@@ -1284,101 +1284,6 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     return last_build_;
 }
 
-BuildProfile RBFPlanningForest::warm_online_cache_bfs(double time_budget_ms,
-                                             int max_nodes,
-                                             int max_depth,
-                                             bool split_nodes) {
-    using Clock = std::chrono::steady_clock;
-    BuildProfile profile;
-    const auto t0 = Clock::now();
-    if (time_budget_ms <= 0.0 || !database_) {
-        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        profile.final_boxes = database_ ? static_cast<int>(database_->node_count()) : 0;
-        profile.diagnostics["prewarm.time_budget_ms"] = std::max(0.0, time_budget_ms);
-        profile.diagnostics["prewarm.visited_nodes"] = 0.0;
-        profile.diagnostics["prewarm.splits"] = 0.0;
-        profile.diagnostics["prewarm.completed"] = 0.0;
-        return profile;
-    }
-
-    reset_oracle(Scene{});
-    oracle_->reset_counters();
-    std::queue<std::pair<int, int>> frontier;
-    frontier.push(std::make_pair(oracle_->root_node(), -1));
-    OracleSplitOptions split_options = config_.grower.find_free_box.split;
-
-    int visited_nodes = 0;
-    int splits = 0;
-    int max_observed_depth = 0;
-    bool exhausted = false;
-    auto deadline_reached = [&]() {
-        return std::chrono::duration<double, std::milli>(Clock::now() - t0).count() >= time_budget_ms;
-    };
-
-    while (!frontier.empty()) {
-        if ((max_nodes > 0 && visited_nodes >= max_nodes) || deadline_reached()) {
-            break;
-        }
-        const auto [node, changed_dim] = frontier.front();
-        frontier.pop();
-        if (node < 0 || !database_->node(static_cast<lect_database::NodeId>(node)).has_value()) {
-            continue;
-        }
-        const int depth = oracle_->depth(node);
-        max_observed_depth = std::max(max_observed_depth, depth);
-        const auto intervals = oracle_->node_intervals(node);
-        oracle_->validate_node(node, intervals, changed_dim);
-        visited_nodes += 1;
-
-        if (!oracle_->is_leaf(node)) {
-            const int child_changed_dim = oracle_->split_dim(node);
-            frontier.push(std::make_pair(oracle_->left_child(node), child_changed_dim));
-            frontier.push(std::make_pair(oracle_->right_child(node), child_changed_dim));
-            continue;
-        }
-        if (!split_nodes || (max_depth >= 0 && depth >= max_depth) || deadline_reached()) {
-            continue;
-        }
-        const auto split = oracle_->split_node(node, intervals, changed_dim, split_options);
-        if (split.split) {
-            splits += 1;
-            frontier.push(std::make_pair(split.left, split.split_dim));
-            frontier.push(std::make_pair(split.right, split.split_dim));
-        }
-    }
-    exhausted = frontier.empty();
-
-    const OracleCounters oracle_counters = oracle_->counters();
-    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    profile.raw_boxes = visited_nodes;
-    profile.final_boxes = static_cast<int>(database_->node_count());
-    profile.diagnostics["prewarm.time_budget_ms"] = time_budget_ms;
-    profile.diagnostics["prewarm.visited_nodes"] = static_cast<double>(visited_nodes);
-    profile.diagnostics["prewarm.splits"] = static_cast<double>(splits);
-    profile.diagnostics["prewarm.frontier_nodes"] = static_cast<double>(frontier.size());
-    profile.diagnostics["prewarm.max_observed_depth"] = static_cast<double>(max_observed_depth);
-    profile.diagnostics["prewarm.completed"] = exhausted ? 1.0 : 0.0;
-    profile.diagnostics["prewarm.tree_nodes"] = static_cast<double>(database_->node_count());
-    profile.diagnostics["oracle.node_validations"] = static_cast<double>(oracle_counters.node_validations);
-    profile.diagnostics["oracle.materializations"] = static_cast<double>(oracle_counters.materializations);
-    profile.diagnostics["oracle.materialization_stored_endpoint"] = static_cast<double>(oracle_counters.materialization_stored_endpoint);
-    profile.diagnostics["oracle.materialization_reused_endpoint_cache"] = static_cast<double>(oracle_counters.materialization_reused_endpoint_cache);
-    profile.diagnostics["oracle.materialization_reused_external_evidence"] = static_cast<double>(oracle_counters.materialization_reused_external_evidence);
-    profile.diagnostics["oracle.materialization_source_incremental_state"] = static_cast<double>(oracle_counters.materialization_source_incremental_state);
-    profile.diagnostics["oracle.materialization_endpoint_time_us"] = oracle_counters.materialization_endpoint_time_us;
-    profile.diagnostics["oracle.materialization_envelope_time_us"] = oracle_counters.materialization_envelope_time_us;
-    profile.diagnostics["oracle.scoring_evaluations"] = static_cast<double>(oracle_counters.scoring_evaluations);
-    profile.diagnostics["oracle.scoring_source_incremental_state"] = static_cast<double>(oracle_counters.scoring_source_incremental_state);
-    profile.diagnostics["oracle.scoring_reused_endpoint_cache"] = static_cast<double>(oracle_counters.scoring_reused_endpoint_cache);
-    profile.diagnostics["oracle.scoring_reused_external_evidence"] = static_cast<double>(oracle_counters.scoring_reused_external_evidence);
-    if (config_.database.checkpoint_after_build && database_) {
-        database_->checkpoint();
-    }
-    reset_oracle(scene_);
-    reserve_existing_boxes();
-    return profile;
-}
-
 FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
                                                          const std::vector<Interval>& domain,
                                                          StageContext& context,
@@ -1556,55 +1461,29 @@ BuildProfile RBFPlanningForest::build_subtractive(
     const auto t0 = Clock::now();
 
     BuildProfile profile;
-    last_build_seeds_ = seeds;
-    scene_.clear();
-    boxes_.clear();
-    raw_boxes_.clear();
-    adjacency_.clear();
-    segment_edges_.clear();
-    invalidate_query_cache();
-    reset_oracle(Scene{});
-
-    const auto prewarm_t0 = Clock::now();
-    const BuildProfile prewarm = warm_online_cache_bfs(options.prewarm_time_budget_ms,
-                                                 options.prewarm_max_nodes,
-                                                 options.prewarm_max_depth,
-                                                 options.split_prewarm_nodes);
-    const double prewarm_ms = std::chrono::duration<double, std::milli>(Clock::now() - prewarm_t0).count();
-    profile.diagnostics["subtractive.prewarm_ms"] = prewarm_ms;
-    profile.diagnostics["subtractive.prewarm_visited_nodes"] = prewarm.diagnostics.count("prewarm.visited_nodes")
-        ? prewarm.diagnostics.at("prewarm.visited_nodes")
-        : 0.0;
-    profile.diagnostics["subtractive.prewarm_splits"] = prewarm.diagnostics.count("prewarm.splits")
-        ? prewarm.diagnostics.at("prewarm.splits")
-        : 0.0;
-
-    reset_oracle(Scene{});
-    int next_id = 0;
-    int emitted_initial_boxes = 0;
-    if (options.emit_prewarm_leaves && database_) {
-        for (lect_database::NodeId node = 0; node < database_->node_count(); ++node) {
-            const auto topology = database_->topology(node);
-            if (!lect_database::valid_node_id(topology.id) || !topology.leaf) {
-                continue;
-            }
-            BoxNode box;
-            box.id = next_id++;
-            box.joint_intervals = oracle_->node_intervals(static_cast<int>(node));
-            box.seed_config = box.center();
-            box.tree_id = static_cast<int>(node);
-            box.parent_box_id = -1;
-            box.root_id = box.id;
-            box.safety_status = BoxSafetyStatus::CertifiedFree;
-            box.strict_audit_required = false;
-            box.compute_volume();
-            oracle_->reserve_node(box.tree_id, box.id);
-            boxes_.push_back(box);
-            raw_boxes_.push_back(std::move(box));
-            emitted_initial_boxes += 1;
-        }
+    const auto bootstrap_t0 = Clock::now();
+    if (!seeds.empty()) {
+        StageContext bootstrap_context = StageContext::from_runtime(config_.runtime);
+        const BuildProfile bootstrap = build_coverage({}, seeds, bootstrap_context);
+        profile.diagnostics["subtractive.bootstrap_boxes"] = static_cast<double>(bootstrap.final_boxes);
+        profile.diagnostics["subtractive.bootstrap_raw_boxes"] = static_cast<double>(bootstrap.raw_boxes);
+        profile.diagnostics["subtractive.bootstrap_segment_edges"] = static_cast<double>(bootstrap.segment_edges);
+    } else {
+        last_build_seeds_ = seeds;
+        scene_.clear();
+        boxes_.clear();
+        raw_boxes_.clear();
+        adjacency_.clear();
+        segment_edges_.clear();
+        invalidate_query_cache();
+        reset_oracle(Scene{});
+        profile.diagnostics["subtractive.bootstrap_boxes"] = 0.0;
+        profile.diagnostics["subtractive.bootstrap_raw_boxes"] = 0.0;
+        profile.diagnostics["subtractive.bootstrap_segment_edges"] = 0.0;
     }
-    profile.diagnostics["subtractive.initial_leaf_boxes"] = static_cast<double>(emitted_initial_boxes);
+    const double bootstrap_ms = std::chrono::duration<double, std::milli>(Clock::now() - bootstrap_t0).count();
+    profile.diagnostics["subtractive.bootstrap_ms"] = bootstrap_ms;
+    profile.diagnostics["subtractive.initial_leaf_boxes"] = static_cast<double>(boxes_.size());
     rebuild_adjacency();
 
     std::vector<Obstacle> validation_obstacles;
@@ -1875,7 +1754,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
     rebuild_adjacency();
     profile.adjacency_ms = carve_local_adjacency_ms + carve_global_adjacency_ms +
         std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
-    profile.grow_ms = prewarm_ms + carve_collision_ms + carve_regrow_ms;
+    profile.grow_ms = bootstrap_ms + carve_collision_ms + carve_regrow_ms;
     profile.raw_boxes = static_cast<int>(raw_boxes_.size());
     profile.final_boxes = static_cast<int>(boxes_.size());
     profile.segment_edges = static_cast<int>(segment_edges_.size());

@@ -41,11 +41,6 @@ struct SubtractiveObstacleGroup {
 };
 
 struct SubtractiveBuildOptions {
-	double prewarm_time_budget_ms = 0.0;
-	int prewarm_max_nodes = 0;
-	int prewarm_max_depth = -1;
-	bool split_prewarm_nodes = true;
-	bool emit_prewarm_leaves = true;
 	bool run_connector = true;
 	bool use_validation_obstacles_for_final_scene = true;
 };
@@ -182,10 +177,6 @@ public:
 	const OracleCounters* oracle_counters() const {
 		return oracle_ ? &oracle_->counters() : nullptr;
 	}
-	BuildProfile warm_online_cache_bfs(double time_budget_ms,
-	                             int max_nodes = 0,
-	                             int max_depth = -1,
-	                             bool split_nodes = true);
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					  const Eigen::Ref<const Eigen::VectorXd>& goal) const;
 	int bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,

@@ -1,9 +1,8 @@
-# SafeBoxForest Standalone Package
+# SafeBoxForest Module
 
-This package contains the SafeBoxForest (SBF) build/query pipeline. It is
-independent from `cpp/v6` and uses the consolidated `LECTDatabase` storage,
-online-cache, and SBF adapter targets plus the standalone `link_interval_envelope`
-package.
+This module contains the SafeBoxForest (SBF) build/query pipeline. It depends on
+the sibling `lect_database` module, which in turn depends on the sibling
+`link_interval_envelope` module.
 
 Public repository:
 https://github.com/tianyu1997/SafeBoxForest
@@ -43,13 +42,13 @@ Expected sibling layout:
 
 ```text
 workspace/
-	SBF/
-	LECTDatabase/
 	link_interval_envelope/
+	lect_database/
+	safe_box_forest/
 ```
 
-Override dependency paths with `SBF_LECTDATABASE_SOURCE_DIR` and
-`SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR` when using another layout.
+Override the lect database path with `SBF_LECTDATABASE_SOURCE_DIR` when using
+another layout.
 
 ## Build And Test
 
@@ -65,7 +64,7 @@ SBF_BUILD_EXPERIMENTS=ON bash tests/run_all.sh
 ```
 
 The test script builds C++, builds the Python extension, runs CTest, and checks
-that this package does not include v6-only headers or paths.
+that this module does not include v6-only headers or paths.
 
 ## TRO 2026 Paper Quickstart
 

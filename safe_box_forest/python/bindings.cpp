@@ -494,11 +494,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
 
     py::class_<rbf::SubtractiveBuildOptions>(module, "SubtractiveBuildOptions")
         .def(py::init<>())
-        .def_readwrite("prewarm_time_budget_ms", &rbf::SubtractiveBuildOptions::prewarm_time_budget_ms)
-        .def_readwrite("prewarm_max_nodes", &rbf::SubtractiveBuildOptions::prewarm_max_nodes)
-        .def_readwrite("prewarm_max_depth", &rbf::SubtractiveBuildOptions::prewarm_max_depth)
-        .def_readwrite("split_prewarm_nodes", &rbf::SubtractiveBuildOptions::split_prewarm_nodes)
-        .def_readwrite("emit_prewarm_leaves", &rbf::SubtractiveBuildOptions::emit_prewarm_leaves)
         .def_readwrite("run_connector", &rbf::SubtractiveBuildOptions::run_connector)
         .def_readwrite("use_validation_obstacles_for_final_scene", &rbf::SubtractiveBuildOptions::use_validation_obstacles_for_final_scene);
 
@@ -813,12 +808,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                              py::arg("obstacle_groups"),
                              py::arg("seeds"),
                              py::arg("options") = rbf::SubtractiveBuildOptions{})
-           .def("warm_online_cache_bfs",
-               &rbf::RBFPlanningForest::warm_online_cache_bfs,
-               py::arg("time_budget_ms"),
-               py::arg("max_nodes") = 0,
-               py::arg("max_depth") = -1,
-               py::arg("split_nodes") = true)
            .def("query",
                [](const rbf::RBFPlanningForest& forest,
                  const std::vector<double>& start,

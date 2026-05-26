@@ -1,31 +1,42 @@
-# LECTDatabase
+# RBF Workspace
 
-Standalone sibling package for the RapidBoxForest `lect_database` core and the SafeBoxForest adapter layer.
+This repository root is a workspace-style monorepo for three first-party modules:
 
-Exported targets:
+- `link_interval_envelope/`: envelope and incremental-FK primitives.
+- `lect_database/`: database, online cache, and the SBF adapter layer.
+- `safe_box_forest/`: planner and query pipeline built on `LECTDatabase`.
 
-- `LECTDatabase::core`
-- `LECTDatabase::sbf_adapter`
+Dependency direction is intentional and one-way:
 
-This package is being extracted in three ordered stages:
+`safe_box_forest -> lect_database -> link_interval_envelope`
 
-1. Standalone database core.
-2. SafeBoxForest adapter layer.
-3. SafeBoxForest wiring and regression.
+The root does not own implementation code for any one module. It only provides a
+single top-level CMake entry point that can configure the modules together in
+dependency order.
 
-Current status:
+## Layout
 
-- Standalone database core is extracted and builds independently.
-- SafeBoxForest adapter target is extracted and tested.
-- The adapter owns the shared SafeBoxForest-facing `Scene`, `CollisionChecker`, `DatabaseBoxOracle`, and database-backed worker session support.
-- Grid/voxel compatibility fields have been removed from the adapter-facing oracle API.
-- Sibling `SafeBoxForest` now configures, builds, and passes its current test suite against the standalone dependencies.
-- SafeBoxForest now requests worker sessions through the generic oracle seam and reuses this package's scene/collision implementation.
-- The remaining work is the runtime backend switch inside SafeBoxForest from legacy `lect::LECT` ownership to direct `lect_database::LectDatabase` ownership, after the SBF split-policy options are unified with the database split-policy descriptor.
-
-Validation snapshot:
-
-```sh
-cmake --build build-local -j2
-ctest --test-dir build-local --output-on-failure
+```text
+.
+|-- CMakeLists.txt
+|-- .gitignore
+|-- link_interval_envelope/
+|-- lect_database/
+`-- safe_box_forest/
 ```
+
+## Root Build
+
+```bash
+cmake -S . -B build \
+  -DRBF_BUILD_ENVELOPE=ON \
+  -DRBF_BUILD_LECT_DATABASE=ON \
+  -DRBF_BUILD_SBF=ON \
+  -DRBF_BUILD_TESTS=ON \
+  -DRBF_WITH_PYTHON=OFF
+
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
+```
+
+Each module still keeps its own package-facing CMake entry and documentation.

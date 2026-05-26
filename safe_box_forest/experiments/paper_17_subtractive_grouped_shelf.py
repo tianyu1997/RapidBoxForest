@@ -124,11 +124,6 @@ def configure(args: argparse.Namespace, seed: int) -> Any:
 
 def build_options(args: argparse.Namespace) -> Any:
     options = sbf.SubtractiveBuildOptions()
-    options.prewarm_time_budget_ms = float(args.prewarm_ms)
-    options.prewarm_max_nodes = int(args.prewarm_max_nodes)
-    options.prewarm_max_depth = int(args.prewarm_max_depth)
-    options.split_prewarm_nodes = bool(args.split_prewarm_nodes)
-    options.emit_prewarm_leaves = True
     options.run_connector = bool(args.run_connector)
     options.use_validation_obstacles_for_final_scene = True
     return options
@@ -180,10 +175,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-consecutive-miss", type=int, default=4000)
     parser.add_argument("--dirty-seed-limit", type=int, default=256)
     parser.add_argument("--local-regrow-timeout-ms", type=float, default=6000.0)
-    parser.add_argument("--prewarm-ms", type=float, default=1500.0)
-    parser.add_argument("--prewarm-max-nodes", type=int, default=0)
-    parser.add_argument("--prewarm-max-depth", type=int, default=4)
-    parser.add_argument("--split-prewarm-nodes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--carving-mode", choices=["aggregate", "exact"], default="aggregate")
     parser.add_argument("--carving-padding", type=float, default=0.0)
     parser.add_argument("--run-connector", action=argparse.BooleanOptionalAction, default=True)

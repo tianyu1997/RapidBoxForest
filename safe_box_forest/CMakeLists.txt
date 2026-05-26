@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(SBF VERSION 0.1.0 LANGUAGES CXX)
+project(SafeBoxForest VERSION 0.1.0 LANGUAGES CXX)
 
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
@@ -14,18 +14,47 @@ option(SBF_BUILD_TESTS "Build SBF C++ tests" ON)
 option(SBF_BUILD_EXPERIMENTS "Build SBF lightweight experiment drivers" OFF)
 option(SBF_WITH_PYTHON "Build SBF Python extension" ON)
 option(SBF_INSTALL_CMAKE_PACKAGE "Install SBF CMake package export files" OFF)
-set(SBF_LECTDATABASE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." CACHE PATH "Path to the standalone LECTDatabase package")
-set(SBF_RAPIDBOXFOREST_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../RapidBoxForest" CACHE PATH "Path to the RapidBoxForest source tree for migration headers")
-set(_SBF_DEFAULT_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope")
-if(NOT EXISTS "${_SBF_DEFAULT_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt" AND
-   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope/CMakeLists.txt")
-    set(_SBF_DEFAULT_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope")
+set(SBF_LECTDATABASE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lect_database" CACHE PATH "Path to the sibling lect_database module")
+
+if(NOT EXISTS "${SBF_LECTDATABASE_SOURCE_DIR}/CMakeLists.txt"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase/CMakeLists.txt")
+    set(SBF_LECTDATABASE_SOURCE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase"
+        CACHE PATH "Path to the sibling lect_database module" FORCE)
 endif()
-set(SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${_SBF_DEFAULT_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}" CACHE PATH "Path to the standalone link_interval_envelope package")
-if(NOT EXISTS "${SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt" AND
-   SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR MATCHES "link_interval_envelope$" AND
-   EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope/CMakeLists.txt")
-    set(SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope" CACHE PATH "Path to the standalone link_interval_envelope package" FORCE)
+
+if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
+    find_package(LECTDatabase QUIET)
+endif()
+
+if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
+    if(EXISTS "${SBF_LECTDATABASE_SOURCE_DIR}/CMakeLists.txt")
+        set(LECTDB_BUILD_TESTS OFF CACHE BOOL "Disable LECTDatabase tests for nested SBF builds" FORCE)
+        set(LECTDB_BUILD_TOOLS OFF CACHE BOOL "Disable LECTDatabase tools for nested SBF builds" FORCE)
+        add_subdirectory("${SBF_LECTDATABASE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/lect_database")
+    else()
+        message(FATAL_ERROR "LECTDatabase::core was not found. Set SBF_LECTDATABASE_SOURCE_DIR to the sibling lect_database module.")
+    endif()
+endif()
+
+if(TARGET LECTDatabase::core)
+    set(SBF_LECTDB_CORE_TARGET LECTDatabase::core)
+else()
+    set(SBF_LECTDB_CORE_TARGET lect_database_core)
+endif()
+
+if(TARGET LECTDatabase::sbf_adapter)
+    set(SBF_LECTDB_ADAPTER_TARGET LECTDatabase::sbf_adapter)
+elseif(TARGET lect_database_sbf_adapter)
+    set(SBF_LECTDB_ADAPTER_TARGET lect_database_sbf_adapter)
+else()
+    set(SBF_LECTDB_ADAPTER_TARGET "")
+endif()
+
+if(TARGET LECTDatabase::online_cache)
+    set(SBF_LECTDB_CACHE_TARGET LECTDatabase::online_cache)
+else()
+    set(SBF_LECTDB_CACHE_TARGET lect_database_online_cache)
 endif()
 
 find_package(Threads REQUIRED)
@@ -45,34 +74,6 @@ if(SBF_WITH_PYTHON)
         )
         FetchContent_MakeAvailable(pybind11)
     endif()
-endif()
-
-if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
-    find_package(LECTDatabase QUIET)
-endif()
-
-if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
-    if(EXISTS "${SBF_LECTDATABASE_SOURCE_DIR}/CMakeLists.txt")
-        set(LECTDB_BUILD_TESTS OFF CACHE BOOL "Disable LECTDatabase tests for nested SBF builds" FORCE)
-        set(LECTDB_BUILD_TOOLS OFF CACHE BOOL "Disable LECTDatabase tools for nested SBF builds" FORCE)
-        add_subdirectory("${SBF_LECTDATABASE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/_deps/LECTDatabase")
-    else()
-        message(FATAL_ERROR "LECTDatabase::core was not found. Set SBF_LECTDATABASE_SOURCE_DIR to the standalone LECTDatabase package.")
-    endif()
-endif()
-
-if(TARGET LECTDatabase::core)
-    set(SBF_LECTDB_CORE_TARGET LECTDatabase::core)
-else()
-    set(SBF_LECTDB_CORE_TARGET lect_database_core)
-endif()
-
-if(TARGET LECTDatabase::sbf_adapter)
-    set(SBF_LECTDB_ADAPTER_TARGET LECTDatabase::sbf_adapter)
-elseif(TARGET lect_database_sbf_adapter)
-    set(SBF_LECTDB_ADAPTER_TARGET lect_database_sbf_adapter)
-else()
-    set(SBF_LECTDB_ADAPTER_TARGET "")
 endif()
 
 set(SBF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
@@ -105,10 +106,8 @@ if(SBF_LECTDB_ADAPTER_TARGET)
     target_link_libraries(sbf_core PUBLIC ${SBF_LECTDB_ADAPTER_TARGET})
 endif()
 
-if(TARGET LECTDatabase::online_cache)
-    target_link_libraries(sbf_core PUBLIC LECTDatabase::online_cache)
-elseif(TARGET lect_database_online_cache)
-    target_link_libraries(sbf_core PUBLIC lect_database_online_cache)
+if(SBF_LECTDB_CACHE_TARGET)
+    target_link_libraries(sbf_core PUBLIC ${SBF_LECTDB_CACHE_TARGET})
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

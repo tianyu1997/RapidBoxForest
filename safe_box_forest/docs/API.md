@@ -85,7 +85,6 @@ Public build and query methods:
 - `build(start, goal, obstacles, context)`
 - `build_coverage(obstacles, seeds)`
 - `build_coverage(obstacles, seeds, context)`
-- `warm_online_cache_bfs(time_budget_ms, max_nodes, max_depth, split_nodes)`
 - `query(start, goal)`
 - `refine_query_corridor(start, goal, max_boxes_to_add)`
 - `bridge_query(start, goal)`
@@ -307,7 +306,6 @@ Public bound `SafeBoxForest` methods mirror the current facade surface:
 
 - `build(...)`
 - `build_coverage(...)`
-- `warm_online_cache_bfs(...)`
 - `query(...)`
 - `refine_query_corridor(...)`
 - `bridge_query(...)`

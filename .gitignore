@@ -1,12 +1,20 @@
 # Build outputs
 build*/
+*/build*/
 cmake-build-*/
+*/cmake-build-*/
 CMakeFiles/
+*/CMakeFiles/
 CMakeCache.txt
+*/CMakeCache.txt
 cmake_install.cmake
+*/cmake_install.cmake
 CTestTestfile.cmake
+*/CTestTestfile.cmake
 Testing/
+*/Testing/
 _deps/
+*/_deps/
 
 # Compiled artifacts
 *.a

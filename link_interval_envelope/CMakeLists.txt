@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
-project(LinkIntervalEnvelope VERSION 0.1.0 LANGUAGES CXX)
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    project(LinkIntervalEnvelope VERSION 0.1.0 LANGUAGES CXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,6 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LIE_WITH_PYTHON "Build Python extension" ON)
 option(LIE_BUILD_TESTS "Build C++ smoke tests" ON)
+option(LIE_BUILD_EXAMPLES "Build C++ examples" ON)
 
 include(cmake/FetchDeps.cmake)
 find_package(Threads REQUIRED)
@@ -51,11 +54,13 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(link_interval_envelope_core PRIVATE -Wall -Wextra -Wpedantic -O3)
 endif()
 
-add_executable(lie_microbench examples/microbench.cpp)
-target_link_libraries(lie_microbench PRIVATE link_interval_envelope_core)
-target_compile_definitions(lie_microbench PRIVATE
-    LIE_EXAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/data"
-)
+if(LIE_BUILD_EXAMPLES)
+    add_executable(lie_microbench examples/microbench.cpp)
+    target_link_libraries(lie_microbench PRIVATE link_interval_envelope_core)
+    target_compile_definitions(lie_microbench PRIVATE
+        LIE_EXAMPLE_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/examples/data"
+    )
+endif()
 
 if(LIE_WITH_PYTHON)
     if(NOT TARGET pybind11::module)

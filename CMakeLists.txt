@@ -1,7 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(LECTDatabase VERSION 0.1.0 LANGUAGES CXX)
-
-include(GNUInstallDirs)
+project(RBFWorkspace VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -9,131 +7,30 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-option(LECTDB_BUILD_TESTS "Build LECTDatabase C++ tests" ON)
-option(LECTDB_BUILD_TOOLS "Build LECTDatabase command-line tools" ON)
-option(LECTDB_BUILD_SBF "Build the consolidated SafeBoxForest subtree" OFF)
-set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/link_interval_envelope"
-    CACHE PATH "Path to the standalone link_interval_envelope package")
+option(RBF_BUILD_TESTS "Build tests for enabled modules" ON)
+option(RBF_BUILD_TOOLS "Build tools for enabled modules" ON)
+option(RBF_BUILD_ENVELOPE "Build the link_interval_envelope module" ON)
+option(RBF_BUILD_LECT_DATABASE "Build the lect_database module" ON)
+option(RBF_BUILD_SBF "Build the safe_box_forest module" OFF)
+option(RBF_WITH_PYTHON "Build Python bindings for enabled modules" OFF)
+option(RBF_BUILD_EXPERIMENTS "Build optional module experiments" OFF)
 
-if(NOT EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt"
-   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope/CMakeLists.txt")
-    set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope"
-        CACHE PATH "Path to the standalone link_interval_envelope package" FORCE)
+if(RBF_BUILD_ENVELOPE OR RBF_BUILD_LECT_DATABASE OR RBF_BUILD_SBF)
+    set(LIE_BUILD_TESTS ${RBF_BUILD_TESTS} CACHE BOOL "Build C++ smoke tests" FORCE)
+    set(LIE_WITH_PYTHON ${RBF_WITH_PYTHON} CACHE BOOL "Build Python extension" FORCE)
+    set(LIE_BUILD_EXAMPLES ${RBF_BUILD_EXPERIMENTS} CACHE BOOL "Build C++ examples" FORCE)
+    add_subdirectory(link_interval_envelope)
 endif()
 
-if(NOT EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt"
-   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope/CMakeLists.txt")
-    set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
-        "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope"
-        CACHE PATH "Path to the standalone link_interval_envelope package" FORCE)
+if(RBF_BUILD_LECT_DATABASE)
+    set(LECTDB_BUILD_TESTS ${RBF_BUILD_TESTS} CACHE BOOL "Build LECTDatabase C++ tests" FORCE)
+    set(LECTDB_BUILD_TOOLS ${RBF_BUILD_TOOLS} CACHE BOOL "Build LECTDatabase command-line tools" FORCE)
+    add_subdirectory(lect_database)
 endif()
 
-find_package(Threads REQUIRED)
-
-if(NOT TARGET link_interval_envelope::core AND NOT TARGET link_interval_envelope_core)
-    find_package(LinkIntervalEnvelope QUIET)
-endif()
-
-if(NOT TARGET link_interval_envelope::core AND NOT TARGET link_interval_envelope_core)
-    if(EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt")
-        set(LIE_WITH_PYTHON OFF CACHE BOOL "Disable envelope Python bindings for nested LECTDatabase builds" FORCE)
-        set(LIE_BUILD_TESTS OFF CACHE BOOL "Disable envelope tests for nested LECTDatabase builds" FORCE)
-        add_subdirectory(
-            "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}"
-            "${CMAKE_BINARY_DIR}/_deps/link_interval_envelope")
-    else()
-        message(FATAL_ERROR
-            "link_interval_envelope::core was not found. Set "
-            "LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR to the standalone envelope package.")
-    endif()
-endif()
-
-if(TARGET link_interval_envelope::core)
-    set(LECTDB_ENVELOPE_TARGET link_interval_envelope::core)
-else()
-    set(LECTDB_ENVELOPE_TARGET link_interval_envelope_core)
-endif()
-
-set(LECTDB_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
-
-add_library(lect_database_core STATIC
-    src/lect_database/types.cpp
-    src/lect_database/split_policy.cpp
-    src/lect_database/identity.cpp
-    src/lect_database/database.cpp
-)
-add_library(LECTDatabase::core ALIAS lect_database_core)
-
-add_library(lect_database_sbf_adapter STATIC
-    src/sbf/oracle.cpp
-    src/sbf/scene.cpp
-)
-add_library(LECTDatabase::sbf_adapter ALIAS lect_database_sbf_adapter)
-
-add_library(lect_database_online_cache STATIC
-    src/online_cache/cache_tree.cpp
-)
-add_library(LECTDatabase::online_cache ALIAS lect_database_online_cache)
-
-target_include_directories(lect_database_core PUBLIC
-    $<BUILD_INTERFACE:${LECTDB_INCLUDE_DIR}>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(lect_database_core PUBLIC
-    ${LECTDB_ENVELOPE_TARGET}
-    Threads::Threads
-)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(lect_database_core PRIVATE -Wall -Wextra -Wpedantic -O3)
-endif()
-
-target_include_directories(lect_database_sbf_adapter PUBLIC
-    $<BUILD_INTERFACE:${LECTDB_INCLUDE_DIR}>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(lect_database_sbf_adapter PUBLIC
-    lect_database_core
-    lect_database_online_cache
-)
-
-target_include_directories(lect_database_online_cache PUBLIC
-    $<BUILD_INTERFACE:${LECTDB_INCLUDE_DIR}>
-    $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(lect_database_online_cache PUBLIC
-    lect_database_core
-)
-
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(lect_database_sbf_adapter PRIVATE -Wall -Wextra -Wpedantic -O3)
-    target_compile_options(lect_database_online_cache PRIVATE -Wall -Wextra -Wpedantic -O3)
-endif()
-
-if(LECTDB_BUILD_TOOLS)
-    add_executable(lect_database_tool tools/lect_database_tool.cpp)
-    target_link_libraries(lect_database_tool PRIVATE lect_database_core)
-
-    add_executable(lect_database_benchmark tools/lect_database_benchmark.cpp)
-    target_link_libraries(lect_database_benchmark PRIVATE lect_database_core)
-endif()
-
-if(LECTDB_BUILD_TESTS)
-    enable_testing()
-    add_subdirectory(tests)
-endif()
-
-if(LECTDB_BUILD_SBF)
-    set(SBF_LECTDATABASE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "Path to LECTDatabase for nested SBF builds" FORCE)
-    set(SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}" CACHE PATH "Path to link_interval_envelope for nested SBF builds" FORCE)
+if(RBF_BUILD_SBF)
+    set(SBF_BUILD_TESTS ${RBF_BUILD_TESTS} CACHE BOOL "Build SBF C++ tests" FORCE)
+    set(SBF_BUILD_EXPERIMENTS ${RBF_BUILD_EXPERIMENTS} CACHE BOOL "Build SBF lightweight experiment drivers" FORCE)
+    set(SBF_WITH_PYTHON ${RBF_WITH_PYTHON} CACHE BOOL "Build SBF Python extension" FORCE)
     add_subdirectory(safe_box_forest)
 endif()
-
-install(TARGETS lect_database_core lect_database_sbf_adapter lect_database_online_cache
-    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
-)
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})

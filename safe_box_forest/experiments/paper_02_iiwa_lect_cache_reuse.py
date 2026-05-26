@@ -228,62 +228,20 @@ def run_bfs_prewarm_trial(
     budget_ms: float,
     cache_namespace: str,
 ) -> dict[str, Any]:
-    progress(f"start variant={variant} protocol=bfs_prewarm scenario={difficulty} budget_ms={budget_ms:g} cache={cache_namespace}")
-    cache_dir = args.cache_root / cache_namespace
-    if cache_dir.exists():
-        shutil.rmtree(cache_dir)
-    cfg = configure_standalone_sbf(args, 0, preset=variant)
-    apply_cache_protocol(cfg, args, cache_namespace)
-    prebuild_metrics = cache_metrics(args.cache_root, cache_namespace)
-    forest = __import__("sbf").SafeBoxForest(robot, cfg)
-    prewarm_t0 = time.perf_counter()
-    profile = forest.warm_online_cache_bfs(
-        float(budget_ms),
-        int(args.prewarm_max_nodes),
-        int(args.prewarm_max_depth if args.prewarm_max_depth >= 0 else args.ffb_depth),
-        bool(args.prewarm_split_nodes),
+    trial = run_random_empty_prewarm_trial(
+        args,
+        robot=robot,
+        variant=variant,
+        difficulty=difficulty,
+        budget_ms=budget_ms,
+        cache_namespace=cache_namespace,
     )
-    build_s = float(profile.total_ms) / 1000.0
-    metrics = cache_metrics(args.cache_root, cache_namespace)
-    diagnostics = dict(profile.diagnostics)
-    diagnostics["prewarm.wall_time_s"] = time.perf_counter() - prewarm_t0
-    trial = {
-        "variant": variant,
-        "robot": "iiwa",
-        "seed": 0,
-        "protocol": "bfs_prewarm",
-        "phase": "bfs_prewarm",
-        "difficulty": difficulty,
-        "scenario": difficulty,
-        "budget_ms": float(budget_ms),
-        "budget_label": budget_label(budget_ms),
-        "scene_name": "none",
-        "scene_metadata": {
-            "scene_kind": "scene_independent_online_cache_bfs",
-            "robot": "iiwa",
-            "scenario": difficulty,
-            "scene_label": scene_label_for(difficulty),
-            "prewarm_starts_empty": True,
-        },
-        "cache_enabled": True,
-        "cache_namespace": cache_namespace,
-        "cache_root": str(args.cache_root),
-        "prebuild_cache_file_count": int(prebuild_metrics["cache_file_count"]),
-        "prebuild_cache_file_bytes": int(prebuild_metrics["cache_file_bytes"]),
-        "prebuild_cache_files": prebuild_metrics["cache_files"],
-        "cache_file_count": int(metrics["cache_file_count"]),
-        "cache_file_bytes": int(metrics["cache_file_bytes"]),
-        "cache_files": metrics["cache_files"],
-        "build_s": build_s,
-        "n_boxes": int(profile.raw_boxes),
-        "certified_box_count": 0,
-        "provisional_box_count": 0,
-        "box_volume_sum": 0.0,
-        "segment_edge_count": 0,
-        "queries": [],
-        "diagnostics": diagnostics,
-    }
-    progress(f"done variant={variant} protocol=bfs_prewarm scenario={difficulty} budget_ms={budget_ms:g} build_s={build_s:.3f} nodes={profile.raw_boxes} cache_mb={metrics['cache_file_bytes'] / 1e6:.3f}")
+    trial["protocol"] = "bfs_prewarm"
+    trial["phase"] = "bfs_prewarm"
+    trial["scene_name"] = "empty"
+    trial.setdefault("scene_metadata", {})["scene_kind"] = "scene_independent_empty_scene_bootstrap"
+    trial.setdefault("scene_metadata", {})["compat_note"] = "Dedicated online-cache BFS warmup API removed; this protocol now uses blind empty-scene coverage bootstrap."
+    trial.setdefault("diagnostics", {})["compat.no_dedicated_bfs_warmup_api"] = 1.0
     return trial
 
 

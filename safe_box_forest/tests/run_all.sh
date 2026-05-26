@@ -3,20 +3,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT/build}"
-LIE_SOURCE_DIR="${SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR:-$ROOT/../link_interval_envelope}"
 
 case "$BUILD_DIR" in
   /*) ;;
   *) BUILD_DIR="$(cd "$(dirname "$BUILD_DIR")" && pwd)/$(basename "$BUILD_DIR")" ;;
 esac
 
+CMAKE_ARGS=()
+if [[ -n "${SBF_LECTDATABASE_SOURCE_DIR:-}" ]]; then
+  CMAKE_ARGS+=("-DSBF_LECTDATABASE_SOURCE_DIR=$SBF_LECTDATABASE_SOURCE_DIR")
+fi
+
 cmake -S "$ROOT" -B "$BUILD_DIR" \
   -DCMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE:-Release}" \
-  -DSBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR="$LIE_SOURCE_DIR" \
   -DSBF_BUILD_TESTS=ON \
   -DSBF_BUILD_EXPERIMENTS="${SBF_BUILD_EXPERIMENTS:-OFF}" \
   -DSBF_WITH_PYTHON="${SBF_WITH_PYTHON:-ON}" \
-  -DPython3_EXECUTABLE="${PYTHON_EXECUTABLE:-python}"
+  -DPython3_EXECUTABLE="${PYTHON_EXECUTABLE:-python}" \
+  "${CMAKE_ARGS[@]}"
 
 cmake --build "$BUILD_DIR" -j"${JOBS:-$(nproc)}"
 ctest --test-dir "$BUILD_DIR" --output-on-failure
