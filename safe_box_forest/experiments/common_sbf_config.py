@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import sys
+from argparse import ArgumentParser, Namespace
+from pathlib import Path
+from typing import Any, Iterable
+
+
+def bootstrap_imports() -> Path:
+    root = Path(__file__).resolve().parents[1]
+    build_dir = os.environ.get("SBF_BUILD_DIR")
+    candidates = []
+    if build_dir:
+        candidates.append(Path(build_dir) / "python")
+    candidates.extend((root / "build_py310" / "python", root / "build" / "python", root / "python"))
+    for candidate in reversed(candidates):
+        text = str(candidate)
+        if text in sys.path:
+            sys.path.remove(text)
+        if candidate.exists():
+            sys.path.insert(0, text)
+    return root
+
+
+ROOT = bootstrap_imports()
+REPO_ROOT = ROOT.parents[1]
+
+import sbf  # noqa: E402
+
+
+def mean(values: Iterable[float]) -> float | None:
+    data = list(values)
+    return sum(data) / len(data) if data else None
+
+
+def median(values: Iterable[float]) -> float | None:
+    data = sorted(values)
+    if not data:
+        return None
+    mid = len(data) // 2
+    if len(data) % 2:
+        return data[mid]
+    return 0.5 * (data[mid - 1] + data[mid])
+
+
+def segment_resolution_from_step(edge_step: float, segment_step: float) -> int:
+    if segment_step <= 0.0:
+        return 1
+    return max(1, int(math.ceil(max(0.0, float(edge_step)) / float(segment_step))))
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def box_volume_sum(boxes: list[Any]) -> float:
+    return sum(float(box.volume) for box in boxes)
+
+
+def count_status(boxes: list[Any], status: Any) -> int:
+    return sum(1 for box in boxes if box.safety_status == status)
+
+
+def set_if_available(obj: Any, name: str, value: Any) -> bool:
+    try:
+        setattr(obj, name, value)
+        return True
+    except AttributeError:
+        return False
+
+
+def set_path_if_available(obj: Any, path: str, value: Any) -> bool:
+    current = obj
+    parts = path.split(".")
+    for part in parts[:-1]:
+        try:
+            current = getattr(current, part)
+        except AttributeError:
+            return False
+    return set_if_available(current, parts[-1], value)
+
+
+def add_common_sbf_args(parser: ArgumentParser) -> None:
+    parser.add_argument(
+        "--preset",
+        choices=["ifk_strict", "crit_link_coverage", "kdop26_coverage", "support_hull_coverage", "coverage_hybrid"],
+        default="support_hull_coverage",
+    )
+    parser.add_argument("--seeds", type=int, default=1)
+    parser.add_argument("--seed-base", type=int, default=20260504)
+    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--task-batch-size", type=int, default=8)
+    parser.add_argument("--worker-local-ffb", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--max-boxes", type=int, default=5000)
+    parser.add_argument("--timeout-ms", type=float, default=60000.0)
+    parser.add_argument("--ffb-depth", type=int, default=120)
+    parser.add_argument("--max-consecutive-miss", type=int, default=2000)
+    parser.add_argument("--grid-delta", type=float, default=0.04)
+    parser.add_argument("--envelope-subdivisions", type=int, default=4)
+    parser.add_argument("--kdop-safety-epsilon", type=float, default=1e-9)
+    parser.add_argument("--support-hull-keep-kdop", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--support-hull-safety-epsilon", type=float, default=1e-9)
+    parser.add_argument("--split-policy", choices=["widest-first", "best-tighten"], default="best-tighten")
+    parser.add_argument("--best-tighten-depth-synchronous", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--best-tighten-prefer-sector-boundary", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--best-tighten-use-minimax", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--best-tighten-shape-balancing", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--best-tighten-recent-dim-cooling", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--ffb-min-split-width", type=float, default=0.0)
+    parser.add_argument("--endpoint-cache-min-effective-width", type=float, default=0.0)
+    parser.add_argument("--enable-merger", action="store_true", default=False)
+    parser.add_argument("--enable-connector", action="store_true", default=True)
+    parser.add_argument("--no-enable-connector", dest="enable_connector", action="store_false")
+    parser.add_argument("--rrt-goal-bias", type=float, default=0.2)
+    parser.add_argument("--intertree-goal-bias", type=float, default=0.25)
+    parser.add_argument("--unexplored-prob", type=float, default=0.45)
+    parser.add_argument("--step-ratio", type=float, default=0.08)
+    parser.add_argument("--component-connect-prob", type=float, default=0.45)
+    parser.add_argument("--component-connect-candidate-limit", type=int, default=4)
+    parser.add_argument("--component-connect-stage-normalized-linf", type=float, default=0.35)
+    parser.add_argument("--component-connect-ffb-depth-increment", type=int, default=40)
+    parser.add_argument("--component-connect-ffb-max-depth", type=int, default=160)
+    parser.add_argument("--stop-after-connect", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--post-connect-extra-boxes", type=int, default=0)
+    parser.add_argument("--quality-min-connected-boxes", type=int, default=64)
+    parser.add_argument("--post-connect-time-budget-ms", type=float, default=450.0)
+    parser.add_argument("--coverage-first-stop-loss", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hard-frontier-failure-threshold", type=int, default=1)
+    parser.add_argument("--hard-frontier-box-horizon", type=int, default=300)
+    parser.add_argument("--strict-path-audit", action="store_true", default=True)
+    parser.add_argument("--no-strict-path-audit", dest="strict_path_audit", action="store_false")
+    parser.add_argument("--audit-resolution", type=int, default=32)
+    parser.add_argument("--repair-on-audit-failure", action="store_true", default=True)
+    parser.add_argument("--no-repair-on-audit-failure", dest="repair_on_audit_failure", action="store_false")
+    parser.add_argument("--repair-max-attempts", type=int, default=6)
+    parser.add_argument("--repair-rrt-max-iters", type=int, default=20000)
+    parser.add_argument("--repair-timeout-ms", type=float, default=750.0)
+    parser.add_argument("--repair-local-sampling-radius", type=float, default=0.4)
+    parser.add_argument("--repair-local-sampling-growth", type=float, default=2.0)
+    parser.add_argument("--validation-cache", action="store_true", default=True)
+    parser.add_argument("--no-validation-cache", dest="validation_cache", action="store_false")
+    parser.add_argument("--validation-cache-max-entries", type=int, default=200000)
+    parser.add_argument("--collision-shortcut", action="store_true", default=True)
+    parser.add_argument("--no-collision-shortcut", dest="collision_shortcut", action="store_false")
+    parser.add_argument("--collision-shortcut-resolution", type=int, default=24)
+    parser.add_argument("--frontier-bridge", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--connector-bridge-boxes", type=int, default=0)
+    parser.add_argument("--segment-edges", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--connector-pair-batch-size", type=int, default=1)
+    parser.add_argument("--connector-pair-timeout-ms", type=float, default=250.0)
+    parser.add_argument("--connector-max-pairs-per-gap", type=int, default=8)
+    parser.add_argument("--connector-rrt-iters", type=int, default=50000)
+    parser.add_argument("--connector-rrt-timeout-ms", type=float, default=2000.0)
+    parser.add_argument("--connector-rrt-step-size", type=float, default=0.25)
+    parser.add_argument("--connector-rrt-goal-bias", type=float, default=0.4)
+    parser.add_argument("--connector-segment-resolution", type=int, default=16)
+    parser.add_argument("--sbf-bridge-segment-step", type=float, default=0.01)
+    parser.add_argument("--connector-pave-max-chain", type=int, default=0)
+    parser.add_argument("--connector-pave-steps", type=int, default=12)
+    parser.add_argument("--connector-pave-depth", type=int, default=120)
+
+
+def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = None) -> sbf.SBFConfig:
+    chosen = preset or args.preset
+    cfg = sbf.SBFConfig()
+    bridge_segment_resolution = segment_resolution_from_step(
+        float(args.connector_rrt_step_size),
+        float(getattr(args, "sbf_bridge_segment_step", 0.01) or 0.0),
+    )
+    cfg.enable_merger = bool(args.enable_merger)
+    cfg.enable_connector = bool(args.enable_connector)
+    cfg.runtime.mode = sbf.ExecutionMode.Parallel if args.threads > 1 else sbf.ExecutionMode.Inline
+    cfg.runtime.n_threads = max(1, int(args.threads))
+    cfg.runtime.batch_size = max(1, int(args.task_batch_size))
+    cfg.runtime.parallel_threshold = 1
+
+    if chosen == "ifk_strict":
+        cfg.endpoint_source.source = sbf.EndpointSource.IFK
+        cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
+        cfg.validation.mode = sbf.OracleValidationMode.StrictCertificate
+        cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+        cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+    elif chosen in {"crit_link_coverage", "kdop26_coverage", "support_hull_coverage"}:
+        cfg.endpoint_source.source = sbf.EndpointSource.CritSample
+        if chosen == "kdop26_coverage":
+            cfg.envelope_type.type = sbf.EnvelopeType.KDOP
+            cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
+            cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
+        elif chosen == "support_hull_coverage":
+            cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
+            cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
+            cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
+            cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
+            cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
+        else:
+            cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
+        cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
+        cfg.validation.accept_unsafe_free = True
+        cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
+        cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
+    else:
+        cfg.endpoint_source.source = sbf.EndpointSource.CritSample
+        cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
+        cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
+        cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
+        cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
+        cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
+        cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
+        cfg.validation.accept_unsafe_free = True
+        cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
+        cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
+
+    cfg.envelope_type.n_subdivisions = int(args.envelope_subdivisions)
+    use_best_tighten = getattr(args, "split_policy", "best-tighten") == "best-tighten"
+    set_path_if_available(cfg, "grower.find_free_box.split.use_best_tighten", use_best_tighten)
+    set_path_if_available(cfg, "connector.pave.find_free_box.split.use_best_tighten", use_best_tighten)
+    for prefix in ("grower.find_free_box", "connector.pave.find_free_box"):
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.depth_synchronous", bool(args.best_tighten_depth_synchronous))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.prefer_sector_boundary", bool(args.best_tighten_prefer_sector_boundary))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.use_minimax", bool(args.best_tighten_use_minimax))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.shape_balancing", bool(args.best_tighten_shape_balancing))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.recent_dim_cooling", bool(args.best_tighten_recent_dim_cooling))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.min_candidate_width", float(args.ffb_min_split_width))
+    cfg.validation.enable_validation_cache = bool(args.validation_cache)
+    cfg.validation.validation_cache_max_entries = int(args.validation_cache_max_entries)
+    set_if_available(cfg.validation, "endpoint_cache_min_effective_width", float(args.endpoint_cache_min_effective_width))
+
+    cfg.grower.mode = sbf.GrowerMode.RRT
+    cfg.grower.rng_seed = int(args.seed_base) + int(seed)
+    cfg.grower.max_boxes = int(args.max_boxes)
+    cfg.grower.timeout_ms = float(args.timeout_ms)
+    cfg.grower.max_consecutive_miss = int(args.max_consecutive_miss)
+    cfg.grower.n_threads = max(1, int(args.threads))
+    cfg.grower.task_batch_size = max(1, int(args.task_batch_size))
+    cfg.grower.parallel_threshold = 1
+    cfg.grower.worker_local_ffb = bool(args.worker_local_ffb) and args.threads > 1
+    cfg.grower.find_free_box.max_depth = int(args.ffb_depth)
+    cfg.grower.find_free_box.split_reserved_leaf = True
+    cfg.grower.find_free_box.split_unknown_leaf = True
+    cfg.grower.find_free_box.reject_seed_collision = False
+    set_if_available(cfg.grower, "rrt_goal_bias", float(args.rrt_goal_bias))
+    set_if_available(cfg.grower, "intertree_goal_bias", float(args.intertree_goal_bias))
+    set_if_available(cfg.grower, "sustained_goal_bias_cap", min(0.25, float(args.intertree_goal_bias)))
+    set_if_available(cfg.grower, "rrt_step_ratio", float(args.step_ratio))
+    set_if_available(cfg.grower, "unexplored_sample_prob", float(args.unexplored_prob))
+    cfg.grower.connect_mode = True
+    cfg.grower.expand_all_roots_per_sample = True
+    set_if_available(cfg.grower, "component_connect_prob", float(args.component_connect_prob))
+    set_if_available(cfg.grower, "component_connect_candidate_limit", int(args.component_connect_candidate_limit))
+    cfg.grower.component_connect_island_aware = True
+    cfg.grower.component_connect_frontier_cache = True
+    cfg.grower.component_connect_staged_growth = True
+    set_if_available(cfg.grower, "component_connect_stage_normalized_linf", float(args.component_connect_stage_normalized_linf))
+    set_if_available(cfg.grower, "component_connect_adaptive_ffb", True)
+    set_if_available(cfg.grower, "component_connect_ffb_depth_increment", int(args.component_connect_ffb_depth_increment))
+    set_if_available(cfg.grower, "component_connect_ffb_max_depth", int(args.component_connect_ffb_max_depth))
+    set_if_available(cfg.grower, "stop_after_connect", bool(args.stop_after_connect))
+    set_if_available(cfg.grower, "post_connect_extra_boxes", int(args.post_connect_extra_boxes))
+    set_if_available(cfg.grower, "quality_min_connected_boxes", int(args.quality_min_connected_boxes))
+    set_if_available(cfg.grower, "post_connect_time_budget_ms", float(args.post_connect_time_budget_ms))
+    set_if_available(cfg.grower, "coverage_first_stop_loss", bool(args.coverage_first_stop_loss))
+    set_if_available(cfg.grower, "hard_frontier_failure_threshold", int(args.hard_frontier_failure_threshold))
+    set_if_available(cfg.grower, "hard_frontier_box_horizon", int(args.hard_frontier_box_horizon))
+
+    cfg.query.nearest_if_outside = False
+    cfg.query.shortcut_boxes = True
+    cfg.query.collision_shortcut = bool(args.collision_shortcut)
+    cfg.query.collision_shortcut_resolution = int(args.collision_shortcut_resolution)
+    cfg.query.strict_path_audit = bool(args.strict_path_audit)
+    cfg.query.audit_resolution = max(int(args.audit_resolution), bridge_segment_resolution)
+    cfg.query.repair_on_audit_failure = bool(args.repair_on_audit_failure)
+    cfg.query.repair_max_attempts = int(args.repair_max_attempts)
+    cfg.query.repair_rrt_max_iters = int(args.repair_rrt_max_iters)
+    cfg.query.repair_timeout_ms = float(args.repair_timeout_ms)
+    set_if_available(cfg.query, "repair_local_sampling_radius", float(args.repair_local_sampling_radius))
+    set_if_available(cfg.query, "repair_local_sampling_growth", float(args.repair_local_sampling_growth))
+
+    set_if_available(cfg.connector, "frontier_bridge", bool(args.frontier_bridge))
+    cfg.connector.max_total_bridge_boxes = int(args.connector_bridge_boxes)
+    cfg.connector.segment_edges_enabled = bool(args.segment_edges)
+    cfg.connector.rrt_segment_edges = bool(args.segment_edges)
+    cfg.connector.point_gap_segment_edges = bool(args.segment_edges)
+    cfg.connector.n_threads = max(1, int(args.threads))
+    set_if_available(cfg.connector, "pair_batch_size", max(1, int(args.connector_pair_batch_size)))
+    cfg.connector.parallel_threshold = 1
+    set_if_available(cfg.connector, "per_pair_timeout_ms", float(args.connector_pair_timeout_ms))
+    set_if_available(cfg.connector, "max_pairs_per_gap", int(args.connector_max_pairs_per_gap))
+    cfg.connector.rrt.max_iters = int(args.connector_rrt_iters)
+    cfg.connector.rrt.timeout_ms = float(args.connector_rrt_timeout_ms)
+    cfg.connector.rrt.step_size = float(args.connector_rrt_step_size)
+    cfg.connector.rrt.goal_bias = float(args.connector_rrt_goal_bias)
+    cfg.connector.rrt.segment_resolution = max(int(args.connector_segment_resolution), bridge_segment_resolution)
+    cfg.connector.pave.max_chain = int(args.connector_pave_max_chain)
+    set_if_available(cfg.connector.pave, "max_steps_per_waypoint", int(args.connector_pave_steps))
+    cfg.connector.pave.find_free_box.max_depth = int(args.connector_pave_depth)
+    cfg.connector.pave.find_free_box.split_reserved_leaf = True
+    cfg.connector.pave.find_free_box.split_unknown_leaf = True
+    cfg.connector.pave.find_free_box.reject_seed_collision = False
+    return cfg
+
+
+def query_result_payload(label: str, result: sbf.QueryResult, wall_s: float) -> dict[str, Any]:
+    return {
+        "name": label,
+        "ok": bool(result.success),
+        "t_s": float(wall_s),
+        "length": float(result.path_length) if result.success else 0.0,
+        "audit_status": str(result.audit_status).split(".")[-1],
+        "audit_passed": bool(result.audit_passed),
+        "audit_time_ms": float(result.audit_time_ms),
+        "repair_time_ms": float(result.repair_time_ms),
+        "repair_count": int(result.repair_count),
+        "segment_edges_used": int(result.segment_edges_used),
+        "remaining_unsafe_assumptions": int(result.remaining_unsafe_assumptions),
+    }

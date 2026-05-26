@@ -2202,7 +2202,9 @@ bool LectDatabase::load_manifest(std::string* reason) {
     identity_.robot_fingerprint = get_u64(values, "robot_fingerprint");
     identity_.root_domain_fingerprint = get_u64(values, "root_domain_fingerprint");
     identity_.split_policy_hash = get_u64(values, "split_policy_hash");
+    identity_.symmetry_hash = get_u64(values, "symmetry_hash");
     identity_.canonical_mode = get_int(values, "canonical_mode") != 0;
+    identity_.symmetry_descriptor = get_value(values, "symmetry_descriptor");
     identity_.split_policy_descriptor = get_value(values, "split_policy_descriptor");
     identity_.endpoint_descriptor = get_value(values, "endpoint_descriptor", identity_.endpoint_descriptor);
     identity_.envelope_descriptor = get_value(values, "envelope_descriptor", identity_.envelope_descriptor);
@@ -2247,7 +2249,9 @@ bool LectDatabase::save_manifest() const {
         << "robot_fingerprint=" << identity_.robot_fingerprint << '\n'
         << "root_domain_fingerprint=" << identity_.root_domain_fingerprint << '\n'
         << "split_policy_hash=" << identity_.split_policy_hash << '\n'
+        << "symmetry_hash=" << identity_.symmetry_hash << '\n'
         << "canonical_mode=" << (identity_.canonical_mode ? 1 : 0) << '\n'
+        << "symmetry_descriptor=" << identity_.symmetry_descriptor << '\n'
         << "split_policy_descriptor=" << identity_.split_policy_descriptor << '\n'
         << "endpoint_descriptor=" << identity_.endpoint_descriptor << '\n'
         << "envelope_descriptor=" << identity_.envelope_descriptor << '\n'

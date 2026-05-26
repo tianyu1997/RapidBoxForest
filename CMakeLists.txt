@@ -11,9 +11,17 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LECTDB_BUILD_TESTS "Build LECTDatabase C++ tests" ON)
 option(LECTDB_BUILD_TOOLS "Build LECTDatabase command-line tools" ON)
+option(LECTDB_BUILD_SBF "Build the consolidated SafeBoxForest subtree" OFF)
 set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
-    "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope"
+    "${CMAKE_CURRENT_SOURCE_DIR}/link_interval_envelope"
     CACHE PATH "Path to the standalone link_interval_envelope package")
+
+if(NOT EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope/CMakeLists.txt")
+    set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope"
+        CACHE PATH "Path to the standalone link_interval_envelope package" FORCE)
+endif()
 
 if(NOT EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt"
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope/CMakeLists.txt")
@@ -64,6 +72,11 @@ add_library(lect_database_sbf_adapter STATIC
 )
 add_library(LECTDatabase::sbf_adapter ALIAS lect_database_sbf_adapter)
 
+add_library(lect_database_online_cache STATIC
+    src/online_cache/cache_tree.cpp
+)
+add_library(LECTDatabase::online_cache ALIAS lect_database_online_cache)
+
 target_include_directories(lect_database_core PUBLIC
     $<BUILD_INTERFACE:${LECTDB_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:include>
@@ -83,10 +96,20 @@ target_include_directories(lect_database_sbf_adapter PUBLIC
 )
 target_link_libraries(lect_database_sbf_adapter PUBLIC
     lect_database_core
+    lect_database_online_cache
+)
+
+target_include_directories(lect_database_online_cache PUBLIC
+    $<BUILD_INTERFACE:${LECTDB_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(lect_database_online_cache PUBLIC
+    lect_database_core
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(lect_database_sbf_adapter PRIVATE -Wall -Wextra -Wpedantic -O3)
+    target_compile_options(lect_database_online_cache PRIVATE -Wall -Wextra -Wpedantic -O3)
 endif()
 
 if(LECTDB_BUILD_TOOLS)
@@ -102,7 +125,13 @@ if(LECTDB_BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-install(TARGETS lect_database_core lect_database_sbf_adapter
+if(LECTDB_BUILD_SBF)
+    set(SBF_LECTDATABASE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}" CACHE PATH "Path to LECTDatabase for nested SBF builds" FORCE)
+    set(SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}" CACHE PATH "Path to link_interval_envelope for nested SBF builds" FORCE)
+    add_subdirectory(safe_box_forest)
+endif()
+
+install(TARGETS lect_database_core lect_database_sbf_adapter lect_database_online_cache
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
     INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout LECT sibling
+        uses: actions/checkout@v4
+        with:
+          repository: tianyu1997/LECT
+          ssh-key: ${{ secrets.LECT_DEPLOY_KEY }}
+          path: _deps/LECT
+
+      - name: Checkout link_interval_envelope sibling
+        uses: actions/checkout@v4
+        with:
+          repository: tianyu1997/link-interval-envelope
+          ssh-key: ${{ secrets.LIE_DEPLOY_KEY }}
+          path: _deps/link_interval_envelope
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++
+
+      - name: Build and test
+        env:
+          PYTHON_EXECUTABLE: python
+          BUILD_DIR: build_ci
+          CMAKE_BUILD_TYPE: Release
+          SBF_LECT_SOURCE_DIR: ${{ github.workspace }}/_deps/LECT
+          SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR: ${{ github.workspace }}/_deps/link_interval_envelope
+        run: bash tests/run_all.sh

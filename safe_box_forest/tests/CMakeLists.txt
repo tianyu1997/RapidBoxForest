@@ -1,0 +1,10 @@
+add_executable(test_sbf test_sbf.cpp)
+target_link_libraries(test_sbf PRIVATE sbf_core)
+add_test(NAME test_sbf COMMAND test_sbf)
+
+if(SBF_WITH_PYTHON)
+    add_test(NAME test_sbf_python
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/test_python_api.py)
+    set_tests_properties(test_sbf_python PROPERTIES
+        ENVIRONMENT "PYTHONPATH=${CMAKE_BINARY_DIR}/python")
+endif()

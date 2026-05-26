@@ -1,0 +1,22 @@
+% Auto-generated from current anytime trade-off artifacts.
+\begingroup
+\centering
+\captionof{table}{Common-rule tabulated Shelf+IIWA rows from Fig.~\ref{fig:tro_shelf_anytime_tradeoff}, reported by query. Gold rings in Fig.~4 mark these rows only to expose detailed numeric values; the full curves remain the primary evidence. RRTConnect uses one max-timeout attempt per seed/query and returns on connection; BIT* uses one fixed-timeout invocation per seed/query with an audited monotone incumbent checkpoint trace. OMPL planning, final simplify, and fixed-resolution final audit use the same 0.01 joint-space segment step. Query and path entries are success-only averages over paths that pass this fixed-resolution audit.}
+\label{tab:tro_main_shelf_best_tradeoff}
+\footnotesize
+\setlength{\tabcolsep}{1.55pt}
+\renewcommand{\arraystretch}{0.96}
+\begin{tabular}{@{}lrr|rr|rr|rr|rr@{}}
+\toprule
+  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{SBF-SH\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 1.07\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 753\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 37.0\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*}}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
+Query & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path \\
+\midrule
+AS$\rightarrow$TS & 0.00014 & 2.79 & 0.558 & 2.38 & 0.414 & 3.72 & 0.019 & 5.76 & 28.0 & 1.80 \\
+TS$\rightarrow$CS & 0.102 & 2.44 & 0.463 & 1.99 & 1.65 & 3.47 & 0.024 & 4.62 & 4.02 & 2.49 \\
+CS$\rightarrow$LB & 0.020 & 3.14 & 0.533 & 2.63 & 0.420 & 3.26 & 0.050 & 4.37 & 28.7 & 4.33 \\
+LB$\rightarrow$RB & 0.00008 & 3.57 & 0.825 & 3.26 & 0.423 & 3.19 & 0.0060 & 4.25 & 28.0 & 3.06 \\
+RB$\rightarrow$AS & 0.00035 & 2.43 & 0.765 & 1.84 & 0.420 & 2.02 & 0.0029 & 1.88 & 24.1 & 1.82 \\
+\bottomrule
+\end{tabular}
+\par\endgroup

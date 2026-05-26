@@ -1,0 +1,844 @@
+#include <SBF/box_graph.h>
+
+#include <sbf/core/union_find.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <limits>
+#include <numeric>
+#include <queue>
+#include <functional>
+#include <stdexcept>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace rbf {
+namespace {
+
+std::unordered_map<int, const BoxNode*> box_map(const std::vector<BoxNode>& boxes) {
+    std::unordered_map<int, const BoxNode*> map;
+    map.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        map[box.id] = &box;
+    }
+    return map;
+}
+
+double center_distance(const BoxNode& lhs, const BoxNode& rhs) {
+    return (lhs.center() - rhs.center()).norm();
+}
+
+Eigen::VectorXd shared_face_center(const BoxNode& lhs, const BoxNode& rhs) {
+    const int nd = lhs.n_dims();
+    if (nd != rhs.n_dims()) {
+        return (lhs.center() + rhs.center()) * 0.5;
+    }
+    Eigen::VectorXd center(nd);
+    int face_dim = -1;
+    for (int dim = 0; dim < nd; ++dim) {
+        const double overlap_lo = std::max(lhs.joint_intervals[dim].lo, rhs.joint_intervals[dim].lo);
+        const double overlap_hi = std::min(lhs.joint_intervals[dim].hi, rhs.joint_intervals[dim].hi);
+        if (overlap_hi < overlap_lo - 1e-9) {
+            return (lhs.center() + rhs.center()) * 0.5;
+        }
+        if (std::abs(overlap_hi - overlap_lo) <= 1e-9) {
+            if (face_dim >= 0) {
+                return (lhs.center() + rhs.center()) * 0.5;
+            }
+            face_dim = dim;
+            center[dim] = 0.5 * (overlap_lo + overlap_hi);
+        } else {
+            center[dim] = 0.5 * (overlap_lo + overlap_hi);
+        }
+    }
+    return face_dim >= 0 ? center : (lhs.center() + rhs.center()) * 0.5;
+}
+
+bool graph_has_edge(const AdjacencyGraph& graph, int lhs, int rhs) {
+    auto it = graph.find(lhs);
+    if (it == graph.end()) {
+        return false;
+    }
+    return std::find(it->second.begin(), it->second.end(), rhs) != it->second.end();
+}
+
+void append_graph_edge(AdjacencyGraph& graph, int lhs, int rhs) {
+    if (lhs < 0 || rhs < 0 || lhs == rhs) {
+        return;
+    }
+    if (!graph_has_edge(graph, lhs, rhs)) {
+        graph[lhs].push_back(rhs);
+    }
+    if (!graph_has_edge(graph, rhs, lhs)) {
+        graph[rhs].push_back(lhs);
+    }
+}
+
+std::uint64_t edge_pair_key(int lhs, int rhs) {
+    const std::uint32_t lo = static_cast<std::uint32_t>(std::min(lhs, rhs));
+    const std::uint32_t hi = static_cast<std::uint32_t>(std::max(lhs, rhs));
+    return (static_cast<std::uint64_t>(lo) << 32) | static_cast<std::uint64_t>(hi);
+}
+
+long long interval_bin(double value, double origin, double width) {
+    const double safe_width = std::max(width, 1e-12);
+    return static_cast<long long>(std::floor((value - origin) / safe_width));
+}
+
+int choose_index_dimension(const std::vector<BoxNode>& boxes) {
+    if (boxes.empty() || boxes.front().n_dims() <= 0) {
+        return -1;
+    }
+    const int nd = boxes.front().n_dims();
+    int best_dim = 0;
+    double best_span = -1.0;
+    for (int dim = 0; dim < nd; ++dim) {
+        double lo = std::numeric_limits<double>::infinity();
+        double hi = -std::numeric_limits<double>::infinity();
+        for (const auto& box : boxes) {
+            if (box.n_dims() != nd) {
+                return 0;
+            }
+            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+            lo = std::min(lo, interval.lo);
+            hi = std::max(hi, interval.hi);
+        }
+        const double span = hi - lo;
+        if (span > best_span) {
+            best_span = span;
+            best_dim = dim;
+        }
+    }
+    return best_dim;
+}
+
+double choose_bin_width(const std::vector<BoxNode>& boxes, int dim, double tolerance) {
+    if (boxes.empty() || dim < 0) {
+        return 1.0;
+    }
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -std::numeric_limits<double>::infinity();
+    std::vector<double> widths;
+    widths.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+        lo = std::min(lo, interval.lo);
+        hi = std::max(hi, interval.hi);
+        widths.push_back(std::max(0.0, interval.hi - interval.lo));
+    }
+    std::sort(widths.begin(), widths.end());
+    const double median_width = widths.empty() ? 0.0 : widths[widths.size() / 2];
+    const double span_width = (hi - lo) / std::max(1.0, std::sqrt(static_cast<double>(boxes.size())));
+    const double tol_width = std::max(1e-9, 8.0 * std::max(tolerance, 1e-9));
+    return std::max({median_width, span_width, tol_width, 1e-9});
+}
+
+double index_origin(const std::vector<BoxNode>& boxes, int dim, double tolerance) {
+    double origin = 0.0;
+    if (!boxes.empty() && dim >= 0) {
+        origin = std::numeric_limits<double>::infinity();
+        for (const auto& box : boxes) {
+            origin = std::min(origin, box.joint_intervals[static_cast<std::size_t>(dim)].lo);
+        }
+        if (!std::isfinite(origin)) {
+            origin = 0.0;
+        }
+    }
+    return origin - std::max(tolerance, 0.0) - 1e-12;
+}
+
+double waypoint_path_length(const std::vector<Eigen::VectorXd>& waypoints) {
+    double total = 0.0;
+    for (std::size_t index = 1; index < waypoints.size(); ++index) {
+        total += (waypoints[index] - waypoints[index - 1]).norm();
+    }
+    return total;
+}
+
+std::unordered_map<std::uint64_t, const SegmentEdge*> segment_edge_map(const SegmentEdgeList& edges) {
+    std::unordered_map<std::uint64_t, const SegmentEdge*> map;
+    map.reserve(edges.size());
+    for (const auto& edge : edges) {
+        if (edge.source_box_id < 0 || edge.target_box_id < 0) {
+            continue;
+        }
+        const auto key = edge_pair_key(edge.source_box_id, edge.target_box_id);
+        auto it = map.find(key);
+        if (it == map.end() || edge.length < it->second->length) {
+            map[key] = &edge;
+        }
+    }
+    return map;
+}
+
+}  // namespace
+
+bool boxes_connected(const BoxNode& lhs, const BoxNode& rhs, double tolerance) {
+    const int nd = lhs.n_dims();
+    if (nd != rhs.n_dims()) {
+        return false;
+    }
+    int shared_dims = 0;
+    int overlap_dims = 0;
+    for (int dim = 0; dim < nd; ++dim) {
+        const double overlap_lo = std::max(lhs.joint_intervals[dim].lo, rhs.joint_intervals[dim].lo);
+        const double overlap_hi = std::min(lhs.joint_intervals[dim].hi, rhs.joint_intervals[dim].hi);
+        if (overlap_hi < overlap_lo - tolerance) {
+            return false;
+        }
+        if (overlap_hi - overlap_lo < tolerance) {
+            shared_dims += 1;
+        } else {
+            overlap_dims += 1;
+        }
+    }
+    return shared_dims >= 1 || overlap_dims == nd;
+}
+
+AdjacencyGraph compute_adjacency_reference(const std::vector<BoxNode>& boxes,
+                                           double tolerance,
+                                           int max_degree,
+                                           double gap_tolerance) {
+    AdjacencyGraph graph;
+    for (const auto& box : boxes) {
+        graph[box.id] = {};
+    }
+    const int n = static_cast<int>(boxes.size());
+    const double effective_tol = std::max(tolerance, gap_tolerance);
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            if (boxes_connected(boxes[i], boxes[j], effective_tol)) {
+                graph[boxes[i].id].push_back(boxes[j].id);
+                graph[boxes[j].id].push_back(boxes[i].id);
+            }
+        }
+    }
+    if (max_degree > 0) {
+        const auto map = box_map(boxes);
+        for (auto& [id, neighbors] : graph) {
+            auto center_it = map.find(id);
+            if (center_it == map.end()) {
+                continue;
+            }
+            std::sort(neighbors.begin(), neighbors.end(), [&](int lhs, int rhs) {
+                return center_distance(*center_it->second, *map.at(lhs)) <
+                       center_distance(*center_it->second, *map.at(rhs));
+            });
+            if (static_cast<int>(neighbors.size()) > max_degree) {
+                neighbors.resize(static_cast<std::size_t>(max_degree));
+            }
+        }
+    }
+    return graph;
+}
+
+AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
+                                 double tolerance,
+                                 int max_degree,
+                                 double gap_tolerance) {
+    AdjacencyGraph graph;
+    for (const auto& box : boxes) {
+        graph[box.id] = {};
+    }
+    const int n = static_cast<int>(boxes.size());
+    const double effective_tol = std::max(tolerance, gap_tolerance);
+    const int index_dim = choose_index_dimension(boxes);
+    if (n <= 1 || index_dim < 0) {
+        return graph;
+    }
+    const double bin_width = choose_bin_width(boxes, index_dim, effective_tol);
+    const double origin = index_origin(boxes, index_dim, effective_tol);
+    std::unordered_map<long long, std::vector<int>> bins;
+    bins.reserve(static_cast<std::size_t>(std::max(1, n * 2)));
+    for (int i = 0; i < n; ++i) {
+        const auto& interval = boxes[static_cast<std::size_t>(i)].joint_intervals[static_cast<std::size_t>(index_dim)];
+        const long long lo_bin = interval_bin(interval.lo - effective_tol, origin, bin_width);
+        const long long hi_bin = interval_bin(interval.hi + effective_tol, origin, bin_width);
+        for (long long bin = lo_bin; bin <= hi_bin; ++bin) {
+            bins[bin].push_back(i);
+        }
+    }
+    std::unordered_set<std::uint64_t> tested;
+    tested.reserve(static_cast<std::size_t>(std::max(1, n * 8)));
+    for (const auto& [_, members] : bins) {
+        for (std::size_t outer = 0; outer < members.size(); ++outer) {
+            const int i = members[outer];
+            for (std::size_t inner = outer + 1; inner < members.size(); ++inner) {
+                const int j = members[inner];
+                const auto key = edge_pair_key(i, j);
+                if (!tested.insert(key).second) {
+                    continue;
+                }
+                if (boxes_connected(boxes[static_cast<std::size_t>(i)], boxes[static_cast<std::size_t>(j)], effective_tol)) {
+                    graph[boxes[static_cast<std::size_t>(i)].id].push_back(boxes[static_cast<std::size_t>(j)].id);
+                    graph[boxes[static_cast<std::size_t>(j)].id].push_back(boxes[static_cast<std::size_t>(i)].id);
+                }
+            }
+        }
+    }
+    if (max_degree > 0) {
+        const auto map = box_map(boxes);
+        for (auto& [id, neighbors] : graph) {
+            auto center_it = map.find(id);
+            if (center_it == map.end()) {
+                continue;
+            }
+            std::sort(neighbors.begin(), neighbors.end(), [&](int lhs, int rhs) {
+                return center_distance(*center_it->second, *map.at(lhs)) <
+                       center_distance(*center_it->second, *map.at(rhs));
+            });
+            if (static_cast<int>(neighbors.size()) > max_degree) {
+                neighbors.resize(static_cast<std::size_t>(max_degree));
+            }
+        }
+    }
+    return graph;
+}
+
+QueryGraphCache build_query_graph_cache(const std::vector<BoxNode>& boxes,
+                                        const AdjacencyGraph& graph,
+                                        const SegmentEdgeList& segment_edges) {
+    QueryGraphCache cache;
+    cache.boxes = &boxes;
+    cache.graph = &graph;
+    cache.segment_edges = &segment_edges;
+    cache.box_index_by_id.reserve(boxes.size());
+    for (std::size_t index = 0; index < boxes.size(); ++index) {
+        cache.box_index_by_id[boxes[index].id] = index;
+    }
+    cache.segment_edge_index_by_pair.reserve(segment_edges.size());
+    for (std::size_t index = 0; index < segment_edges.size(); ++index) {
+        const auto& edge = segment_edges[index];
+        if (edge.source_box_id < 0 || edge.target_box_id < 0) {
+            continue;
+        }
+        const auto key = edge_pair_key(edge.source_box_id, edge.target_box_id);
+        auto it = cache.segment_edge_index_by_pair.find(key);
+        if (it == cache.segment_edge_index_by_pair.end() || edge.length < segment_edges[it->second].length) {
+            cache.segment_edge_index_by_pair[key] = index;
+        }
+    }
+    cache.adjacency_sets.reserve(graph.size());
+    for (const auto& [id, neighbors] : graph) {
+        cache.adjacency_sets.emplace(id, std::unordered_set<int>(neighbors.begin(), neighbors.end()));
+    }
+
+    cache.point_index_dim = choose_index_dimension(boxes);
+    if (!boxes.empty() && cache.point_index_dim >= 0) {
+        cache.point_bin_width = choose_bin_width(boxes, cache.point_index_dim, 0.0);
+        cache.point_bin_origin = index_origin(boxes, cache.point_index_dim, 0.0);
+        cache.point_bins.reserve(boxes.size() * 2);
+        for (std::size_t index = 0; index < boxes.size(); ++index) {
+            const auto& interval = boxes[index].joint_intervals[static_cast<std::size_t>(cache.point_index_dim)];
+            const long long lo_bin = interval_bin(interval.lo, cache.point_bin_origin, cache.point_bin_width);
+            const long long hi_bin = interval_bin(interval.hi, cache.point_bin_origin, cache.point_bin_width);
+            for (long long bin = lo_bin; bin <= hi_bin; ++bin) {
+                cache.point_bins[bin].push_back(boxes[index].id);
+            }
+        }
+    }
+    return cache;
+}
+
+int add_segment_edge(SegmentEdgeList& edges,
+                     AdjacencyGraph& graph,
+                     int source_box_id,
+                     int target_box_id,
+                     std::vector<Eigen::VectorXd> waypoints,
+                     SegmentEdgeType type,
+                     int segment_resolution,
+                     SegmentEdgeValidation validation,
+                     bool strict_audit_required) {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return -1;
+    }
+    int next_id = 0;
+    for (const auto& edge : edges) {
+        next_id = std::max(next_id, edge.id + 1);
+    }
+    SegmentEdge edge;
+    edge.id = next_id;
+    edge.source_box_id = source_box_id;
+    edge.target_box_id = target_box_id;
+    edge.waypoints = std::move(waypoints);
+    edge.type = type;
+    edge.validation = validation;
+    edge.segment_resolution = segment_resolution;
+    edge.length = waypoint_path_length(edge.waypoints);
+    edge.strict_audit_required = strict_audit_required;
+    edges.push_back(std::move(edge));
+    append_graph_edge(graph, source_box_id, target_box_id);
+    return next_id;
+}
+
+void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges,
+                                      AdjacencyGraph& graph) {
+    for (const auto& edge : edges) {
+        append_graph_edge(graph, edge.source_box_id, edge.target_box_id);
+    }
+}
+
+const SegmentEdge* find_segment_edge(const SegmentEdgeList& edges,
+                                     int source_box_id,
+                                     int target_box_id) {
+    const SegmentEdge* best = nullptr;
+    for (const auto& edge : edges) {
+        const bool matches = (edge.source_box_id == source_box_id && edge.target_box_id == target_box_id) ||
+                             (edge.source_box_id == target_box_id && edge.target_box_id == source_box_id);
+        if (!matches) {
+            continue;
+        }
+        if (best == nullptr || edge.length < best->length) {
+            best = &edge;
+        }
+    }
+    return best;
+}
+
+const SegmentEdge* find_segment_edge(const QueryGraphCache& cache,
+                                     int source_box_id,
+                                     int target_box_id) {
+    if (cache.segment_edges == nullptr) {
+        return nullptr;
+    }
+    const auto it = cache.segment_edge_index_by_pair.find(edge_pair_key(source_box_id, target_box_id));
+    if (it == cache.segment_edge_index_by_pair.end() || it->second >= cache.segment_edges->size()) {
+        return nullptr;
+    }
+    return &(*cache.segment_edges)[it->second];
+}
+
+std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph) {
+    std::unordered_set<int> unseen;
+    for (const auto& [id, _] : graph) {
+        unseen.insert(id);
+    }
+    std::vector<std::vector<int>> islands;
+    while (!unseen.empty()) {
+        const int root = *unseen.begin();
+        unseen.erase(root);
+        islands.push_back({});
+        std::queue<int> queue;
+        queue.push(root);
+        while (!queue.empty()) {
+            const int current = queue.front();
+            queue.pop();
+            islands.back().push_back(current);
+            auto it = graph.find(current);
+            if (it == graph.end()) {
+                continue;
+            }
+            for (int next : it->second) {
+                if (unseen.erase(next) > 0) {
+                    queue.push(next);
+                }
+            }
+        }
+    }
+    return islands;
+}
+
+std::unordered_set<int> find_articulation_points(const AdjacencyGraph& graph) {
+    std::unordered_map<int, int> disc;
+    std::unordered_map<int, int> low;
+    std::unordered_set<int> points;
+    int time = 0;
+
+    std::function<void(int, int)> dfs = [&](int u, int parent) {
+        disc[u] = low[u] = ++time;
+        int children = 0;
+        auto it = graph.find(u);
+        if (it == graph.end()) {
+            return;
+        }
+        for (int v : it->second) {
+            if (v == parent) {
+                continue;
+            }
+            if (disc.find(v) == disc.end()) {
+                children += 1;
+                dfs(v, u);
+                low[u] = std::min(low[u], low[v]);
+                if (parent != -1 && low[v] >= disc[u]) {
+                    points.insert(u);
+                }
+            } else {
+                low[u] = std::min(low[u], disc[v]);
+            }
+        }
+        if (parent == -1 && children > 1) {
+            points.insert(u);
+        }
+    };
+
+    for (const auto& [id, _] : graph) {
+        if (disc.find(id) == disc.end()) {
+            dfs(id, -1);
+        }
+    }
+    return points;
+}
+
+DijkstraResult dijkstra_search(const AdjacencyGraph& graph,
+                               const std::vector<BoxNode>& boxes,
+                               int start_box_id,
+                               int goal_box_id,
+                               const Eigen::VectorXd& goal_point) {
+    static const SegmentEdgeList no_segment_edges;
+    return dijkstra_search(graph, boxes, no_segment_edges, start_box_id, goal_box_id, goal_point);
+}
+
+DijkstraResult dijkstra_search(const AdjacencyGraph& graph,
+                               const std::vector<BoxNode>& boxes,
+                               const SegmentEdgeList& segment_edges,
+                               int start_box_id,
+                               int goal_box_id,
+                               const Eigen::VectorXd& goal_point) {
+    const QueryGraphCache cache = build_query_graph_cache(boxes, graph, segment_edges);
+    return dijkstra_search(cache, start_box_id, goal_box_id, goal_point);
+}
+
+DijkstraResult dijkstra_search(const QueryGraphCache& cache,
+                               int start_box_id,
+                               int goal_box_id,
+                               const Eigen::VectorXd& goal_point) {
+    DijkstraResult result;
+    if (cache.boxes == nullptr || cache.graph == nullptr) {
+        return result;
+    }
+    const auto start_it = cache.box_index_by_id.find(start_box_id);
+    const auto goal_it = cache.box_index_by_id.find(goal_box_id);
+    if (start_it == cache.box_index_by_id.end() || goal_it == cache.box_index_by_id.end()) {
+        return result;
+    }
+    const auto& boxes = *cache.boxes;
+    auto box_ptr = [&](int id) -> const BoxNode* {
+        const auto it = cache.box_index_by_id.find(id);
+        return it == cache.box_index_by_id.end() ? nullptr : &boxes[it->second];
+    };
+    if (start_box_id == goal_box_id) {
+        result.found = true;
+        const SegmentEdge* self_edge = find_segment_edge(cache, start_box_id, goal_box_id);
+        if (self_edge != nullptr) {
+            result.box_sequence = {start_box_id, goal_box_id};
+            result.segment_edge_sequence.push_back(self_edge->id);
+            result.total_cost = self_edge->length;
+        } else {
+            result.box_sequence = {start_box_id};
+        }
+        return result;
+    }
+
+    struct Item {
+        int id;
+        double f;
+        bool operator>(const Item& other) const { return f > other.f; }
+    };
+
+    auto heuristic = [&](int id) {
+        const BoxNode* box = box_ptr(id);
+        const BoxNode* goal_box = box_ptr(goal_box_id);
+        if (box == nullptr || goal_box == nullptr) {
+            return 0.0;
+        }
+        if (goal_point.size() == box->n_dims()) {
+            return (box->center() - goal_point).norm();
+        }
+        return center_distance(*box, *goal_box);
+    };
+
+    std::priority_queue<Item, std::vector<Item>, std::greater<Item>> open;
+    std::unordered_map<int, double> dist;
+    std::unordered_map<int, int> prev;
+    std::unordered_map<int, Eigen::VectorXd> representative;
+    dist[start_box_id] = 0.0;
+    representative[start_box_id] = box_ptr(start_box_id)->center();
+    open.push({start_box_id, heuristic(start_box_id)});
+
+    while (!open.empty()) {
+        const int current = open.top().id;
+        const double priority = open.top().f;
+        open.pop();
+        const double current_dist = dist.find(current) == dist.end() ? std::numeric_limits<double>::infinity() : dist.at(current);
+        if (priority > current_dist + heuristic(current) + 1e-12) {
+            continue;
+        }
+        if (current == goal_box_id) {
+            result.found = true;
+            break;
+        }
+        auto it = cache.graph->find(current);
+        if (it == cache.graph->end()) {
+            continue;
+        }
+        for (int next : it->second) {
+            const BoxNode* current_box = box_ptr(current);
+            const BoxNode* next_box = box_ptr(next);
+            if (current_box == nullptr || next_box == nullptr) {
+                continue;
+            }
+            const Eigen::VectorXd face_center = shared_face_center(*current_box, *next_box);
+            double edge_cost = (representative.at(current) - face_center).norm() + 0.02;
+            const SegmentEdge* edge = find_segment_edge(cache, current, next);
+            if (edge != nullptr) {
+                edge_cost = edge->length > 0.0 ? edge->length : edge_cost;
+            }
+            const double alt = current_dist + edge_cost;
+            auto dit = dist.find(next);
+            if (dit == dist.end() || alt < dit->second) {
+                dist[next] = alt;
+                prev[next] = current;
+                representative[next] = edge != nullptr ? next_box->center() : face_center;
+                open.push({next, alt + heuristic(next)});
+            }
+        }
+    }
+
+    if (!result.found) {
+        return result;
+    }
+    int cur = goal_box_id;
+    while (true) {
+        result.box_sequence.push_back(cur);
+        if (cur == start_box_id) {
+            break;
+        }
+        cur = prev.at(cur);
+    }
+    std::reverse(result.box_sequence.begin(), result.box_sequence.end());
+    for (std::size_t index = 1; index < result.box_sequence.size(); ++index) {
+        const SegmentEdge* edge = find_segment_edge(cache, result.box_sequence[index - 1], result.box_sequence[index]);
+        result.segment_edge_sequence.push_back(edge == nullptr ? -1 : edge->id);
+    }
+    result.total_cost = dist[goal_box_id];
+    return result;
+}
+
+std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const AdjacencyGraph& graph) {
+    static const SegmentEdgeList no_segment_edges;
+    const std::vector<BoxNode> no_boxes;
+    const QueryGraphCache cache = build_query_graph_cache(no_boxes, graph, no_segment_edges);
+    return shortcut_box_sequence(sequence, cache);
+}
+
+std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const QueryGraphCache& cache) {
+    if (sequence.size() <= 2) {
+        return sequence;
+    }
+
+    std::vector<int> shortened;
+    shortened.reserve(sequence.size());
+    std::size_t i = 0;
+    while (i < sequence.size()) {
+        if (shortened.empty() || shortened.back() != sequence[i]) {
+            shortened.push_back(sequence[i]);
+        }
+        if (i + 1 >= sequence.size()) {
+            break;
+        }
+        std::size_t best = i + 1;
+        int bridge = -1;
+        const auto it_i = cache.adjacency_sets.find(sequence[i]);
+        for (std::size_t j = sequence.size() - 1; j > i + 1; --j) {
+            if (it_i != cache.adjacency_sets.end() && it_i->second.count(sequence[j]) > 0) {
+                best = j;
+                bridge = -1;
+                break;
+            }
+            if (it_i == cache.adjacency_sets.end()) {
+                continue;
+            }
+            const auto it_j = cache.adjacency_sets.find(sequence[j]);
+            if (it_j == cache.adjacency_sets.end()) {
+                continue;
+            }
+            for (int candidate : it_i->second) {
+                if (candidate != sequence[i] && candidate != sequence[j] && it_j->second.count(candidate) > 0) {
+                    best = j;
+                    bridge = candidate;
+                    break;
+                }
+            }
+            if (bridge >= 0) {
+                break;
+            }
+        }
+        if (bridge >= 0 && shortened.back() != bridge) {
+            shortened.push_back(bridge);
+        }
+        i = best;
+    }
+    return shortened;
+}
+
+std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_sequence,
+                                               const std::vector<BoxNode>& boxes,
+                                               const Eigen::Ref<const Eigen::VectorXd>& start,
+                                               const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    static const SegmentEdgeList no_segment_edges;
+    return extract_waypoints(box_sequence, boxes, no_segment_edges, start, goal);
+}
+
+std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_sequence,
+                                               const std::vector<BoxNode>& boxes,
+                                               const SegmentEdgeList& segment_edges,
+                                               const Eigen::Ref<const Eigen::VectorXd>& start,
+                                               const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    AdjacencyGraph empty_graph;
+    const QueryGraphCache cache = build_query_graph_cache(boxes, empty_graph, segment_edges);
+    return extract_waypoints(box_sequence, cache, start, goal);
+}
+
+std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_sequence,
+                                               const QueryGraphCache& cache,
+                                               const Eigen::Ref<const Eigen::VectorXd>& start,
+                                               const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    std::vector<Eigen::VectorXd> path;
+    if (box_sequence.empty() || cache.boxes == nullptr) {
+        return path;
+    }
+    const auto& boxes = *cache.boxes;
+    auto box_ptr = [&](int id) -> const BoxNode* {
+        const auto it = cache.box_index_by_id.find(id);
+        return it == cache.box_index_by_id.end() ? nullptr : &boxes[it->second];
+    };
+    path.push_back(start);
+    for (std::size_t i = 1; i < box_sequence.size(); ++i) {
+        const BoxNode* lhs_ptr = box_ptr(box_sequence[i - 1]);
+        const BoxNode* rhs_ptr = box_ptr(box_sequence[i]);
+        if (lhs_ptr == nullptr || rhs_ptr == nullptr) {
+            continue;
+        }
+        const BoxNode& lhs = *lhs_ptr;
+        const BoxNode& rhs = *rhs_ptr;
+        if (const SegmentEdge* edge = find_segment_edge(cache, lhs.id, rhs.id)) {
+            std::vector<Eigen::VectorXd> edge_path = edge->waypoints;
+            if (edge->source_box_id == rhs.id && edge->target_box_id == lhs.id) {
+                std::reverse(edge_path.begin(), edge_path.end());
+            }
+            if (edge_path.empty()) {
+                edge_path.push_back(lhs.center());
+                edge_path.push_back(rhs.center());
+            }
+            for (const auto& waypoint : edge_path) {
+                if (path.empty() || (path.back() - waypoint).norm() > 1e-12) {
+                    path.push_back(waypoint);
+                }
+            }
+            continue;
+        }
+        Eigen::VectorXd waypoint(lhs.n_dims());
+        if (boxes_connected(lhs, rhs)) {
+            Eigen::VectorXd overlap_mid(lhs.n_dims());
+            Eigen::VectorXd overlap_lo(lhs.n_dims());
+            Eigen::VectorXd overlap_hi(lhs.n_dims());
+            for (int dim = 0; dim < lhs.n_dims(); ++dim) {
+                overlap_lo[dim] = std::max(lhs.joint_intervals[dim].lo, rhs.joint_intervals[dim].lo);
+                overlap_hi[dim] = std::min(lhs.joint_intervals[dim].hi, rhs.joint_intervals[dim].hi);
+                overlap_mid[dim] = 0.5 * (overlap_lo[dim] + overlap_hi[dim]);
+            }
+            const Eigen::VectorXd local_delta = goal - path.back();
+            const double denom = local_delta.squaredNorm();
+            if (denom > 1e-18) {
+                const double t = std::min(1.0, std::max(0.0, (overlap_mid - path.back()).dot(local_delta) / denom));
+                waypoint = path.back() + t * local_delta;
+                for (int dim = 0; dim < lhs.n_dims(); ++dim) {
+                    waypoint[dim] = std::min(overlap_hi[dim], std::max(overlap_lo[dim], waypoint[dim]));
+                }
+            } else {
+                waypoint = overlap_mid;
+            }
+        } else {
+            const Eigen::VectorXd lhs_center = lhs.center();
+            const Eigen::VectorXd rhs_center = rhs.center();
+            if ((path.back() - lhs_center).norm() > 1e-12) {
+                path.push_back(lhs_center);
+            }
+            path.push_back(rhs_center);
+            continue;
+        }
+        path.push_back(std::move(waypoint));
+    }
+    if (path.empty() || (path.back() - goal).norm() > 1e-12) {
+        path.push_back(goal);
+    }
+    return path;
+}
+
+double path_length(const std::vector<Eigen::VectorXd>& path) {
+    double total = 0.0;
+    for (std::size_t i = 1; i < path.size(); ++i) {
+        total += (path[i] - path[i - 1]).norm();
+    }
+    return total;
+}
+
+int locate_containing_box(const std::vector<BoxNode>& boxes,
+                          const Eigen::Ref<const Eigen::VectorXd>& q,
+                          bool nearest_if_outside) {
+    AdjacencyGraph empty_graph;
+    static const SegmentEdgeList no_segment_edges;
+    const QueryGraphCache cache = build_query_graph_cache(boxes, empty_graph, no_segment_edges);
+    return locate_containing_box(cache, q, nearest_if_outside);
+}
+
+int locate_containing_box(const QueryGraphCache& cache,
+                          const Eigen::Ref<const Eigen::VectorXd>& q,
+                          bool nearest_if_outside) {
+    if (cache.boxes == nullptr) {
+        return -1;
+    }
+    const auto& boxes = *cache.boxes;
+    int best = -1;
+    double best_dist = std::numeric_limits<double>::max();
+    std::vector<int> candidate_ids;
+    if (cache.point_index_dim >= 0 && q.size() > cache.point_index_dim && !cache.point_bins.empty()) {
+        const long long bin = interval_bin(q[cache.point_index_dim], cache.point_bin_origin, cache.point_bin_width);
+        const auto it = cache.point_bins.find(bin);
+        if (it != cache.point_bins.end()) {
+            candidate_ids = it->second;
+        }
+    }
+    auto visit_box = [&](const BoxNode& box) {
+        if (box.contains(q)) {
+            const int safety_rank = box.safety_status == BoxSafetyStatus::CertifiedFree && !box.strict_audit_required ? 0
+                : box.safety_status == BoxSafetyStatus::CertifiedFree ? 1
+                : box.safety_status == BoxSafetyStatus::ProvisionalFree && !box.strict_audit_required ? 2
+                : box.safety_status == BoxSafetyStatus::ProvisionalFree ? 3
+                : 4;
+            const double center_dist = (box.center() - q).squaredNorm();
+            const double volume = std::max(0.0, box.volume);
+            const double score = static_cast<double>(safety_rank) * 1.0e24 + volume + 1.0e-9 * center_dist;
+            if (best < 0 || score < best_dist) {
+                best = box.id;
+                best_dist = score;
+            }
+            return;
+        }
+        if (nearest_if_outside) {
+            const double d = (box.center() - q).squaredNorm();
+            if (d < best_dist) {
+                best_dist = d;
+                best = box.id;
+            }
+        }
+    };
+    if (!candidate_ids.empty()) {
+        for (int id : candidate_ids) {
+            const auto it = cache.box_index_by_id.find(id);
+            if (it != cache.box_index_by_id.end()) {
+                visit_box(boxes[it->second]);
+            }
+        }
+        if (best >= 0 || !nearest_if_outside) {
+            return best;
+        }
+    }
+    for (const auto& box : boxes) {
+        visit_box(box);
+    }
+    return best;
+}
+
+}  // namespace rbf

@@ -1,0 +1,5 @@
+/build*/
+/examples/out/
+__pycache__/
+*.py[cod]
+*.so

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <LECTDatabase/online_cache.h>
 #include <LECTDatabase/sbf/scene.h>
 
 #include <rbf/lect_database.h>
@@ -29,6 +30,12 @@ enum class OracleValidationMode : std::uint8_t {
     CoverageHeuristic = 1,
 };
 
+enum class BoxCommitPolicy : std::uint8_t {
+    CommitCertifiedOnly = 0,
+    CommitProvisionalAllowed = 1,
+    AuditBeforeCommit = 2,
+};
+
 struct OracleSplitOptions {
     bool use_best_tighten = true;
 };
@@ -45,6 +52,13 @@ struct SplitNodeResult {
 struct OracleValidationConfig {
     OracleValidationMode mode = OracleValidationMode::Strict;
     bool accept_unsafe_free = false;
+    bool enable_validation_cache = true;
+    int validation_cache_max_entries = 4096;
+    double endpoint_cache_min_effective_width = 0.0;
+    bool external_evidence_materialization = true;
+    bool external_evidence_scoring = true;
+    bool external_evidence_backfill_active = true;
+    bool stateless_materialization_context = false;
 };
 
 struct OracleValidationDetail {
@@ -202,6 +216,12 @@ public:
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
                       OracleValidationConfig validation_config = {});
+    DatabaseBoxOracle(Robot robot,
+                      lect_database::OnlineEnvelopeCacheTree& online_cache,
+                      Scene scene = {},
+                      EndpointSourceConfig endpoint_config = {},
+                      EnvelopeTypeConfig envelope_config = {},
+                      OracleValidationConfig validation_config = {});
 
     int n_dims() const override;
     int root_node() const override { return 0; }
@@ -255,6 +275,7 @@ private:
 
     Robot robot_;
     lect_database::LectDatabase& database_;
+    lect_database::OnlineEnvelopeCacheTree* online_cache_ = nullptr;
     EndpointSourceConfig endpoint_config_;
     EnvelopeTypeConfig envelope_config_;
     OracleValidationConfig validation_config_;

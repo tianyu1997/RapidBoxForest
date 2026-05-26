@@ -76,6 +76,21 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
       scene_(std::move(scene)),
       checker_(robot_, scene_) {}
 
+DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
+                                                                         lect_database::OnlineEnvelopeCacheTree& online_cache,
+                                                                         Scene scene,
+                                                                         EndpointSourceConfig endpoint_config,
+                                                                         EnvelopeTypeConfig envelope_config,
+                                                                         OracleValidationConfig validation_config)
+        : robot_(std::move(robot)),
+            database_(online_cache.database()),
+            online_cache_(&online_cache),
+            endpoint_config_(std::move(endpoint_config)),
+            envelope_config_(std::move(envelope_config)),
+            validation_config_(std::move(validation_config)),
+            scene_(std::move(scene)),
+            checker_(robot_, scene_) {}
+
 int DatabaseBoxOracle::n_dims() const {
     return static_cast<int>(database_.root_intervals().size());
 }
@@ -85,6 +100,10 @@ const std::vector<Interval>& DatabaseBoxOracle::root_intervals() const {
 }
 
 std::vector<Interval> DatabaseBoxOracle::node_intervals(int node) const {
+    if (online_cache_ != nullptr) {
+        auto box = online_cache_->node_intervals(static_cast<lect_database::NodeId>(node));
+        return box ? std::move(*box) : database_.root_intervals();
+    }
     auto box = database_.node_box(static_cast<lect_database::NodeId>(node));
     return box ? std::move(*box) : database_.root_intervals();
 }
@@ -103,10 +122,16 @@ bool DatabaseBoxOracle::contains_point(int node, const Eigen::Ref<const Eigen::V
 }
 
 bool DatabaseBoxOracle::is_leaf(int node) const {
+    if (online_cache_ != nullptr) {
+        return online_cache_->is_leaf(static_cast<lect_database::NodeId>(node));
+    }
     return database_.topology(static_cast<lect_database::NodeId>(node)).leaf;
 }
 
 int DatabaseBoxOracle::depth(int node) const {
+    if (online_cache_ != nullptr) {
+        return online_cache_->depth(static_cast<lect_database::NodeId>(node));
+    }
     return database_.topology(static_cast<lect_database::NodeId>(node)).depth;
 }
 
@@ -136,7 +161,9 @@ SplitNodeResult DatabaseBoxOracle::split_node(int node,
     (void)changed_dim;
     (void)options;
     SplitNodeResult result;
-    const auto children = database_.split_leaf(static_cast<lect_database::NodeId>(node));
+    const auto children = online_cache_ != nullptr
+        ? online_cache_->split_leaf(static_cast<lect_database::NodeId>(node))
+        : database_.split_leaf(static_cast<lect_database::NodeId>(node));
     if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
         return result;
     }
@@ -186,6 +213,14 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
     int changed_dim) {
     const auto key = endpoint_key(node);
     const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    if (online_cache_ != nullptr) {
+        if (auto cached = online_cache_->evidence(key)) {
+            if (topology.leaf || cached->child_hull) {
+                counters_.materialization_reused_endpoint_cache += 1;
+                return std::move(cached->payload);
+            }
+        }
+    }
     if (auto cached = database_.evidence(key)) {
         if (topology.leaf || cached->child_hull) {
             counters_.materialization_reused_endpoint_cache += 1;
@@ -201,10 +236,20 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
     record.key = key;
     record.payload = std::move(endpoint.endpoint_iaabbs);
     record.child_hull = false;
-    database_.put_evidence(record);
+    if (online_cache_ != nullptr) {
+        online_cache_->put_evidence(record);
+    } else {
+        database_.put_evidence(record);
+    }
     counters_.materializations += 1;
     counters_.materialization_stored_endpoint += 1;
     counters_.materialization_endpoint_time_us += endpoint.enumerate_time_us;
+    if (online_cache_ != nullptr) {
+        if (auto stored = online_cache_->evidence(key)) {
+            return std::move(stored->payload);
+        }
+        return record.payload;
+    }
     if (auto stored = database_.evidence(key)) {
         return std::vector<float>(stored->payload.begin(), stored->payload.end());
     }

@@ -1,0 +1,231 @@
+#include <sbf/core/robot.h>
+#include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/envelope_type.h>
+#include <link_interval_envelope/batch.h>
+#include <link_interval_envelope/incremental_context.h>
+
+#include <cassert>
+#include <cmath>
+#include <string>
+#include <vector>
+
+namespace {
+
+void assert_close(const std::vector<float>& a, const std::vector<float>& b) {
+    assert(a.size() == b.size());
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        assert(std::abs(a[i] - b[i]) < 1e-6f);
+    }
+}
+
+}  // namespace
+
+int main() {
+    const std::string robot_path = std::string(LIE_EXAMPLE_DATA_DIR) + "/2dof_planar.json";
+    const rbf::Robot robot = rbf::Robot::from_json(robot_path);
+    assert(robot.n_joints() == 2);
+    assert(robot.n_active_links() > 0);
+
+    std::vector<rbf::Interval> intervals = {
+        {-0.4, 0.4},
+        {-0.2, 0.2},
+    };
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    const auto endpoint = rbf::compute_endpoint_iaabb(robot, intervals, endpoint_config);
+    assert(endpoint.is_safe);
+    assert(endpoint.n_active_links == robot.n_active_links());
+    assert(endpoint.endpoint_iaabbs.size() == static_cast<std::size_t>(robot.n_active_links() * 2 * 6));
+
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    envelope_config.n_subdivisions = 4;
+    const auto envelope = rbf::compute_link_envelope(
+        endpoint.endpoint_iaabbs.data(),
+        endpoint.n_active_links,
+        robot.active_link_radii(),
+        envelope_config);
+    assert(envelope.n_subdivisions == 4);
+    assert(envelope.link_iaabbs.size() == static_cast<std::size_t>(robot.n_active_links() * 4 * 6));
+    assert(!envelope.has_grid());
+
+    envelope_config.type = rbf::EnvelopeType::Hull16_Grid;
+    envelope_config.n_subdivisions = 1;
+    envelope_config.grid_config.voxel_delta = 0.05;
+    const auto grid_envelope = rbf::compute_link_envelope(
+        endpoint.endpoint_iaabbs.data(),
+        endpoint.n_active_links,
+        robot.active_link_radii(),
+        envelope_config);
+    assert(grid_envelope.has_grid());
+    assert(grid_envelope.sparse_grid->count_occupied() > 0);
+    assert(grid_envelope.grid_fill_time_us >= 0.0);
+    assert(grid_envelope.grid_capacity >= grid_envelope.sparse_grid->num_bricks());
+    assert(grid_envelope.grid_brick_write_count > 0);
+    assert(grid_envelope.grid_range_write_count > 0);
+
+    std::vector<rbf::Interval> parent_intervals = {
+        {-0.4, 0.4},
+        {-0.2, 0.2},
+    };
+    std::vector<rbf::Interval> child_intervals = {
+        {-0.4, 0.4},
+        {-0.1, 0.3},
+    };
+    const auto ifk_endpoint = rbf::compute_endpoint_iaabb(robot, intervals, endpoint_config);
+    assert(ifk_endpoint.is_safe);
+    assert(ifk_endpoint.source == rbf::EndpointSource::IFK);
+    assert(std::string(rbf::endpoint_source_name(ifk_endpoint.source)) == "IFK");
+
+    rbf::EndpointSourceConfig hifk_config;
+    hifk_config.source = rbf::EndpointSource::HIFK;
+    hifk_config.hifk_max_depth = 0;
+    const auto hifk_endpoint = rbf::compute_endpoint_iaabb(robot, intervals, hifk_config);
+    assert(hifk_endpoint.is_safe);
+    assert(hifk_endpoint.source == rbf::EndpointSource::HIFK);
+    assert(std::string(rbf::endpoint_source_name(hifk_endpoint.source)) == "HIFK");
+    assert_close(ifk_endpoint.endpoint_iaabbs, hifk_endpoint.endpoint_iaabbs);
+
+    std::vector<rbf::Interval> narrow_intervals = {
+        {-0.025, 0.025},
+        {-0.02, 0.02},
+    };
+    std::vector<rbf::Interval> medium_intervals = {
+        {-0.1, 0.1},
+        {-0.05, 0.05},
+    };
+    std::vector<rbf::Interval> wide_intervals = {
+        {-0.25, 0.25},
+        {-0.25, 0.25},
+    };
+    std::vector<rbf::Interval> wide_joint0_intervals = {
+        {-0.25, 0.25},
+        {-0.02, 0.02},
+    };
+    std::vector<rbf::Interval> wide_joint1_intervals = {
+        {-0.02, 0.02},
+        {-0.25, 0.25},
+    };
+    assert(rbf::recommend_hifk_depth(robot, narrow_intervals) == 0);
+    assert(rbf::recommend_hifk_depth(robot, medium_intervals) == 3);
+    assert(rbf::recommend_hifk_depth(robot, wide_intervals) == 5);
+    assert(rbf::recommend_hifk_depth(robot, wide_joint0_intervals) == 5);
+    assert(rbf::recommend_hifk_depth(robot, wide_joint1_intervals) == 3);
+
+    rbf::EndpointSourceConfig auto_hifk_config = hifk_config;
+    auto_hifk_config.hifk_max_depth = -1;
+    const auto auto_hifk_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, auto_hifk_config);
+    rbf::EndpointSourceConfig explicit_hifk_config = hifk_config;
+    explicit_hifk_config.hifk_max_depth = rbf::recommend_hifk_depth(robot, wide_intervals);
+    const auto explicit_hifk_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, explicit_hifk_config);
+    assert_close(auto_hifk_endpoint.endpoint_iaabbs, explicit_hifk_endpoint.endpoint_iaabbs);
+
+    link_interval_envelope::IncrementalEnvelopeContext context(
+        robot, endpoint_config, envelope_config);
+    auto first = context.compute(parent_intervals);
+    assert(first.endpoint.is_safe);
+    assert(!first.used_incremental_fk);
+    assert(!context.has_valid_fk());
+    auto second = context.compute(child_intervals);
+    assert(second.changed_dim == 1);
+    assert(!second.used_incremental_fk);
+    auto full_child_envelope = rbf::compute_link_envelope(
+        rbf::compute_endpoint_iaabb(robot, child_intervals, endpoint_config).endpoint_iaabbs.data(),
+        robot.n_active_links(),
+        robot.active_link_radii(),
+        envelope_config);
+    const auto full_endpoint = rbf::compute_endpoint_iaabb(robot, child_intervals, endpoint_config);
+    assert_close(second.endpoint.endpoint_iaabbs, full_endpoint.endpoint_iaabbs);
+    assert_close(second.envelope.link_iaabbs, full_child_envelope.link_iaabbs);
+
+    auto third = context.compute(child_intervals);
+    assert(!third.reused_fk);
+    assert_close(third.endpoint.endpoint_iaabbs, full_endpoint.endpoint_iaabbs);
+
+    rbf::EndpointSourceConfig crit_config;
+    crit_config.source = rbf::EndpointSource::CritSample;
+    crit_config.n_threads = 1;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    envelope_config.n_subdivisions = 4;
+
+    link_interval_envelope::IncrementalEnvelopeContext crit_context(
+        robot, crit_config, envelope_config);
+    auto crit_first = crit_context.compute(parent_intervals);
+    assert(!crit_first.used_source_incremental_state);
+    assert(!crit_first.endpoint.is_safe);
+    assert(crit_context.has_valid_fk());
+    auto crit_second = crit_context.compute(child_intervals);
+    assert(crit_second.used_source_incremental_state);
+    assert(crit_second.changed_dim == 1);
+    assert(crit_second.endpoint.candidate_dirty_count >= 1);
+    assert(crit_second.endpoint.predh_rebuild_count >= 1);
+    const auto crit_full_endpoint = rbf::compute_endpoint_iaabb(
+        robot, child_intervals, crit_config);
+    const auto crit_full_envelope = rbf::compute_link_envelope(
+        crit_full_endpoint.endpoint_iaabbs.data(),
+        crit_full_endpoint.n_active_links,
+        robot.active_link_radii(),
+        envelope_config);
+    assert_close(crit_second.endpoint.endpoint_iaabbs, crit_full_endpoint.endpoint_iaabbs);
+    assert_close(crit_second.envelope.link_iaabbs, crit_full_envelope.link_iaabbs);
+    auto crit_third = crit_context.compute(child_intervals);
+    assert(crit_third.reused_endpoint_cache);
+    assert(crit_third.endpoint.endpoint_cache_reused);
+    assert_close(crit_third.endpoint.endpoint_iaabbs, crit_full_endpoint.endpoint_iaabbs);
+
+    rbf::EndpointSourceConfig crit_parallel_config = crit_config;
+    crit_parallel_config.n_threads = 2;
+    crit_parallel_config.parallel_min_combos = 1;
+    const auto crit_serial_endpoint = rbf::compute_endpoint_iaabb(
+        robot, child_intervals, crit_config);
+    const auto crit_parallel_endpoint = rbf::compute_endpoint_iaabb(
+        robot, child_intervals, crit_parallel_config);
+    assert(crit_serial_endpoint.combo_count == crit_parallel_endpoint.combo_count);
+    assert(crit_serial_endpoint.combo_count > 0);
+    assert(crit_parallel_endpoint.enumerate_threads == 2);
+    assert(crit_parallel_endpoint.parallel_min_combos_used == 1);
+    assert(crit_parallel_endpoint.enumerate_chunk_count >= 1);
+    assert_close(crit_serial_endpoint.endpoint_iaabbs,
+                 crit_parallel_endpoint.endpoint_iaabbs);
+
+    std::vector<std::vector<rbf::Interval>> batch_boxes = {
+        parent_intervals,
+        child_intervals,
+    };
+    for (const auto source : {rbf::EndpointSource::IFK,
+                              rbf::EndpointSource::CritSample,
+                              rbf::EndpointSource::HIFK}) {
+        rbf::EndpointSourceConfig batch_endpoint_config;
+        batch_endpoint_config.source = source;
+        if (source == rbf::EndpointSource::HIFK) {
+            batch_endpoint_config.hifk_max_depth = 0;
+        }
+        auto batch_single = link_interval_envelope::compute_envelope_batch(
+            robot, batch_boxes, batch_endpoint_config, envelope_config, 1);
+        auto batch_parallel = link_interval_envelope::compute_envelope_batch(
+            robot, batch_boxes, batch_endpoint_config, envelope_config, 2);
+        assert(batch_single.size() == batch_boxes.size());
+        assert(batch_parallel.size() == batch_boxes.size());
+        for (std::size_t i = 0; i < batch_boxes.size(); ++i) {
+            const auto full_batch_endpoint = rbf::compute_endpoint_iaabb(
+                robot, batch_boxes[i], batch_endpoint_config);
+            assert(batch_single[i].is_safe == full_batch_endpoint.is_safe);
+            assert(batch_parallel[i].is_safe == full_batch_endpoint.is_safe);
+            const auto full_batch_envelope = rbf::compute_link_envelope(
+                full_batch_endpoint.endpoint_iaabbs.data(),
+                full_batch_endpoint.n_active_links,
+                robot.active_link_radii(),
+                envelope_config);
+            assert_close(batch_single[i].endpoint_iaabbs,
+                         full_batch_endpoint.endpoint_iaabbs);
+            assert_close(batch_parallel[i].endpoint_iaabbs,
+                         full_batch_endpoint.endpoint_iaabbs);
+            assert_close(batch_single[i].envelope.link_iaabbs,
+                         full_batch_envelope.link_iaabbs);
+            assert_close(batch_parallel[i].envelope.link_iaabbs,
+                         full_batch_envelope.link_iaabbs);
+        }
+    }
+    return 0;
+}

@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{Random-scene dynamic obstacle updates on matched easy/medium/hard edit paths. Warm denotes an isolated source-scene prewarm followed by a fresh target-scene rebuild, and speedup denotes the ratio of warm median to incremental median.}
+\label{tab:tro_dynamic_rebuild}
+\footnotesize
+\setlength{\tabcolsep}{2.60pt}
+\renewcommand{\arraystretch}{0.95}
+\resizebox{0.70\columnwidth}{!}{%
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Transition & Incr. (s) & Warm (s) & Speedup \\
+\midrule
+easy->medium & 0.0095 & 0.0902 & 9.493 \\
+medium->hard & 0.0364 & 0.0702 & 1.929 \\
+hard->medium & 0.0014 & 0.0581 & 41.07 \\
+medium->easy & 0.000330 & 0.0464 & 140.36 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}

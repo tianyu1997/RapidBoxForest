@@ -10,6 +10,8 @@ std::string identity_descriptor(const LectDatabaseIdentity& identity) {
         << "|robot=" << identity.robot_fingerprint
         << "|root=" << identity.root_domain_fingerprint
         << "|canonical=" << (identity.canonical_mode ? 1 : 0)
+        << "|symmetry_hash=" << identity.symmetry_hash
+        << "|symmetry={" << identity.symmetry_descriptor << "}"
         << "|split_hash=" << identity.split_policy_hash
         << "|split={" << identity.split_policy_descriptor << "}"
         << "|endpoint=" << identity.endpoint_descriptor
@@ -42,6 +44,11 @@ bool identity_compatible(const LectDatabaseIdentity& stored,
         if (reason) *reason = "canonical mode differs";
         return false;
     }
+    if (stored.symmetry_hash != requested.symmetry_hash ||
+        stored.symmetry_descriptor != requested.symmetry_descriptor) {
+        if (reason) *reason = "symmetry descriptor differs";
+        return false;
+    }
     if (stored.split_policy_hash != requested.split_policy_hash ||
         stored.split_policy_descriptor != requested.split_policy_descriptor) {
         if (reason) *reason = "split policy differs";
@@ -70,6 +77,7 @@ LectDatabaseIdentity make_identity_for_robot(const Robot& robot,
                                              const std::vector<Interval>& root_intervals,
                                              const SplitPolicyDescriptor& split_policy,
                                              bool canonical_mode,
+                                             std::string symmetry_descriptor,
                                              std::string endpoint_descriptor,
                                              std::string envelope_descriptor,
                                              std::string payload_layout,
@@ -79,6 +87,8 @@ LectDatabaseIdentity make_identity_for_robot(const Robot& robot,
     identity.root_domain_fingerprint = fingerprint_intervals(root_intervals);
     identity.split_policy_hash = split_policy_hash(split_policy);
     identity.canonical_mode = canonical_mode;
+    identity.symmetry_descriptor = std::move(symmetry_descriptor);
+    identity.symmetry_hash = stable_hash(identity.symmetry_descriptor);
     identity.split_policy_descriptor = split_policy_descriptor(split_policy);
     if (!endpoint_descriptor.empty()) {
         identity.endpoint_descriptor = std::move(endpoint_descriptor);

@@ -16,3 +16,9 @@ add_executable(test_sbf_adapter_cpp
 )
 target_link_libraries(test_sbf_adapter_cpp PRIVATE lect_database_sbf_adapter)
 add_test(NAME test_sbf_adapter_cpp COMMAND test_sbf_adapter_cpp)
+
+add_executable(test_online_cache_cpp
+    test_online_cache.cpp
+)
+target_link_libraries(test_online_cache_cpp PRIVATE lect_database_online_cache)
+add_test(NAME test_online_cache_cpp COMMAND test_online_cache_cpp)
