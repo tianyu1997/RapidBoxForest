@@ -1,0 +1,483 @@
+#include <LECTDatabase/sbf/oracle.h>
+
+#include <sbf/envelope/endpoint_source.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <stdexcept>
+#include <system_error>
+
+namespace rbf {
+namespace {
+
+using lect_database::NodeId;
+
+std::uint64_t next_session_id() {
+    static std::atomic<std::uint64_t> counter{0};
+    return counter.fetch_add(1, std::memory_order_relaxed);
+}
+
+void record_envelope_collision(OracleCounters& counters, const EnvelopeCollisionStats& stats) {
+    counters.envelope_collision_envelope_aabb_tests += stats.envelope_aabb_tests;
+    counters.envelope_collision_envelope_aabb_rejects += stats.envelope_aabb_rejects;
+    counters.envelope_collision_link_union_aabb_tests += stats.link_union_aabb_tests;
+    counters.envelope_collision_link_union_aabb_rejects += stats.link_union_aabb_rejects;
+    counters.envelope_collision_link_aabb_tests += stats.link_aabb_tests;
+    counters.envelope_collision_link_aabb_rejects += stats.link_aabb_rejects;
+    counters.envelope_collision_kdop_tests += stats.kdop_tests;
+    counters.envelope_collision_kdop_rejects += stats.kdop_rejects;
+    counters.envelope_collision_kdop_axes_tested += stats.kdop_axes_tested;
+    counters.envelope_collision_gjk_tests += stats.gjk_tests;
+    counters.envelope_collision_gjk_rejects += stats.gjk_rejects;
+    counters.envelope_collision_gjk_iterations += stats.gjk_iterations;
+}
+
+lect_database::EvidenceChannel database_channel_for_endpoint(EndpointSource source) {
+    return endpoint_safety_is_certified(endpoint_source_default_safety(source))
+        ? lect_database::EvidenceChannel::Safe
+        : lect_database::EvidenceChannel::Rapid;
+}
+
+rbf::lect_database::LectDatabaseConfig make_worker_database_config(const DatabaseBoxOracle& master,
+                                                                   const std::filesystem::path& path,
+                                                                   const std::vector<Interval>& root_intervals) {
+    lect_database::LectDatabaseConfig config;
+    config.path = path;
+    config.root_intervals = root_intervals;
+    config.split_policy = master.database().split_policy_descriptor();
+    config.identity = master.database().identity();
+    config.identity.root_domain_fingerprint = lect_database::fingerprint_intervals(root_intervals);
+    config.open.read_only = false;
+    config.open.create_if_missing = true;
+    config.open.verify_identity = true;
+    config.open.replay_journal = true;
+    return config;
+}
+
+int remap_lookup(const std::unordered_map<int, int>& node_remap, int worker_node) {
+    const auto it = node_remap.find(worker_node);
+    return it == node_remap.end() ? -1 : it->second;
+}
+
+}  // namespace
+
+DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
+                                     lect_database::LectDatabase& database,
+                                     Scene scene,
+                                     EndpointSourceConfig endpoint_config,
+                                     EnvelopeTypeConfig envelope_config,
+                                     OracleValidationConfig validation_config)
+    : robot_(std::move(robot)),
+      database_(database),
+      endpoint_config_(std::move(endpoint_config)),
+      envelope_config_(std::move(envelope_config)),
+      validation_config_(std::move(validation_config)),
+      scene_(std::move(scene)),
+      checker_(robot_, scene_) {}
+
+int DatabaseBoxOracle::n_dims() const {
+    return static_cast<int>(database_.root_intervals().size());
+}
+
+const std::vector<Interval>& DatabaseBoxOracle::root_intervals() const {
+    return database_.root_intervals();
+}
+
+std::vector<Interval> DatabaseBoxOracle::node_intervals(int node) const {
+    auto box = database_.node_box(static_cast<lect_database::NodeId>(node));
+    return box ? std::move(*box) : database_.root_intervals();
+}
+
+bool DatabaseBoxOracle::contains_point(int node, const Eigen::Ref<const Eigen::VectorXd>& q) const {
+    const auto box = database_.node_box(static_cast<lect_database::NodeId>(node));
+    if (!box || q.size() != static_cast<int>(box->size())) {
+        return false;
+    }
+    for (int dim = 0; dim < q.size(); ++dim) {
+        if (!(*box)[static_cast<std::size_t>(dim)].contains(q[dim])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool DatabaseBoxOracle::is_leaf(int node) const {
+    return database_.topology(static_cast<lect_database::NodeId>(node)).leaf;
+}
+
+int DatabaseBoxOracle::depth(int node) const {
+    return database_.topology(static_cast<lect_database::NodeId>(node)).depth;
+}
+
+int DatabaseBoxOracle::split_dim(int node) const {
+    return database_.topology(static_cast<lect_database::NodeId>(node)).split_dim;
+}
+
+double DatabaseBoxOracle::split_value(int node) const {
+    return database_.topology(static_cast<lect_database::NodeId>(node)).split_value;
+}
+
+int DatabaseBoxOracle::left_child(int node) const {
+    const auto id = database_.topology(static_cast<lect_database::NodeId>(node)).left;
+    return lect_database::valid_node_id(id) ? static_cast<int>(id) : -1;
+}
+
+int DatabaseBoxOracle::right_child(int node) const {
+    const auto id = database_.topology(static_cast<lect_database::NodeId>(node)).right;
+    return lect_database::valid_node_id(id) ? static_cast<int>(id) : -1;
+}
+
+SplitNodeResult DatabaseBoxOracle::split_node(int node,
+                                              const std::vector<Interval>& intervals,
+                                              int changed_dim,
+                                              const OracleSplitOptions& options) {
+    (void)intervals;
+    (void)changed_dim;
+    (void)options;
+    SplitNodeResult result;
+    const auto children = database_.split_leaf(static_cast<lect_database::NodeId>(node));
+    if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
+        return result;
+    }
+    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    result.split = true;
+    result.node = node;
+    result.left = static_cast<int>(children.first);
+    result.right = static_cast<int>(children.second);
+    result.split_dim = topology.split_dim;
+    result.split_value = topology.split_value;
+    return result;
+}
+
+SplitNodeResult DatabaseBoxOracle::split_node_at(int node, int split_dim, double split_value) {
+    SplitNodeResult result;
+    const auto children = database_.split_leaf(static_cast<lect_database::NodeId>(node), split_dim, split_value);
+    if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
+        return result;
+    }
+    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    result.split = true;
+    result.node = node;
+    result.left = static_cast<int>(children.first);
+    result.right = static_cast<int>(children.second);
+    result.split_dim = topology.split_dim;
+    result.split_value = topology.split_value;
+    return result;
+}
+
+bool DatabaseBoxOracle::point_in_collision(const Eigen::Ref<const Eigen::VectorXd>& q) const {
+    return checker_.check_config(q);
+}
+
+lect_database::EvidenceKey DatabaseBoxOracle::endpoint_key(int node) const {
+    lect_database::EvidenceKey key;
+    key.node_id = static_cast<lect_database::NodeId>(node);
+    key.sector = lect_database::kPrimarySector;
+    key.channel = database_channel_for_endpoint(endpoint_config_.source);
+    key.endpoint_source = endpoint_config_.source;
+    key.payload_kind = lect_database::EvidencePayloadKind::EndpointEnvelope;
+    return key;
+}
+
+std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
+    int node,
+    const std::vector<Interval>& intervals,
+    int changed_dim) {
+    const auto key = endpoint_key(node);
+    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    if (auto cached = database_.evidence(key)) {
+        if (topology.leaf || cached->child_hull) {
+            counters_.materialization_reused_endpoint_cache += 1;
+            return std::vector<float>(cached->payload.begin(), cached->payload.end());
+        }
+    }
+
+    EndpointIAABBResult endpoint = compute_endpoint_iaabb(robot_, intervals, endpoint_config_, nullptr, changed_dim);
+    if (endpoint.endpoint_iaabbs.empty()) {
+        return std::nullopt;
+    }
+    lect_database::EvidenceRecord record;
+    record.key = key;
+    record.payload = std::move(endpoint.endpoint_iaabbs);
+    record.child_hull = false;
+    database_.put_evidence(record);
+    counters_.materializations += 1;
+    counters_.materialization_stored_endpoint += 1;
+    counters_.materialization_endpoint_time_us += endpoint.enumerate_time_us;
+    if (auto stored = database_.evidence(key)) {
+        return std::vector<float>(stored->payload.begin(), stored->payload.end());
+    }
+    return std::nullopt;
+}
+
+BoxValidation DatabaseBoxOracle::classify_payload(int node,
+                                                  const std::vector<Interval>& intervals,
+                                                  const std::vector<float>& endpoint_payload) {
+    (void)intervals;
+    LinkEnvelope envelope = compute_link_envelope(endpoint_payload.data(),
+                                                  robot_.n_active_links(),
+                                                  robot_.active_link_radii(),
+                                                  envelope_config_);
+    EnvelopeCollisionStats collision_stats;
+    const CollisionResultKind collision = collide_envelope_aabbs(envelope,
+                                                                 scene_.obstacles().data(),
+                                                                 scene_.n_obstacles(),
+                                                                 {},
+                                                                 &collision_stats);
+    record_envelope_collision(counters_, collision_stats);
+    counters_.envelope_collision_queries += 1;
+    last_validation_detail_.node = node;
+    last_validation_detail_.depth = depth(node);
+    last_validation_detail_.mode = validation_config_.mode;
+    last_validation_detail_.endpoint_source = endpoint_config_.source;
+    last_validation_detail_.endpoint_safety_level = endpoint_source_default_safety(endpoint_config_.source);
+    last_validation_detail_.endpoint_is_safe = endpoint_safety_is_certified(last_validation_detail_.endpoint_safety_level);
+    last_validation_detail_.materialized = true;
+    last_validation_detail_.aabb_overlap = collision != CollisionResultKind::DefinitelyFree;
+    if (collision == CollisionResultKind::DefinitelyFree) {
+        counters_.certified_free += 1;
+        counters_.envelope_collision_free += 1;
+        last_validation_detail_.validation = BoxValidation::Free;
+        last_validation_detail_.safety_status = BoxSafetyStatus::CertifiedFree;
+        last_validation_detail_.collision_possible = false;
+        return BoxValidation::Free;
+    }
+    counters_.collision_possible += 1;
+    counters_.envelope_collision_maybe += 1;
+    last_validation_detail_.validation = BoxValidation::Unknown;
+    last_validation_detail_.safety_status = BoxSafetyStatus::Unknown;
+    last_validation_detail_.collision_possible = true;
+    return BoxValidation::Unknown;
+}
+
+BoxValidation DatabaseBoxOracle::validate_node(int node,
+                                               const std::vector<Interval>& intervals,
+                                               int changed_dim) {
+    counters_.node_validations += 1;
+    last_validation_detail_ = {};
+    last_validation_detail_.node = node;
+    last_validation_detail_.depth = depth(node);
+    last_validation_detail_.mode = validation_config_.mode;
+    if (scene_.empty()) {
+        counters_.certified_free += 1;
+        last_validation_detail_.validation = BoxValidation::Free;
+        last_validation_detail_.safety_status = BoxSafetyStatus::CertifiedFree;
+        last_validation_detail_.collision_possible = false;
+        return BoxValidation::Free;
+    }
+    auto payload = endpoint_payload_for_node(node, intervals, changed_dim);
+    if (!payload) {
+        counters_.collision_possible += 1;
+        last_validation_detail_.validation = BoxValidation::Unknown;
+        last_validation_detail_.safety_status = BoxSafetyStatus::Unknown;
+        last_validation_detail_.collision_possible = true;
+        return BoxValidation::Unknown;
+    }
+    return classify_payload(node, intervals, *payload);
+}
+
+bool DatabaseBoxOracle::validate_intervals(const std::vector<Interval>& intervals) {
+    counters_.interval_validations += 1;
+    return !checker_.check_box(intervals);
+}
+
+bool DatabaseBoxOracle::is_reserved(int node) const {
+    return node_to_box_.find(node) != node_to_box_.end();
+}
+
+std::optional<int> DatabaseBoxOracle::reservation_owner(int node) const {
+    const auto it = node_to_box_.find(node);
+    return it == node_to_box_.end() ? std::nullopt : std::optional<int>(it->second);
+}
+
+void DatabaseBoxOracle::reserve_node(int node, int box_id) {
+    node_to_box_[node] = box_id;
+    box_to_node_[box_id] = node;
+}
+
+void DatabaseBoxOracle::release_node(int node) {
+    const auto it = node_to_box_.find(node);
+    if (it == node_to_box_.end()) {
+        return;
+    }
+    box_to_node_.erase(it->second);
+    node_to_box_.erase(it);
+}
+
+void DatabaseBoxOracle::release_box(int box_id) {
+    const auto it = box_to_node_.find(box_id);
+    if (it == box_to_node_.end()) {
+        return;
+    }
+    node_to_box_.erase(it->second);
+    box_to_node_.erase(it);
+}
+
+void DatabaseBoxOracle::clear_reservations() {
+    node_to_box_.clear();
+    box_to_node_.clear();
+}
+
+int DatabaseBoxOracle::select_unexplored_node() const {
+    for (lect_database::NodeId node_id = 0; node_id < database_.node_count(); ++node_id) {
+        const auto topology = database_.topology(node_id);
+        const int node = static_cast<int>(node_id);
+        if (topology.leaf && !is_reserved(node)) {
+            return node;
+        }
+    }
+    return -1;
+}
+
+int DatabaseBoxOracle::common_ancestor_depth(int lhs_node, int rhs_node) const {
+    const auto lhs = static_cast<lect_database::NodeId>(lhs_node);
+    const auto rhs = static_cast<lect_database::NodeId>(rhs_node);
+    if (lhs_node < 0 || rhs_node < 0 ||
+        lhs >= database_.node_count() || rhs >= database_.node_count()) {
+        return -1;
+    }
+    const auto ancestor = database_.lca(lhs, rhs);
+    if (!lect_database::valid_node_id(ancestor)) {
+        return -1;
+    }
+    return database_.topology(ancestor).depth;
+}
+
+std::unique_ptr<BoxOracleSession> DatabaseBoxOracle::make_session(const OracleSessionConfig& config) {
+    return std::make_unique<DatabaseBoxOracleSession>(*this, config);
+}
+
+void DatabaseBoxOracle::set_scene(Scene scene) {
+    scene_ = std::move(scene);
+    checker_.set_scene(scene_);
+}
+
+DatabaseBoxOracleSession::DatabaseBoxOracleSession(DatabaseBoxOracle& master,
+                                                   const OracleSessionConfig& config)
+    : master_(master),
+      master_domain_root_(config.domain_root >= 0 ? config.domain_root : master.root_node()),
+      read_only_(config.read_only),
+      temp_dir_(make_temp_dir()) {
+    if (master_domain_root_ < 0 || !lect_database::valid_node_id(static_cast<NodeId>(master_domain_root_)) ||
+        static_cast<std::size_t>(master_domain_root_) >= master.database().node_count()) {
+        throw std::out_of_range("LECTDatabase oracle session domain root is out of range");
+    }
+    const auto worker_root = master.node_intervals(master_domain_root_);
+    if (worker_root.empty()) {
+        throw std::runtime_error("LECTDatabase oracle session domain root has no intervals");
+    }
+    std::error_code ec;
+    std::filesystem::create_directories(temp_dir_, ec);
+    if (ec) {
+        throw std::runtime_error("LECTDatabase oracle session failed to create temp directory");
+    }
+
+    std::string reason;
+    worker_database_.emplace();
+    auto worker_config = make_worker_database_config(master_, temp_dir_, worker_root);
+    if (!worker_database_->open(std::move(worker_config), &reason)) {
+        throw std::runtime_error("LECTDatabase oracle session failed to open worker database: " + reason);
+    }
+    worker_oracle_ = std::make_unique<DatabaseBoxOracle>(master_.robot(),
+                                                         *worker_database_,
+                                                         master_.scene(),
+                                                         master_.endpoint_config(),
+                                                         master_.envelope_config(),
+                                                         master_.validation_config());
+    node_remap_.emplace(worker_oracle_->root_node(), master_domain_root_);
+}
+
+DatabaseBoxOracleSession::~DatabaseBoxOracleSession() {
+    worker_oracle_.reset();
+    worker_database_.reset();
+    std::error_code ec;
+    std::filesystem::remove_all(temp_dir_, ec);
+}
+
+bool DatabaseBoxOracleSession::commit() {
+    if (read_only_) {
+        committed_ = true;
+        return true;
+    }
+    if (committed_) {
+        return true;
+    }
+    if (!replay_structure(worker_oracle_->root_node(), master_domain_root_)) {
+        return false;
+    }
+    if (!copy_worker_leaf_evidence()) {
+        return false;
+    }
+    committed_ = true;
+    return true;
+}
+
+int DatabaseBoxOracleSession::map_node_to_master(int worker_node) const {
+    return remap_lookup(node_remap_, worker_node);
+}
+
+bool DatabaseBoxOracleSession::replay_structure(int worker_node, int master_node) {
+    node_remap_[worker_node] = master_node;
+    const auto worker_topology = worker_database_->topology(static_cast<NodeId>(worker_node));
+    if (worker_topology.leaf) {
+        return true;
+    }
+
+    auto master_topology = master_.database().topology(static_cast<NodeId>(master_node));
+    if (master_topology.leaf) {
+        const auto children = master_.database().split_leaf(static_cast<NodeId>(master_node),
+                                                            worker_topology.split_dim,
+                                                            worker_topology.split_value);
+        if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
+            return false;
+        }
+        master_topology = master_.database().topology(static_cast<NodeId>(master_node));
+    } else if (master_topology.split_dim != worker_topology.split_dim ||
+               std::abs(master_topology.split_value - worker_topology.split_value) > 1e-12) {
+        return false;
+    }
+
+    const int master_left = static_cast<int>(master_topology.left);
+    const int master_right = static_cast<int>(master_topology.right);
+    if (master_left < 0 || master_right < 0) {
+        return false;
+    }
+    node_remap_[static_cast<int>(worker_topology.left)] = master_left;
+    node_remap_[static_cast<int>(worker_topology.right)] = master_right;
+    return replay_structure(static_cast<int>(worker_topology.left), master_left) &&
+           replay_structure(static_cast<int>(worker_topology.right), master_right);
+}
+
+bool DatabaseBoxOracleSession::copy_worker_leaf_evidence() {
+    for (const auto& record : worker_database_->evidence_records()) {
+        if (record.child_hull) {
+            continue;
+        }
+        const auto topology = worker_database_->topology(record.key.node_id);
+        if (!topology.leaf) {
+            continue;
+        }
+        const int mapped_node = remap_lookup(node_remap_, static_cast<int>(record.key.node_id));
+        if (mapped_node < 0) {
+            return false;
+        }
+        auto replay = record;
+        replay.key.node_id = static_cast<NodeId>(mapped_node);
+        if (!master_.database().put_evidence(std::move(replay))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::filesystem::path DatabaseBoxOracleSession::make_temp_dir() {
+    return std::filesystem::temp_directory_path() /
+        ("lectdb_sbf_session_" + std::to_string(next_session_id()));
+}
+
+std::unique_ptr<BoxOracleSession> DatabaseBoxOracleFactory::make_session(const OracleSessionConfig& config) {
+    return master_.make_session(config);
+}
+
+}  // namespace rbf

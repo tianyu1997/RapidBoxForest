@@ -1,0 +1,30 @@
+# Build outputs
+build*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# Compiled artifacts
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.o
+*.obj
+*.pyc
+__pycache__/
+
+# Generated metadata
+compile_commands.json
+.cache/
+.pytest_cache/
+
+# Local editor/system files
+.vscode/
+.idea/
+.DS_Store
