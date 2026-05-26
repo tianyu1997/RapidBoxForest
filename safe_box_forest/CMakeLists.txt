@@ -14,11 +14,11 @@ option(SBF_BUILD_TESTS "Build SBF C++ tests" ON)
 option(SBF_BUILD_EXPERIMENTS "Build SBF lightweight experiment drivers" OFF)
 option(SBF_WITH_PYTHON "Build SBF Python extension" ON)
 option(SBF_INSTALL_CMAKE_PACKAGE "Install SBF CMake package export files" OFF)
-set(SBF_LECTDATABASE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lect_database" CACHE PATH "Path to the sibling lect_database module")
+set(SBF_LECT_DATABASE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lect_database" CACHE PATH "Path to the sibling lect_database module")
 
-if(NOT EXISTS "${SBF_LECTDATABASE_SOURCE_DIR}/CMakeLists.txt"
+if(NOT EXISTS "${SBF_LECT_DATABASE_MODULE_DIR}/CMakeLists.txt"
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase/CMakeLists.txt")
-    set(SBF_LECTDATABASE_SOURCE_DIR
+    set(SBF_LECT_DATABASE_MODULE_DIR
         "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase"
         CACHE PATH "Path to the sibling lect_database module" FORCE)
 endif()
@@ -28,12 +28,12 @@ if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
 endif()
 
 if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
-    if(EXISTS "${SBF_LECTDATABASE_SOURCE_DIR}/CMakeLists.txt")
+    if(EXISTS "${SBF_LECT_DATABASE_MODULE_DIR}/CMakeLists.txt")
         set(LECTDB_BUILD_TESTS OFF CACHE BOOL "Disable LECTDatabase tests for nested SBF builds" FORCE)
         set(LECTDB_BUILD_TOOLS OFF CACHE BOOL "Disable LECTDatabase tools for nested SBF builds" FORCE)
-        add_subdirectory("${SBF_LECTDATABASE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/lect_database")
+        add_subdirectory("${SBF_LECT_DATABASE_MODULE_DIR}" "${CMAKE_BINARY_DIR}/lect_database")
     else()
-        message(FATAL_ERROR "LECTDatabase::core was not found. Set SBF_LECTDATABASE_SOURCE_DIR to the sibling lect_database module.")
+        message(FATAL_ERROR "LECTDatabase::core was not found. Set SBF_LECT_DATABASE_MODULE_DIR to the sibling lect_database module.")
     endif()
 endif()
 
@@ -77,7 +77,7 @@ if(SBF_WITH_PYTHON)
 endif()
 
 set(SBF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
-set(SBF_LECTDB_INCLUDE_DIR ${SBF_LECTDATABASE_SOURCE_DIR}/include)
+set(SBF_LECTDB_INCLUDE_DIR ${SBF_LECT_DATABASE_MODULE_DIR}/include)
 
 add_library(sbf_core STATIC
     src/box_graph.cpp

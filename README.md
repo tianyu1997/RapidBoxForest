@@ -20,6 +20,7 @@ dependency order.
 .
 |-- CMakeLists.txt
 |-- .gitignore
+|-- docs/
 |-- link_interval_envelope/
 |-- lect_database/
 `-- safe_box_forest/

@@ -11,13 +11,13 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(LECTDB_BUILD_TESTS "Build LECTDatabase C++ tests" ON)
 option(LECTDB_BUILD_TOOLS "Build LECTDatabase command-line tools" ON)
-set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
+set(LECTDB_ENVELOPE_MODULE_DIR
     "${CMAKE_CURRENT_SOURCE_DIR}/../link_interval_envelope"
     CACHE PATH "Path to the sibling link_interval_envelope module")
 
-if(NOT EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt"
+if(NOT EXISTS "${LECTDB_ENVELOPE_MODULE_DIR}/CMakeLists.txt"
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope/CMakeLists.txt")
-    set(LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR
+    set(LECTDB_ENVELOPE_MODULE_DIR
         "${CMAKE_CURRENT_SOURCE_DIR}/../link-interval-envelope"
         CACHE PATH "Path to the sibling link_interval_envelope module" FORCE)
 endif()
@@ -29,17 +29,17 @@ if(NOT TARGET link_interval_envelope::core AND NOT TARGET link_interval_envelope
 endif()
 
 if(NOT TARGET link_interval_envelope::core AND NOT TARGET link_interval_envelope_core)
-    if(EXISTS "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}/CMakeLists.txt")
+    if(EXISTS "${LECTDB_ENVELOPE_MODULE_DIR}/CMakeLists.txt")
         set(LIE_WITH_PYTHON OFF CACHE BOOL "Disable envelope Python bindings for nested LECTDatabase builds" FORCE)
         set(LIE_BUILD_TESTS OFF CACHE BOOL "Disable envelope tests for nested LECTDatabase builds" FORCE)
         set(LIE_BUILD_EXAMPLES OFF CACHE BOOL "Disable envelope examples for nested LECTDatabase builds" FORCE)
         add_subdirectory(
-            "${LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR}"
+            "${LECTDB_ENVELOPE_MODULE_DIR}"
             "${CMAKE_BINARY_DIR}/link_interval_envelope")
     else()
         message(FATAL_ERROR
             "link_interval_envelope::core was not found. Set "
-            "LECTDB_LINK_INTERVAL_ENVELOPE_SOURCE_DIR to the sibling envelope module.")
+            "LECTDB_ENVELOPE_MODULE_DIR to the sibling envelope module.")
     endif()
 endif()
 

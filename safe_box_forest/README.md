@@ -47,8 +47,8 @@ workspace/
 	safe_box_forest/
 ```
 
-Override the lect database path with `SBF_LECTDATABASE_SOURCE_DIR` when using
-another layout.
+For standalone SBF development outside this workspace, override the database
+module path with `SBF_LECT_DATABASE_MODULE_DIR`.
 
 ## Build And Test
 
@@ -63,8 +63,9 @@ BUILD_DIR=build_release CMAKE_BUILD_TYPE=Release bash tests/run_all.sh
 SBF_BUILD_EXPERIMENTS=ON bash tests/run_all.sh
 ```
 
-The test script builds C++, builds the Python extension, runs CTest, and checks
-that this module does not include v6-only headers or paths.
+The test script configures the workspace root, builds C++, builds the Python
+extension, runs CTest, and checks that this module does not include v6-only
+headers or paths.
 
 ## TRO 2026 Paper Quickstart
 

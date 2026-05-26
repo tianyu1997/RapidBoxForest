@@ -1,7 +1,6 @@
 # SBF Experiment Reproduction Guide
 
-This guide covers the public standalone repository at:
-https://github.com/tianyu1997/sbf-standalone
+This guide covers the SBF module inside the `RBFWorkspace` repository.
 
 ## 1. Prerequisites
 
@@ -9,19 +8,18 @@ Expected sibling layout:
 
 ```text
 workspace/
-  LECTDatabase/
   link_interval_envelope/
-  SBF/
+  lect_database/
+  safe_box_forest/
 ```
 
 Required tools:
 
-- CMake and a C++17-capable compiler.
+- CMake and a C++20-capable compiler.
 - Python 3 with the packages needed by this repository's Python bindings and experiment scripts.
 - XeLaTeX if you want to rebuild the paper PDF.
 
-If your dependencies live somewhere else, point SBF at them with
-`SBF_LECTDATABASE_SOURCE_DIR` and `SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR`.
+The workspace root CMake entrypoint wires the module dependencies in order.
 
 ## 2. Build And Validate The Repository
 

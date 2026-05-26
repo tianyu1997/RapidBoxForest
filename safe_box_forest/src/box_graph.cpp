@@ -156,22 +156,6 @@ double waypoint_path_length(const std::vector<Eigen::VectorXd>& waypoints) {
     return total;
 }
 
-std::unordered_map<std::uint64_t, const SegmentEdge*> segment_edge_map(const SegmentEdgeList& edges) {
-    std::unordered_map<std::uint64_t, const SegmentEdge*> map;
-    map.reserve(edges.size());
-    for (const auto& edge : edges) {
-        if (edge.source_box_id < 0 || edge.target_box_id < 0) {
-            continue;
-        }
-        const auto key = edge_pair_key(edge.source_box_id, edge.target_box_id);
-        auto it = map.find(key);
-        if (it == map.end() || edge.length < it->second->length) {
-            map[key] = &edge;
-        }
-    }
-    return map;
-}
-
 }  // namespace
 
 bool boxes_connected(const BoxNode& lhs, const BoxNode& rhs, double tolerance) {

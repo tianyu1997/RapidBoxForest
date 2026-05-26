@@ -76,8 +76,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-seed-indices", default="1,3,5,8,10", help="Comma-separated build/RNG seed indices for repeated trials on the same Shelf+IIWA scene. Empty string falls back to range(--scene-seeds).")
     parser.add_argument("--scene-profile", choices=["balanced", "legacy"], default="balanced", help="Deprecated compatibility option; ignored by the Shelf+IIWA Table II protocol.")
     parser.add_argument("--prewarm-budgets-ms", default="1000,2000,5000,10000,30000", help="Comma-separated blind prewarm budgets in milliseconds. For random_obstacle_ffb this is overridden by --random-ffb-scene-counts when that list is nonempty.")
-    parser.add_argument("--include-matched-cross", action=argparse.BooleanOptionalAction, default=True, help="Compatibility name for the main Warm budget rows: for each time budget, start from an empty LECT, blind-BFS-prewarm it, then time a fresh Shelf+IIWA target tree against the prewarm cache.")
-    parser.add_argument("--warm-prewarm-mode", choices=["bfs", "random_empty", "random_obstacle_ffb"], default="random_obstacle_ffb", help="Robot-space blind prewarm policy for Warm rows. bfs uses LECT breadth-first traversal in an empty scene. random_empty builds empty-scene coverage from random joint-space seeds. random_obstacle_ffb runs FFB-only seeds in random obstacle scenes without target obstacles, queries, or route traces.")
+    parser.add_argument("--include-matched-cross", action=argparse.BooleanOptionalAction, default=True, help="Compatibility name for the main Warm budget rows: for each time budget, build blind cache coverage, then time a fresh Shelf+IIWA target tree against that cache.")
+    parser.add_argument("--warm-prewarm-mode", choices=["random_empty", "random_obstacle_ffb"], default="random_obstacle_ffb", help="Robot-space blind prewarm policy for Warm rows. random_empty builds empty-scene coverage from random joint-space seeds. random_obstacle_ffb runs FFB-only seeds in random obstacle scenes without target obstacles, queries, or route traces.")
     parser.add_argument("--warm-target-mode", choices=WARM_TARGET_MODES, default=STRICT_WARM_MODE, help="Warm target protocol. strict preserves the route-locked same-route comparison and keeps external scoring disabled by default. guided_external keeps a fresh active target tree but lets blind prewarm evidence accelerate materialization and split scoring. guided_active loads the blind prewarm LECT as the active target tree.")
     parser.add_argument("--matched-trajectory-reuse", action=argparse.BooleanOptionalAction, default=True, help="For the main Warm rows, use a fresh target LECT tree so the target build follows the Cold scene/search route unless route audit says otherwise.")
     parser.add_argument("--cross-external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True, help="Warm target switch. Keep true for the paper-facing Warm row so blind prewarm evidence can serve target materialization without becoming the active target tree.")
@@ -97,10 +97,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
     parser.add_argument("--include-cross-diagnostic", action=argparse.BooleanOptionalAction, default=False, help="Run cross-scene cache-transfer diagnostics. These rows are not used by the main LECT replay table because endpoint-only cross transfer is not a stable build-time acceleration regime.")
-    parser.add_argument("--cross-prewarm-mode", choices=["route_empty", "bfs"], default="route_empty", help="Cross-scene offline prewarm protocol. route_empty builds the target query in an empty scene before timing the target obstacles; bfs keeps the old scene-independent global BFS LECT preheat.")
-    parser.add_argument("--prewarm-max-depth", type=int, default=-1, help="Maximum LECT depth for BFS prewarm; -1 uses --ffb-depth.")
-    parser.add_argument("--prewarm-max-nodes", type=int, default=0, help="Maximum nodes materialized by BFS prewarm; 0 means unlimited until time/depth budget.")
-    parser.add_argument("--prewarm-split-nodes", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cross-prewarm-mode", choices=["route_empty"], default="route_empty", help="Cross-scene offline prewarm protocol. route_empty builds the target query in an empty scene before timing the target obstacles.")
     parser.add_argument("--random-prewarm-seeds", type=int, default=1, help="Robot-space random coverage seeds per second for --warm-prewarm-mode random_empty when --random-prewarm-scale-with-budget is enabled; otherwise the fixed seed count for every budget.")
     parser.add_argument("--random-prewarm-scale-with-budget", action=argparse.BooleanOptionalAction, default=True, help="Scale random_empty seed count linearly with the prewarm budget.")
     parser.add_argument("--random-prewarm-sequence", choices=["random", "halton"], default="halton", help="Blind robot-space sample sequence for random_empty prewarm. halton is deterministic prefix-stable low-discrepancy coverage; random is pseudo-random uniform sampling.")
@@ -122,8 +119,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--external-scoring-min-iou", type=float, default=0.0015, help="Minimum interval IoU for scoring-only overlapping external evidence; set <=0 to disable overlap fallback.")
     parser.add_argument("--external-scoring-overlap-max-nodes", type=int, default=5000, help="Max external LECT nodes visited per scoring overlap lookup; set <=0 to disable overlap fallback.")
     parser.add_argument("--external-materialization-cover-ratio", type=float, default=0.0, help="Max volume ratio for conservative covering external evidence during materialization; set <=0 to require exact materialization evidence.")
-    parser.add_argument("--prewarm-scene-seeds", type=int, default=0, help="Deprecated compatibility field; BFS prewarm is scene-independent.")
-    parser.add_argument("--prewarm-seed-base", type=int, default=20270505)
     parser.add_argument("--cross-random-obstacles", type=int, default=10)
     parser.add_argument("--cross-random-seed-base", type=int, default=None, help="Deprecated compatibility option; by default evaluation scenes use --seed-base to match paper_15_random_anytime_tradeoff.py.")
     parser.add_argument("--cross-random-blocked-seeds", default="20262523")
@@ -217,32 +212,6 @@ def copy_cache_namespace(cache_root: Path, source_namespace: str, target_namespa
 
 def progress(message: str) -> None:
     print(f"[exp2] {message}", flush=True)
-
-
-def run_bfs_prewarm_trial(
-    args: argparse.Namespace,
-    *,
-    robot: Any,
-    variant: str,
-    difficulty: str,
-    budget_ms: float,
-    cache_namespace: str,
-) -> dict[str, Any]:
-    trial = run_random_empty_prewarm_trial(
-        args,
-        robot=robot,
-        variant=variant,
-        difficulty=difficulty,
-        budget_ms=budget_ms,
-        cache_namespace=cache_namespace,
-    )
-    trial["protocol"] = "bfs_prewarm"
-    trial["phase"] = "bfs_prewarm"
-    trial["scene_name"] = "empty"
-    trial.setdefault("scene_metadata", {})["scene_kind"] = "scene_independent_empty_scene_bootstrap"
-    trial.setdefault("scene_metadata", {})["compat_note"] = "Dedicated online-cache BFS warmup API removed; this protocol now uses blind empty-scene coverage bootstrap."
-    trial.setdefault("diagnostics", {})["compat.no_dedicated_bfs_warmup_api"] = 1.0
-    return trial
 
 
 def random_robot_seeds(robot: Any, count: int, seed: int) -> list[list[float]]:
@@ -970,17 +939,7 @@ def main() -> int:
                 for budget_ms in budgets_ms:
                     label = budget_label(budget_ms)
                     prewarm_namespace = safe_namespace("paper2", args.cache_run_id, variant, difficulty, label, f"blind_{args.warm_prewarm_mode}_prewarm")
-                    if args.warm_prewarm_mode == "bfs":
-                        prewarm_trial = run_bfs_prewarm_trial(
-                            args,
-                            robot=robot,
-                            variant=variant,
-                            difficulty=difficulty,
-                            budget_ms=float(budget_ms),
-                            cache_namespace=prewarm_namespace,
-                        )
-                        prewarm_protocol = "scene_independent_lect_bfs"
-                    elif args.warm_prewarm_mode == "random_empty":
+                    if args.warm_prewarm_mode == "random_empty":
                         prewarm_trial = run_random_empty_prewarm_trial(
                             args,
                             robot=robot,
@@ -1010,7 +969,7 @@ def main() -> int:
                     prewarm_cache_metrics = cache_metrics(args.cache_root, prewarm_namespace)
 
                     for seed_index, target_scene_name, target_scene_label, obstacles, metadata, scene_seeds, scene_queries in scenes:
-                        warm_namespace = safe_namespace("paper2", args.cache_run_id, variant, difficulty, label, f"eval_seed{seed_index}", f"blind_bfs_{warm_target_mode}")
+                        warm_namespace = safe_namespace("paper2", args.cache_run_id, variant, difficulty, label, f"eval_seed{seed_index}", f"blind_cache_{warm_target_mode}")
                         copy_cache_namespace(args.cache_root, prewarm_namespace, warm_namespace)
                         if warm_target_mode == STRICT_WARM_MODE:
                             warm_protocol = "warm_budget"
@@ -1096,59 +1055,24 @@ def main() -> int:
             if args.include_cross_diagnostic:
                 for budget_ms in budgets_ms:
                     label = budget_label(budget_ms)
-                    if args.cross_prewarm_mode == "bfs":
-                        prewarm_namespace = safe_namespace("paper2", args.cache_run_id, variant, difficulty, label, "bfs_prewarm")
-                        if float(budget_ms) > 0.0:
-                            prewarm_trial = run_bfs_prewarm_trial(
-                                args,
-                                robot=robot,
-                                variant=variant,
-                                difficulty=difficulty,
-                                budget_ms=float(budget_ms),
-                                cache_namespace=prewarm_namespace,
-                            )
-                        else:
-                            (args.cache_root / prewarm_namespace).mkdir(parents=True, exist_ok=True)
-                            prewarm_trial = run_bfs_prewarm_trial(
-                                args,
-                                robot=robot,
-                                variant=variant,
-                                difficulty=difficulty,
-                                budget_ms=0.0,
-                                cache_namespace=prewarm_namespace,
-                            )
-                        prewarm_trial["phase"] = "bfs_prewarm"
-                        prewarm_trial["budget_ms"] = float(budget_ms)
-                        prewarm_trial["budget_label"] = label
-                        all_trials.append(prewarm_trial)
-                        prewarm_cache_metrics = cache_metrics(args.cache_root, prewarm_namespace)
-
                     for seed_index, target_scene_name, target_scene_label, obstacles, metadata, scene_seeds, scene_queries in scenes:
                         reuse_namespace = safe_namespace("paper2", args.cache_run_id, variant, difficulty, label, f"eval_seed{seed_index}", "cross_scene_reuse")
-                        if args.cross_prewarm_mode == "bfs":
-                            copy_cache_namespace(args.cache_root, prewarm_namespace, reuse_namespace)
-                            prewarm_trial_for_seed = prewarm_trial
-                            prewarm_cache_metrics = cache_metrics(args.cache_root, prewarm_namespace)
-                            prewarm_protocol = "scene_independent_lect_bfs"
-                            scene_independent = True
-                            source_cache_namespace = prewarm_namespace
-                        else:
-                            prewarm_trial_for_seed = run_route_empty_prewarm_trial(
-                                args,
-                                robot=robot,
-                                variant=variant,
-                                difficulty=difficulty,
-                                seed_index=seed_index,
-                                budget_ms=float(budget_ms),
-                                cache_namespace=reuse_namespace,
-                                seeds=scene_seeds,
-                                queries=scene_queries,
-                            )
-                            all_trials.append(prewarm_trial_for_seed)
-                            prewarm_cache_metrics = cache_metrics(args.cache_root, reuse_namespace)
-                            prewarm_protocol = "empty_scene_same_query_prewarm"
-                            scene_independent = False
-                            source_cache_namespace = reuse_namespace
+                        prewarm_trial_for_seed = run_route_empty_prewarm_trial(
+                            args,
+                            robot=robot,
+                            variant=variant,
+                            difficulty=difficulty,
+                            seed_index=seed_index,
+                            budget_ms=float(budget_ms),
+                            cache_namespace=reuse_namespace,
+                            seeds=scene_seeds,
+                            queries=scene_queries,
+                        )
+                        all_trials.append(prewarm_trial_for_seed)
+                        prewarm_cache_metrics = cache_metrics(args.cache_root, reuse_namespace)
+                        prewarm_protocol = "empty_scene_same_query_prewarm"
+                        scene_independent = False
+                        source_cache_namespace = reuse_namespace
                         prewarm_info = {
                             "protocol": prewarm_protocol,
                             "difficulty": difficulty,
@@ -1315,7 +1239,7 @@ def main() -> int:
                     label = budget_label(budget_ms)
                     prewarm_rows = [
                         trial for trial in all_trials
-                        if trial.get("variant") == variant and trial.get("difficulty") == difficulty and trial.get("phase") in {"bfs_prewarm", "route_empty_prewarm"} and trial.get("budget_label") == label
+                        if trial.get("variant") == variant and trial.get("difficulty") == difficulty and trial.get("phase") == "route_empty_prewarm" and trial.get("budget_label") == label
                     ]
                     reuse_rows = [
                         trial for trial in all_trials
@@ -1385,9 +1309,6 @@ def main() -> int:
             "stateless_materialization_context": bool(args.stateless_materialization_context),
             "include_cross_diagnostic": bool(args.include_cross_diagnostic),
             "cross_prewarm_mode": str(args.cross_prewarm_mode),
-            "prewarm_max_depth": int(args.prewarm_max_depth if args.prewarm_max_depth >= 0 else args.ffb_depth),
-            "prewarm_max_nodes": int(args.prewarm_max_nodes),
-            "prewarm_split_nodes": bool(args.prewarm_split_nodes),
             "random_prewarm_seeds": int(args.random_prewarm_seeds),
             "random_prewarm_scale_with_budget": bool(args.random_prewarm_scale_with_budget),
             "random_prewarm_sequence": str(args.random_prewarm_sequence),
@@ -1410,8 +1331,6 @@ def main() -> int:
             "external_scoring_overlap_max_nodes": int(args.external_scoring_overlap_max_nodes),
             "external_materialization_cover_ratio": float(args.external_materialization_cover_ratio),
             "cross_detach_cache_tree": bool(args.cross_detach_cache_tree),
-            "prewarm_scene_seeds_deprecated": max(0, int(args.prewarm_scene_seeds)),
-            "prewarm_seed_base_deprecated": int(args.prewarm_seed_base),
             "disjoint_prewarm": True,
             "prewarm_starts_empty_per_budget": True,
             "prewarm_is_blind_to_target_route": True,

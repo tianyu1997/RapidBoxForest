@@ -76,19 +76,8 @@ struct RBFPlanningConfig {
 	bool enable_merger = true;
 	bool enable_connector = true;
 
-	/// RSS threshold for mid-prewarm disk spill in database prewarm tools.
-	/// During structural pre-split, this also bounds the estimated number of new
-	/// in-memory tree nodes; during materialisation, evidence is spilled to disk
-	/// when resident memory exceeds this value. 0 = use the built-in default.
-	std::size_t prewarm_rss_threshold_bytes = 0;
-	/// Optional hard cap for total LECT tree nodes during prewarm_split.
-	/// 0 = derive a conservative cap from prewarm_rss_threshold_bytes.
-	std::size_t prewarm_max_tree_nodes = 0;
-	/// Conservative in-memory estimate used to derive prewarm_max_tree_nodes.
-	/// Includes tree columns, metadata, hot flags, and split-event overhead.
-	std::size_t prewarm_tree_bytes_per_node_estimate = 512;
 	/// RSS threshold for session-level evidence spill during online cache updates.
-	/// 0 = disabled outside explicit prewarm spilling.
+	/// 0 = disabled.
 	std::size_t database_evidence_spill_rss_threshold_bytes = 0;
 	/// Check RSS after this many dirty evidence updates when online spill is enabled.
 	std::uint64_t database_evidence_spill_check_interval_updates = 4096;

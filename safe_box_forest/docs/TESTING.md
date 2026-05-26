@@ -1,6 +1,6 @@
 # Testing
 
-Run the test suite from this module root:
+Run the integrated test suite from this module root:
 
 ```bash
 bash tests/run_all.sh
@@ -10,7 +10,7 @@ Useful environment variables:
 
 - `BUILD_DIR`: override build directory.
 - `PYTHON_EXECUTABLE`: choose the Python interpreter used by CMake/pybind11.
-- `SBF_LECTDATABASE_SOURCE_DIR`: path to the sibling `lect_database` module.
+- `RBF_WITH_PYTHON`: build Python bindings for enabled workspace modules.
 
-The test script also runs an independence grep check to catch accidental
-includes of v6-only forest/planner/ffb/lect headers.
+The test script configures the workspace root and also runs an independence grep
+check to catch accidental includes of v6-only forest/planner/ffb/lect headers.

@@ -8,6 +8,7 @@ Exported targets:
 
 - `LECTDatabase::core`
 - `LECTDatabase::sbf_adapter`
+- `LECTDatabase::online_cache`
 
 Dependency direction:
 
@@ -31,7 +32,7 @@ Current status:
 - Grid/voxel compatibility fields have been removed from the adapter-facing oracle API.
 - Sibling `safe_box_forest` now configures, builds, and passes its current test suite against this module.
 - SafeBoxForest now requests worker sessions through the generic oracle seam and reuses this package's scene/collision implementation.
-- The remaining work is the runtime backend switch inside SafeBoxForest from legacy `lect::LECT` ownership to direct `lect_database::LectDatabase` ownership, after the SBF split-policy options are unified with the database split-policy descriptor.
+- SafeBoxForest consumes this module through the database-backed oracle and online-cache targets in the integrated workspace build.
 
 Validation snapshot:
 

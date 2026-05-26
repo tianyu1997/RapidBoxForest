@@ -387,17 +387,6 @@ bool parse_integer(std::string_view text, Integer* value) {
     return true;
 }
 
-bool parse_named_u64_line(std::string_view line,
-                          std::string_view expected_name,
-                          std::uint64_t* value) {
-    line = trim_line_ending(line);
-    const auto pos = line.find('=');
-    if (pos == std::string_view::npos || line.substr(0, pos) != expected_name) {
-        return false;
-    }
-    return parse_integer(line.substr(pos + 1), value);
-}
-
 struct ParsedEvidenceHeader {
     EvidenceKey key;
     bool child_hull = false;
@@ -405,16 +394,6 @@ struct ParsedEvidenceHeader {
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
     std::string_view payload_text;
-};
-
-struct ParsedEvidenceIndexEntry {
-    EvidenceKey key;
-    std::uint64_t offset = 0;
-    std::uint32_t size = 0;
-    bool child_hull = false;
-    bool unavailable = false;
-    std::uint64_t generation = 0;
-    std::uint64_t checksum = 0;
 };
 
 EvidenceRecordView make_evidence_view(const std::shared_ptr<const EvidenceRecord>& record) {
@@ -636,80 +615,6 @@ std::optional<EvidenceRecord> parse_evidence_record(std::string_view line) {
     record.checksum = header->checksum;
     record.payload = parse_payload(header->payload_text);
     return record;
-}
-
-std::string serialize_evidence_index_entry(const EvidenceKey& key,
-                                           std::uint64_t offset,
-                                           std::uint32_t size,
-                                           bool child_hull,
-                                           bool unavailable,
-                                           std::uint64_t generation,
-                                           std::uint64_t checksum) {
-    std::ostringstream out;
-    out << key.node_id << '|'
-        << key.sector << '|'
-        << static_cast<int>(key.channel) << '|'
-        << static_cast<int>(key.endpoint_source) << '|'
-        << static_cast<int>(key.payload_kind) << '|'
-        << offset << '|'
-        << size << '|'
-        << (child_hull ? 1 : 0) << '|'
-        << (unavailable ? 1 : 0) << '|'
-        << generation << '|'
-        << checksum;
-    return out.str();
-}
-
-std::optional<ParsedEvidenceIndexEntry> parse_evidence_index_entry(std::string_view line) {
-    line = trim_line_ending(line);
-    std::string_view field;
-    ParsedEvidenceIndexEntry entry;
-    int channel = 0;
-    int endpoint_source = 0;
-    int payload_kind = 0;
-    int child_hull = 0;
-    int unavailable = 0;
-
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &entry.key.node_id)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &entry.key.sector)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &channel)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &endpoint_source)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &payload_kind)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &entry.offset)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &entry.size)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &child_hull)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &unavailable)) {
-        return std::nullopt;
-    }
-    if (!take_field(&line, '|', &field) || !parse_integer(field, &entry.generation)) {
-        return std::nullopt;
-    }
-    if (!parse_integer(line, &entry.checksum)) {
-        return std::nullopt;
-    }
-
-    entry.key.channel = static_cast<EvidenceChannel>(channel);
-    entry.key.endpoint_source = static_cast<EndpointSource>(endpoint_source);
-    entry.key.payload_kind = static_cast<EvidencePayloadKind>(payload_kind);
-    entry.child_hull = child_hull != 0;
-    entry.unavailable = unavailable != 0;
-    return entry;
 }
 
 bool payloads_equal(std::span<const float> lhs, std::span<const float> rhs) {

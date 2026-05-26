@@ -21,7 +21,7 @@ def detect_lie_root() -> Path:
     try:
         import os
 
-        env_value = os.environ.get("SBF_LINK_INTERVAL_ENVELOPE_SOURCE_DIR")
+        env_value = os.environ.get("RBF_ENVELOPE_MODULE_DIR")
     except Exception:
         env_value = None
     if env_value:

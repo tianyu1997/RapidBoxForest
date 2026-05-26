@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-ci -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DRBF_BUILD_ENVELOPE=ON
+          -DRBF_BUILD_LECT_DATABASE=ON
+          -DRBF_BUILD_SBF=ON
+          -DRBF_BUILD_TESTS=ON
+          -DRBF_BUILD_TOOLS=ON
+          -DRBF_WITH_PYTHON=OFF
+
+      - name: Build
+        run: cmake --build build-ci
+
+      - name: Test
+        run: ctest --test-dir build-ci --output-on-failure
+
+      - name: Python syntax
+        run: python -m compileall -q safe_box_forest/python safe_box_forest/experiments

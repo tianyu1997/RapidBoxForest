@@ -1737,7 +1737,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
             connector_config.n_threads = config_.runtime.n_threads;
         }
         IslandConnector connector(*oracle_, robot_, checker, connector_config);
-        next_id = next_box_id();
+        int next_id = next_box_id();
         const auto connector_result = connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
         profile.bridge_boxes_added = connector_result.bridge_boxes_added;
         profile.segment_edges_added = connector_result.segment_edges_added;

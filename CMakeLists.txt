@@ -15,6 +15,10 @@ option(RBF_BUILD_SBF "Build the safe_box_forest module" OFF)
 option(RBF_WITH_PYTHON "Build Python bindings for enabled modules" OFF)
 option(RBF_BUILD_EXPERIMENTS "Build optional module experiments" OFF)
 
+if(RBF_BUILD_TESTS)
+    enable_testing()
+endif()
+
 if(RBF_BUILD_ENVELOPE OR RBF_BUILD_LECT_DATABASE OR RBF_BUILD_SBF)
     set(LIE_BUILD_TESTS ${RBF_BUILD_TESTS} CACHE BOOL "Build C++ smoke tests" FORCE)
     set(LIE_WITH_PYTHON ${RBF_WITH_PYTHON} CACHE BOOL "Build Python extension" FORCE)
