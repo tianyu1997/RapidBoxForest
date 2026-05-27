@@ -11,8 +11,8 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_rrt_connect import path_length, segment_free  # noqa: E402
-from common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import path_length, segment_free  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
 from sbf.marcucci import make_combined_obstacles, make_combined_queries, load_iiwa14_robot  # noqa: E402
 
 

@@ -256,35 +256,49 @@ void test_external_evidence_reuses_when_handles_differ() {
         "planning_database_oracle_ifk",
         "planning_database_oracle_link_iaabb");
 
-    ld::LectDatabase active_database;
-    ld::LectDatabase external_database;
+    ld::NodeId active_target = ld::kInvalidNodeId;
+    ld::NodeId active_parent = ld::kInvalidNodeId;
+    ld::NodeId external_target = ld::kInvalidNodeId;
     std::string reason;
-    require(active_database.open(active_config, &reason));
-    require(external_database.open(external_config, &reason));
+    {
+        ld::LectDatabase active_database;
+        ld::LectDatabase external_database;
+        require(active_database.open(active_config, &reason));
+        require(external_database.open(external_config, &reason));
 
-    const auto active_root_children = active_database.split_leaf(active_database.root_node());
-    require(ld::valid_node_id(active_root_children.first));
-    require(ld::valid_node_id(active_root_children.second));
-    const auto active_left_children = active_database.split_leaf(active_root_children.first);
-    require(ld::valid_node_id(active_left_children.first));
-    const auto active_right_children = active_database.split_leaf(active_root_children.second);
-    const ld::NodeId active_target = active_right_children.first;
+        const auto active_root_children = active_database.split_leaf(active_database.root_node());
+        require(ld::valid_node_id(active_root_children.first));
+        require(ld::valid_node_id(active_root_children.second));
+        const auto active_left_children = active_database.split_leaf(active_root_children.first);
+        require(ld::valid_node_id(active_left_children.first));
+        const auto active_right_children = active_database.split_leaf(active_root_children.second);
+        active_target = active_right_children.first;
+        active_parent = active_root_children.second;
 
-    const auto external_root_children = external_database.split_leaf(external_database.root_node());
-    require(ld::valid_node_id(external_root_children.first));
-    require(ld::valid_node_id(external_root_children.second));
-    const auto external_right_children = external_database.split_leaf(external_root_children.second);
-    const ld::NodeId external_target = external_right_children.first;
-    require(active_target != external_target);
+        const auto external_root_children = external_database.split_leaf(external_database.root_node());
+        require(ld::valid_node_id(external_root_children.first));
+        require(ld::valid_node_id(external_root_children.second));
+        const auto external_right_children = external_database.split_leaf(external_root_children.second);
+        external_target = external_right_children.first;
+        require(active_target != external_target);
 
-    ld::EvidenceRecord external_record;
-    external_record.key.node_id = external_target;
-    external_record.key.sector = ld::kPrimarySector;
-    external_record.key.channel = ld::EvidenceChannel::Safe;
-    external_record.key.endpoint_source = rbf::EndpointSource::IFK;
-    external_record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
-    external_record.payload.assign(12, 0.0f);
-    require(external_database.put_evidence(std::move(external_record)));
+        ld::EvidenceRecord external_record;
+        external_record.key.node_id = external_target;
+        external_record.key.sector = ld::kPrimarySector;
+        external_record.key.channel = ld::EvidenceChannel::Safe;
+        external_record.key.endpoint_source = rbf::EndpointSource::IFK;
+        external_record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+        external_record.payload.assign(12, 0.0f);
+        require(external_database.put_evidence(std::move(external_record)));
+
+        require(active_database.checkpoint());
+        require(external_database.checkpoint());
+    }
+
+    auto reopened_active = ld::LectDatabase::open_existing(active_dir, false, &reason);
+    auto reopened_external = ld::LectDatabase::open_existing(external_dir, true, &reason);
+    require(reopened_active.has_value());
+    require(reopened_external.has_value());
 
     rbf::EndpointSourceConfig endpoint_config;
     endpoint_config.source = rbf::EndpointSource::IFK;
@@ -297,20 +311,20 @@ void test_external_evidence_reuses_when_handles_differ() {
     const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
     rbf::DatabaseBoxOracle oracle(
         robot,
-        active_database,
+        *reopened_active,
         rbf::Scene(obstacles),
         endpoint_config,
         envelope_config,
         validation_config,
-        &external_database);
+        &*reopened_external);
 
     const auto target_box = oracle.node_intervals(static_cast<rbf::OracleNodeId>(active_target));
     (void)oracle.validate_node(static_cast<rbf::OracleNodeId>(active_target),
                                target_box,
-                               active_database.topology(active_root_children.second).split_dim);
+                               reopened_active->topology(active_parent).split_dim);
     require(oracle.counters().materialization_reused_external_evidence == 1);
     require(oracle.counters().materializations == 0);
-    require(active_database.evidence_count() == 0);
+    require(reopened_active->evidence_count() == 0);
     require(oracle.last_validation_detail().reused_external_evidence);
 
     std::filesystem::remove_all(active_dir);

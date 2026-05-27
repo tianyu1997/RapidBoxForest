@@ -13,9 +13,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_anytime_tradeoff import euclidean_path_length, path_passes_post_audit  # noqa: E402
-from common_sbf_config import sbf  # noqa: E402
-from common_scene_sampling import make_random_scene, make_robot  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import euclidean_path_length, path_passes_post_audit  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import sbf  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import make_random_scene, make_robot  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

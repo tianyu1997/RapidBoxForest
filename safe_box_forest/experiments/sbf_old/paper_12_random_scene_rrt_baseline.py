@@ -10,9 +10,9 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
-from common_rrt_connect import rrt_connect  # noqa: E402
-from common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, make_random_scene, make_robot  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import rrt_connect  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, make_random_scene, make_robot  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

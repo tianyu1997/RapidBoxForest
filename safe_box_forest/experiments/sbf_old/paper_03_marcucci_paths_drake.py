@@ -10,7 +10,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
     ROOT,
     add_common_sbf_args,
     box_volume_sum,
@@ -20,7 +20,7 @@ from common_sbf_config import (  # noqa: E402
     sbf,
     write_json,
 )
-from collision_refine import RefineConfig, refine_path_rows  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.collision_refine import RefineConfig, refine_path_rows  # noqa: E402
 from sbf.marcucci import (  # noqa: E402
     make_bins_obstacles,
     make_combined_obstacles,

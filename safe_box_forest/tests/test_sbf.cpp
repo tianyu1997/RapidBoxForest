@@ -46,35 +46,35 @@ public:
     AcceptAllOracle() : root_{{0.0, 3.0}, {0.0, 1.0}} {}
 
     int n_dims() const override { return static_cast<int>(root_.size()); }
-    int root_node() const override { return 0; }
+    rbf::OracleNodeId root_node() const override { return 0; }
     const std::vector<rbf::Interval>& root_intervals() const override { return root_; }
-    std::vector<rbf::Interval> node_intervals(int) const override { return root_; }
-    bool contains_point(int, const Eigen::Ref<const Eigen::VectorXd>&) const override { return true; }
-    bool is_leaf(int) const override { return true; }
-    int depth(int) const override { return 0; }
-    int split_dim(int) const override { return 0; }
-    double split_value(int) const override { return 0.0; }
-    int left_child(int) const override { return -1; }
-    int right_child(int) const override { return -1; }
-    rbf::SplitNodeResult split_node(int,
+    std::vector<rbf::Interval> node_intervals(rbf::OracleNodeId) const override { return root_; }
+    bool contains_point(rbf::OracleNodeId, const Eigen::Ref<const Eigen::VectorXd>&) const override { return true; }
+    bool is_leaf(rbf::OracleNodeId) const override { return true; }
+    int depth(rbf::OracleNodeId) const override { return 0; }
+    int split_dim(rbf::OracleNodeId) const override { return 0; }
+    double split_value(rbf::OracleNodeId) const override { return 0.0; }
+    rbf::OracleNodeId left_child(rbf::OracleNodeId) const override { return -1; }
+    rbf::OracleNodeId right_child(rbf::OracleNodeId) const override { return -1; }
+    rbf::SplitNodeResult split_node(rbf::OracleNodeId,
                                     const std::vector<rbf::Interval>&,
                                     int,
                                     const rbf::OracleSplitOptions&) override { return {}; }
-    rbf::SplitNodeResult split_node_at(int, int, double) override { return {}; }
+    rbf::SplitNodeResult split_node_at(rbf::OracleNodeId, int, double) override { return {}; }
     bool point_in_collision(const Eigen::Ref<const Eigen::VectorXd>&) const override { return false; }
-    rbf::BoxValidation validate_node(int, const std::vector<rbf::Interval>&, int = -1) override { return rbf::BoxValidation::Free; }
+    rbf::BoxValidation validate_node(rbf::OracleNodeId, const std::vector<rbf::Interval>&, int = -1) override { return rbf::BoxValidation::Free; }
     bool validate_intervals(const std::vector<rbf::Interval>&) override {
         interval_validations += 1;
         counters_.interval_validations += 1;
         return true;
     }
-    bool is_reserved(int) const override { return false; }
-    std::optional<int> reservation_owner(int) const override { return std::nullopt; }
-    void reserve_node(int, int) override {}
-    void release_node(int) override {}
+    bool is_reserved(rbf::OracleNodeId) const override { return false; }
+    std::optional<int> reservation_owner(rbf::OracleNodeId) const override { return std::nullopt; }
+    void reserve_node(rbf::OracleNodeId, int) override {}
+    void release_node(rbf::OracleNodeId) override {}
     void release_box(int box_id) override { released_boxes.push_back(box_id); }
     void clear_reservations() override {}
-    int select_unexplored_node() const override { return -1; }
+    rbf::OracleNodeId select_unexplored_node() const override { return -1; }
     const rbf::OracleCounters& counters() const override { return counters_; }
     void reset_counters() override { counters_ = {}; }
 
@@ -83,6 +83,170 @@ public:
 
 private:
     std::vector<rbf::Interval> root_;
+    rbf::OracleCounters counters_;
+};
+
+class ThresholdOracle final : public rbf::BoxOracle {
+public:
+    explicit ThresholdOracle(int free_depth,
+                             int max_tree_depth = 16,
+                             rbf::BoxValidation blocked_validation = rbf::BoxValidation::Unknown)
+        : free_depth_(free_depth),
+          max_tree_depth_(std::max(max_tree_depth, free_depth + 1)),
+          blocked_validation_(blocked_validation) {
+        Node root;
+        root.depth = 0;
+        root.intervals = {{0.0, 1.0}, {0.0, 1.0}};
+        nodes_.push_back(root);
+    }
+
+    int n_dims() const override { return 2; }
+    rbf::OracleNodeId root_node() const override { return 0; }
+    int max_tree_depth() const override { return max_tree_depth_; }
+    const std::vector<rbf::Interval>& root_intervals() const override {
+        return nodes_.front().intervals;
+    }
+    std::vector<rbf::Interval> node_intervals(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].intervals;
+    }
+    bool contains_point(rbf::OracleNodeId node,
+                        const Eigen::Ref<const Eigen::VectorXd>& q) const override {
+        if (q.size() != n_dims()) {
+            return false;
+        }
+        const auto& intervals = nodes_[static_cast<std::size_t>(node)].intervals;
+        for (int dim = 0; dim < q.size(); ++dim) {
+            const auto& interval = intervals[static_cast<std::size_t>(dim)];
+            if (q[dim] < interval.lo || q[dim] > interval.hi) {
+                return false;
+            }
+        }
+        return true;
+    }
+    bool is_leaf(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].leaf;
+    }
+    int depth(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].depth;
+    }
+    int split_dim(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].split_dim;
+    }
+    double split_value(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].split_value;
+    }
+    rbf::OracleNodeId left_child(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].left;
+    }
+    rbf::OracleNodeId right_child(rbf::OracleNodeId node) const override {
+        return nodes_[static_cast<std::size_t>(node)].right;
+    }
+    rbf::SplitNodeResult split_node(rbf::OracleNodeId node,
+                                    const std::vector<rbf::Interval>& intervals,
+                                    int,
+                                    const rbf::OracleSplitOptions&) override {
+        if (!is_leaf(node) || depth(node) >= max_tree_depth_ - 1) {
+            return {};
+        }
+        const int dim = depth(node) % n_dims();
+        const auto& interval = intervals[static_cast<std::size_t>(dim)];
+        const double split = 0.5 * (interval.lo + interval.hi);
+        return split_node_impl(node, dim, split, intervals);
+    }
+    rbf::SplitNodeResult split_node_at(rbf::OracleNodeId node, int split_dim, double split_value) override {
+        if (!is_leaf(node) || depth(node) >= max_tree_depth_ - 1) {
+            return {};
+        }
+        return split_node_impl(node,
+                               split_dim,
+                               split_value,
+                               nodes_[static_cast<std::size_t>(node)].intervals);
+    }
+    bool point_in_collision(const Eigen::Ref<const Eigen::VectorXd>&) const override { return false; }
+    rbf::BoxValidation validate_node(rbf::OracleNodeId node,
+                                     const std::vector<rbf::Interval>&,
+                                     int = -1) override {
+        counters_.node_validations += 1;
+        if (depth(node) >= free_depth_) {
+            counters_.certified_free += 1;
+            return rbf::BoxValidation::Free;
+        }
+        if (blocked_validation_ == rbf::BoxValidation::Occupied) {
+            counters_.collision_possible += 1;
+            return rbf::BoxValidation::Occupied;
+        }
+        counters_.collision_possible += 1;
+        return rbf::BoxValidation::Unknown;
+    }
+    bool validate_intervals(const std::vector<rbf::Interval>&) override { return true; }
+    bool is_reserved(rbf::OracleNodeId) const override { return false; }
+    std::optional<int> reservation_owner(rbf::OracleNodeId) const override { return std::nullopt; }
+    void reserve_node(rbf::OracleNodeId, int) override {}
+    void release_node(rbf::OracleNodeId) override {}
+    void release_box(int) override {}
+    void clear_reservations() override {}
+    rbf::OracleNodeId select_unexplored_node() const override { return -1; }
+    const rbf::OracleCounters& counters() const override { return counters_; }
+    void reset_counters() override { counters_ = {}; }
+
+private:
+    struct Node {
+        int depth = 0;
+        bool leaf = true;
+        int split_dim = 0;
+        double split_value = 0.0;
+        rbf::OracleNodeId left = rbf::kInvalidOracleNodeId;
+        rbf::OracleNodeId right = rbf::kInvalidOracleNodeId;
+        std::vector<rbf::Interval> intervals;
+    };
+
+    rbf::SplitNodeResult split_node_impl(rbf::OracleNodeId node,
+                                         int split_dim,
+                                         double split_value,
+                                         const std::vector<rbf::Interval>& intervals) {
+        if (split_dim < 0 || split_dim >= static_cast<int>(intervals.size())) {
+            return {};
+        }
+        const auto& interval = intervals[static_cast<std::size_t>(split_dim)];
+        if (split_value <= interval.lo || split_value >= interval.hi) {
+            return {};
+        }
+
+        Node left_node;
+        left_node.depth = depth(node) + 1;
+        left_node.intervals = intervals;
+        left_node.intervals[static_cast<std::size_t>(split_dim)].hi = split_value;
+
+        Node right_node;
+        right_node.depth = depth(node) + 1;
+        right_node.intervals = intervals;
+        right_node.intervals[static_cast<std::size_t>(split_dim)].lo = split_value;
+
+        const auto left = static_cast<rbf::OracleNodeId>(nodes_.size());
+        nodes_.push_back(std::move(left_node));
+        const auto right = static_cast<rbf::OracleNodeId>(nodes_.size());
+        nodes_.push_back(std::move(right_node));
+
+        auto& current = nodes_[static_cast<std::size_t>(node)];
+        current.leaf = false;
+        current.split_dim = split_dim;
+        current.split_value = split_value;
+        current.left = left;
+        current.right = right;
+        return {
+            .split = true,
+            .node = node,
+            .left = left,
+            .right = right,
+            .split_dim = split_dim,
+            .split_value = split_value,
+        };
+    }
+
+    int free_depth_ = 0;
+    int max_tree_depth_ = 0;
+    rbf::BoxValidation blocked_validation_ = rbf::BoxValidation::Unknown;
+    std::vector<Node> nodes_;
     rbf::OracleCounters counters_;
 };
 
@@ -102,6 +266,12 @@ std::set<std::pair<int, int>> edge_set(const rbf::AdjacencyGraph& graph) {
         }
     }
     return edges;
+}
+
+double diagnostic_value(const std::unordered_map<std::string, double>& diagnostics,
+                        const std::string& key) {
+    const auto it = diagnostics.find(key);
+    return it == diagnostics.end() ? 0.0 : it->second;
 }
 
 void test_runtime_context() {
@@ -299,6 +469,137 @@ void test_query_audit_gated_repair_without_graph() {
     assert(query.repair_count > 0);
 }
 
+void test_find_free_box_binary_accepts_start_depth() {
+    ThresholdOracle oracle(2, 10);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    options.start_depth = 2;
+    options.max_depth = 6;
+
+    const auto result = service.find(seed, options);
+    assert(result.found);
+    assert(oracle.depth(result.node) == 2);
+    assert(result.decisions == 1);
+}
+
+void test_find_free_box_binary_returns_shallowest_free_depth() {
+    ThresholdOracle oracle(5, 12);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    options.start_depth = 2;
+    options.max_depth = 8;
+
+    const auto result = service.find(seed, options);
+    assert(result.found);
+    assert(oracle.depth(result.node) == 5);
+    assert(result.decisions == 5);
+}
+
+void test_find_free_box_binary_fails_when_max_depth_not_free() {
+    ThresholdOracle oracle(9, 12);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    options.start_depth = 2;
+    options.max_depth = 8;
+
+    const auto result = service.find(seed, options);
+    assert(!result.found);
+    assert(result.fail_code == 2);
+    assert(result.hit_unknown_depth_cap);
+    assert(oracle.depth(result.node) == 8);
+    assert(result.decisions == 2);
+}
+
+void test_find_free_box_binary_treats_occupied_as_nonfree() {
+    ThresholdOracle oracle(4, 12, rbf::BoxValidation::Occupied);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    options.start_depth = 1;
+    options.max_depth = 6;
+
+    const auto result = service.find(seed, options);
+    assert(result.found);
+    assert(oracle.depth(result.node) == 4);
+}
+
+void test_find_free_box_linear_mode_ignores_start_depth() {
+    ThresholdOracle oracle(3, 10);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.start_depth = 5;
+    options.max_depth = 6;
+
+    const auto result = service.find(seed, options);
+    assert(result.found);
+    assert(oracle.depth(result.node) == 3);
+    assert(result.decisions == 4);
+}
+
+void test_build_subtractive_hits_domain_binary_ffb() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_subtractive_domain_binary");
+    config.enable_merger = false;
+    config.enable_connector = false;
+    config.runtime.mode = rbf::ExecutionMode::Inline;
+    config.grower.mode = rbf::GrowerConfig::Mode::Frontwave;
+    config.grower.max_boxes = 24;
+    config.grower.max_consecutive_miss = 256;
+    config.grower.find_free_box.max_depth = 6;
+    config.grower.find_free_box.start_depth = 2;
+    config.grower.find_free_box.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    config.dynamic_update.dirty_region_padding = 0.0;
+    config.dynamic_update.dirty_seed_limit = 16;
+
+    rbf::RBFPlanningForest forest(robot, config);
+
+    rbf::SubtractiveObstacleGroup group;
+    group.name = "domain_binary_regrow";
+    group.carving_obstacles = {
+        rbf::Obstacle(0.14f, -0.37f, -0.1f, 0.46f, -0.13f, 0.1f),
+    };
+    group.validation_obstacles = group.carving_obstacles;
+
+    std::vector<Eigen::VectorXd> seeds;
+    for (const std::array<double, 2>& values : {
+             std::array<double, 2>{0.0, 0.0},
+             std::array<double, 2>{0.4, -0.2},
+             std::array<double, 2>{-0.4, 0.2},
+             std::array<double, 2>{0.6, 0.3},
+             std::array<double, 2>{-0.6, -0.3},
+         }) {
+        Eigen::VectorXd seed(2);
+        seed << values[0], values[1];
+        seeds.push_back(seed);
+    }
+
+    const auto profile = forest.build_subtractive({group}, seeds);
+    assert(profile.final_boxes > 0);
+    assert(diagnostic_value(profile.diagnostics, "subtractive.regrow_seeds") > 0.0);
+    assert(diagnostic_value(profile.diagnostics, "subtractive.carve_boxes_removed") > 0.0);
+    assert(diagnostic_value(profile.diagnostics, "subtractive.carve_boxes_added") > 0.0);
+}
+
 }  // namespace
 
 int main() {
@@ -313,6 +614,12 @@ int main() {
     test_safe_box_forest_frontwave();
     test_obstacle_rebuild();
     test_query_audit_gated_repair_without_graph();
+    test_find_free_box_binary_accepts_start_depth();
+    test_find_free_box_binary_returns_shallowest_free_depth();
+    test_find_free_box_binary_fails_when_max_depth_not_free();
+    test_find_free_box_binary_treats_occupied_as_nonfree();
+    test_find_free_box_linear_mode_ignores_start_depth();
+    test_build_subtractive_hits_domain_binary_ffb();
     std::cout << "SBF C++ tests passed.\n";
     return 0;
 }

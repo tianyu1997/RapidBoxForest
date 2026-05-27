@@ -11,10 +11,10 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_anytime_tradeoff import aggregate_stage_records, final_ompl_simplify_path, incumbent_stage_record, task_result, update_incumbents  # noqa: E402
-from common_rrt_connect import path_length as list_path_length  # noqa: E402
-from common_sbf_config import ROOT, sbf, write_json  # noqa: E402
-from paper_04_iris_np_gcs_baseline import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import aggregate_stage_records, final_ompl_simplify_path, incumbent_stage_record, task_result, update_incumbents  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import path_length as list_path_length  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_iris_np_gcs_baseline import (  # noqa: E402
     DEFAULT_IRIS_NP,
     GCS_REPO,
     build_regions_for_seed,

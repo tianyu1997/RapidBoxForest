@@ -38,12 +38,12 @@ constexpr std::size_t kMaxResidentEvidenceRecords = 8192;
 constexpr std::uint64_t kEvidenceAppendsPerFlush = 1024;
 constexpr std::size_t kEvidenceIndexLoadFactorNumerator = 13;
 constexpr std::size_t kEvidenceIndexLoadFactorDenominator = 16;
-constexpr std::uint32_t kEvidenceStoreSchemaVersion = 1;
+constexpr std::uint32_t kEvidenceStoreSchemaVersion = 3;
 constexpr std::uint64_t kEvidenceStoreMagic = 0x3156454242464652ull;
-constexpr std::uint32_t kEvidenceIndexSidecarSchemaVersion = 2;
+constexpr std::uint32_t kEvidenceIndexSidecarSchemaVersion = 3;
 constexpr std::uint64_t kEvidenceIndexSidecarMagic = 0x3158444945424652ull;
-constexpr std::string_view kLegacyNodeIdScheme = "bfs_heap_v1";
 constexpr std::string_view kCurrentNodeIdScheme = "path_handle_v3";
+constexpr std::string_view kCurrentEvidenceEncoding = "pathcode_v3";
 
 enum EvidenceIndexSidecarFlags : std::uint32_t {
     kEvidenceIndexFlagChildHull = 1u << 0,
@@ -67,19 +67,20 @@ struct EvidenceStoreRecordHeader {
     std::uint32_t payload_kind = 0;
     std::uint32_t flags = 0;
     std::uint32_t payload_count = 0;
+    std::uint32_t path_word_count = 0;
+    std::uint32_t path_bit_count = 0;
     std::uint32_t record_size = 0;
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
-    std::uint32_t reserved0 = 0;
-    std::uint32_t reserved1 = 0;
 };
 
 struct EvidenceIndexSidecarHeader {
     std::uint64_t magic = kEvidenceIndexSidecarMagic;
     std::uint32_t version = kEvidenceIndexSidecarSchemaVersion;
-    std::uint32_t reserved = 0;
+    std::uint32_t header_size = 40u;
     std::uint64_t evidence_file_size = 0;
     std::uint64_t entry_count = 0;
+    std::uint64_t path_blob_offset = 0;
 };
 
 struct EvidenceIndexSidecarEntry {
@@ -90,7 +91,9 @@ struct EvidenceIndexSidecarEntry {
     std::uint32_t payload_kind = 0;
     std::uint32_t flags = 0;
     std::uint32_t size = 0;
-    std::uint32_t reserved = 0;
+    std::uint32_t path_word_count = 0;
+    std::uint32_t path_bit_count = 0;
+    std::uint64_t path_blob_offset = 0;
     std::uint64_t offset = 0;
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
@@ -99,8 +102,8 @@ struct EvidenceIndexSidecarEntry {
 
 static_assert(sizeof(EvidenceStoreFileHeader) == 32);
 static_assert(sizeof(EvidenceStoreRecordHeader) == 60);
-static_assert(sizeof(EvidenceIndexSidecarHeader) == 32);
-static_assert(sizeof(EvidenceIndexSidecarEntry) == 60);
+static_assert(sizeof(EvidenceIndexSidecarHeader) == 40);
+static_assert(sizeof(EvidenceIndexSidecarEntry) == 72);
 static_assert(alignof(EvidenceIndexSidecarHeader) == 1);
 static_assert(alignof(EvidenceIndexSidecarEntry) == 1);
 static_assert(std::is_trivially_copyable_v<EvidenceStoreFileHeader>);
@@ -179,7 +182,10 @@ bool evidence_sidecar_entry_less(const EvidenceIndexSidecarEntry& lhs,
     if (lhs.endpoint_source != rhs.endpoint_source) {
         return lhs.endpoint_source < rhs.endpoint_source;
     }
-    return lhs.payload_kind < rhs.payload_kind;
+    if (lhs.payload_kind != rhs.payload_kind) {
+        return lhs.payload_kind < rhs.payload_kind;
+    }
+    return lhs.path_blob_offset < rhs.path_blob_offset;
 }
 
 bool evidence_sidecar_offsets_sorted(std::span<const EvidenceIndexSidecarEntry> entries) {
@@ -346,6 +352,51 @@ std::uint64_t payload_checksum(std::span<const float> payload) {
     return hash;
 }
 
+std::uint32_t path_word_count_for_bits(int bit_count) {
+    if (bit_count < 0) {
+        return 0;
+    }
+    if (bit_count == 0) {
+        return 0;
+    }
+    return static_cast<std::uint32_t>((static_cast<std::uint64_t>(bit_count) + 63u) / 64u);
+}
+
+bool path_code_storage_valid(const PathCode& path) {
+    return path.words.size() == path_word_count_for_bits(path.bit_count);
+}
+
+std::uint64_t path_code_storage_bytes(std::uint32_t path_word_count) {
+    return static_cast<std::uint64_t>(path_word_count) * sizeof(std::uint64_t);
+}
+
+std::optional<PathCode> parse_path_code_blob(std::span<const std::byte> bytes,
+                                             std::uint32_t path_word_count,
+                                             std::uint32_t path_bit_count) {
+    if (path_word_count == 0 && path_bit_count == 0) {
+        return PathCode{};
+    }
+    const auto expected_word_count = path_word_count_for_bits(static_cast<int>(path_bit_count));
+    if (path_word_count != expected_word_count) {
+        return std::nullopt;
+    }
+    const auto required_bytes = path_code_storage_bytes(path_word_count);
+    if (bytes.size() != required_bytes) {
+        return std::nullopt;
+    }
+
+    PathCode path;
+    path.bit_count = static_cast<int>(path_bit_count);
+    path.words.resize(path_word_count);
+    if (required_bytes > 0) {
+        std::memcpy(path.words.data(), bytes.data(), static_cast<std::size_t>(required_bytes));
+    }
+    if (!path_code_storage_valid(path)) {
+        return std::nullopt;
+    }
+    return path;
+}
+
 std::string serialize_payload(const std::vector<float>& payload) {
     std::ostringstream out;
     out << payload.size();
@@ -424,9 +475,10 @@ EvidenceRecord clone_evidence_record(const EvidenceRecordView& view) {
     return record;
 }
 
-std::uint32_t evidence_binary_record_size(std::size_t payload_count) {
-    const auto payload_bytes = payload_count * sizeof(float);
-    const auto total_bytes = sizeof(EvidenceStoreRecordHeader) + payload_bytes;
+std::uint32_t evidence_binary_record_size(std::size_t payload_count, std::uint32_t path_word_count) {
+    const auto path_bytes = path_code_storage_bytes(path_word_count);
+    const auto payload_bytes = static_cast<std::uint64_t>(payload_count) * sizeof(float);
+    const auto total_bytes = sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes;
     return total_bytes > std::numeric_limits<std::uint32_t>::max()
         ? 0u
         : static_cast<std::uint32_t>(total_bytes);
@@ -434,9 +486,12 @@ std::uint32_t evidence_binary_record_size(std::size_t payload_count) {
 
 EvidenceStoreRecordHeader make_evidence_store_record_header(const EvidenceRecord& record) {
     EvidenceStoreRecordHeader header;
-    if (record.payload.size() > std::numeric_limits<std::uint32_t>::max()) {
+    if (record.payload.size() > std::numeric_limits<std::uint32_t>::max() ||
+        !record.key.node_path_valid ||
+        !path_code_storage_valid(record.key.node_path)) {
         return header;
     }
+    const auto path_word_count = path_word_count_for_bits(record.key.node_path.bit_count);
     header.node_id = record.key.node_id;
     header.sector = static_cast<std::int32_t>(record.key.sector);
     header.channel = static_cast<std::uint32_t>(record.key.channel);
@@ -445,7 +500,9 @@ EvidenceStoreRecordHeader make_evidence_store_record_header(const EvidenceRecord
     header.flags = (record.child_hull ? kEvidenceIndexFlagChildHull : 0u) |
                    (record.unavailable ? kEvidenceIndexFlagUnavailable : 0u);
     header.payload_count = static_cast<std::uint32_t>(record.payload.size());
-    header.record_size = evidence_binary_record_size(record.payload.size());
+    header.path_word_count = path_word_count;
+    header.path_bit_count = static_cast<std::uint32_t>(record.key.node_path.bit_count);
+    header.record_size = evidence_binary_record_size(record.payload.size(), path_word_count);
     header.generation = record.generation;
     header.checksum = record.checksum;
     return header;
@@ -485,13 +542,23 @@ std::optional<EvidenceRecord> parse_binary_evidence_record(std::span<const std::
     if (header.record_size != bytes.size()) {
         return std::nullopt;
     }
+    const auto path_bytes = static_cast<std::size_t>(path_code_storage_bytes(header.path_word_count));
     const auto payload_bytes = static_cast<std::size_t>(header.payload_count) * sizeof(float);
-    if (sizeof(EvidenceStoreRecordHeader) + payload_bytes != bytes.size()) {
+    if (sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes != bytes.size()) {
+        return std::nullopt;
+    }
+    const auto path = parse_path_code_blob(
+        bytes.subspan(sizeof(EvidenceStoreRecordHeader), path_bytes),
+        header.path_word_count,
+        header.path_bit_count);
+    if (!path) {
         return std::nullopt;
     }
 
     EvidenceRecord record;
     record.key.node_id = header.node_id;
+    record.key.node_path = *path;
+    record.key.node_path_valid = true;
     record.key.sector = header.sector;
     record.key.channel = static_cast<EvidenceChannel>(header.channel);
     record.key.endpoint_source = static_cast<EndpointSource>(header.endpoint_source);
@@ -503,7 +570,7 @@ std::optional<EvidenceRecord> parse_binary_evidence_record(std::span<const std::
     record.payload.resize(header.payload_count);
     if (payload_bytes > 0) {
         std::memcpy(record.payload.data(),
-                    bytes.data() + sizeof(EvidenceStoreRecordHeader),
+                    bytes.data() + sizeof(EvidenceStoreRecordHeader) + path_bytes,
                     payload_bytes);
     }
     return record;
@@ -2070,25 +2137,23 @@ bool LectDatabase::normalize_evidence_key(EvidenceKey* key) const {
     if (key == nullptr) {
         return false;
     }
-    if (!key->node_path_valid) {
-        if (!valid_node_id(key->node_id)) {
-            return false;
-        }
-        const auto node_item = read_node(key->node_id);
-        if (!node_item) {
-            return false;
-        }
-        key->node_path = node_item->path;
-        key->node_path_valid = true;
-        return true;
-    }
-    if (!valid_node_id(key->node_id)) {
+    if (key->node_path_valid) {
         const auto found = node_path_index_.find(key->node_path);
         if (found == node_path_index_.end()) {
             return false;
         }
         key->node_id = found->second;
+        return true;
     }
+    if (!valid_node_id(key->node_id)) {
+        return false;
+    }
+    const auto node_item = read_node(key->node_id);
+    if (!node_item) {
+        return false;
+    }
+    key->node_path = node_item->path;
+    key->node_path_valid = true;
     return true;
 }
 
@@ -2247,11 +2312,19 @@ bool LectDatabase::load_manifest(std::string* reason) {
         return false;
     }
     const std::string node_id_scheme = get_value(values, "node_id_scheme");
-    if (node_id_scheme != kLegacyNodeIdScheme && node_id_scheme != kCurrentNodeIdScheme) {
+    if (node_id_scheme != kCurrentNodeIdScheme) {
         if (reason) *reason = "node id scheme is missing or unsupported; rebuild the database";
         return false;
     }
     identity_.schema_version = static_cast<std::uint32_t>(get_u64(values, "schema_version", kLectDatabaseSchemaVersion));
+    if (identity_.schema_version != kLectDatabaseSchemaVersion) {
+        if (reason) *reason = "schema version is unsupported; rebuild the database";
+        return false;
+    }
+    if (get_value(values, "evidence_encoding") != kCurrentEvidenceEncoding) {
+        if (reason) *reason = "evidence encoding is missing or unsupported; rebuild the database";
+        return false;
+    }
     identity_.robot_fingerprint = get_u64(values, "robot_fingerprint");
     identity_.root_domain_fingerprint = get_u64(values, "root_domain_fingerprint");
     identity_.split_policy_hash = get_u64(values, "split_policy_hash");
@@ -2317,6 +2390,7 @@ bool LectDatabase::save_manifest() const {
         << "payload_layout=" << identity_.payload_layout << '\n'
         << "builder_version=" << identity_.builder_version << '\n'
         << "node_id_scheme=" << kCurrentNodeIdScheme << '\n'
+        << "evidence_encoding=" << kCurrentEvidenceEncoding << '\n'
         << "split_strategy=" << static_cast<int>(descriptor.strategy) << '\n'
         << "split_min_width=" << std::setprecision(17) << descriptor.min_width << '\n'
         << "split_midpoint=" << (descriptor.midpoint ? 1 : 0) << '\n'
@@ -2422,7 +2496,6 @@ bool LectDatabase::load_evidence(std::string* reason) {
     evidence_append_offset_ = 0;
     evidence_appends_since_flush_ = 0;
     evidence_index_sidecar_dirty_ = false;
-    evidence_store_format_ = EvidenceStoreFormat::Binary;
     const auto path = evidence_path(config_.path);
     std::error_code error;
     const bool evidence_exists = std::filesystem::exists(path, error);
@@ -2442,45 +2515,26 @@ bool LectDatabase::load_evidence(std::string* reason) {
     }
     EvidenceStoreFileHeader store_header;
     const bool binary_store = read_evidence_store_file_header(input, &store_header);
-    evidence_store_format_ = binary_store ? EvidenceStoreFormat::Binary : EvidenceStoreFormat::LegacyText;
     if (binary_store) {
         evidence_append_offset_ = evidence_file_size;
+    }
+    if (!binary_store) {
+        if (reason) *reason = "evidence store format is unsupported; rebuild the database";
+        return false;
     }
 
     if (binary_store && load_evidence_index_sidecar(evidence_file_size)) {
         return true;
     }
 
-    if (binary_store) {
-        if (!scan_binary_evidence_store(input, evidence_file_size, reason)) {
-            return false;
-        }
-        evidence_index_sidecar_dirty_ = true;
-        if (!config_.open.read_only && !save_evidence_index_sidecar(evidence_append_offset_)) {
-            evidence_index_sidecar_dirty_ = true;
-        }
-        prefetch_indexed_evidence_ranges();
-        return true;
-    }
-
-    std::vector<EvidenceRecord> legacy_records;
-    if (!scan_legacy_text_evidence_store(input,
-                                         config_.open.read_only ? nullptr : &legacy_records,
-                                         reason)) {
+    if (!scan_binary_evidence_store(input, evidence_file_size, reason)) {
         return false;
     }
-    if (config_.open.read_only) {
-        evidence_append_offset_ = evidence_file_size;
-        return true;
-    }
-    input.close();
-    input.clear();
-    if (!rewrite_evidence_store_binary(legacy_records, reason)) {
-        return false;
-    }
-    if (!save_evidence_index_sidecar(evidence_append_offset_)) {
+    evidence_index_sidecar_dirty_ = true;
+    if (!config_.open.read_only && !save_evidence_index_sidecar(evidence_append_offset_)) {
         evidence_index_sidecar_dirty_ = true;
     }
+    prefetch_indexed_evidence_ranges();
     return true;
 }
 
@@ -2667,7 +2721,7 @@ std::optional<std::span<const std::byte>> LectDatabase::load_evidence_bytes(std:
 }
 
 void LectDatabase::prefetch_indexed_evidence_ranges() const {
-    if (evidence_store_format_ != EvidenceStoreFormat::Binary || evidence_index_count_ == 0) {
+    if (evidence_index_count_ == 0) {
         return;
     }
     if (!ensure_evidence_mapped_file()) {
@@ -2727,27 +2781,45 @@ bool LectDatabase::load_evidence_index_sidecar(std::uint64_t evidence_file_size)
     std::memcpy(&header, bytes.data(), sizeof(header));
     if (header.magic != kEvidenceIndexSidecarMagic ||
         header.version != kEvidenceIndexSidecarSchemaVersion ||
+        header.header_size != sizeof(EvidenceIndexSidecarHeader) ||
         header.evidence_file_size != evidence_file_size) {
         return false;
     }
     const auto expected_count = static_cast<std::size_t>(header.entry_count);
     const auto entries_bytes = expected_count * sizeof(EvidenceIndexSidecarEntry);
-    const auto required_size = sizeof(EvidenceIndexSidecarHeader) + entries_bytes;
-    if (entries_bytes / sizeof(EvidenceIndexSidecarEntry) != expected_count || bytes.size() != required_size) {
+    const auto entries_offset = static_cast<std::size_t>(header.header_size);
+    const auto expected_path_blob_offset = entries_offset + entries_bytes;
+    if (entries_bytes / sizeof(EvidenceIndexSidecarEntry) != expected_count ||
+        header.path_blob_offset != expected_path_blob_offset ||
+        bytes.size() < expected_path_blob_offset) {
         return false;
     }
     const auto* raw_entry_data = reinterpret_cast<const EvidenceIndexSidecarEntry*>(
-        bytes.data() + sizeof(EvidenceIndexSidecarHeader));
+        bytes.data() + entries_offset);
     const std::span<const EvidenceIndexSidecarEntry> raw_entries(raw_entry_data, expected_count);
     if (!evidence_sidecar_offsets_sorted(raw_entries)) {
         return false;
     }
+    const auto path_blob = bytes.subspan(static_cast<std::size_t>(header.path_blob_offset));
 
     clear_evidence_index();
     reserve_evidence_index(expected_count);
     for (const auto& raw_entry : raw_entries) {
         EvidenceKey key;
         key.node_id = raw_entry.node_id;
+        const auto path_bytes = static_cast<std::size_t>(path_code_storage_bytes(raw_entry.path_word_count));
+        if (raw_entry.path_blob_offset > path_blob.size() || path_bytes > path_blob.size() - raw_entry.path_blob_offset) {
+            return false;
+        }
+        const auto path = parse_path_code_blob(
+            path_blob.subspan(static_cast<std::size_t>(raw_entry.path_blob_offset), path_bytes),
+            raw_entry.path_word_count,
+            raw_entry.path_bit_count);
+        if (!path) {
+            return false;
+        }
+        key.node_path = *path;
+        key.node_path_valid = true;
         key.sector = raw_entry.sector;
         key.channel = static_cast<EvidenceChannel>(raw_entry.channel);
         key.endpoint_source = static_cast<EndpointSource>(raw_entry.endpoint_source);
@@ -2819,8 +2891,9 @@ bool LectDatabase::scan_binary_evidence_store(std::ifstream& input,
             return false;
         }
 
+        const auto path_bytes = path_code_storage_bytes(record_header.path_word_count);
         const auto payload_bytes = static_cast<std::uint64_t>(record_header.payload_count) * sizeof(float);
-        const auto expected_record_size = sizeof(EvidenceStoreRecordHeader) + payload_bytes;
+        const auto expected_record_size = sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes;
         if (record_header.record_size != expected_record_size ||
             record_header.record_size < sizeof(EvidenceStoreRecordHeader) ||
             offset + record_header.record_size > evidence_file_size) {
@@ -2830,12 +2903,27 @@ bool LectDatabase::scan_binary_evidence_store(std::ifstream& input,
 
         EvidenceKey key;
         key.node_id = record_header.node_id;
+        std::vector<std::byte> path_storage(static_cast<std::size_t>(path_bytes));
+        if (path_bytes > 0) {
+            input.read(reinterpret_cast<char*>(path_storage.data()), static_cast<std::streamsize>(path_bytes));
+            if (!input) {
+                if (reason) *reason = "evidence store path payload is truncated";
+                return false;
+            }
+        }
+        const auto path = parse_path_code_blob(path_storage, record_header.path_word_count, record_header.path_bit_count);
+        if (!path) {
+            if (reason) *reason = "evidence store path payload is malformed";
+            return false;
+        }
+        key.node_path = *path;
+        key.node_path_valid = true;
         key.sector = record_header.sector;
         key.channel = static_cast<EvidenceChannel>(record_header.channel);
         key.endpoint_source = static_cast<EndpointSource>(record_header.endpoint_source);
         key.payload_kind = static_cast<EvidencePayloadKind>(record_header.payload_kind);
         if (!normalize_evidence_key(&key)) {
-            if (reason) *reason = "evidence store references an unknown node handle";
+            if (reason) *reason = "evidence store references an unknown node path";
             return false;
         }
 
@@ -2861,114 +2949,6 @@ bool LectDatabase::scan_binary_evidence_store(std::ifstream& input,
         if (reason) *reason = "evidence store has trailing bytes";
         return false;
     }
-    evidence_store_format_ = EvidenceStoreFormat::Binary;
-    return true;
-}
-
-bool LectDatabase::scan_legacy_text_evidence_store(std::ifstream& input,
-                                                   std::vector<EvidenceRecord>* records,
-                                                   std::string* reason) {
-    input.clear();
-    input.seekg(0, std::ios::beg);
-    clear_evidence_index();
-
-    std::string line_storage;
-    while (true) {
-        const auto raw_offset = input.tellg();
-        if (!std::getline(input, line_storage)) {
-            break;
-        }
-        const auto offset = raw_offset == std::streampos(-1)
-            ? 0ull
-            : static_cast<std::uint64_t>(raw_offset);
-        std::string_view line = trim_line_ending(line_storage);
-        if (line.empty()) {
-            continue;
-        }
-        auto record = parse_evidence_record(line);
-        if (!record) {
-            if (reason) *reason = "legacy evidence row is malformed";
-            return false;
-        }
-        if (!normalize_evidence_key(&record->key)) {
-            if (reason) *reason = "legacy evidence row references an unknown node handle";
-            return false;
-        }
-        if (line_storage.size() > std::numeric_limits<std::uint32_t>::max()) {
-            if (reason) *reason = "legacy evidence row is too large";
-            return false;
-        }
-        EvidenceIndexEntry entry;
-        entry.offset = offset;
-        entry.size = static_cast<std::uint32_t>(line_storage.size());
-        entry.child_hull = record->child_hull;
-        entry.unavailable = record->unavailable;
-        entry.generation = record->generation;
-        entry.checksum = record->checksum;
-        upsert_evidence_index(record->key, entry);
-        if (records != nullptr) {
-            records->push_back(std::move(*record));
-        }
-    }
-    input.clear();
-    evidence_store_format_ = EvidenceStoreFormat::LegacyText;
-    return true;
-}
-
-bool LectDatabase::rewrite_evidence_store_binary(const std::vector<EvidenceRecord>& records,
-                                                 std::string* reason) {
-    close_evidence_streams();
-    std::filesystem::create_directories(config_.path);
-    const auto path = evidence_path(config_.path);
-    const auto tmp = path.string() + ".tmp";
-    std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
-    if (!out) {
-        if (reason) *reason = "failed to rewrite binary evidence store";
-        return false;
-    }
-    if (!write_evidence_store_file_header(out)) {
-        if (reason) *reason = "failed to write evidence store header";
-        return false;
-    }
-
-    clear_evidence_index();
-    reserve_evidence_index(records.size());
-    std::uint64_t offset = sizeof(EvidenceStoreFileHeader);
-    for (const auto& record : records) {
-        const auto header = make_evidence_store_record_header(record);
-        if (header.record_size == 0) {
-            if (reason) *reason = "evidence payload is too large to persist";
-            return false;
-        }
-        out.write(reinterpret_cast<const char*>(&header), static_cast<std::streamsize>(sizeof(header)));
-        if (!record.payload.empty()) {
-            out.write(reinterpret_cast<const char*>(record.payload.data()),
-                      static_cast<std::streamsize>(record.payload.size() * sizeof(float)));
-        }
-        if (!out) {
-            if (reason) *reason = "failed while rewriting binary evidence store";
-            return false;
-        }
-
-        EvidenceIndexEntry entry;
-        entry.offset = offset;
-        entry.size = header.record_size;
-        entry.child_hull = record.child_hull;
-        entry.unavailable = record.unavailable;
-        entry.generation = record.generation;
-        entry.checksum = record.checksum;
-        upsert_evidence_index(record.key, entry);
-        offset += header.record_size;
-    }
-    out.close();
-    if (!static_cast<bool>(out) || !replace_file(tmp, path)) {
-        if (reason) *reason = "failed to replace evidence store during migration";
-        return false;
-    }
-
-    evidence_store_format_ = EvidenceStoreFormat::Binary;
-    evidence_append_offset_ = offset;
-    evidence_index_sidecar_dirty_ = true;
     return true;
 }
 
@@ -2992,7 +2972,6 @@ bool LectDatabase::ensure_binary_evidence_store_file() const {
         if (!out || !write_evidence_store_file_header(out)) {
             return false;
         }
-        evidence_store_format_ = EvidenceStoreFormat::Binary;
         evidence_append_offset_ = sizeof(EvidenceStoreFileHeader);
         return true;
     }
@@ -3002,7 +2981,6 @@ bool LectDatabase::ensure_binary_evidence_store_file() const {
     if (!input || !read_evidence_store_file_header(input, &header)) {
         return false;
     }
-    evidence_store_format_ = EvidenceStoreFormat::Binary;
     evidence_append_offset_ = file_size;
     return true;
 }
@@ -3018,37 +2996,51 @@ bool LectDatabase::save_evidence_index_sidecar(std::uint64_t evidence_file_size)
     if (!out) {
         return false;
     }
-    const EvidenceIndexSidecarHeader header{
-        kEvidenceIndexSidecarMagic,
-        kEvidenceIndexSidecarSchemaVersion,
-        0,
-        evidence_file_size,
-        static_cast<std::uint64_t>(evidence_index_count_),
-    };
-    out.write(reinterpret_cast<const char*>(&header), static_cast<std::streamsize>(sizeof(header)));
     std::vector<EvidenceIndexSidecarEntry> raw_entries;
     raw_entries.reserve(evidence_index_count_);
+    std::vector<std::byte> path_blob;
     for (const auto& slot : evidence_index_) {
         if (slot.key.node_id == kInvalidNodeId) {
             continue;
         }
+        EvidenceKey key = slot.key;
+        if (!normalize_evidence_key(&key) || !key.node_path_valid || !path_code_storage_valid(key.node_path)) {
+            return false;
+        }
         EvidenceIndexSidecarEntry raw_entry;
-        raw_entry.node_id = slot.key.node_id;
-        raw_entry.sector = static_cast<std::int32_t>(slot.key.sector);
-        raw_entry.channel = static_cast<std::uint32_t>(slot.key.channel);
-        raw_entry.endpoint_source = static_cast<std::uint32_t>(slot.key.endpoint_source);
-        raw_entry.payload_kind = static_cast<std::uint32_t>(slot.key.payload_kind);
+        raw_entry.node_id = key.node_id;
+        raw_entry.sector = static_cast<std::int32_t>(key.sector);
+        raw_entry.channel = static_cast<std::uint32_t>(key.channel);
+        raw_entry.endpoint_source = static_cast<std::uint32_t>(key.endpoint_source);
+        raw_entry.payload_kind = static_cast<std::uint32_t>(key.payload_kind);
         raw_entry.flags = (slot.entry.child_hull ? kEvidenceIndexFlagChildHull : 0u) |
                           (slot.entry.unavailable ? kEvidenceIndexFlagUnavailable : 0u);
         raw_entry.size = slot.entry.size;
+        raw_entry.path_word_count = path_word_count_for_bits(key.node_path.bit_count);
+        raw_entry.path_bit_count = static_cast<std::uint32_t>(key.node_path.bit_count);
+        raw_entry.path_blob_offset = path_blob.size();
         raw_entry.offset = slot.entry.offset;
         raw_entry.generation = slot.entry.generation;
         raw_entry.checksum = slot.entry.checksum;
         raw_entries.push_back(raw_entry);
+        const auto* path_bytes = reinterpret_cast<const std::byte*>(key.node_path.words.data());
+        path_blob.insert(path_blob.end(), path_bytes, path_bytes + path_code_storage_bytes(raw_entry.path_word_count));
     }
     std::sort(raw_entries.begin(), raw_entries.end(), evidence_sidecar_entry_less);
+    const EvidenceIndexSidecarHeader header{
+        kEvidenceIndexSidecarMagic,
+        kEvidenceIndexSidecarSchemaVersion,
+        sizeof(EvidenceIndexSidecarHeader),
+        evidence_file_size,
+        static_cast<std::uint64_t>(raw_entries.size()),
+        sizeof(EvidenceIndexSidecarHeader) + raw_entries.size() * sizeof(EvidenceIndexSidecarEntry),
+    };
+    out.write(reinterpret_cast<const char*>(&header), static_cast<std::streamsize>(sizeof(header)));
     for (const auto& raw_entry : raw_entries) {
         out.write(reinterpret_cast<const char*>(&raw_entry), static_cast<std::streamsize>(sizeof(raw_entry)));
+    }
+    if (!path_blob.empty()) {
+        out.write(reinterpret_cast<const char*>(path_blob.data()), static_cast<std::streamsize>(path_blob.size()));
     }
     out.close();
     if (!static_cast<bool>(out) || !replace_file(tmp, path)) {
@@ -3082,6 +3074,10 @@ bool LectDatabase::append_evidence_record_to_store(const EvidenceRecord& record)
     const std::uint64_t offset = evidence_append_offset_;
     evidence_append_stream_.write(reinterpret_cast<const char*>(&header),
                                   static_cast<std::streamsize>(sizeof(header)));
+    if (header.path_word_count > 0) {
+        evidence_append_stream_.write(reinterpret_cast<const char*>(record.key.node_path.words.data()),
+                                      static_cast<std::streamsize>(path_code_storage_bytes(header.path_word_count)));
+    }
     if (!record.payload.empty()) {
         evidence_append_stream_.write(reinterpret_cast<const char*>(record.payload.data()),
                                       static_cast<std::streamsize>(record.payload.size() * sizeof(float)));
@@ -3124,13 +3120,7 @@ std::shared_ptr<const EvidenceRecord> LectDatabase::load_indexed_evidence(const 
     if (!bytes_view) {
         return {};
     }
-    std::optional<EvidenceRecord> record;
-    if (evidence_store_format_ == EvidenceStoreFormat::Binary) {
-        record = parse_binary_evidence_record(*bytes_view);
-    } else {
-        record = parse_evidence_record(std::string_view(reinterpret_cast<const char*>(bytes_view->data()),
-                                                        bytes_view->size()));
-    }
+    auto record = parse_binary_evidence_record(*bytes_view);
     if (!record) {
         return {};
     }

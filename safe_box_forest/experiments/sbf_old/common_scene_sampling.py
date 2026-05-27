@@ -5,7 +5,7 @@ import random
 from dataclasses import dataclass
 from typing import Sequence
 
-from common_sbf_config import sbf
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import sbf
 from sbf.marcucci import load_iiwa14_robot
 
 ENDPOINT_CLEARANCE_MARGIN_M = 0.24

@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path.cwd()))
-import experiments.tro2026_generate_tables as gen
+import RapidBoxForest.safe_box_forest.experiments.sbf_old.tro2026_generate_tables as gen
 
 if __name__ == '__main__':
     out = gen.rebuild_table(Path('outputs/paper'))

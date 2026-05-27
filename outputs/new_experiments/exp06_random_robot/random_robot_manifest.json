@@ -1,0 +1,134 @@
+{
+  "commands": [
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_05_random_robot_scenes.py",
+        "--robots",
+        "iiwa,ur5,panda",
+        "--difficulties",
+        "easy,medium,hard",
+        "--scene-seeds",
+        "5",
+        "--scene-profile",
+        "balanced",
+        "--methods",
+        "support_hull_coverage",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp06_random_robot/sbf_random_robot.json"
+      ],
+      "methods": [
+        "sbf"
+      ],
+      "name": "sbf_random_robot"
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_12_random_scene_rrt_baseline.py",
+        "--robots",
+        "iiwa,ur5,panda",
+        "--difficulties",
+        "easy,medium,hard",
+        "--scene-seeds",
+        "5",
+        "--scene-profile",
+        "balanced",
+        "--trials",
+        "3",
+        "--segment-step",
+        "0.01",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp06_random_robot/rrtconnect_random_robot.json"
+      ],
+      "methods": [
+        "rrtconnect"
+      ],
+      "name": "rrtconnect_random_robot"
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_12_random_scene_ompl_baselines.py",
+        "--robots",
+        "iiwa,ur5,panda",
+        "--difficulties",
+        "easy,medium,hard",
+        "--scene-seeds",
+        "5",
+        "--scene-profile",
+        "balanced",
+        "--methods",
+        "prm,bitstar",
+        "--trials",
+        "3",
+        "--segment-step",
+        "0.01",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp06_random_robot/ompl_random_robot.json"
+      ],
+      "methods": [
+        "prm",
+        "bitstar"
+      ],
+      "name": "ompl_random_robot"
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_12_random_scene_iris_np_gcs_baseline.py",
+        "--robots",
+        "iiwa,ur5,panda",
+        "--difficulties",
+        "easy,medium,hard",
+        "--scene-seeds",
+        "5",
+        "--scene-profile",
+        "balanced",
+        "--trials",
+        "1",
+        "--segment-step",
+        "0.01",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp06_random_robot/iris_np_gcs_random_robot.json"
+      ],
+      "methods": [
+        "iris_np"
+      ],
+      "name": "iris_np_gcs_random_robot"
+    }
+  ],
+  "environment": {
+    "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "git_sha": "d6a1affc70f5",
+    "hostname": "tian",
+    "machine": "x86_64",
+    "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
+    "proc_status": {
+      "VmData_kb": 7700,
+      "VmHWM_kb": 12876,
+      "VmRSS_kb": 12876,
+      "VmSize_kb": 15740
+    },
+    "processor": "x86_64",
+    "python": "3.10.19",
+    "repo_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "thread_env": {}
+  },
+  "experiment": "exp06_random_robot",
+  "params": {
+    "difficulties": "easy,medium,hard",
+    "dry_run": true,
+    "execute": false,
+    "methods": "sbf,iris_np,prm,rrtconnect,bitstar",
+    "out_dir": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp06_random_robot",
+    "out_json": null,
+    "robots": "iiwa,ur5,panda",
+    "scene_profile": "balanced",
+    "scene_seeds": 5,
+    "trials": 3
+  },
+  "run_id": "exp06_20260527T064614Z_d6a1affc70f5",
+  "runs": [],
+  "status": "dry_run"
+}

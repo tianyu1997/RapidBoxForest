@@ -1,9 +1,3 @@
-现在重新做一次实验部分的完整设计，放到根目录的experiments 文件夹中：
-1. Endpoint evenlope 实验：参考RapidBoxForest/paper/sbf_old中的ABLE III Endpoint-interval AABB source comparison at fixed widths.
-2. Link envelopei实验：参考RapidBoxForest/paper/sbf_old中的TABLE IV Width-wise CritSample link-envelope comparison under the same S = 4 short-link split.不过统一使用S=1。
-3. LECT性能实验，测试LECT各种常用操作的耗时，如query, load, split, save等等。以及节点内存占用情况
-4. LECT warm/cold对比实验参考RapidBoxForest/paper/sbf_old中的TABLE V。
-
 # Experiment script layout
 
 For a repository-level rerun guide, start with `../docs/EXPERIMENT_REPRODUCTION.md`.

@@ -12,7 +12,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from paper_04_marcucci_combined import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_marcucci_combined import (  # noqa: E402
     ROOT,
     configure,
     median,

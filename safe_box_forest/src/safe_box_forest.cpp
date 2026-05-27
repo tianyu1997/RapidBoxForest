@@ -1359,13 +1359,211 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         return split_dim >= 0;
     };
 
-    const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_->max_tree_depth() - 1));
+    const double domain_tol = 1e-12;
+    const int tree_max_depth = std::max(0, oracle_->max_tree_depth() - 1);
+    const int effective_max_depth = std::clamp(options.max_depth, 0, tree_max_depth);
+    const int effective_start_depth = std::clamp(options.start_depth, 0, effective_max_depth);
+    auto should_stop_search = [&](FindFreeBoxResult& current_result) {
+        const bool deadline_limit_hit = options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms;
+        if (!context.should_stop() && !deadline_limit_hit) {
+            return false;
+        }
+        current_result.deadline_reached = context.deadline().expired() || deadline_limit_hit;
+        current_result.fail_code = 4;
+        return true;
+    };
+    auto descend_to_seed_child = [&](OracleNodeId& current_node, int& current_changed_dim) {
+        current_changed_dim = oracle_->split_dim(current_node);
+        current_node = (seed[current_changed_dim] <= oracle_->split_value(current_node))
+            ? oracle_->left_child(current_node)
+            : oracle_->right_child(current_node);
+    };
+
+    if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth) {
+        enum class DepthProbeOutcome : std::uint8_t {
+            Free = 0,
+            NonFree = 1,
+            Fatal = 2,
+        };
+        struct DepthProbeResult {
+            DepthProbeOutcome outcome = DepthProbeOutcome::Fatal;
+            FindFreeBoxResult result;
+        };
+
+        auto probe_target_depth = [&](int target_depth) {
+            FindFreeBoxResult probe_result;
+            OracleNodeId node = oracle_->root_node();
+            int changed_dim = -1;
+            while (true) {
+                if (should_stop_search(probe_result)) {
+                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                }
+
+                auto intervals = oracle_->node_intervals(node);
+                const int node_depth = oracle_->depth(node);
+                if (!intervals_overlap_local(intervals, domain, 0.0)) {
+                    probe_result.node = node;
+                    probe_result.intervals = std::move(intervals);
+                    probe_result.fail_code = 5;
+                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                }
+
+                if (node_depth >= target_depth) {
+                    if (!intervals_subset_local(intervals, domain, domain_tol)) {
+                        probe_result.hit_unknown_depth_cap = true;
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 2;
+                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
+                    }
+                    if (oracle_->is_reserved(node)) {
+                        probe_result.hit_reserved_depth_cap = true;
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 2;
+                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
+                    }
+
+                    const auto validation = oracle_->validate_node(node, intervals, changed_dim);
+                    probe_result.validation_detail = oracle_->last_validation_detail();
+                    probe_result.decisions += 1;
+                    if (validation == BoxValidation::Free) {
+                        probe_result.found = true;
+                        probe_result.node = node;
+                        probe_result.changed_dim = changed_dim;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 0;
+                        return DepthProbeResult{DepthProbeOutcome::Free, std::move(probe_result)};
+                    }
+                    probe_result.node = node;
+                    probe_result.intervals = std::move(intervals);
+                    if (validation == BoxValidation::Occupied) {
+                        probe_result.fail_code = 3;
+                    } else {
+                        probe_result.hit_unknown_depth_cap = true;
+                        probe_result.fail_code = 2;
+                    }
+                    return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
+                }
+
+                if (!oracle_->is_leaf(node)) {
+                    descend_to_seed_child(node, changed_dim);
+                    continue;
+                }
+
+                if (!intervals_subset_local(intervals, domain, domain_tol)) {
+                    int split_dim = -1;
+                    double split_value = 0.0;
+                    if (!choose_domain_boundary_split(intervals, split_dim, split_value)) {
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 6;
+                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                    }
+                    const auto split = oracle_->split_node_at(node, split_dim, split_value);
+                    if (!split.split) {
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 6;
+                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                    }
+                    probe_result.splits += 1;
+                    changed_dim = split_dim;
+                    node = (seed[split_dim] <= split_value) ? split.left : split.right;
+                    continue;
+                }
+
+                if (oracle_->is_reserved(node)) {
+                    if (!options.split_reserved_leaf) {
+                        probe_result.hit_reserved_depth_cap = true;
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 2;
+                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
+                    }
+                    const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
+                    if (!split.split) {
+                        probe_result.fail_code = 6;
+                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                    }
+                    probe_result.splits += 1;
+                    descend_to_seed_child(node, changed_dim);
+                    continue;
+                }
+
+                if (!options.split_unknown_leaf) {
+                    probe_result.hit_unknown_depth_cap = true;
+                    probe_result.node = node;
+                    probe_result.intervals = std::move(intervals);
+                    probe_result.fail_code = 2;
+                    return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
+                }
+                const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
+                if (!split.split) {
+                    probe_result.fail_code = 6;
+                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                }
+                probe_result.splits += 1;
+                descend_to_seed_child(node, changed_dim);
+            }
+        };
+
+        int total_decisions = 0;
+        int total_splits = 0;
+        auto absorb_probe = [&](const FindFreeBoxResult& probe_result) {
+            total_decisions += probe_result.decisions;
+            total_splits += probe_result.splits;
+        };
+        auto finalize = [&](FindFreeBoxResult probe_result) {
+            probe_result.decisions = total_decisions;
+            probe_result.splits = total_splits;
+            return probe_result;
+        };
+
+        auto lower_probe = probe_target_depth(effective_start_depth);
+        absorb_probe(lower_probe.result);
+        if (lower_probe.outcome != DepthProbeOutcome::NonFree || effective_start_depth >= effective_max_depth) {
+            result = finalize(std::move(lower_probe.result));
+            result.total_ms = elapsed_ms();
+            return result;
+        }
+
+        auto upper_probe = probe_target_depth(effective_max_depth);
+        absorb_probe(upper_probe.result);
+        if (upper_probe.outcome != DepthProbeOutcome::Free) {
+            result = finalize(std::move(upper_probe.result));
+            result.total_ms = elapsed_ms();
+            return result;
+        }
+
+        int nonfree_depth = effective_start_depth;
+        int free_depth = effective_max_depth;
+        FindFreeBoxResult best_free = std::move(upper_probe.result);
+        while (free_depth - nonfree_depth > 1) {
+            const int mid_depth = nonfree_depth + (free_depth - nonfree_depth) / 2;
+            auto mid_probe = probe_target_depth(mid_depth);
+            absorb_probe(mid_probe.result);
+            if (mid_probe.outcome == DepthProbeOutcome::Fatal) {
+                result = finalize(std::move(mid_probe.result));
+                result.total_ms = elapsed_ms();
+                return result;
+            }
+            if (mid_probe.outcome == DepthProbeOutcome::Free) {
+                free_depth = mid_depth;
+                best_free = std::move(mid_probe.result);
+                continue;
+            }
+            nonfree_depth = mid_depth;
+        }
+        result = finalize(std::move(best_free));
+        result.total_ms = elapsed_ms();
+        return result;
+    }
+
     OracleNodeId node = oracle_->root_node();
     int changed_dim = -1;
     while (true) {
-        if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
-            result.deadline_reached = context.deadline().expired() || options.deadline_ms > 0.0;
-            result.fail_code = 4;
+        if (should_stop_search(result)) {
             break;
         }
 
@@ -1377,14 +1575,11 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
         if (!oracle_->is_leaf(node)) {
-            changed_dim = oracle_->split_dim(node);
-            node = (seed[changed_dim] <= oracle_->split_value(node))
-                ? oracle_->left_child(node)
-                : oracle_->right_child(node);
+            descend_to_seed_child(node, changed_dim);
             continue;
         }
 
-        if (!intervals_subset_local(intervals, domain, 1e-12)) {
+        if (!intervals_subset_local(intervals, domain, domain_tol)) {
             if (oracle_->depth(node) >= effective_max_depth) {
                 result.hit_unknown_depth_cap = true;
                 result.node = node;
@@ -1427,10 +1622,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 break;
             }
             result.splits += 1;
-            changed_dim = oracle_->split_dim(node);
-            node = (seed[changed_dim] <= oracle_->split_value(node))
-                ? oracle_->left_child(node)
-                : oracle_->right_child(node);
+            descend_to_seed_child(node, changed_dim);
             continue;
         }
 
@@ -1464,10 +1656,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
         result.splits += 1;
-        changed_dim = oracle_->split_dim(node);
-        node = (seed[changed_dim] <= oracle_->split_value(node))
-            ? oracle_->left_child(node)
-            : oracle_->right_child(node);
+        descend_to_seed_child(node, changed_dim);
     }
     result.total_ms = elapsed_ms();
     return result;

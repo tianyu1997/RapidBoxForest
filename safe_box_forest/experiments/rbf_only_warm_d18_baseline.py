@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from common_sbf_config import (
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import (
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,
@@ -16,7 +16,7 @@ from common_sbf_config import (
     set_online_cache_backfill,
     write_json,
 )
-from common_scene_sampling import make_random_scene, make_robot
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import make_random_scene, make_robot
 
 import sbf
 

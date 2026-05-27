@@ -22,9 +22,10 @@ constexpr std::uint64_t kBinaryEvidenceIndexSidecarMagic = 0x3158444945424652ull
 struct BinaryEvidenceIndexSidecarHeader {
     std::uint64_t magic = 0;
     std::uint32_t version = 0;
-    std::uint32_t reserved = 0;
+    std::uint32_t header_size = 0;
     std::uint64_t evidence_file_size = 0;
     std::uint64_t entry_count = 0;
+    std::uint64_t path_blob_offset = 0;
 };
 
 struct BinaryEvidenceIndexSidecarEntry {
@@ -35,15 +36,17 @@ struct BinaryEvidenceIndexSidecarEntry {
     std::uint32_t payload_kind = 0;
     std::uint32_t flags = 0;
     std::uint32_t size = 0;
-    std::uint32_t reserved = 0;
+    std::uint32_t path_word_count = 0;
+    std::uint32_t path_bit_count = 0;
+    std::uint64_t path_blob_offset = 0;
     std::uint64_t offset = 0;
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
 };
 #pragma pack(pop)
 
-static_assert(sizeof(BinaryEvidenceIndexSidecarHeader) == 32);
-static_assert(sizeof(BinaryEvidenceIndexSidecarEntry) == 60);
+static_assert(sizeof(BinaryEvidenceIndexSidecarHeader) == 40);
+static_assert(sizeof(BinaryEvidenceIndexSidecarEntry) == 72);
 
 std::vector<rbf::Interval> root2() {
     return {{0.0, 2.0}, {0.0, 2.0}};
@@ -548,8 +551,8 @@ void test_lru_node_page_swap_and_reopen() {
     std::filesystem::remove_all(dir);
 }
 
-void test_legacy_text_evidence_store_migrates_on_open() {
-    const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_legacy_evidence_migration";
+void test_legacy_text_evidence_store_is_rejected() {
+    const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_legacy_evidence_rejected";
     ld::EvidenceKey key;
     {
         auto database = make_database(dir);
@@ -578,22 +581,8 @@ void test_legacy_text_evidence_store_migrates_on_open() {
 
     std::string reason;
     auto reopened = ld::LectDatabase::open_existing(dir, false, &reason);
-    assert(reopened.has_value());
-    const auto migrated = reopened->evidence(key);
-    assert(migrated.has_value());
-    assert(migrated->payload.size() == legacy_record.payload.size());
-    assert(migrated->payload[0] == legacy_record.payload[0]);
-    assert(migrated->payload[1] == legacy_record.payload[1]);
-    assert(migrated->checksum == legacy_record.checksum);
-
-    std::uint64_t magic = 0;
-    {
-        std::ifstream input(dir / "evidence.pages", std::ios::binary);
-        input.read(reinterpret_cast<char*>(&magic), static_cast<std::streamsize>(sizeof(magic)));
-        assert(static_cast<bool>(input));
-    }
-    assert(magic == kBinaryEvidenceStoreMagic);
-    assert(std::filesystem::exists(dir / "evidence.index"));
+    assert(!reopened.has_value());
+    assert(reason == "evidence store format is unsupported; rebuild the database");
     std::filesystem::remove_all(dir);
 }
 
@@ -631,6 +620,7 @@ void test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback() {
         input.read(reinterpret_cast<char*>(&header), static_cast<std::streamsize>(sizeof(header)));
         assert(static_cast<bool>(input));
         assert(header.magic == kBinaryEvidenceIndexSidecarMagic);
+        assert(header.header_size == sizeof(BinaryEvidenceIndexSidecarHeader));
         entries.resize(static_cast<std::size_t>(header.entry_count));
         if (!entries.empty()) {
             input.read(reinterpret_cast<char*>(entries.data()),
@@ -638,6 +628,8 @@ void test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback() {
             assert(static_cast<bool>(input));
         }
     }
+    assert(header.path_blob_offset == sizeof(BinaryEvidenceIndexSidecarHeader) +
+           entries.size() * sizeof(BinaryEvidenceIndexSidecarEntry));
     assert(entries.size() >= 2);
     for (std::size_t index = 1; index < entries.size(); ++index) {
         assert(entries[index - 1].offset <= entries[index].offset);
@@ -662,6 +654,84 @@ void test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback() {
     std::filesystem::remove_all(dir);
 }
 
+void test_binary_evidence_index_sidecar_pathcode_recovers_from_bad_node_id_hint() {
+    const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_binary_sidecar_bad_hint";
+    ld::EvidenceKey left_key;
+    {
+        auto database = make_database(dir);
+        const auto children = database.split_leaf(database.root_node());
+        assert(children.first == 1 && children.second == 2);
+
+        left_key.node_id = children.first;
+        left_key.sector = ld::kPrimarySector;
+        left_key.channel = ld::EvidenceChannel::Safe;
+        left_key.endpoint_source = rbf::EndpointSource::IFK;
+        left_key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+
+        ld::EvidenceRecord left;
+        left.key = left_key;
+        left.payload = {4.0f, 3.0f, 2.0f, 1.0f};
+        assert(database.put_evidence(left));
+        assert(database.checkpoint());
+    }
+
+    BinaryEvidenceIndexSidecarHeader header;
+    std::vector<BinaryEvidenceIndexSidecarEntry> entries;
+    std::vector<char> path_blob;
+    {
+        const auto sidecar_path = dir / "evidence.index";
+        std::ifstream input(sidecar_path, std::ios::binary);
+        input.read(reinterpret_cast<char*>(&header), static_cast<std::streamsize>(sizeof(header)));
+        assert(static_cast<bool>(input));
+        entries.resize(static_cast<std::size_t>(header.entry_count));
+        if (!entries.empty()) {
+            input.read(reinterpret_cast<char*>(entries.data()),
+                       static_cast<std::streamsize>(entries.size() * sizeof(BinaryEvidenceIndexSidecarEntry)));
+            assert(static_cast<bool>(input));
+        }
+        const auto sidecar_size = std::filesystem::file_size(sidecar_path);
+        const auto path_blob_size = static_cast<std::size_t>(sidecar_size - header.path_blob_offset);
+        path_blob.resize(path_blob_size);
+        if (!path_blob.empty()) {
+            input.read(path_blob.data(), static_cast<std::streamsize>(path_blob.size()));
+            assert(static_cast<bool>(input));
+        }
+    }
+    assert(entries.size() == 1);
+    assert(entries.front().node_id == left_key.node_id);
+    entries.front().node_id += 99;
+
+    {
+        std::ofstream out(dir / "evidence.pages", std::ios::binary | std::ios::app);
+        const char garbage[] = {'x', 'v', '3', '!'};
+        out.write(garbage, static_cast<std::streamsize>(sizeof(garbage)));
+        assert(static_cast<bool>(out));
+    }
+    header.evidence_file_size = std::filesystem::file_size(dir / "evidence.pages");
+
+    {
+        std::ofstream out(dir / "evidence.index", std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(&header), static_cast<std::streamsize>(sizeof(header)));
+        out.write(reinterpret_cast<const char*>(entries.data()),
+                  static_cast<std::streamsize>(entries.size() * sizeof(BinaryEvidenceIndexSidecarEntry)));
+        if (!path_blob.empty()) {
+            out.write(path_blob.data(), static_cast<std::streamsize>(path_blob.size()));
+        }
+        assert(static_cast<bool>(out));
+    }
+
+    std::string reason;
+    auto reopened = ld::LectDatabase::open_existing(dir, true, &reason);
+    assert(reopened.has_value());
+    const auto left = reopened->evidence(left_key);
+    assert(left.has_value());
+    assert(left->key.node_id == left_key.node_id);
+    assert(left->payload.size() == 4);
+    assert(left->payload[0] == 4.0f);
+    assert(left->payload[3] == 1.0f);
+    std::filesystem::remove_all(dir);
+}
+
 }  // namespace
 
 int main() {
@@ -676,7 +746,8 @@ int main() {
     test_evidence_parent_hull_and_exact_box_lookup();
     test_endpoint_payload_parent_hull_layout();
     test_lru_node_page_swap_and_reopen();
-    test_legacy_text_evidence_store_migrates_on_open();
+    test_legacy_text_evidence_store_is_rejected();
     test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback();
+    test_binary_evidence_index_sidecar_pathcode_recovers_from_bad_node_id_hint();
     return 0;
 }

@@ -11,11 +11,11 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_anytime_tradeoff import aggregate_stage_records, final_ompl_simplify_path, incumbent_stage_record, path_passes_post_audit, task_result, update_incumbents  # noqa: E402
-from common_rrt_connect import path_length as list_path_length, segment_free  # noqa: E402
-from common_sbf_config import ROOT, sbf, write_json  # noqa: E402
-from common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, ENDPOINT_CLEARANCE_MARGIN_M, FIXED_ROBOT_CLEARANCE_MARGIN_M, SEGMENT_RESOLUTION, make_random_scene, make_robot, scene_profile_requires_balanced_probe  # noqa: E402
-from paper_12_random_scene_iris_np_gcs_baseline import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import aggregate_stage_records, final_ompl_simplify_path, incumbent_stage_record, path_passes_post_audit, task_result, update_incumbents  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import path_length as list_path_length, segment_free  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, ENDPOINT_CLEARANCE_MARGIN_M, FIXED_ROBOT_CLEARANCE_MARGIN_M, SEGMENT_RESOLUTION, make_random_scene, make_robot, scene_profile_requires_balanced_probe  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_12_random_scene_iris_np_gcs_baseline import (  # noqa: E402
     build_drake_random_scene,
     build_regions,
     configure_threads,

@@ -9,11 +9,11 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_anytime_tradeoff import final_ompl_simplify_path  # noqa: E402
-from common_sbf_config import ROOT, sbf, write_json  # noqa: E402
-from common_scene_sampling import make_random_scene, make_robot  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import final_ompl_simplify_path  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import make_random_scene, make_robot  # noqa: E402
 from sbf.marcucci import load_iiwa14_robot, make_combined_obstacles  # noqa: E402
-from tro2026_generate_tables import RANDOM_SBF_MAIN_ARTIFACT, best_tradeoff_points, safe_float  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.tro2026_generate_tables import RANDOM_SBF_MAIN_ARTIFACT, best_tradeoff_points, safe_float  # noqa: E402
 
 
 DEFAULT_BUDGETS = "0,1e-4,1e-3,1e-2,5e-2,1e-1"

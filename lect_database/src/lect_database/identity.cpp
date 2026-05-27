@@ -28,7 +28,7 @@ std::uint64_t identity_hash(const LectDatabaseIdentity& identity) {
 bool identity_compatible(const LectDatabaseIdentity& stored,
                          const LectDatabaseIdentity& requested,
                          std::string* reason) {
-    if (stored.schema_version > requested.schema_version) {
+    if (stored.schema_version != requested.schema_version) {
         if (reason) *reason = "schema version differs";
         return false;
     }

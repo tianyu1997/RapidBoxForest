@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from common_sbf_config import sbf
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import sbf
 from sbf.marcucci import (
     load_iiwa14_robot,
     make_bins_obstacles,

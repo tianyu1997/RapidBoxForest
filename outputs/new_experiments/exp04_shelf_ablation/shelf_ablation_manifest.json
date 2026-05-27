@@ -1,0 +1,181 @@
+{
+  "environment": {
+    "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "git_sha": "d6a1affc70f5",
+    "hostname": "tian",
+    "machine": "x86_64",
+    "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
+    "proc_status": {
+      "VmData_kb": 7708,
+      "VmHWM_kb": 12896,
+      "VmRSS_kb": 12896,
+      "VmSize_kb": 15748
+    },
+    "processor": "x86_64",
+    "python": "3.10.19",
+    "repo_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "thread_env": {}
+  },
+  "experiment": "exp04_shelf_ablation",
+  "matrix": [
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation/baseline_ifk_support_hull_8t_best_tighten.json",
+        "--preset",
+        "ifk_strict",
+        "--envelope",
+        "support_hull",
+        "--threads",
+        "8",
+        "--seeds",
+        "1",
+        "--timeout-ms",
+        "60000.0",
+        "--split-policy",
+        "best-tighten",
+        "--strict-path-audit",
+        "--audit-resolution",
+        "32"
+      ],
+      "expected_baseline": "warm+AAFK+SupportHull+8threads+AAFKVolumeMin",
+      "factor": "baseline_proxy",
+      "limitations": "legacy proxy uses IFK strict and best-tighten, not full warm LECT AAFKVolumeMin yet",
+      "name": "baseline_ifk_support_hull_8t_best_tighten",
+      "supported": true
+    },
+    {
+      "command": [],
+      "factor": "cache",
+      "name": "no_lect_cache_online_envelopes",
+      "requires_new_hook": "disable LectCacheSession and force online envelope materialization",
+      "supported": false
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation/no_aafk_critsample_support_hull.json",
+        "--preset",
+        "support_hull_coverage",
+        "--envelope",
+        "support_hull",
+        "--threads",
+        "8",
+        "--seeds",
+        "1",
+        "--timeout-ms",
+        "60000.0",
+        "--split-policy",
+        "best-tighten",
+        "--strict-path-audit",
+        "--audit-resolution",
+        "32"
+      ],
+      "factor": "endpoint_source",
+      "name": "no_aafk_critsample_support_hull",
+      "supported": true
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation/no_support_hull_aabb.json",
+        "--preset",
+        "ifk_strict",
+        "--envelope",
+        "link",
+        "--threads",
+        "8",
+        "--seeds",
+        "1",
+        "--timeout-ms",
+        "60000.0",
+        "--split-policy",
+        "best-tighten",
+        "--strict-path-audit",
+        "--audit-resolution",
+        "32"
+      ],
+      "factor": "envelope",
+      "name": "no_support_hull_aabb",
+      "supported": true
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation/no_support_hull_kdop26.json",
+        "--preset",
+        "ifk_strict",
+        "--envelope",
+        "kdop26",
+        "--threads",
+        "8",
+        "--seeds",
+        "1",
+        "--timeout-ms",
+        "60000.0",
+        "--split-policy",
+        "best-tighten",
+        "--strict-path-audit",
+        "--audit-resolution",
+        "32"
+      ],
+      "factor": "envelope",
+      "name": "no_support_hull_kdop26",
+      "supported": true
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation/single_thread.json",
+        "--preset",
+        "ifk_strict",
+        "--envelope",
+        "support_hull",
+        "--threads",
+        "1",
+        "--seeds",
+        "1",
+        "--timeout-ms",
+        "60000.0",
+        "--split-policy",
+        "best-tighten",
+        "--strict-path-audit",
+        "--audit-resolution",
+        "32"
+      ],
+      "factor": "threads",
+      "name": "single_thread",
+      "supported": true
+    },
+    {
+      "command": [],
+      "factor": "split_policy",
+      "name": "round_robin_split_policy",
+      "requires_new_hook": "bind or expose true round-robin split policy; legacy closest option is widest-first",
+      "supported": false
+    }
+  ],
+  "params": {
+    "dry_run": true,
+    "execute": false,
+    "only": "all",
+    "out_dir": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp04_shelf_ablation",
+    "out_json": null,
+    "seeds": 1,
+    "threads": 8,
+    "timeout_ms": 60000.0
+  },
+  "run_id": "exp04_20260527T064614Z_d6a1affc70f5",
+  "runs": [],
+  "status": "dry_run"
+}

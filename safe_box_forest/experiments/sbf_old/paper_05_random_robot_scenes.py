@@ -10,8 +10,8 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import ROOT, add_common_sbf_args, configure_standalone_sbf, mean, median, query_result_payload, sbf, write_json
-from common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, make_random_scene, make_robot
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, add_common_sbf_args, configure_standalone_sbf, mean, median, query_result_payload, sbf, write_json
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, make_random_scene, make_robot
 
 
 def parse_args() -> argparse.Namespace:

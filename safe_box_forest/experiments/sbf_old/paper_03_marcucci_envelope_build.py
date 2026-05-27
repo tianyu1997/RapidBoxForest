@@ -13,7 +13,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import (
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import (
     REPO_ROOT,
     ROOT,
     add_common_sbf_args,

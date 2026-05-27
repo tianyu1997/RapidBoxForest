@@ -14,7 +14,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import ROOT, REPO_ROOT, mean, median, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, REPO_ROOT, mean, median, write_json  # noqa: E402
 from sbf.marcucci import ANCHORS, iiwa14_robot_json, make_combined_queries  # noqa: E402
 
 

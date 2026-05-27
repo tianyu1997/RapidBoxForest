@@ -5,7 +5,7 @@ Prefer experiments/tro2026_generate_tables.py for new commands.
 """
 from __future__ import annotations
 
-from tro2026_generate_tables import main
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.tro2026_generate_tables import main
 
 
 if __name__ == "__main__":

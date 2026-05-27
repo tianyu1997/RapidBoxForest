@@ -184,11 +184,6 @@ private:
     bool scan_binary_evidence_store(std::ifstream& input,
                                     std::uint64_t evidence_file_size,
                                     std::string* reason);
-    bool scan_legacy_text_evidence_store(std::ifstream& input,
-                                         std::vector<EvidenceRecord>* records,
-                                         std::string* reason);
-    bool rewrite_evidence_store_binary(const std::vector<EvidenceRecord>& records,
-                                       std::string* reason);
     bool ensure_binary_evidence_store_file() const;
     std::optional<std::span<const std::byte>> load_evidence_bytes(std::uint64_t offset,
                                                                   std::uint32_t size) const;
@@ -242,11 +237,6 @@ private:
         EvidenceKey key;
     };
 
-    enum class EvidenceStoreFormat : std::uint8_t {
-        Binary = 0,
-        LegacyText = 1,
-    };
-
     bool opened_ = false;
     LectDatabaseConfig config_;
     LectDatabaseIdentity identity_;
@@ -263,7 +253,6 @@ private:
     mutable std::unordered_map<EvidenceKey, std::shared_ptr<const EvidenceRecord>, EvidenceKeyHash> evidence_;
     std::vector<EvidenceIndexRecord> evidence_index_;
     std::size_t evidence_index_count_ = 0;
-    mutable EvidenceStoreFormat evidence_store_format_ = EvidenceStoreFormat::Binary;
     mutable std::shared_ptr<EvidenceMappedFile> evidence_mapped_file_;
     mutable bool evidence_mapping_stale_ = false;
     mutable std::vector<std::byte> evidence_read_buffer_;

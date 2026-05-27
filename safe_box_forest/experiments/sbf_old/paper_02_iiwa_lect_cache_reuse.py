@@ -16,8 +16,8 @@ from typing import Any, Iterable
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import ROOT, add_common_sbf_args, configure_standalone_sbf, mean, write_json  # noqa: E402
-from paper_03_marcucci_envelope_build import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, add_common_sbf_args, configure_standalone_sbf, mean, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_03_marcucci_envelope_build import (  # noqa: E402
     apply_cache_protocol,
     cache_metrics,
     endpoints_clear,

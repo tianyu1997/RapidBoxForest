@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from common_sbf_config import (
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import (
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,

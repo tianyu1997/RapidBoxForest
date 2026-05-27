@@ -13,7 +13,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from paper_04_marcucci_combined import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_marcucci_combined import (  # noqa: E402
     ROOT,
     configure,
     parse_args as parse_exp4_args,
@@ -21,7 +21,7 @@ from paper_04_marcucci_combined import (  # noqa: E402
     refine_corridors,
     sbf,
 )
-from paper_04_merger_gcs import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_merger_gcs import (  # noqa: E402
     boxes_intersect,
     interval_bounds,
     path_collision_audit,

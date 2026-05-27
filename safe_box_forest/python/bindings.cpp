@@ -471,6 +471,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .value("Inline", rbf::ExecutionMode::Inline)
         .value("Parallel", rbf::ExecutionMode::Parallel);
 
+    py::enum_<rbf::FindFreeBoxSearchMode>(module, "FindFreeBoxSearchMode")
+        .value("Linear", rbf::FindFreeBoxSearchMode::Linear)
+        .value("BinaryDepth", rbf::FindFreeBoxSearchMode::BinaryDepth);
+
     py::class_<rbf::RuntimeConfig>(module, "RuntimeConfig")
         .def(py::init<>())
         .def_readwrite("mode", &rbf::RuntimeConfig::mode)
@@ -523,7 +527,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
     py::class_<rbf::FindFreeBoxOptions>(module, "FindFreeBoxOptions")
         .def(py::init<>())
         .def_readwrite("max_depth", &rbf::FindFreeBoxOptions::max_depth)
+        .def_readwrite("start_depth", &rbf::FindFreeBoxOptions::start_depth)
         .def_readwrite("skip_to_depth", &rbf::FindFreeBoxOptions::skip_to_depth)
+        .def_readwrite("search_mode", &rbf::FindFreeBoxOptions::search_mode)
         .def_readwrite("deadline_ms", &rbf::FindFreeBoxOptions::deadline_ms)
         .def_readwrite("split_reserved_leaf", &rbf::FindFreeBoxOptions::split_reserved_leaf)
         .def_readwrite("split_unknown_leaf", &rbf::FindFreeBoxOptions::split_unknown_leaf)

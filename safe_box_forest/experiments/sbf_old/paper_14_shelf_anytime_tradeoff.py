@@ -10,7 +10,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_anytime_tradeoff import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import (  # noqa: E402
     EPS_PATH_DEFAULT,
     aggregate_stage_records,
     assert_promoted_monotone,
@@ -21,9 +21,9 @@ from common_anytime_tradeoff import (  # noqa: E402
     task_result,
     update_incumbents,
 )
-from common_rrt_connect import segment_free  # noqa: E402
-from common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
-from paper_04_marcucci_combined import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import segment_free  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, mean, median, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_marcucci_combined import (  # noqa: E402
     configure,
     parse_args as parse_exp4_args,
     query_payload,

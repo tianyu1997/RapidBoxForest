@@ -4,7 +4,7 @@ import math
 import time
 from typing import Any
 
-from common_sbf_config import sbf
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import sbf
 
 
 def distance(a: list[float], b: list[float]) -> float:

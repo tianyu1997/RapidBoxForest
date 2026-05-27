@@ -12,7 +12,7 @@ PAPER_OUTPUTS = ROOT / "outputs" / "paper"
 DEFAULT_ARTIFACT = PAPER_OUTPUTS / "tro2026_random_anytime_tradeoff_full_unbiased_strictaudit_rrtgrid_sbfopt_20260512.json"
 DEFAULT_STEPS = [0.02, 0.01, 0.005, 0.002]
 
-from audit_random_anytime_artifact import audit_artifact  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.audit_random_anytime_artifact import audit_artifact  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

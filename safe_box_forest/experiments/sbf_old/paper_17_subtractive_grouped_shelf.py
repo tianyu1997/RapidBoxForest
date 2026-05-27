@@ -29,7 +29,7 @@ def _bootstrap_imports() -> Path:
 ROOT = _bootstrap_imports()
 
 import sbf  # noqa: E402
-import paper_04_marcucci_combined as exp4  # noqa: E402
+import RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_marcucci_combined as exp4  # noqa: E402
 from sbf.marcucci import (  # noqa: E402
     make_bins_obstacles,
     make_combined_queries,

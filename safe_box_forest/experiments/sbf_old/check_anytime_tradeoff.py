@@ -7,7 +7,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from common_sbf_config import ROOT
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT
 
 
 def parse_args() -> argparse.Namespace:

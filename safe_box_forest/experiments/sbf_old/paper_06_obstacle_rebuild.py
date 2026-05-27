@@ -31,7 +31,7 @@ ROOT = _bootstrap_imports()
 REPO_ROOT = ROOT.parents[1]
 
 import sbf
-import paper_04_marcucci_combined as exp4
+import RapidBoxForest.safe_box_forest.experiments.sbf_old.paper_04_marcucci_combined as exp4
 from sbf.marcucci import make_aabb, make_combined_obstacles, make_combined_queries, make_coverage_seeds, load_iiwa14_robot
 
 

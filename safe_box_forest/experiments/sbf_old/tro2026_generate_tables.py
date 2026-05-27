@@ -67,7 +67,7 @@ def anytime_summary_points(payload: dict[str, Any] | None) -> list[dict[str, Any
     records = payload.get("records")
     if isinstance(records, list) and records:
         try:
-            from common_anytime_tradeoff import aggregate_stage_records
+            from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import aggregate_stage_records
         except Exception:
             try:
                 import importlib.util

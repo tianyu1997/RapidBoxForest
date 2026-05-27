@@ -3,15 +3,23 @@
 #include <SBF/oracle.h>
 #include <SBF/runtime.h>
 
+#include <cstdint>
 #include <vector>
 
 namespace rbf {
 
+enum class FindFreeBoxSearchMode : std::uint8_t {
+	Linear = 0,
+	BinaryDepth = 1,
+};
+
 struct FindFreeBoxOptions {
 	int max_depth = 64;
-	/// Leaf nodes at depth < skip_to_depth are always Unknown; bypass validate_node
-	/// for them and split directly.  Should match lect_build_policy.skip_top_depth.
+	int start_depth = 0;
+	/// Legacy compatibility knob retained for older experiment configs.
+	/// Binary depth search uses start_depth as its lower bound.
 	int skip_to_depth = 0;
+	FindFreeBoxSearchMode search_mode = FindFreeBoxSearchMode::BinaryDepth;
 	bool split_unknown_leaf = true;
 	bool split_reserved_leaf = true;
 	bool reject_seed_collision = false;

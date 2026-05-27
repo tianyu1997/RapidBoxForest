@@ -11,7 +11,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common_sbf_config import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
     ROOT,
     add_common_sbf_args,
     configure_standalone_sbf,
@@ -22,7 +22,7 @@ from common_sbf_config import (  # noqa: E402
     set_if_available,
     write_json,
 )
-from common_scene_sampling import (  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import (  # noqa: E402
     DEFAULT_RANDOM_ROBOTS,
     DEFAULT_RANDOM_SCENE_SEEDS,
     RANDOM_DIFFICULTY_ORDER,

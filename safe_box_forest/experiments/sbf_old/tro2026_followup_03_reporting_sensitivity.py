@@ -16,7 +16,7 @@ DEFAULT_TOLERANCES = [0.0, 0.05, 0.08, 0.10, 0.15]
 DEFAULT_TOLERANCE = 0.08
 
 sys.path.insert(0, str(ROOT / "experiments"))
-import tro2026_generate_tables as tablegen  # noqa: E402
+import RapidBoxForest.safe_box_forest.experiments.sbf_old.tro2026_generate_tables as tablegen  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

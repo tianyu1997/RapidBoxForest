@@ -1,0 +1,93 @@
+{
+  "commands": [
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_marcucci_combined.py",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp05_shelf_cross_algorithm/sbf_support_hull.json",
+        "--preset",
+        "ifk_strict",
+        "--envelope",
+        "support_hull",
+        "--threads",
+        "8",
+        "--seeds",
+        "1",
+        "--strict-path-audit"
+      ],
+      "methods": [
+        "sbf"
+      ],
+      "name": "sbf_support_hull"
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_baselines_marcucci.py",
+        "--quick",
+        "--methods",
+        "iris_np,ompl",
+        "--out-dir",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp05_shelf_cross_algorithm/baselines",
+        "--seeds",
+        "1",
+        "--dry-run"
+      ],
+      "methods": [
+        "iris_np",
+        "ompl"
+      ],
+      "name": "iris_prm_bitstar_baselines"
+    },
+    {
+      "command": [
+        "/home/tian/miniconda3/envs/sbf/bin/python3",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/safe_box_forest/experiments/sbf_old/paper_04_rrt_connect_baseline.py",
+        "--trials",
+        "10",
+        "--timeout-ms",
+        "10000.0",
+        "--segment-step",
+        "0.01",
+        "--out-json",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp05_shelf_cross_algorithm/rrtconnect.json"
+      ],
+      "methods": [
+        "rrtconnect"
+      ],
+      "name": "rrtconnect"
+    }
+  ],
+  "environment": {
+    "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "git_sha": "d6a1affc70f5",
+    "hostname": "tian",
+    "machine": "x86_64",
+    "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
+    "proc_status": {
+      "VmData_kb": 7552,
+      "VmHWM_kb": 12868,
+      "VmRSS_kb": 12868,
+      "VmSize_kb": 15592
+    },
+    "processor": "x86_64",
+    "python": "3.10.19",
+    "repo_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "thread_env": {}
+  },
+  "experiment": "exp05_shelf_cross_algorithm",
+  "params": {
+    "dry_run": true,
+    "execute": false,
+    "methods": "sbf,iris_np,prm,rrtconnect,bitstar",
+    "out_dir": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/exp05_shelf_cross_algorithm",
+    "out_json": null,
+    "rrt_trials": 10,
+    "seeds": 1,
+    "timeout_ms": 10000.0
+  },
+  "run_id": "exp05_20260527T064614Z_d6a1affc70f5",
+  "runs": [],
+  "status": "dry_run"
+}
