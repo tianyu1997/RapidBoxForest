@@ -226,6 +226,11 @@
 \bibcite{amice2022finding}{11}
 \bibcite{petersen2023growing}{12}
 \bibcite{werner2024approximating}{13}
+\bibcite{blackmore1992swept}{14}
+\bibcite{abdel2006swept}{15}
+\bibcite{gottschalk1996obbtree}{16}
+\bibcite{larsen1999fast}{17}
+\bibcite{gilbert1988fast}{18}
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VII-}0a}Limitations.}{17}{paragraph.7.0.0.1}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VII-}0b}Scope and Future Work.}{17}{paragraph.7.0.0.2}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{Appendix\nobreakspace  A: RBF-only No-grid Diagnostics}{17}{section*.1}\protected@file@percent }
@@ -235,17 +240,9 @@
 \@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces RBF-only Gate 0 and lifelong-cache mechanism status after the no-grid refactor. In E5, FK/link-envelope materialization is charged only on the target leaf layer; parent layers are reconstructed by child-hull propagation during checkpoint.}}{17}{table.7}\protected@file@percent }
 \newlabel{tab:tro_appendix_rbf_only_cache_mechanism}{{VII}{17}{RBF-only Gate 0 and lifelong-cache mechanism status after the no-grid refactor. In E5, FK/link-envelope materialization is charged only on the target leaf layer; parent layers are reconstructed by child-hull propagation during checkpoint}{table.7}{}}
 \newlabel{tab:tro_appendix_rbf_only_cache_mechanism@cref}{{[table][7][]VII}{[1][17][]17}}
-\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces RBF-only appendix sweep summary with all three no-grid envelope families. Rows are ranked by strict-audit success, then build plus query time, then cache footprint.}}{17}{table.8}\protected@file@percent }
-\newlabel{tab:tro_appendix_rbf_only_sweep}{{VIII}{17}{RBF-only appendix sweep summary with all three no-grid envelope families. Rows are ranked by strict-audit success, then build plus query time, then cache footprint}{table.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Standalone link-envelope representation summary over the 2400-box fixed-width corpus. The table reports per-box staged materialization cost for LinkIAABB, KDOP26, SupportHull, and the AABB-first chain variants; the escalation column is the fraction of boxes that must run at least one post-AABB stage.}}{17}{table.8}\protected@file@percent }
+\newlabel{tab:tro_appendix_rbf_only_sweep}{{VIII}{17}{Standalone link-envelope representation summary over the 2400-box fixed-width corpus. The table reports per-box staged materialization cost for LinkIAABB, KDOP26, SupportHull, and the AABB-first chain variants; the escalation column is the fraction of boxes that must run at least one post-AABB stage}{table.8}{}}
 \newlabel{tab:tro_appendix_rbf_only_sweep@cref}{{[table][8][]VIII}{[1][17][]17}}
-\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.}}{17}{table.9}\protected@file@percent }
-\newlabel{tab:tro_appendix_rbf_only_warm_reuse}{{IX}{17}{RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database}{table.9}{}}
-\newlabel{tab:tro_appendix_rbf_only_warm_reuse@cref}{{[table][9][]IX}{[1][17][]17}}
-\bibcite{blackmore1992swept}{14}
-\bibcite{abdel2006swept}{15}
-\bibcite{gottschalk1996obbtree}{16}
-\bibcite{larsen1999fast}{17}
-\bibcite{gilbert1988fast}{18}
 \bibcite{bergen1999gjk}{19}
 \bibcite{pan2012fcl}{20}
 \bibcite{moore2009introduction}{21}
@@ -271,4 +268,7 @@
 \bibcite{kalakrishnan2011stomp}{41}
 \bibcite{schulman2014motion}{42}
 \bibcite{mukadam2018gpmp2}{43}
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.}}{18}{table.9}\protected@file@percent }
+\newlabel{tab:tro_appendix_rbf_only_warm_reuse}{{IX}{18}{RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database}{table.9}{}}
+\newlabel{tab:tro_appendix_rbf_only_warm_reuse@cref}{{[table][9][]IX}{[1][17][]18}}
 \gdef \@abspage@last{18}

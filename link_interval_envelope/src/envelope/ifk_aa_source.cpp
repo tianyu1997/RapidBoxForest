@@ -64,6 +64,35 @@ int widest_positive_width_dim(const std::vector<Interval>& intervals) {
     return best_dim;
 }
 
+bool allowed_hifk_dimension(
+    const std::vector<Interval>& intervals,
+    int dim,
+    double min_width)
+{
+    return dim >= 0 && dim < static_cast<int>(intervals.size()) &&
+           intervals[static_cast<std::size_t>(dim)].width() > min_width;
+}
+
+std::vector<int> widest_root_order(const std::vector<Interval>& root_intervals, int n_dims) {
+    std::vector<int> order(static_cast<std::size_t>(std::max(0, n_dims)));
+    for (int dim = 0; dim < n_dims; ++dim) {
+        order[static_cast<std::size_t>(dim)] = dim;
+    }
+    std::stable_sort(order.begin(), order.end(), [&](int lhs, int rhs) {
+        const double lhs_width = lhs < static_cast<int>(root_intervals.size())
+            ? std::max(0.0, root_intervals[static_cast<std::size_t>(lhs)].width())
+            : 0.0;
+        const double rhs_width = rhs < static_cast<int>(root_intervals.size())
+            ? std::max(0.0, root_intervals[static_cast<std::size_t>(rhs)].width())
+            : 0.0;
+        if (lhs_width != rhs_width) {
+            return lhs_width > rhs_width;
+        }
+        return lhs < rhs;
+    });
+    return order;
+}
+
 int aafk_volume_min_dim(
     const Robot& robot,
     const std::vector<Interval>& intervals)
@@ -104,28 +133,68 @@ int aafk_volume_min_dim(
 }
 
 struct HifkDepthSplitSchedule {
+    HifkSplitStrategy strategy = HifkSplitStrategy::RoundRobin;
     std::vector<int> depth_dims;
+    std::vector<int> root_order;
+    int depth_offset = 0;
+    double min_width = 0.0;
 
-    void reset(int capacity_hint) {
-        depth_dims.assign(static_cast<std::size_t>(std::max(0, capacity_hint)), -1);
+    void reset(const EndpointSourceConfig& config,
+               const std::vector<Interval>& intervals,
+               int capacity_hint) {
+        strategy = config.hifk_split_strategy;
+        depth_offset = std::max(0, config.hifk_depth_offset);
+        min_width = std::max(0.0, config.hifk_min_split_width);
+        depth_dims.clear();
+        root_order.clear();
+
+        if (strategy == HifkSplitStrategy::FixedDepthSchedule) {
+            depth_dims = config.hifk_depth_dimensions;
+            if (depth_dims.empty() && capacity_hint > 0) {
+                depth_dims.assign(static_cast<std::size_t>(capacity_hint), -1);
+            }
+            return;
+        }
+
+        if (strategy == HifkSplitStrategy::WidestRoot) {
+            const std::vector<Interval>& root_intervals =
+                config.hifk_root_intervals.empty() ? intervals : config.hifk_root_intervals;
+            root_order = widest_root_order(root_intervals, static_cast<int>(intervals.size()));
+        }
     }
 
     int resolve(
         int depth_from_root,
-        const std::vector<Interval>& intervals,
-        const Robot& robot)
+        const std::vector<Interval>& intervals) const
     {
         if (depth_from_root < 0) {
             return widest_positive_width_dim(intervals);
         }
-        if (depth_from_root >= static_cast<int>(depth_dims.size())) {
-            depth_dims.resize(static_cast<std::size_t>(depth_from_root + 1), -1);
+
+        const int global_depth = depth_from_root + depth_offset;
+        if (strategy == HifkSplitStrategy::FixedDepthSchedule) {
+            if (global_depth >= 0 && global_depth < static_cast<int>(depth_dims.size())) {
+                const int stored = depth_dims[static_cast<std::size_t>(global_depth)];
+                if (allowed_hifk_dimension(intervals, stored, min_width)) {
+                    return stored;
+                }
+            }
+            return widest_positive_width_dim(intervals);
         }
-        int& stored = depth_dims[static_cast<std::size_t>(depth_from_root)];
-        if (stored < 0) {
-            stored = aafk_volume_min_dim(robot, intervals);
+
+        if (strategy == HifkSplitStrategy::WidestRoot && !root_order.empty()) {
+            const int stored = root_order[static_cast<std::size_t>(global_depth % static_cast<int>(root_order.size()))];
+            if (allowed_hifk_dimension(intervals, stored, min_width)) {
+                return stored;
+            }
+            return widest_positive_width_dim(intervals);
         }
-        return stored;
+
+        const int stored = global_depth % static_cast<int>(intervals.size());
+        if (allowed_hifk_dimension(intervals, stored, min_width)) {
+            return stored;
+        }
+        return widest_positive_width_dim(intervals);
     }
 };
 
@@ -166,7 +235,7 @@ void hifk_aa_recurse(
         return;
     }
 
-    const int split_joint = schedule.resolve(depth, intervals, robot);
+    const int split_joint = schedule.resolve(depth, intervals);
 
     if (split_joint > k_valid) {
         aa_fk_extend_prefix(current, robot, intervals, k_valid, split_joint, n_joints);
@@ -209,6 +278,7 @@ void hifk_aa_recurse(
 void hifk_aa_bfs_adaptive(
     const Robot& robot,
     const std::vector<Interval>& intervals_in,
+    const EndpointSourceConfig& config,
     int max_depth,
     float* out_hull,
     int n_active_links,
@@ -237,7 +307,7 @@ void hifk_aa_bfs_adaptive(
 
     std::priority_queue<Node> queue;
     HifkDepthSplitSchedule schedule;
-    schedule.reset(max_depth);
+    schedule.reset(config, intervals_in, max_depth);
     queue.push(make_node(intervals_in, 0));
 
     while (!queue.empty()) {
@@ -249,7 +319,7 @@ void hifk_aa_bfs_adaptive(
             continue;
         }
 
-        const int split_joint = schedule.resolve(node.depth, node.intervals, robot);
+        const int split_joint = schedule.resolve(node.depth, node.intervals);
 
         const double mid = (node.intervals[split_joint].lo + node.intervals[split_joint].hi) * 0.5;
         const double original_lo = node.intervals[split_joint].lo;
@@ -310,9 +380,7 @@ std::vector<int> aafk_volume_min_depth_schedule(
 EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
     const Robot& robot,
     const std::vector<Interval>& intervals,
-    int max_depth,
-    int /*n_threads*/,
-    double vol_ratio_thresh)
+    const EndpointSourceConfig& config)
 {
     EndpointIAABBResult result;
     result.source = EndpointSource::HIFK;
@@ -326,23 +394,24 @@ EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
         return result;
     }
 
-    const int effective_max_depth = std::max(0, max_depth);
+    const int effective_max_depth = std::max(0, config.hifk_max_depth);
     const int n_tf = n_joints + (robot.has_tool() ? 1 : 0);
     const int n_active_links = result.n_active_links;
 
     init_endpoints_inf(result.endpoint_iaabbs.data(), n_active_links);
 
-    if (vol_ratio_thresh > 0.0) {
+    if (config.hifk_vol_ratio_thresh > 0.0) {
         hifk_aa_bfs_adaptive(
             robot,
             intervals,
+            config,
             effective_max_depth,
             result.endpoint_iaabbs.data(),
             n_active_links,
-            vol_ratio_thresh);
+            config.hifk_vol_ratio_thresh);
     } else {
         HifkDepthSplitSchedule schedule;
-        schedule.reset(effective_max_depth);
+        schedule.reset(config, intervals, effective_max_depth);
         HifkAaWs workspace;
         workspace.n_joints = n_joints;
         workspace.n_tf = n_tf;
@@ -371,6 +440,21 @@ EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
     }
 
     return result;
+}
+
+EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    int max_depth,
+    int n_threads,
+    double vol_ratio_thresh)
+{
+    EndpointSourceConfig config;
+    config.source = EndpointSource::HIFK;
+    config.hifk_max_depth = max_depth;
+    config.hifk_n_threads = n_threads;
+    config.hifk_vol_ratio_thresh = vol_ratio_thresh;
+    return compute_endpoint_iaabb_hifk_aa(robot, intervals, config);
 }
 
 }  // namespace rbf

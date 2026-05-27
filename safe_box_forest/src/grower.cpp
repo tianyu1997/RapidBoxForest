@@ -646,7 +646,14 @@ OracleNodeId find_leaf_containing(BoxOracle& oracle, const Eigen::Ref<const Eige
     OracleNodeId node = oracle.root_node();
     while (!oracle.is_leaf(node)) {
         const int dim = oracle.split_dim(node);
-        node = q[dim] <= oracle.split_value(node) ? oracle.left_child(node) : oracle.right_child(node);
+        if (dim < 0 || dim >= q.size()) {
+            return kInvalidOracleNodeId;
+        }
+        const OracleNodeId child = q[dim] <= oracle.split_value(node) ? oracle.left_child(node) : oracle.right_child(node);
+        if (child == kInvalidOracleNodeId) {
+            return kInvalidOracleNodeId;
+        }
+        node = child;
     }
     return node;
 }

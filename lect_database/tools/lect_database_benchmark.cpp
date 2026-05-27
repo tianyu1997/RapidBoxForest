@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -25,12 +26,17 @@ struct Options {
     int depth = 8;
     std::uint64_t queries = 20000;
     std::uint64_t evidence_records = 20000;
+    std::uint64_t compact_delete_ops = 0;
     int payload_floats = 84;
     std::uint32_t page_size_bytes = 4096;
     std::uint32_t max_resident_pages = 4;
     std::uint32_t seed = 42;
     bool fresh = true;
+    bool existing_db = false;
     bool verify = true;
+    bool read_stages_only = false;
+    bool snapshot = false;
+    std::filesystem::path snapshot_path;
 };
 
 struct StageRow {
@@ -41,6 +47,15 @@ struct StageRow {
     std::size_t evidence = 0;
     ld::LectDatabaseStats delta;
     bool ok = true;
+};
+
+struct BenchmarkFixture {
+    std::uint64_t node_count = 0;
+    std::vector<ld::NodeId> node_ids;
+    std::vector<ld::NodeId> random_nodes;
+    std::vector<std::vector<rbf::Interval>> sampled_boxes;
+    std::vector<std::vector<rbf::Interval>> query_boxes;
+    std::vector<ld::EvidenceRecord> evidence_samples;
 };
 
 ld::LectDatabaseStats diff_stats(const ld::LectDatabaseStats& after, const ld::LectDatabaseStats& before) {
@@ -72,11 +87,16 @@ void usage() {
         << "  --depth D                 ensured kd-tree depth (default 8)\n"
         << "  --queries N               read/query operations per read stage (default 20000)\n"
         << "  --evidence-records N      evidence insert/update/read operations (default 20000)\n"
+        << "  --compact-delete-ops N    optional sampled node payload tombstones before compact (default node_count/4)\n"
         << "  --payload-floats N        floats per endpoint payload (default 84)\n"
         << "  --page-size N             node page size in bytes (default 4096)\n"
         << "  --resident-pages N        LRU resident node page cap (default 4)\n"
         << "  --seed N                  random seed (default 42)\n"
+        << "  --existing-db             benchmark an already-persisted database instead of building synthetic data\n"
+        << "  --snapshot               build and benchmark a read snapshot from the database\n"
+        << "  --snapshot-path PATH      snapshot directory (default DB/lect_snapshot)\n"
         << "  --reuse                   do not delete an existing database first\n"
+        << "  --read-stages-only        run only open/query/evidence read stages\n"
         << "  --no-verify               skip final strict verify\n"
         << "  --help                    print this help\n";
 }
@@ -97,11 +117,16 @@ Options parse_args(int argc, char** argv) {
         else if (arg == "--depth") options.depth = std::stoi(next());
         else if (arg == "--queries") options.queries = static_cast<std::uint64_t>(std::stoull(next()));
         else if (arg == "--evidence-records") options.evidence_records = static_cast<std::uint64_t>(std::stoull(next()));
+        else if (arg == "--compact-delete-ops") options.compact_delete_ops = static_cast<std::uint64_t>(std::stoull(next()));
         else if (arg == "--payload-floats") options.payload_floats = std::stoi(next());
         else if (arg == "--page-size") options.page_size_bytes = static_cast<std::uint32_t>(std::stoul(next()));
         else if (arg == "--resident-pages") options.max_resident_pages = static_cast<std::uint32_t>(std::stoul(next()));
         else if (arg == "--seed") options.seed = static_cast<std::uint32_t>(std::stoul(next()));
+        else if (arg == "--existing-db") options.existing_db = true;
+        else if (arg == "--snapshot") options.snapshot = true;
+        else if (arg == "--snapshot-path") options.snapshot_path = next();
         else if (arg == "--reuse") options.fresh = false;
+        else if (arg == "--read-stages-only") options.read_stages_only = true;
         else if (arg == "--no-verify") options.verify = false;
         else if (arg == "--help") {
             usage();
@@ -117,6 +142,9 @@ Options parse_args(int argc, char** argv) {
     options.payload_floats = std::max(1, options.payload_floats);
     options.page_size_bytes = std::max<std::uint32_t>(128, options.page_size_bytes);
     options.max_resident_pages = std::max<std::uint32_t>(1, options.max_resident_pages);
+    if (options.snapshot && options.snapshot_path.empty()) {
+        options.snapshot_path = ld::LectReadSnapshot::default_snapshot_path(options.db_path);
+    }
     return options;
 }
 
@@ -194,6 +222,43 @@ std::vector<rbf::Interval> random_query_box(int dims, std::mt19937& rng) {
     return box;
 }
 
+std::vector<rbf::Interval> expanded_query_box(const std::vector<rbf::Interval>& box) {
+    std::vector<rbf::Interval> query = box;
+    for (auto& interval : query) {
+        const double width = std::max(1e-9, interval.hi - interval.lo);
+        const double pad = std::max(1e-6, width * 0.25);
+        interval.lo -= pad;
+        interval.hi += pad;
+    }
+    return query;
+}
+
+void perturb_payload(ld::EvidenceRecord* record, std::uint64_t ordinal) {
+    if (record == nullptr) {
+        return;
+    }
+    record->generation += 1;
+    record->checksum = 0;
+    record->unavailable = false;
+    if (record->payload.empty()) {
+        record->payload.push_back(0.0f);
+    }
+    const float delta = 1.0e-6f * static_cast<float>((ordinal % 17u) + 1u);
+    record->payload.front() = std::nextafter(record->payload.front() + delta,
+                                             std::numeric_limits<float>::infinity());
+}
+
+ld::EvidenceRecord materialize_record(const ld::EvidenceRecordView& view) {
+    ld::EvidenceRecord record;
+    record.key = view.key;
+    record.child_hull = view.child_hull;
+    record.unavailable = view.unavailable;
+    record.generation = view.generation;
+    record.checksum = view.checksum;
+    record.payload.assign(view.payload.begin(), view.payload.end());
+    return record;
+}
+
 template <typename Fn>
 StageRow measure(const std::string& stage,
                  std::uint64_t operations,
@@ -214,10 +279,298 @@ StageRow measure(const std::string& stage,
     return row;
 }
 
+double avg_us_per_op(const StageRow& row) {
+    return row.operations == 0 ? 0.0 : (row.elapsed_ms * 1000.0 / static_cast<double>(row.operations));
+}
+
+std::filesystem::path sibling_stage_path(const std::filesystem::path& root, const std::string& suffix) {
+    const auto name = root.filename().string();
+    return root.parent_path() / (name + "_" + suffix);
+}
+
+bool copy_database_tree(const std::filesystem::path& source, const std::filesystem::path& target) {
+    std::error_code error;
+    std::filesystem::remove_all(target, error);
+    error.clear();
+    std::filesystem::create_directories(target.parent_path(), error);
+    if (error) {
+        return false;
+    }
+    std::filesystem::copy(source, target, std::filesystem::copy_options::recursive, error);
+    return !error;
+}
+
+StageRow failed_stage(const std::string& stage, std::uint64_t operations) {
+    StageRow row;
+    row.stage = stage;
+    row.operations = operations;
+    row.ok = false;
+    return row;
+}
+
+StageRow measure_open_existing(const std::string& stage,
+                               const std::filesystem::path& path,
+                               bool read_only,
+                               bool verify_after_open) {
+    StageRow row;
+    row.stage = stage;
+    row.operations = 1;
+    std::string reason;
+    const auto begin = Clock::now();
+    auto database = ld::LectDatabase::open_existing(path, read_only, &reason);
+    row.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    row.ok = database.has_value() && (!verify_after_open || database->verify(true).ok);
+    if (database) {
+        row.nodes = database->node_count();
+        row.evidence = database->evidence_count();
+        row.delta = database->stats();
+    }
+    return row;
+}
+
+StageRow measure_snapshot_build(const std::filesystem::path& legacy_path,
+                          const std::filesystem::path& snapshot_path) {
+    StageRow row;
+    row.stage = "snapshot.build";
+    row.operations = 1;
+    std::string reason;
+    const auto begin = Clock::now();
+    row.ok = ld::LectReadSnapshot::build_from_legacy(legacy_path, snapshot_path, &reason);
+    row.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    if (row.ok) {
+        ld::LectReadSnapshot snapshot;
+        row.ok = snapshot.open(snapshot_path, &reason);
+        if (row.ok) {
+            row.nodes = snapshot.node_count();
+            row.evidence = snapshot.evidence_count();
+        }
+    }
+    if (!row.ok && !reason.empty()) {
+        std::cerr << "snapshot build failed: " << reason << '\n';
+    }
+    return row;
+}
+
+StageRow measure_snapshot_open(const std::string& stage,
+                         const std::filesystem::path& snapshot_path) {
+    StageRow row;
+    row.stage = stage;
+    row.operations = 1;
+    std::string reason;
+    ld::LectReadSnapshot snapshot;
+    const auto begin = Clock::now();
+    row.ok = snapshot.open(snapshot_path, &reason);
+    row.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    if (row.ok) {
+        row.nodes = snapshot.node_count();
+        row.evidence = snapshot.evidence_count();
+    } else if (!reason.empty()) {
+        std::cerr << "snapshot open failed: " << reason << '\n';
+    }
+    return row;
+}
+
+template <typename Fn>
+StageRow measure_reopened_snapshot(const std::string& stage,
+                                   std::uint64_t operations,
+                                   const std::filesystem::path& snapshot_path,
+                                   Fn&& fn) {
+    std::string reason;
+    ld::LectReadSnapshot snapshot;
+    if (!snapshot.open(snapshot_path, &reason)) {
+        if (!reason.empty()) {
+            std::cerr << "snapshot open failed for " << stage << ": " << reason << '\n';
+        }
+        return failed_stage(stage, operations);
+    }
+    StageRow row;
+    row.stage = stage;
+    row.operations = operations;
+    row.nodes = snapshot.node_count();
+    row.evidence = snapshot.evidence_count();
+    const auto begin = Clock::now();
+    row.ok = fn(snapshot, row.delta);
+    row.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    return row;
+}
+
+template <typename Fn>
+StageRow measure_reopened_db(const std::string& stage,
+                             std::uint64_t operations,
+                             const std::filesystem::path& path,
+                             bool read_only,
+                             Fn&& fn) {
+    std::string reason;
+    auto database = ld::LectDatabase::open_existing(path, read_only, &reason);
+    if (!database) {
+        return failed_stage(stage, operations);
+    }
+    return measure(stage, operations, *database, [&]() { return fn(*database); });
+}
+
+template <typename Fn>
+StageRow measure_reopened_db_session(const std::string& stage,
+                                     std::uint64_t operations,
+                                     const std::filesystem::path& path,
+                                     bool read_only,
+                                     Fn&& fn) {
+    std::string reason;
+    auto database = ld::LectDatabase::open_existing(path, read_only, &reason);
+    if (!database) {
+        return failed_stage(stage, operations);
+    }
+
+    auto session = database->make_query_session();
+    const auto before = database->stats();
+    const auto begin = Clock::now();
+    const bool ok = fn(*database, session);
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+
+    StageRow row;
+    row.stage = stage;
+    row.operations = operations;
+    row.elapsed_ms = elapsed;
+    row.nodes = database->node_count();
+    row.evidence = database->evidence_count();
+    row.delta = diff_stats(database->stats(), before);
+    row.delta.query_path_cache_hits = session.stats().query_path_cache_hits;
+    row.delta.query_path_cache_misses = session.stats().query_path_cache_misses;
+    row.ok = ok;
+    return row;
+}
+
+bool build_baseline_database(const Options& options,
+                            BenchmarkFixture* fixture,
+                            std::string* reason) {
+    ld::LectDatabase database;
+    const auto config = make_config(options);
+    if (!database.open(config, reason)) {
+        return false;
+    }
+    if (!database.ensure_depth(options.depth)) {
+        if (reason) *reason = "ensure_depth failed";
+        return false;
+    }
+
+    fixture->node_count = static_cast<std::uint64_t>(database.node_count());
+    fixture->node_ids = database.node_ids();
+    std::mt19937 rng(options.seed);
+    std::uniform_int_distribution<std::uint64_t> node_dist(0, fixture->node_count == 0 ? 0 : fixture->node_count - 1);
+
+    fixture->random_nodes.clear();
+    fixture->random_nodes.reserve(static_cast<std::size_t>(options.queries));
+    for (std::uint64_t i = 0; i < options.queries; ++i) {
+        fixture->random_nodes.push_back(static_cast<ld::NodeId>(node_dist(rng)));
+    }
+
+    fixture->sampled_boxes.clear();
+    fixture->sampled_boxes.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(options.queries, 4096)));
+    for (std::uint64_t i = 0; i < options.queries && fixture->sampled_boxes.size() < 4096; ++i) {
+        auto box = database.node_box(fixture->random_nodes[static_cast<std::size_t>(i)]);
+        if (!box) {
+            if (reason) *reason = "node_box failed during baseline setup";
+            return false;
+        }
+        fixture->sampled_boxes.push_back(std::move(*box));
+    }
+
+    fixture->query_boxes.clear();
+    fixture->query_boxes.reserve(static_cast<std::size_t>(options.queries));
+    for (std::uint64_t i = 0; i < options.queries; ++i) {
+        fixture->query_boxes.push_back(random_query_box(options.dims, rng));
+    }
+
+    fixture->evidence_samples.clear();
+    fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
+        const auto node_id = static_cast<ld::NodeId>(i % fixture->node_count);
+        auto key = evidence_key(i, node_id, fixture->node_count);
+        ld::EvidenceRecord record;
+        record.key = key;
+        record.payload = make_payload(i, options.payload_floats);
+        if (!database.put_evidence(std::move(record))) {
+            if (reason) *reason = "put_evidence failed during baseline setup";
+            return false;
+        }
+        ld::EvidenceRecord sample;
+        sample.key = key;
+        sample.payload = make_payload(i, options.payload_floats);
+        fixture->evidence_samples.push_back(std::move(sample));
+    }
+
+    if (!database.checkpoint()) {
+        if (reason) *reason = "checkpoint failed during baseline setup";
+        return false;
+    }
+    return true;
+}
+
+bool load_existing_fixture(const Options& options,
+                           BenchmarkFixture* fixture,
+                           std::string* reason) {
+    auto database = ld::LectDatabase::open_existing(options.db_path, true, reason);
+    if (!database) {
+        return false;
+    }
+
+    fixture->node_ids = database->node_ids();
+    fixture->node_count = static_cast<std::uint64_t>(fixture->node_ids.size());
+    if (fixture->node_ids.empty()) {
+        if (reason) *reason = "existing database has no nodes";
+        return false;
+    }
+
+    std::mt19937 rng(options.seed);
+    std::uniform_int_distribution<std::size_t> node_dist(0, fixture->node_ids.size() - 1);
+    fixture->random_nodes.clear();
+    fixture->random_nodes.reserve(static_cast<std::size_t>(options.queries));
+    for (std::uint64_t i = 0; i < options.queries; ++i) {
+        fixture->random_nodes.push_back(fixture->node_ids[node_dist(rng)]);
+    }
+
+    fixture->sampled_boxes.clear();
+    fixture->sampled_boxes.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(options.queries, 4096)));
+    for (std::uint64_t i = 0; i < options.queries && fixture->sampled_boxes.size() < 4096; ++i) {
+        auto box = database->node_box(fixture->random_nodes[static_cast<std::size_t>(i)]);
+        if (!box) {
+            if (reason) *reason = "node_box failed while preparing existing-db fixture";
+            return false;
+        }
+        fixture->sampled_boxes.push_back(std::move(*box));
+    }
+    if (fixture->sampled_boxes.empty()) {
+        if (reason) *reason = "existing database fixture has no sampled boxes";
+        return false;
+    }
+
+    fixture->query_boxes.clear();
+    fixture->query_boxes.reserve(static_cast<std::size_t>(options.queries));
+    for (std::uint64_t i = 0; i < options.queries; ++i) {
+        const auto& box = fixture->sampled_boxes[static_cast<std::size_t>(i % fixture->sampled_boxes.size())];
+        fixture->query_boxes.push_back(expanded_query_box(box));
+    }
+
+    fixture->evidence_samples.clear();
+    fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
+        const auto node_id = fixture->random_nodes[static_cast<std::size_t>(i % fixture->random_nodes.size())];
+        ld::EvidenceKey key;
+        key.node_id = node_id;
+        const auto view = database->evidence(key);
+        if (!view || view->unavailable || view->payload.empty()) {
+            if (reason) *reason = "existing database fixture could not load sampled evidence";
+            return false;
+        }
+        fixture->evidence_samples.push_back(materialize_record(*view));
+    }
+    return true;
+}
+
 void print_rows(const std::vector<StageRow>& rows) {
-    std::cout << std::left << std::setw(24) << "stage"
+    std::cout << std::left << std::setw(28) << "stage"
               << std::right << std::setw(12) << "ops"
               << std::setw(12) << "ms"
+              << std::setw(14) << "avg_us/op"
               << std::setw(14) << "ops/s"
               << std::setw(10) << "nodes"
               << std::setw(10) << "evidence"
@@ -232,9 +585,10 @@ void print_rows(const std::vector<StageRow>& rows) {
         const double ops_per_sec = row.elapsed_ms > 0.0
             ? static_cast<double>(row.operations) * 1000.0 / row.elapsed_ms
             : 0.0;
-        std::cout << std::left << std::setw(24) << row.stage
+        std::cout << std::left << std::setw(28) << row.stage
                   << std::right << std::setw(12) << row.operations
                   << std::setw(12) << std::fixed << std::setprecision(3) << row.elapsed_ms
+                  << std::setw(14) << std::fixed << std::setprecision(3) << avg_us_per_op(row)
                   << std::setw(14) << std::fixed << std::setprecision(1) << ops_per_sec
                   << std::setw(10) << row.nodes
                   << std::setw(10) << row.evidence
@@ -261,7 +615,7 @@ bool write_csv(const std::filesystem::path& path, const std::vector<StageRow>& r
     if (!out) {
         return false;
     }
-    out << "stage,operations,elapsed_ms,ops_per_sec,nodes,evidence,page_reads,page_writes,cache_hits,cache_misses,evictions,dirty_evictions,dirty_flushes,evidence_reads,evidence_writes,journal_transactions,range_nodes_visited,resident_pages,max_resident_pages,ok\n";
+    out << "stage,operations,elapsed_ms,avg_us_per_op,ops_per_sec,nodes,evidence,page_reads,page_writes,cache_hits,cache_misses,evictions,dirty_evictions,dirty_flushes,evidence_reads,evidence_writes,journal_transactions,range_nodes_visited,resident_pages,max_resident_pages,ok\n";
     for (const auto& row : rows) {
         const double ops_per_sec = row.elapsed_ms > 0.0
             ? static_cast<double>(row.operations) * 1000.0 / row.elapsed_ms
@@ -269,6 +623,7 @@ bool write_csv(const std::filesystem::path& path, const std::vector<StageRow>& r
         out << row.stage << ','
             << row.operations << ','
             << std::setprecision(17) << row.elapsed_ms << ','
+            << avg_us_per_op(row) << ','
             << ops_per_sec << ','
             << row.nodes << ','
             << row.evidence << ','
@@ -295,7 +650,7 @@ bool write_csv(const std::filesystem::path& path, const std::vector<StageRow>& r
 int main(int argc, char** argv) {
     try {
         const Options options = parse_args(argc, argv);
-        if (options.fresh) {
+        if (options.fresh && !options.existing_db) {
             std::filesystem::remove_all(options.db_path);
         }
         const auto db_parent = options.db_path.parent_path();
@@ -303,158 +658,248 @@ int main(int argc, char** argv) {
             std::filesystem::create_directories(db_parent);
         }
 
-        ld::LectDatabase database;
         std::string reason;
-        const auto config = make_config(options);
-        if (!database.open(config, &reason)) {
-            std::cerr << "failed to open database: " << reason << '\n';
-            return 1;
+        BenchmarkFixture fixture;
+        if (options.existing_db) {
+            if (!load_existing_fixture(options, &fixture, &reason)) {
+                std::cerr << "failed to load existing database fixture: " << reason << '\n';
+                return 1;
+            }
+        } else {
+            if (!build_baseline_database(options, &fixture, &reason)) {
+                std::cerr << "failed to build baseline database: " << reason << '\n';
+                return 1;
+            }
         }
 
         std::vector<StageRow> rows;
-        rows.push_back(measure("add.ensure_depth", 1, database, [&]() {
-            return database.ensure_depth(options.depth);
-        }));
+        rows.push_back(measure_open_existing("load.open_read_only", options.db_path, true, false));
+        rows.push_back(measure_reopened_db("read.node_box_disk",
+                                           options.queries,
+                                           options.db_path,
+                                           true,
+                                           [&](ld::LectDatabase& database) {
+                                               for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                   auto box = database.node_box(fixture.random_nodes[static_cast<std::size_t>(i)]);
+                                                   if (!box) {
+                                                       return false;
+                                                   }
+                                               }
+                                               return true;
+                                           }));
+        rows.push_back(measure_reopened_db_session("read.node_box_session",
+                                                   options.queries,
+                                                   options.db_path,
+                                                   true,
+                                                   [&](ld::LectDatabase&, ld::LectDbQuerySession& session) {
+                                                       for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                           auto box = session.node_box(fixture.random_nodes[static_cast<std::size_t>(i)]);
+                                                           if (!box) {
+                                                               return false;
+                                                           }
+                                                       }
+                                                       return true;
+                                                   }));
+        rows.push_back(measure_reopened_db("read.exact_box_lookup_disk",
+                                           options.queries,
+                                           options.db_path,
+                                           true,
+                                           [&](ld::LectDatabase& database) {
+                                               for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                   const auto& box = fixture.sampled_boxes[static_cast<std::size_t>(i % fixture.sampled_boxes.size())];
+                                                   const auto lookup = database.box_to_node_exact(database.make_box_key(box));
+                                                   if (!lookup.found) {
+                                                       return false;
+                                                   }
+                                               }
+                                               return true;
+                                           }));
+        rows.push_back(measure_reopened_db_session("read.exact_box_lookup_session",
+                                                   options.queries,
+                                                   options.db_path,
+                                                   true,
+                                                   [&](ld::LectDatabase& database, ld::LectDbQuerySession& session) {
+                                                       for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                           const auto& box = fixture.sampled_boxes[static_cast<std::size_t>(i % fixture.sampled_boxes.size())];
+                                                           const auto lookup = session.box_to_node_exact(database.make_box_key(box));
+                                                           if (!lookup.found) {
+                                                               return false;
+                                                           }
+                                                       }
+                                                       return true;
+                                                   }));
+        rows.push_back(measure_reopened_db("read.endpoint_for_box_exact_disk",
+                                           options.queries,
+                                           options.db_path,
+                                           true,
+                                           [&](ld::LectDatabase& database) {
+                                               for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                   const auto index = static_cast<std::size_t>(i % fixture.sampled_boxes.size());
+                                                   const auto& box = fixture.sampled_boxes[index];
+                                                   auto key_template = fixture.evidence_samples[static_cast<std::size_t>(i % fixture.evidence_samples.size())].key;
+                                                   const auto endpoint = database.endpoint_for_box_exact(database.make_box_key(box), key_template);
+                                                   if (!endpoint) {
+                                                       return false;
+                                                   }
+                                               }
+                                               return true;
+                                           }));
+        rows.push_back(measure_reopened_db("read.range_query_disk",
+                                           options.queries,
+                                           options.db_path,
+                                           true,
+                                           [&](ld::LectDatabase& database) {
+                                               ld::LectDatabaseStats range_stats;
+                                               for (const auto& box : fixture.query_boxes) {
+                                                   const auto ids = database.range_query(box,
+                                                                                         ld::RangeQueryMode::Intersecting,
+                                                                                         &range_stats);
+                                                   if (ids.empty() && database.node_count() > 0) {
+                                                       return false;
+                                                   }
+                                               }
+                                               return range_stats.range_nodes_visited > 0;
+                                           }));
+        rows.push_back(measure_reopened_db("read.evidence_disk",
+                                           static_cast<std::uint64_t>(fixture.evidence_samples.size()),
+                                           options.db_path,
+                                           true,
+                                           [&](ld::LectDatabase& database) {
+                                               for (const auto& record : fixture.evidence_samples) {
+                                                   if (!database.evidence(record.key)) {
+                                                       return false;
+                                                   }
+                                               }
+                                               return true;
+                                           }));
 
-        const std::uint64_t node_count = static_cast<std::uint64_t>(database.node_count());
-        std::mt19937 rng(options.seed);
-        std::uniform_int_distribution<std::uint64_t> node_dist(0, node_count == 0 ? 0 : node_count - 1);
-
-        std::vector<ld::NodeId> random_nodes;
-        random_nodes.reserve(static_cast<std::size_t>(options.queries));
-        for (std::uint64_t i = 0; i < options.queries; ++i) {
-            random_nodes.push_back(static_cast<ld::NodeId>(node_dist(rng)));
+        if (options.snapshot) {
+            rows.push_back(measure_snapshot_build(options.db_path, options.snapshot_path));
+            rows.push_back(measure_snapshot_open("snapshot.load.open_read_only", options.snapshot_path));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.node_box",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats&) {
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       auto box = snapshot.node_box(fixture.random_nodes[static_cast<std::size_t>(i)]);
+                                                       if (!box) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   return true;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.exact_box_lookup",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats&) {
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       const auto& box = fixture.sampled_boxes[static_cast<std::size_t>(i % fixture.sampled_boxes.size())];
+                                                       const auto lookup = snapshot.box_to_node_exact(snapshot.make_box_key(box));
+                                                       if (!lookup.found) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   return true;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.endpoint_for_box_exact",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats&) {
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       const auto index = static_cast<std::size_t>(i % fixture.sampled_boxes.size());
+                                                       const auto& box = fixture.sampled_boxes[index];
+                                                       auto key_template = fixture.evidence_samples[static_cast<std::size_t>(i % fixture.evidence_samples.size())].key;
+                                                       const auto endpoint = snapshot.endpoint_for_box_exact(snapshot.make_box_key(box), key_template);
+                                                       if (!endpoint) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   return true;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.range_query",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats& delta) {
+                                                   ld::LectDatabaseStats range_stats;
+                                                   for (const auto& box : fixture.query_boxes) {
+                                                       const auto ids = snapshot.range_query(box,
+                                                                                             ld::RangeQueryMode::Intersecting,
+                                                                                             &range_stats);
+                                                       if (ids.empty() && snapshot.node_count() > 0) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   delta.range_nodes_visited = range_stats.range_nodes_visited;
+                                                   return range_stats.range_nodes_visited > 0;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.evidence",
+                                               static_cast<std::uint64_t>(fixture.evidence_samples.size()),
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats& delta) {
+                                                   for (const auto& record : fixture.evidence_samples) {
+                                                       if (!snapshot.evidence(record.key)) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   delta.evidence_reads = static_cast<std::uint64_t>(fixture.evidence_samples.size());
+                                                   return true;
+                                               }));
         }
 
-        std::vector<std::vector<rbf::Interval>> sampled_boxes;
-        rows.push_back(measure("read.node_topology", options.queries, database, [&]() {
-            for (std::uint64_t i = 0; i < options.queries; ++i) {
-                const auto node_id = static_cast<ld::NodeId>(i % node_count);
-                if (!database.node(node_id) || !ld::valid_node_id(database.topology(node_id).id)) {
-                    return false;
+        if (!options.read_stages_only) {
+            const auto checkpoint_db = sibling_stage_path(options.db_path, "checkpoint_dirty");
+            if (!copy_database_tree(options.db_path, checkpoint_db)) {
+                rows.push_back(failed_stage("write.checkpoint_dirty", 1));
+            } else {
+                auto database = ld::LectDatabase::open_existing(checkpoint_db, false, &reason);
+                if (!database) {
+                    rows.push_back(failed_stage("write.checkpoint_dirty", 1));
+                } else {
+                    bool prepared = true;
+                    for (std::uint64_t i = 0; i < fixture.evidence_samples.size(); ++i) {
+                        auto record = fixture.evidence_samples[static_cast<std::size_t>(i)];
+                        perturb_payload(&record, i + 13);
+                        if (!database->put_evidence(std::move(record))) {
+                            prepared = false;
+                            break;
+                        }
+                    }
+                    rows.push_back(prepared
+                        ? measure("write.checkpoint_dirty", 1, *database, [&]() { return database->checkpoint(); })
+                        : failed_stage("write.checkpoint_dirty", 1));
                 }
             }
-            return true;
-        }));
 
-        rows.push_back(measure("read.node_box", options.queries, database, [&]() {
-            sampled_boxes.clear();
-            sampled_boxes.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(options.queries, 4096)));
-            for (std::uint64_t i = 0; i < options.queries; ++i) {
-                auto box = database.node_box(random_nodes[static_cast<std::size_t>(i)]);
-                if (!box) {
-                    return false;
+            const auto compact_db = sibling_stage_path(options.db_path, "compact_tombstones");
+            const std::uint64_t delete_ops = options.compact_delete_ops > 0
+                ? std::max<std::uint64_t>(1, std::min<std::uint64_t>(options.compact_delete_ops, fixture.node_ids.size()))
+                : std::max<std::uint64_t>(1, fixture.node_count / 4);
+            if (!copy_database_tree(options.db_path, compact_db)) {
+                rows.push_back(failed_stage("write.compact_tombstones", 1));
+            } else {
+                bool prepared = false;
+                {
+                    auto database = ld::LectDatabase::open_existing(compact_db, false, &reason);
+                    if (database) {
+                        prepared = true;
+                        for (std::uint64_t i = 0; i < delete_ops; ++i) {
+                            const auto node_id = fixture.node_ids[static_cast<std::size_t>((i * 4) % fixture.node_ids.size())];
+                            database->delete_node_payloads(node_id);
+                        }
+                        prepared = prepared && database->checkpoint();
+                    }
                 }
-                if (sampled_boxes.size() < 4096) {
-                    sampled_boxes.push_back(std::move(*box));
-                }
+                rows.push_back(prepared
+                    ? measure_reopened_db("write.compact_tombstones",
+                                          1,
+                                          compact_db,
+                                          false,
+                                          [&](ld::LectDatabase& database) { return database.compact(); })
+                    : failed_stage("write.compact_tombstones", 1));
             }
-            return true;
-        }));
 
-        rows.push_back(measure("read.exact_box_lookup", options.queries, database, [&]() {
-            for (std::uint64_t i = 0; i < options.queries; ++i) {
-                const auto& box = sampled_boxes[static_cast<std::size_t>(i % sampled_boxes.size())];
-                const auto lookup = database.box_to_node_exact(database.make_box_key(box));
-                if (!lookup.found) {
-                    return false;
-                }
-            }
-            return true;
-        }));
-
-        rows.push_back(measure("read.range_query", options.queries, database, [&]() {
-            ld::LectDatabaseStats range_stats;
-            for (std::uint64_t i = 0; i < options.queries; ++i) {
-                const auto ids = database.range_query(random_query_box(options.dims, rng),
-                                                      ld::RangeQueryMode::Intersecting,
-                                                      &range_stats);
-                if (ids.empty() && database.node_count() > 0) {
-                    return false;
-                }
-            }
-            return range_stats.range_nodes_visited > 0;
-        }));
-
-        std::vector<ld::EvidenceKey> evidence_keys;
-        evidence_keys.reserve(static_cast<std::size_t>(options.evidence_records));
-        rows.push_back(measure("write.evidence_insert", options.evidence_records, database, [&]() {
-            for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
-                const auto node_id = static_cast<ld::NodeId>(i % node_count);
-                auto key = evidence_key(i, node_id, node_count);
-                ld::EvidenceRecord record;
-                record.key = key;
-                record.payload = make_payload(i, options.payload_floats);
-                if (!database.put_evidence(std::move(record))) {
-                    return false;
-                }
-                evidence_keys.push_back(key);
-            }
-            return true;
-        }));
-
-        rows.push_back(measure("read.evidence", options.evidence_records, database, [&]() {
-            for (const auto& key : evidence_keys) {
-                if (!database.evidence(key)) {
-                    return false;
-                }
-            }
-            return true;
-        }));
-
-        rows.push_back(measure("write.evidence_update", options.evidence_records, database, [&]() {
-            for (std::uint64_t i = 0; i < evidence_keys.size(); ++i) {
-                ld::EvidenceRecord record;
-                record.key = evidence_keys[static_cast<std::size_t>(i)];
-                record.payload = make_payload(i + 13, options.payload_floats);
-                if (!database.put_evidence(std::move(record))) {
-                    return false;
-                }
-            }
-            return true;
-        }));
-
-        rows.push_back(measure("write.checkpoint_live_evidence", 1, database, [&]() {
-            return database.checkpoint();
-        }));
-
-        rows.push_back(measure("write.compact_live_evidence", 1, database, [&]() {
-            return database.compact();
-        }));
-
-        const std::uint64_t delete_ops = std::min<std::uint64_t>(node_count, options.evidence_records);
-        rows.push_back(measure("delete.node_payloads", delete_ops, database, [&]() {
-            for (std::uint64_t i = 0; i < delete_ops; ++i) {
-                database.delete_node_payloads(static_cast<ld::NodeId>(i));
-            }
-            return true;
-        }));
-
-        rows.push_back(measure("write.checkpoint_after_delete", 1, database, [&]() {
-            return database.checkpoint();
-        }));
-
-        rows.push_back(measure("write.compact_after_delete", 1, database, [&]() {
-            return database.compact();
-        }));
-
-        rows.push_back(measure("read.verify", 1, database, [&]() {
-            return !options.verify || database.verify(true).ok;
-        }));
-
-        StageRow reopen_row;
-        reopen_row.stage = "read.reopen_verify";
-        reopen_row.operations = 1;
-        const auto reopen_begin = Clock::now();
-        auto reopened = ld::LectDatabase::open_existing(options.db_path, true, &reason);
-        reopen_row.elapsed_ms = std::chrono::duration<double, std::milli>(Clock::now() - reopen_begin).count();
-        reopen_row.ok = reopened.has_value() && (!options.verify || reopened->verify(true).ok);
-        if (reopened) {
-            reopen_row.nodes = reopened->node_count();
-            reopen_row.evidence = reopened->evidence_count();
-            reopen_row.delta = reopened->stats();
+            rows.push_back(measure_open_existing("read.reopen_verify", options.db_path, true, options.verify));
         }
-        rows.push_back(reopen_row);
 
         print_rows(rows);
         if (!options.csv_path.empty() && !write_csv(options.csv_path, rows)) {

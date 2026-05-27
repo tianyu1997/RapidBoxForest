@@ -67,20 +67,32 @@ void populate_aabb_payloads(LinkEnvelope& result, const double* link_radii) {
     }
 }
 
-void populate_shape_payloads(LinkEnvelope& result, const EnvelopeTypeConfig& config) {
+void populate_shape_payloads(
+    LinkEnvelope& result,
+    const float* endpoint_iaabbs,
+    const EnvelopeTypeConfig& config)
+{
     const bool wants_kdop = config.type == EnvelopeType::KDOP ||
-        config.type == EnvelopeType::SupportHull;
+        (config.type == EnvelopeType::SupportHull && config.support_hull_config.keep_kdop);
     const bool wants_support_hull = config.type == EnvelopeType::SupportHull;
     result.kdop_direction_set = config.kdop_config.direction_set;
     result.kdop_n_axes = wants_kdop ? kdop_axis_count(config.kdop_config.direction_set) : 0;
-    if (wants_kdop && !result.inflated_link_iaabbs.empty()) {
-        result.kdop_intervals = compute_kdop_intervals_from_aabbs(
-            result.inflated_link_iaabbs, config.kdop_config.direction_set);
+    if (wants_kdop && endpoint_iaabbs != nullptr && result.n_active_links > 0) {
+        result.kdop_intervals = compute_kdop_intervals_from_endpoint_iaabbs(
+            endpoint_iaabbs,
+            result.n_active_links,
+            result.n_subdivisions,
+            config.kdop_config.direction_set,
+            static_cast<float>(std::max(0.0, config.kdop_config.safety_epsilon)));
     } else {
         result.kdop_intervals.clear();
     }
-    if (wants_support_hull && !result.inflated_link_iaabbs.empty()) {
-        result.support_hulls = compute_support_hulls_from_aabbs(result.inflated_link_iaabbs);
+    if (wants_support_hull && endpoint_iaabbs != nullptr && result.n_active_links > 0) {
+        result.support_hulls = compute_support_hulls_from_endpoint_iaabbs(
+            endpoint_iaabbs,
+            result.n_active_links,
+            result.n_subdivisions,
+            static_cast<float>(std::max(0.0, config.support_hull_config.safety_epsilon)));
     } else {
         result.support_hulls.clear();
     }
@@ -121,7 +133,7 @@ LinkEnvelope compute_link_envelope(
     }
 
     populate_aabb_payloads(result, link_radii);
-    populate_shape_payloads(result, config);
+    populate_shape_payloads(result, endpoint_iaabbs, config);
 
     return result;
 }

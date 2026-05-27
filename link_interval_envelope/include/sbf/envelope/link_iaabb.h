@@ -12,6 +12,7 @@
 #include <sbf/core/robot.h>
 #include <sbf/core/fk_state.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace rbf {
@@ -35,5 +36,26 @@ void derive_link_iaabb_subdivided(
     const double* link_radii,
     int n_subdivisions,
     float* out_sub_iaabbs);
+
+inline void interpolate_endpoint_box(
+    const float* proximal_box,
+    const float* distal_box,
+    float t,
+    float* out_box)
+{
+    for (int i = 0; i < 6; ++i) {
+        out_box[i] = proximal_box[i] * (1.0f - t) + distal_box[i] * t;
+    }
+}
+
+inline void expand_box_in_place(float* box, float padding) {
+    if (padding <= 0.0f) return;
+    box[0] -= padding;
+    box[1] -= padding;
+    box[2] -= padding;
+    box[3] += padding;
+    box[4] += padding;
+    box[5] += padding;
+}
 
 }  // namespace rbf

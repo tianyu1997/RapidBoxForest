@@ -140,7 +140,7 @@ struct EvidenceRecordView {
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
     std::span<const float> payload;
-    std::shared_ptr<const EvidenceRecord> storage;
+    std::shared_ptr<const void> storage;
 };
 
 struct LectDatabaseStats {

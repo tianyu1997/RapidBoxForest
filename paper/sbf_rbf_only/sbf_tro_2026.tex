@@ -134,16 +134,17 @@ and a radius-lifted link envelope provides an inexpensive filter for box
 validation and collision rejection. A rapidly-exploring random tree
 (RRT)-inspired grower builds a scene-specific box forest into a queryable
 corridor graph, and a Lifelong Envelope Cache Tree (LECT) selectively caches
-kinematics-keyed envelope records when replay is cheaper than recomputation. On
-the reported benchmark set, the d18 cache prewarm stores
-524287 evidence records in 20.22~s and reopens in 1.460~s with 262144 reused
-leaf records. On Shelf+IIWA, the current LinkIAABB warm rows replay 3420
-external records in E2 and 7201 in E3 while preserving 1/1 and 5/5 strict-audit
-success; wall time remains about 1.8~s and 1.6~s because scene-specific growth
-and validation dominate this inexpensive envelope setting. A dynamic-update study further shows 1.9$\times$--140$\times$
-speedups over warm rebuild on matched obstacle-edit paths. This paper keeps the
-original planning formulation and title, but limits its quantitative claims to
-results regenerated from the current RapidBoxForest implementation.
+kinematics-keyed envelope records when replay is cheaper than recomputation. In
+the regenerated endpoint-envelope experiment, each source is evaluated on 6000
+shared IIWA14 joint boxes, with 1000 boxes at each of six fixed widths. The
+public IFK spelling, which now subsumes the former AAFK alias, averages
+4.53~$\mu$s per endpoint box with no observed reference under-coverage.
+Hierarchical IFK tightens the mean endpoint volume by up to 76.0\% relative to
+IFK at 72.2~$\mu$s. CritSample and MC give smaller boxes but are
+non-certified and show observed under-coverage against the finite reference
+union. These results bound the quantitative claims in this version to the
+endpoint-envelope primitive; full planner-level cache, dynamic-update, and
+cross-planner tables are not carried forward here.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -206,13 +207,12 @@ and link-envelope evidence keyed by robot kinematics and joint intervals; it is
 an acceleration layer for repeated materialization, not a separate planning
 claim.
 
-The evaluation therefore asks what the current implementation can support under
-the adopted protocol. The main axes are cache prewarm and replay cost, Shelf+IIWA
-cold-versus-warm build and query time, strict-audit success,
-envelope-representation trade-offs across the link-envelope families including
-staged AABB/KDOP26/SupportHull cascades, and
-dynamic update speedup over warm rebuild. Broader cross-planner baselines and
-full multi-robot generalization remain future work.
+The evaluation therefore asks how the endpoint-envelope source family behaves
+under the adopted protocol. The current quantitative axes are endpoint
+construction time, endpoint AABB volume, and the observed under-coverage gap
+against a finite reference union on shared IIWA14 joint boxes. Planner-level
+cache, dynamic-update, cross-planner, and multi-robot generalization studies
+remain future work for this paper track.
 
 We therefore position the paper as a planning-systems contribution enabled by a
 geometry primitive. The endpoint-to-link envelope is the main geometric idea;
@@ -231,33 +231,33 @@ three concrete elements:}
   multi-query reuse}: a switchable endpoint source family---AA-backed
   interval forward kinematics (IFK), hierarchical IFK (HIFK),
   CritSample, analytical extrema---compact
-  per-representation link records (AABB, KDOP26, SupportHull) for staged
+  per-representation link records (AABB, SupportHull) for staged
   filtering, and a kinematic-keyed LECT cache for cross-scene envelope reuse.
   No prior work has been found applying this pipeline to $C$-space box
   validation or multi-query planning reuse
-  (\cref{sec:link_envelopes,sec:exp_mechanisms}).
+  (\cref{sec:link_envelopes,sec:exp_endpoint_envelopes}).
 
   \item \emph{A self-contained link-envelope-guided box-forest planner.}
   Scene-specific $C$-space box forests are grown through seeded frontier
   expansion, consolidated into a connected corridor graph, and queried by
   graph search and local refinement. LECT provides an optional
   kinematic-keyed cache for repeated envelope materialization across builds
-  (\cref{sec:lect,sec:forest,sec:exp_mechanisms}).
+  (\cref{sec:lect,sec:forest,sec:exp}).
 
-  \item \emph{An implementation-aligned evaluation.}
-  Shelf+IIWA, cache-mechanism, envelope sweep, and dynamic-update studies are
-  evaluated under the strict audit protocol adopted in this paper. The
-  reported rows are generated from the current implementation and do not carry
-  forward the older cross-planner comparison tables
-  (\cref{sec:exp_shelf_iiwa,sec:exp_mechanisms,sec:exp_dynamic_updates}).
+  \item \emph{An implementation-aligned endpoint-envelope evaluation.}
+  Experiment~1 regenerates the endpoint-source sweep on shared fixed-width
+  IIWA14 joint boxes and reports time, volume, certification status, and finite
+  reference-gap diagnostics from the current implementation. Older planner,
+  cache, dynamic-update, and cross-planner tables are not carried forward
+  (\cref{sec:exp_endpoint_envelopes}).
 \end{enumerate}
 
 The paper's evidence chain is: \Cref{sec:link_envelopes} develops the endpoint
 and link interval-envelope primitive for fast box validation; \cref{sec:lect}
 describes the cache optimization that reuses expensive envelope records;
 \cref{sec:forest} turns link-envelope-filtered boxes into a rapidly expanding
-box-forest planner; and \cref{sec:exp} evaluates the resulting build/query,
-cache-reuse, and dynamic-update behavior under the adopted protocol.
+box-forest planner; and \cref{sec:exp} evaluates the regenerated
+endpoint-envelope source trade-off under the adopted protocol.
 
 \begin{figure*}[t]
   \centering
@@ -369,7 +369,7 @@ The differences that motivate the \rbf{} contribution claim are:
     CritSample (practical), and analytical extrema (tightest)---rather than a
     fixed algorithm, allowing the conservative vs.\ performance trade-off to be
     controlled without changing the link-representation or planner layers;
-  \item compact per-representation link records (AABB, KDOP26, SupportHull) are
+  \item compact per-representation link records (AABB, SupportHull) are
     organised for staged filtering during box growth, a knob absent from CCD
     libraries; and
   \item the endpoint and link envelope records are organised in LECT, a
@@ -572,7 +572,7 @@ evaluating AA-FK at the leaves before hulling the child endpoint boxes. This is
 not the same as the unsplit IFK baseline: a true depth-1 HIFK evaluation
 already splits once and hulls two leaves, whereas IFK performs one unsplit
 AA-FK pass on the original box. The mechanism study in
-\cref{sec:exp_mechanisms} reports two representative split depths, HIFK\_3 and
+\cref{sec:exp_endpoint_envelopes} reports two representative split depths, HIFK\_3 and
 HIFK\_5, to quantify how additional hierarchical depth trades runtime for
 tighter certified endpoint boxes.
 
@@ -651,17 +651,6 @@ explicit: if all sub-envelopes are collapsed back into one global AABB, much of
 the gain disappears.
 
 
-\paragraph{KDOP slab envelope.}
-A k-discrete-oriented-polytope ($k$-DOP) envelope stores lower and upper support values along a fixed set of
-directions. Here the 26-plane variant (KDOP26) uses the three
-coordinate axes, six face-diagonal axes, and four body-diagonal axes, for a
-total of 13 unsigned axes and 26 supporting planes. Endpoint boxes are projected
-onto these axes, padded by the link radius, and merged over each
-subsegment. Collision checking is correspondingly cheap: after the ordinary
-link AABB test, the slab test continues with the non-axis directions and exits
-on the first separating interval. The staged order first tests the DOP18 axes
-and only reaches the final DOP26 diagonals for near survivors.
-
 \paragraph{SupportHull envelope.}
 When the endpoint envelopes are convex, their convex hull preserves directional
 structure that a single AABB discards. SupportHull is the compact runtime
@@ -671,10 +660,7 @@ query direction $d$, the support point is the better of the proximal and distal
 AABB support points, and collision refinement against an obstacle AABB uses a
 fixed-size Gilbert--Johnson--Keerthi (GJK) narrow phase with the obstacle
 inflated by the link radius and safety margin. This retains much of the convex-
-hull directional fidelity while keeping the default record compact; a hybrid
-variant may additionally retain KDOP26 intervals as a mid-phase before GJK,
-but that is treated as a separate runtime/storage point rather than as the
-default SupportHull envelope.
+hull directional fidelity while keeping the default record compact.
 
 In this way, the link-envelope layer is separate from the upstream kinematics solver.
 Sections \cref{sec:rewrite_geom,sec:rewrite_endpoint_env,sec:rewrite_link_env}
@@ -733,8 +719,8 @@ LECT is queried by \textsc{FindFreeBox}, not by the graph search itself. Given a
 joint interval, the cache either replays endpoint evidence or materializes it
 online, then derives the requested link representation. Directional records are
 used as refinement evidence rather than as standalone free-space certificates:
-the runtime first evaluates padded link AABBs, then uses KDOP26 slabs or
-SupportHull/GJK only for survivors of the AABB test. When a node is split, child
+the runtime first evaluates padded link AABBs, then uses SupportHull/GJK only
+for survivors of the AABB test. When a node is split, child
 envelopes may refine the parent witness, but any compact parent record remains
 representation-dependent and is rechecked against the current obstacle set
 before a box can enter the forest.
@@ -743,8 +729,8 @@ before a box can enter the forest.
 
 Persistence is selective. Endpoint evidence is the common reusable record, but
 simple IFK+AABB evidence can be cheaper to recompute online than to reload.
-KDOP26 and SupportHull records are stored only when their tighter filters are
-expected to amortize storage and lookup cost. Implementation details such as
+SupportHull records are stored only when their tighter filters are expected to
+amortize storage and lookup cost. Implementation details such as
 node arrays and residency management are engineering choices at the
 implementation level; the paper does not claim runtime benefit from sector
 symmetry, because the cache mechanism operates in canonical-identity mode with
@@ -1029,14 +1015,13 @@ regions. The resulting method is summarized in \cref{alg:forest_growth}.
 
 The main reported configuration uses coordinated multi-goal growth. Five seed
 configurations initialize the shelf roots, and the grower uses the fixed
-resource budget reported in
-\cref{sec:exp_shelf_iiwa}. This choice keeps the
+resource budget defined by the planner configuration. This choice keeps the
 growth schedule simple enough to preserve one authoritative forest state while
-still exposing reusable LECT evidence across threads and cache-warm reruns.
-Staged wavefront growth and task-batched multi-threaded growth are treated as
-engineering variants, and the parallel-scaling experiment reports the present
-limit of the task-batched variant. The output of this section is the
-query-ready box-region object only.
+still exposing reusable LECT evidence across threads and cache-warm reruns. The
+regenerated quantitative section in this version focuses on the endpoint
+envelope primitive, so this planning configuration is described as the
+implementation surface rather than as a reported timing row. The output of this
+section is the query-ready box-region object only.
 
 \subsection{Forest Consolidation}\label{sec:forest_consolidation}
 
@@ -1057,10 +1042,10 @@ connected candidate merges are handled by constructing a candidate parent
 region and accepting it only when its chosen envelope representation remains
 collision-free against the current obstacle set. This is where the representation choices of
 \Cref{sec:link_envelopes,sec:lect} become operational. In an AABB-based forest, the compact parent witness
-is typically the enclosing AABB of the two child boxes. KDOP parents can merge
-child slab intervals by per-axis minima and maxima, while SupportHull parents
-are kept compact only when the merged endpoint-hull witness remains acceptable;
-otherwise the child witnesses are kept. Greedy non-sibling candidates are
+is typically the enclosing AABB of the two child boxes. In a SupportHull-based
+forest, parent witnesses are kept compact only when the merged endpoint-hull
+witness remains acceptable; otherwise the child witnesses are kept. Greedy
+non-sibling candidates are
 ranked by a volume-expansion score, so exact face merges are preferred and
 high-inflation parents are deferred unless they pass validation under the
 scene oracle. The consolidation logic is summarized in
@@ -1211,140 +1196,195 @@ final audit used for the other planners.
 
 \section{Experiments}\label{sec:exp}
 
-This section evaluates \rbf{} as a multi-query planning system under the
-current evaluation protocol. Returned paths are compared only after the
-implemented query pipeline has completed its own post-processing and strict
-final audit.
+This section reports the regenerated endpoint-envelope source study
+(Experiment~1) and the width-wise link-envelope representation study
+(Experiment~2). Together they measure the geometric primitives used by the
+later box-validation and planner layers, not planner-level path benchmarks.
 
-\paragraph{Scope.}
-The main evidence consists of the Gate 0 configuration smoke, the E5
-lifelong-cache mechanism study, the E1 envelope sweep, the E2/E3 Shelf+IIWA
-cold-versus-warm rows, and the dynamic-update capability comparison. A warm
-random-scene study across IIWA, UR5, and Panda is also reported for
-completeness.
+\paragraph{Protocol.}
+The benchmark uses the IIWA14 model and six fixed joint-box widths
+\{0.02, 0.05, 0.10, 0.20, 0.30, 0.50\}~rad. For each width, 1000 shared joint
+boxes are generated from the same seeded table and then replayed by all endpoint
+sources, giving 6000 endpoint boxes per source. The evaluated sources are IFK
+(the public spelling that now subsumes the former AAFK alias), HIFK with depths
+3 and 5, CritSample, Analytical, and MC. MC uses width-proportional sample
+counts from 2857 to 71429 samples per box, with 50000 reference samples at the
+nominal width. The output artifact stores the fixed box table hash so the
+link-envelope study can reuse the same corpus.
 
-\paragraph{Reporting Protocol.}
-Planner success in this paper means strict path-audit success under the current
-query pipeline. Cache reuse is allowed only at the envelope-materialization
-layer: target builds still regrow and revalidate scene-specific boxes, and warm
-rows are never credited for persisted free-space labels. For the
-reviewer-sensitive Shelf+IIWA rows, the external d18 cache is read-only during
-evaluation and active-database backfill is disabled.
+\paragraph{Metrics.}
+For each source and width, the runner records endpoint construction time,
+endpoint AABB volume, implementation certification status, and the diagnostic
+gap to the finite reference union of CritSample, Analytical, and MC records.
+\Cref{tab:exp1_endpoint_envelopes} restores the original Table~I structure and
+reports the mean endpoint AABB volume $V$, mean evaluation time, and maximum
+observed gap at each fixed width. The gap column is a diagnostic over the
+sampled corpus, not a formal containment proof.
 
-\paragraph{Fixed Configuration.}
-All rows use the configuration
-\texttt{rbf\_ifk\_aa\_aafkvol\_d40\_s15\_canonical\_lifelong}: the public API
-spelling \texttt{EndpointSource.IFK} for the IFK\_AA-backed certified endpoint
-source, an AAFKVolumeMin split schedule through depth 40, find-free-box start
-depth 15, strict-certificate validation with certified-only commit, a depth-18
-prewarm, a default LECT tree-depth cap of 64, and the adopted link-envelope family
-\{LinkIAABB, KDOP26, SupportHull\}.
-
-\paragraph{Platform and Scenes.}
-Planner rows were generated with one worker thread; the standalone
-link-envelope representation microbenchmark uses the batch parallelism recorded
-in its result artifact.
-Shelf+IIWA uses the canonical Marcucci scene with five fixed query pairs. The
-random-scene benchmark uses balanced easy/medium/hard scenes for IIWA,
-UR5, and Panda at five scene seeds per setting.
-
-\subsection{Shelf+IIWA Efficiency and Path Quality}\label{sec:exp_shelf_iiwa}
-
-\begin{figure}[t]
+\begin{table}[t]
   \centering
-  \includegraphics[width=\columnwidth]{../sbf_old/figures/Marcucci_scene.png}
-  \caption{Canonical Shelf+IIWA scene used in the experiments. The E3 main run
-  evaluates five fixed query pairs on this scene under the strict audit
-  protocol.}
-  \label{fig:marcucci_scene}
-\end{figure}
+  \caption{Endpoint-interval AABB source comparison at fixed widths.}
+  \label{tab:exp1_endpoint_envelopes}
+  \scriptsize
+  \setlength{\tabcolsep}{2.0pt}
+  \renewcommand{\arraystretch}{0.76}
+  \begin{tabular}{@{}llrrr@{}}
+    \toprule
+    Width & Source & $V$ (m$^3$) & Mean ($\mu$s) & Max gap (m) \\
+    \midrule
+    0.02 & IFK & 0.000049 & 4.3 & 0.0000 \\
+    0.02 & HIFK\_3 & 0.000047 & 23.9 & 0.0000 \\
+    0.02 & HIFK\_5 & 0.000047 & 73.1 & 0.0000 \\
+    0.02 & CritSample & 0.000046 & 10.0 & 0.0000 \\
+    0.02 & Analytical & 0.000046 & 6475.9 & 0.0000 \\
+    0.02 & MC & 0.000029 & 2263.1 & 0.0061 \\
+    \addlinespace
+    0.05 & IFK & 0.000872 & 4.5 & 0.0000 \\
+    0.05 & HIFK\_3 & 0.000784 & 24.1 & 0.0000 \\
+    0.05 & HIFK\_5 & 0.000757 & 72.5 & 0.0000 \\
+    0.05 & CritSample & 0.000712 & 10.7 & 0.0003 \\
+    0.05 & Analytical & 0.000713 & 6609.5 & 0.0000 \\
+    0.05 & MC & 0.000499 & 5603.3 & 0.0145 \\
+    \addlinespace
+    0.10 & IFK & 0.008530 & 4.6 & 0.0000 \\
+    0.10 & HIFK\_3 & 0.006907 & 24.1 & 0.0000 \\
+    0.10 & HIFK\_5 & 0.006432 & 72.0 & 0.0000 \\
+    0.10 & CritSample & 0.005686 & 11.1 & 0.0012 \\
+    0.10 & Analytical & 0.005690 & 6753.7 & 0.0000 \\
+    0.10 & MC & 0.004201 & 11412.3 & 0.0307 \\
+    \addlinespace
+    0.20 & IFK & 0.1023 & 4.6 & 0.0000 \\
+    0.20 & HIFK\_3 & 0.0676 & 26.4 & 0.0000 \\
+    0.20 & HIFK\_5 & 0.0583 & 80.2 & 0.0000 \\
+    0.20 & CritSample & 0.0451 & 12.7 & 0.0054 \\
+    0.20 & Analytical & 0.0452 & 7074.8 & 0.0000 \\
+    0.20 & MC & 0.0351 & 22866.2 & 0.0702 \\
+    \addlinespace
+    0.30 & IFK & 0.5222 & 4.6 & 0.0000 \\
+    0.30 & HIFK\_3 & 0.2819 & 23.4 & 0.0000 \\
+    0.30 & HIFK\_5 & 0.2246 & 70.8 & 0.0000 \\
+    0.30 & CritSample & 0.1495 & 13.9 & 0.0126 \\
+    0.30 & Analytical & 0.1505 & 7218.2 & 0.0000 \\
+    0.30 & MC & 0.1202 & 34588.3 & 0.0956 \\
+    \addlinespace
+    0.50 & IFK & 5.746 & 4.6 & 0.0000 \\
+    0.50 & HIFK\_3 & 2.073 & 24.1 & 0.0000 \\
+    0.50 & HIFK\_5 & 1.381 & 72.2 & 0.0000 \\
+    0.50 & CritSample & 0.6559 & 18.0 & 0.0324 \\
+    0.50 & Analytical & 0.6657 & 7489.0 & 0.0030 \\
+    0.50 & MC & 0.5476 & 57728.9 & 0.1137 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
-\input{../sbf_old/generated/tab_tro_rbf_only_warm_reuse.tex}
+\subsection{Endpoint Envelope Source Study}\label{sec:exp_endpoint_envelopes}
 
-\Cref{fig:marcucci_scene,tab:tro_appendix_rbf_only_warm_reuse} summarize the
-Shelf+IIWA rows. The single-query E2 shelf row remains strict-audit safe in both
-cold and warm modes: wall time changes from 1.820~s to 1.812~s, and the warm row
-replays 3420 external evidence records while both rows use one bounded repair.
-The five-query E3 main row also preserves all strict audits: cold and warm wall
-times are 1.587~s and 1.588~s, respectively, with the warm row replaying 7201
-external evidence records and requiring no query repairs.
+\Cref{tab:exp1_endpoint_envelopes} summarizes the endpoint interval-envelope
+source comparison used to choose the geometric inputs for the current paper
+track. The IFK row now stands for the public spelling whose implementation is
+identical to the old AAFK alias, so it is reported only once. IFK remains the
+cheapest certified source and stays gap-free against the sampled reference
+union over all reported widths, with mean endpoint time between 4.3 and
+4.6~$\mu$s.
 
-The current LinkIAABB shelf rows therefore demonstrate correct external-evidence
-replay without persisted free-space labels, not a large wall-time speedup. This
-is expected for this inexpensive representation: scene-specific box growth,
-obstacle validation, and query post-processing dominate the measured wall time
-once endpoint evidence replay is enabled.
+Hierarchical IFK trades time for tighter certified boxes. All three certified
+AA rows remain gap-free against the sampled reference union over the reported
+widths. After fixing HIFK's split-policy selection and rerunning the same 6000
+shared boxes, HIFK no longer pays the previous online dimension-search
+overhead. At width 0.50~rad, the mean endpoint volume drops from 5.746~m$^3$
+for IFK to 2.073~m$^3$ for HIFK\_3 and 1.381~m$^3$ for HIFK\_5, while mean
+endpoint cost rises from 4.6 to 24.1 to 72.2~$\mu$s. This preserves the same
+qualitative trade-off as the old Table~I, but now places HIFK in a practical
+middle tier: HIFK\_3 removes most of IFK's wide-box slack, while HIFK\_5 pushes
+that trade-off further without the earlier artificial timing plateau.
 
-\subsection{Balanced Random-Scene Pipeline Study}\label{sec:exp_generalization}
+The non-certified sources are useful as tightness references but are not safe
+drop-in replacements for certified validation. CritSample still tracks
+Analytical much more closely than any certified AA source on wide boxes,
+reaching 0.6559 versus 0.6657~m$^3$ at 0.50~rad while remaining orders of
+magnitude cheaper, 18.0 versus 7489.0~$\mu$s, but it exhibits a 0.0324~m maximum
+observed gap against the finite reference union. MC is the tightest row at each
+reported width, but it is also the slowest and shows the largest observed gap,
+reaching 0.1137~m at 0.50~rad. The regenerated Exp.1 result therefore supports
+the paper's default design choice: use IFK for cheap certified envelopes, and
+reserve hierarchical or sampling-based sources for tighter diagnostics and
+future ablation studies.
 
-The multi-robot random-scene benchmark reports the same fixed protocol on
-IIWA, UR5, and Panda across easy, medium, and hard settings. IIWA and Panda
-remain strict-audit safe across the three difficulties, while UR5 is the
-limiting case in the present data.
+\subsection{Link-Envelope Representation Study}\label{sec:exp_link_envelopes}
 
-\subsection{Mechanism Studies: Envelopes and Cache}\label{sec:exp_mechanisms}
+\Cref{tab:tro_link_envelope_widthwise_ifk_s1} restores the original
+mainline representation study with the certified IFK\_AA endpoint source and
+the fixed short-link split $S=1$. The benchmark reuses the same six fixed
+widths and shared box corpus as Experiment~1 and compares only the retained
+mainline representations, LinkIAABB and pure SupportHull, on uninflated
+short-link record volume, envelope construction time, and envelope-only
+obstacle-check time.
 
-\input{../sbf_old/generated/tab_tro_link_envelopes.tex}
+\input{../sbf_old/generated/tab_tro_link_envelope_widthwise_ifk_s1.tex}
 
-\paragraph{Link-envelope chain modes.}
-\Cref{tab:tro_link_envelopes} extends the standalone link-envelope
-microbenchmark beyond independently built LinkIAABB, KDOP26, and SupportHull
-records. The staged chains run the cheap AABB filter first and invoke KDOP26 or
-SupportHull only for boxes that survive the earlier stage. Across the 2400-box
-fixed-width corpus, only 28.3\% of boxes reach the tighter second stage, so the
-AABB--KDOP26 and AABB--SupportHull chains average 1.27~$\mu$s and
-1.25~$\mu$s per box, compared with 1.94~$\mu$s for standalone KDOP26 and
-1.77~$\mu$s for standalone SupportHull. The full AABB--KDOP26--SupportHull
-cascade averages 1.85~$\mu$s per box. \Cref{tab:tro_appendix_rbf_only_sweep}
-compresses the same artifact into one aggregate summary view.
+The corrected volume proxy tightens monotonically from LinkIAABB to pure
+SupportHull at every width. The gap is most visible on narrow boxes: at
+0.02~rad the reported volume drops from 0.0136~m$^3$ for LinkIAABB to
+0.000379~m$^3$ for SupportHull. As the width grows, the two rows converge, but
+the ordering remains unchanged even at 0.50~rad (4.691 versus 4.617~m$^3$).
+LinkIAABB remains the cheapest row to construct, staying near 0.1~$\mu$s across
+the sweep, while pure SupportHull remains compact at about 0.2~$\mu$s once the
+\texttt{keep\_kdop=false} path stops retaining an extra KDOP payload slot. The
+obstacle-check time shows the expected mainline trade-off: LinkIAABB stays
+cheapest, rising from about 0.5 to 1.1~$\mu$s, while pure SupportHull rises from
+about 0.8 to 6.7~$\mu$s as the boxes widen and more survivors reach the GJK
+refinement stage. The retained mainline representation set therefore reduces to
+a simple coarse-versus-tight trade-off: AABB for the cheapest broad filter, and
+pure SupportHull when the tighter directional witness is worth the extra runtime.
 
-\input{../sbf_old/generated/tab_tro_rbf_only_cache_mechanism.tex}
+\subsection{LECT Disk Microbenchmark}\label{sec:exp_lect_microbench}
 
-\input{../sbf_old/generated/tab_tro_rbf_only_sweep.tex}
+Experiment~3 applies the same reopen-per-stage disk benchmark template to the
+real Shelf+IIWA persisted cache used by the warm-build study. Each timed stage
+reopens the same current-format d18 cache before executing its workload, so the
+reported cost is for the persisted LECT path rather than for a database object
+left resident by the setup phase. The measured cache stores 524{,}287 nodes and
+524{,}287 endpoint-envelope records in a 334.21~MB namespace with 64~KiB node
+pages and a 256-page resident cap. To keep the real-cache benchmark bounded,
+the read stages sample 2{,}000 persisted operations, checkpoint is measured
+after 2{,}000 sampled evidence updates, and compact is measured after
+tombstoning 20{,}000 sampled node payloads on a copied sibling namespace.
 
-\paragraph{LECT mechanism.}
-\Cref{tab:tro_appendix_rbf_only_cache_mechanism} summarizes the cache semantics.
-The d18 prewarm materializes only the target leaf
-layer, storing 524287 evidence records while directly evaluating 262144 leaf
-records in 20.22~s. Reopening the same cache takes 1.460~s and reuses 262144
-cached leaf records without fresh FK above the leaves. This is the paper's main
-cache-mechanism result: the current implementation does perform persistent
-evidence replay, but the reported rows support a canonical-identity cache claim
-rather than a stronger sector-symmetry reuse claim.
+\begin{table}[t]
+  \caption{Disk-backed LECT microbenchmark on the real Shelf+IIWA d18 persisted
+  cache. Reported values are average per operation using the most readable unit
+  for each row. Checkpoint is measured after 2k sampled evidence updates;
+  compact is measured after 20k sampled node tombstones on a copied cache
+  namespace.}
+  \label{tab:exp3_lect_disk_microbench}
+  \centering
+  \begin{tabular}{@{}lrr@{}}
+    \toprule
+    Operation & Ops & Avg. \\
+    \midrule
+    Open read-only & 1 & 3.894 s \\
+    Node box & 2000 & 1.184 ms \\
+    Exact box lookup & 2000 & 637.2 $\mu$s \\
+    Range query & 2000 & 28.071 ms \\
+    Evidence read & 2000 & 3.3 $\mu$s \\
+    Checkpoint (2k dirty updates) & 1 & 1.342 s \\
+    Compact (20k node tombstones) & 1 & 1.351 s \\
+    \bottomrule
+  \end{tabular}
+\end{table}
 
-\paragraph{Envelope sweep.}
-\Cref{tab:tro_appendix_rbf_only_sweep} gives a compact cross-width summary of
-the same E2 representation study. LinkIAABB remains the cheapest standalone
-representation at 0.68~$\mu$s per box and 384~B payload. Standalone KDOP26 and
-SupportHull increase cost to 1.94~$\mu$s and 1.77~$\mu$s, respectively. The
-AABB-first chains recover much of that overhead: AABB--KDOP26 averages
-1.27~$\mu$s per box at 854.8~B, AABB--SupportHull averages 1.25~$\mu$s at
-619.4~B, and all three chain rows escalate beyond the AABB stage on only 28.3\%
-of the boxes in the fixed-width corpus.
-
-
-\subsection{Dynamic-Update Capability Study}\label{sec:exp_dynamic_updates}
-
-\Cref{tab:tro_dynamic_rebuild} summarizes the local update procedure on the
-random-scene edit protocol. It creates two matched edit
-paths: insertion from easy to medium to hard, and deletion from hard to medium
-to easy. The warm baseline is measured per transition, not as a cumulative
-path: the source scene first populates an isolated cache namespace,
-and the reported warm time is then a fresh target-scene
-\texttt{build\_coverage} call from that cache.
-
-\input{../sbf_old/generated/tab_tro_dynamic_rebuild.tex}
-
-The incremental update is consistently faster than this cache-warm rebuild
-baseline on the five-seed IIWA dynamic protocol. Insertion medians are
-9.5~ms for easy$\rightarrow$medium and 36.4~ms for
-medium$\rightarrow$hard, compared with 90.2~ms and 70.2~ms for warm rebuilds.
-Deletion is cheaper still because previously accepted boxes remain valid when
-obstacles are removed: hard$\rightarrow$medium takes 1.4~ms and
-medium$\rightarrow$easy takes 0.33~ms, versus 58.1~ms and 46.4~ms warm target
-rebuilds. This remains a capability study rather than a broad dynamic-scene
-claim, but it confirms that the explicit forest representation and local regrow
-interfaces are operational in the current code.
+\Cref{tab:exp3_lect_disk_microbench} shows that the persisted LECT path is
+dominated by whole-store traversal and maintenance once the cache grows to the
+full Shelf+IIWA d18 artifact. On this 334.21~MB persisted cache, evidence reads
+remain microsecond-scale at 3.3~$\mu$s and exact box lookup stays
+sub-millisecond at 637.2~$\mu$s, but node-box fetch rises to 1.184~ms and the
+expanded intersecting range-query stage rises to 28.071~ms because it now
+traverses a 524k-node disk-backed tree rather than a 511-node synthetic toy.
+Reopening the cache costs 3.894~s, while sampled dirty checkpoint and compact
+both remain near 1.35~s on copied namespaces. This still matches the design
+intent in \cref{sec:lect_storage}: point evidence reuse on reopened persisted
+caches is far cheaper than rebuilding the d18 artifact, while heavier storage
+maintenance remains an occasional batch cost rather than a per-query tax.
 
 \section{Conclusion}\label{sec:conclusion}
 
@@ -1354,25 +1394,32 @@ envelopes to link interval envelopes via capsule Minkowski decomposition and
 convex-hull generator bounding; an RRT-inspired grower builds a scene-specific
 box forest into a corridor graph queried by graph search and local refinement;
 LECT optionally caches kinematic envelope records to reduce repeated
-materialization cost. The experiments show correct Shelf+IIWA external-evidence
-replay, a leaf-only cache-prewarm mechanism, a strong LinkIAABB setting with
-useful AABB-first chain modes, and a working dynamic-update path that
-outperforms warm rebuild on the reported edit protocol.
+materialization cost. The regenerated experiments in this version evaluate the
+endpoint-envelope primitive directly and add a certified IFK-based $S=1$
+link-envelope representation study plus a disk-backed LECT microbenchmark: IFK
+is the fastest certified endpoint row, LinkIAABB is the lightest retained link
+witness, and the real Shelf+IIWA persisted-cache study shows that evidence
+reads stay microsecond-scale, exact box lookup stays sub-millisecond, and
+whole-store checkpoint/compact remain second-scale maintenance operations on
+the full 524k-node cache. Older planner-level cache,
+dynamic-update, and cross-planner tables are intentionally not carried forward.
 
 \paragraph{Limitations.}
 The box-corridor guarantee (\cref{thm:corridor_certificate}) is conditional on
 conservative IFK validation and path containment inside the validated box union;
-the reported rows do not claim that condition, and the dataset still does not
-store corridor-containment fields. The strict audit is an implementation-level
-acceptance rule rather than a continuous safety proof. The cache mechanism
-supports persistent evidence replay, but the reported results
-justify only canonical-identity caching and do not imply that replay produces
-wall-time speedup in every envelope setting.
+the regenerated Exp.1 and Exp.2 rows do not exercise full planner paths and
+therefore do not claim that condition. The Exp.1 gap diagnostic is computed
+against a finite union of CritSample, Analytical, and MC records, so it should
+be read as an implementation sanity check rather than as a formal proof of
+containment.
 
 \paragraph{Scope and Future Work.}
-The empirical scope covers Shelf+IIWA, the cache/update studies, and the
-balanced random-scene benchmark. Broader generalization studies, stronger cache
-transfer, and additional cross-planner comparisons remain natural next steps.
+The empirical scope in this version covers the endpoint-envelope source sweep,
+a width-wise IFK/$S=1$ link-envelope representation study, and a real
+Shelf+IIWA persisted-cache microbenchmark. The next steps are to extend the
+LECT study from storage-level timings to Shelf+IIWA warm-build rows,
+planner-level cache reuse, dynamic-update rows, and broader cross-planner or multi-robot
+comparisons under the same fixed-artifact protocol.
 
 \bibliographystyle{IEEEtran}
 \bibliography{../sbf_old/references}

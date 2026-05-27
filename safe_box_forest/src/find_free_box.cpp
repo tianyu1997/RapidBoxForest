@@ -57,14 +57,22 @@ bool should_stop_search(StageContext& context,
     return true;
 }
 
-void descend_to_seed_child(BoxOracle& oracle,
+bool descend_to_seed_child(BoxOracle& oracle,
                            const Eigen::Ref<const Eigen::VectorXd>& seed,
                            OracleNodeId& node,
                            int& changed_dim) {
     changed_dim = oracle.split_dim(node);
-    node = (seed[changed_dim] <= oracle.split_value(node))
+    if (changed_dim < 0 || changed_dim >= seed.size()) {
+        return false;
+    }
+    const OracleNodeId child = (seed[changed_dim] <= oracle.split_value(node))
         ? oracle.left_child(node)
         : oracle.right_child(node);
+    if (child == kInvalidOracleNodeId) {
+        return false;
+    }
+    node = child;
+    return true;
 }
 
 void record_elapsed(StageContext& context,
@@ -180,7 +188,10 @@ DepthProbeResult probe_binary_target_depth(BoxOracle& oracle,
                 }
                 result.splits += 1;
             }
-            descend_to_seed_child(oracle, seed, node, changed_dim);
+            if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
+                result.fail_code = 6;
+                return {DepthProbeOutcome::Fatal, std::move(result)};
+            }
             continue;
         }
 
@@ -203,7 +214,10 @@ DepthProbeResult probe_binary_target_depth(BoxOracle& oracle,
             }
             result.splits += 1;
         }
-        descend_to_seed_child(oracle, seed, node, changed_dim);
+        if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
+            result.fail_code = 6;
+            return {DepthProbeOutcome::Fatal, std::move(result)};
+        }
     }
 }
 
@@ -244,7 +258,10 @@ FindFreeBoxResult run_linear_search(BoxOracle& oracle,
                 }
                 result.splits += 1;
             }
-            descend_to_seed_child(oracle, seed, node, changed_dim);
+            if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
+                result.fail_code = 6;
+                break;
+            }
             continue;
         }
 
@@ -286,7 +303,10 @@ FindFreeBoxResult run_linear_search(BoxOracle& oracle,
             }
             result.splits += 1;
         }
-        descend_to_seed_child(oracle, seed, node, changed_dim);
+        if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
+            result.fail_code = 6;
+            break;
+        }
     }
     return result;
 }

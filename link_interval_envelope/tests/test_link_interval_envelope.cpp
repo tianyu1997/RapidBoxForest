@@ -1,5 +1,7 @@
 #include <sbf/core/robot.h>
+#include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/support_hull.h>
 #include <sbf/envelope/envelope_type.h>
 #include <link_interval_envelope/batch.h>
 #include <link_interval_envelope/incremental_context.h>
@@ -16,6 +18,18 @@ void assert_close(const std::vector<float>& a, const std::vector<float>& b) {
     for (std::size_t i = 0; i < a.size(); ++i) {
         assert(std::abs(a[i] - b[i]) < 1e-6f);
     }
+}
+
+void assert_not_close(const std::vector<float>& a, const std::vector<float>& b) {
+    assert(a.size() == b.size());
+    bool differs = false;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (std::abs(a[i] - b[i]) >= 1e-6f) {
+            differs = true;
+            break;
+        }
+    }
+    assert(differs);
 }
 
 }  // namespace
@@ -51,14 +65,113 @@ int main() {
 
     envelope_config.type = rbf::EnvelopeType::SupportHull;
     envelope_config.n_subdivisions = 1;
+    envelope_config.support_hull_config.keep_kdop = false;
     const auto shape_envelope = rbf::compute_link_envelope(
         endpoint.endpoint_iaabbs.data(),
         endpoint.n_active_links,
         robot.active_link_radii(),
         envelope_config);
-    assert(shape_envelope.kdop_n_axes > 0);
-    assert(!shape_envelope.kdop_intervals.empty());
+    assert(shape_envelope.kdop_n_axes == 0);
+    assert(shape_envelope.kdop_intervals.empty());
     assert(!shape_envelope.support_hulls.empty());
+
+    envelope_config.support_hull_config.keep_kdop = true;
+    const auto shape_envelope_with_kdop = rbf::compute_link_envelope(
+        endpoint.endpoint_iaabbs.data(),
+        endpoint.n_active_links,
+        robot.active_link_radii(),
+        envelope_config);
+    assert(shape_envelope_with_kdop.kdop_n_axes > 0);
+    assert(!shape_envelope_with_kdop.kdop_intervals.empty());
+    assert(!shape_envelope_with_kdop.support_hulls.empty());
+
+    std::vector<float> synthetic_endpoint_iaabbs = {
+        0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 0.0f, 2.0f, 2.0f, 1.0f,
+    };
+    rbf::EnvelopeTypeConfig synthetic_shape_config;
+    synthetic_shape_config.type = rbf::EnvelopeType::SupportHull;
+    synthetic_shape_config.n_subdivisions = 1;
+    synthetic_shape_config.support_hull_config.keep_kdop = true;
+    const auto synthetic_shape_envelope = rbf::compute_link_envelope(
+        synthetic_endpoint_iaabbs.data(),
+        1,
+        nullptr,
+        synthetic_shape_config);
+    assert(synthetic_shape_envelope.support_hulls.size() ==
+        static_cast<std::size_t>(rbf::kSupportHullRecordSize));
+    for (int i = 0; i < 12; ++i) {
+        assert(std::abs(synthetic_shape_envelope.support_hulls[static_cast<std::size_t>(i)] -
+            synthetic_endpoint_iaabbs[static_cast<std::size_t>(i)]) < 1e-6f);
+    }
+    const float expected_diag_bound = 1.0f / std::sqrt(2.0f);
+    const std::size_t diag_axis_offset = 8;
+    assert(std::abs(synthetic_shape_envelope.kdop_intervals[diag_axis_offset] + expected_diag_bound) < 1e-6f);
+    assert(std::abs(synthetic_shape_envelope.kdop_intervals[diag_axis_offset + 1] - expected_diag_bound) < 1e-6f);
+
+    const rbf::Obstacle diagonal_gap_obstacle(0.0f, 1.6f, 0.0f, 0.4f, 1.9f, 1.0f);
+    rbf::EnvelopeTypeConfig synthetic_aabb_config;
+    synthetic_aabb_config.type = rbf::EnvelopeType::LinkIAABB;
+    synthetic_aabb_config.n_subdivisions = 1;
+    const auto synthetic_aabb_envelope = rbf::compute_link_envelope(
+        synthetic_endpoint_iaabbs.data(),
+        1,
+        nullptr,
+        synthetic_aabb_config);
+    rbf::EnvelopeCollisionStats aabb_stats;
+    const auto aabb_kind = rbf::collide_envelope_aabbs(
+        synthetic_aabb_envelope,
+        &diagonal_gap_obstacle,
+        1,
+        {},
+        &aabb_stats);
+    assert(aabb_kind == rbf::CollisionResultKind::MaybeColliding);
+    assert(aabb_stats.maybe_pairs == 1);
+
+    rbf::EnvelopeTypeConfig synthetic_kdop_config;
+    synthetic_kdop_config.type = rbf::EnvelopeType::KDOP;
+    synthetic_kdop_config.n_subdivisions = 1;
+    const auto synthetic_kdop_envelope = rbf::compute_link_envelope(
+        synthetic_endpoint_iaabbs.data(),
+        1,
+        nullptr,
+        synthetic_kdop_config);
+    rbf::EnvelopeCollisionOptions kdop_options;
+    kdop_options.mode = rbf::EnvelopeCollisionMode::KDOP;
+    rbf::EnvelopeCollisionStats kdop_stats;
+    const auto kdop_kind = rbf::collide_envelope_aabbs(
+        synthetic_kdop_envelope,
+        &diagonal_gap_obstacle,
+        1,
+        kdop_options,
+        &kdop_stats);
+    assert(kdop_kind == rbf::CollisionResultKind::DefinitelyFree);
+    assert(kdop_stats.kdop_tests == 1);
+    assert(kdop_stats.kdop_rejects == 1);
+    assert(kdop_stats.maybe_pairs == 0);
+
+    rbf::EnvelopeTypeConfig synthetic_support_only_config;
+    synthetic_support_only_config.type = rbf::EnvelopeType::SupportHull;
+    synthetic_support_only_config.n_subdivisions = 1;
+    synthetic_support_only_config.support_hull_config.keep_kdop = false;
+    const auto synthetic_support_only_envelope = rbf::compute_link_envelope(
+        synthetic_endpoint_iaabbs.data(),
+        1,
+        nullptr,
+        synthetic_support_only_config);
+    rbf::EnvelopeCollisionOptions support_options;
+    support_options.mode = rbf::EnvelopeCollisionMode::GJK;
+    rbf::EnvelopeCollisionStats support_stats;
+    const auto support_kind = rbf::collide_envelope_aabbs(
+        synthetic_support_only_envelope,
+        &diagonal_gap_obstacle,
+        1,
+        support_options,
+        &support_stats);
+    assert(support_kind == rbf::CollisionResultKind::DefinitelyFree);
+    assert(support_stats.gjk_tests == 1);
+    assert(support_stats.gjk_rejects == 1);
+    assert(support_stats.maybe_pairs == 0);
 
     std::vector<rbf::Interval> parent_intervals = {
         {-0.4, 0.4},
@@ -102,6 +215,23 @@ int main() {
         {-0.02, 0.02},
         {-0.25, 0.25},
     };
+
+    rbf::EndpointSourceConfig hifk_rr_config = hifk_config;
+    hifk_rr_config.hifk_max_depth = 1;
+    const auto hifk_rr_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, hifk_rr_config);
+
+    rbf::EndpointSourceConfig hifk_fixed_joint0 = hifk_rr_config;
+    hifk_fixed_joint0.hifk_split_strategy = rbf::HifkSplitStrategy::FixedDepthSchedule;
+    hifk_fixed_joint0.hifk_depth_dimensions = {0};
+    const auto hifk_fixed_joint0_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, hifk_fixed_joint0);
+    assert_close(hifk_rr_endpoint.endpoint_iaabbs, hifk_fixed_joint0_endpoint.endpoint_iaabbs);
+
+    rbf::EndpointSourceConfig hifk_fixed_joint1 = hifk_rr_config;
+    hifk_fixed_joint1.hifk_split_strategy = rbf::HifkSplitStrategy::FixedDepthSchedule;
+    hifk_fixed_joint1.hifk_depth_dimensions = {1};
+    const auto hifk_fixed_joint1_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, hifk_fixed_joint1);
+    assert_not_close(hifk_rr_endpoint.endpoint_iaabbs, hifk_fixed_joint1_endpoint.endpoint_iaabbs);
+
     assert(rbf::recommend_hifk_depth(robot, narrow_intervals) == 0);
     assert(rbf::recommend_hifk_depth(robot, medium_intervals) == 3);
     assert(rbf::recommend_hifk_depth(robot, wide_intervals) == 5);

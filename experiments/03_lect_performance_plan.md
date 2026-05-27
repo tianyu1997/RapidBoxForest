@@ -8,7 +8,7 @@
 
 1. 数据集：至少 shelf/IIWA baseline LECT cache；可追加 random robot caches。
 2. Cache 模式：cold load、warm load、fresh writable、read-only replay、incremental save、full save。
-3. Envelope/channel：AAFK+SupportHull baseline，AABB、KDOP、CritSample 作为对照。
+3. Envelope/channel：AAFK+SH baseline，AABB、AABB->SH chain、CritSample 作为对照。
 4. Tree 规模：1k、10k、100k 或按现有 cache 实际规模分桶。
 5. 操作：query、batch query、split、materialize evidence、load、save full、save incremental、spill/read flat payload。
 
@@ -32,7 +32,7 @@
 1. Warm/read-only cache query 显著快于在线 materialization。
 2. Incremental save 在 dirty node 少时远快于 full save。
 3. Load warm filesystem cache 明显快于 cold load。
-4. SupportHull per-node bytes 高于 AABB，但 planning 过滤质量更好。
+4. SH per-node bytes 高于 AABB；AABB->SH chain 还会增加 staged metadata，但可能降低平均 collision/refine 成本。
 
 ## 初始脚本
 

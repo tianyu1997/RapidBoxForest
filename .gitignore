@@ -36,3 +36,9 @@ compile_commands.json
 .vscode/
 .idea/
 .DS_Store
+
+# Generated experiment outputs
+/outputs/
+**/outputs/
+.sbf_lect_database/
+**/.sbf_lect_database/

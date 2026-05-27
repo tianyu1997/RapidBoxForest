@@ -301,6 +301,62 @@ def _kdop_axes_np() -> "np.ndarray":
     return _KDOP_AXES_NP
 
 
+def _lerp_box(box0: Sequence[float], box1: Sequence[float], t: float) -> list[float]:
+    return [float(a) * (1.0 - t) + float(b) * t for a, b in zip(box0, box1)]
+
+
+def _endpoint_box_pairs(result: dict[str, Any]) -> list[tuple[list[float], list[float], int]]:
+    endpoint = result.get("endpoint", {})
+    endpoint_flat = [float(v) for v in endpoint.get("endpoint_iaabbs_flat", [])]
+    envelope = result.get("envelope", {})
+    n_sub = max(1, int(envelope.get("n_subdivisions", 1)))
+    n_active = int(result.get("robot", {}).get("n_active_links", 0))
+    if n_active <= 0:
+        n_active = len(endpoint_flat) // 12
+    if not endpoint_flat or len(endpoint_flat) < n_active * 12:
+        return []
+
+    pairs: list[tuple[list[float], list[float], int]] = []
+    for link_idx in range(n_active):
+        base = link_idx * 12
+        prox = endpoint_flat[base:base + 6]
+        dist = endpoint_flat[base + 6:base + 12]
+        if len(prox) < 6 or len(dist) < 6:
+            continue
+        for sub_idx in range(n_sub):
+            t_lo = float(sub_idx) / float(n_sub)
+            t_hi = float(sub_idx + 1) / float(n_sub)
+            pairs.append((_lerp_box(prox, dist, t_lo), _lerp_box(prox, dist, t_hi), link_idx))
+    return pairs
+
+
+def _kdop_record_for_endpoint_pair(prox_box: Sequence[float], dist_box: Sequence[float]) -> list[float]:
+    points = np.asarray(aabb_corners(list(prox_box)) + aabb_corners(list(dist_box)), dtype=float)
+    axes = _kdop_axes_np()
+    proj = points @ axes.T
+    record: list[float] = []
+    for axis in range(axes.shape[0]):
+        record.extend((float(np.min(proj[:, axis])), float(np.max(proj[:, axis]))))
+    return record
+
+
+def _kdop_volume_from_endpoints(result: dict[str, Any], n_mc: int = 4096) -> float:
+    pairs = _endpoint_box_pairs(result)
+    if not pairs:
+        return 0.0
+    envelope = result.get("envelope", {})
+    aabb_flat = [float(v) for v in envelope.get("link_iaabbs_flat", [])]
+    if len(aabb_flat) < len(pairs) * 6:
+        return 0.0
+    rng = np.random.RandomState(42)
+    total = 0.0
+    for index, (prox_box, dist_box, _link_idx) in enumerate(pairs):
+        aabb = tuple(aabb_flat[index * 6:index * 6 + 6])
+        record = _kdop_record_for_endpoint_pair(prox_box, dist_box)
+        total += _kdop_volume_for_link(aabb, record, radius=0.0, n_mc=n_mc, rng=rng)
+    return float(total)
+
+
 def _kdop_volume_for_link(
     aabb: tuple[float, float, float, float, float, float],
     record: list[float],
@@ -335,23 +391,24 @@ def kdop_volume(result: dict[str, Any], n_mc: int = 4096) -> float:
     kdop = envelope.get("kdop", {})
     intervals_flat = [float(v) for v in kdop.get("intervals_flat", [])]
     n_axes = int(kdop.get("n_axes", 0))
-    if n_axes != 13 or not intervals_flat:
-        return 0.0
-    aabb_flat = [float(v) for v in envelope.get("link_iaabbs_flat", [])]
-    n_active = len(intervals_flat) // (n_axes * 2)
-    if n_active == 0 or len(aabb_flat) < n_active * 6:
-        return 0.0
-    n_sub = max(1, int(envelope.get("n_subdivisions", 1)))
-    radii = [float(v) for v in result.get("robot", {}).get("active_link_radii", [])]
-    rng = np.random.RandomState(42)
-    total = 0.0
-    for i in range(n_active):
-        aabb = tuple(aabb_flat[i * 6: i * 6 + 6])
-        record = intervals_flat[i * n_axes * 2: i * n_axes * 2 + n_axes * 2]
-        link_idx = i // n_sub
-        radius = radii[link_idx] if link_idx < len(radii) else 0.0
-        total += _kdop_volume_for_link(aabb, record, radius=radius, n_mc=n_mc, rng=rng)
-    return total
+    if n_axes == 13 and intervals_flat:
+        aabb_flat = [float(v) for v in envelope.get("link_iaabbs_flat", [])]
+        n_active = len(intervals_flat) // (n_axes * 2)
+        if n_active > 0 and len(aabb_flat) >= n_active * 6:
+            rng = np.random.RandomState(42)
+            total = 0.0
+            for i in range(n_active):
+                aabb = tuple(aabb_flat[i * 6: i * 6 + 6])
+                record = intervals_flat[i * n_axes * 2: i * n_axes * 2 + n_axes * 2]
+                total += _kdop_volume_for_link(aabb, record, radius=0.0, n_mc=n_mc, rng=rng)
+            if total > 0.0:
+                return total
+
+    endpoint_volume = _kdop_volume_from_endpoints(result, n_mc=n_mc)
+    if endpoint_volume > 0.0:
+        return endpoint_volume
+
+    return 0.0
 
 
 def aabb_corners(box: list[float]) -> list[list[float]]:
@@ -376,16 +433,28 @@ def support_hull_volume(result: dict[str, Any]) -> float:
     envelope = result.get("envelope", {})
     support_hulls_flat = [float(v) for v in envelope.get("support_hulls_flat", [])]
     stride = 13
-    if not support_hulls_flat or len(support_hulls_flat) < stride:
+    if support_hulls_flat and len(support_hulls_flat) >= stride:
+        cached = envelope.get("_support_hull_volume_uninflated")
+        if cached is not None:
+            return float(cached)
+        total = 0.0
+        for offset in range(0, len(support_hulls_flat), stride):
+            record = support_hulls_flat[offset:offset + stride]
+            if len(record) == stride:
+                total += support_hull_volume_for_record(record)
+        envelope["_support_hull_volume_uninflated"] = float(total)
+        if total > 0.0:
+            return float(total)
+
+    endpoint_pairs = _endpoint_box_pairs(result)
+    if not endpoint_pairs:
         return 0.0
     cached = envelope.get("_support_hull_volume_uninflated")
     if cached is not None:
         return float(cached)
     total = 0.0
-    for offset in range(0, len(support_hulls_flat), stride):
-        record = support_hulls_flat[offset:offset + stride]
-        if len(record) == stride:
-            total += support_hull_volume_for_record(record)
+    for prox_box, dist_box, _link_idx in endpoint_pairs:
+        total += support_hull_volume_for_record(prox_box + dist_box + [0.0])
     envelope["_support_hull_volume_uninflated"] = float(total)
     return float(total)
 

@@ -60,6 +60,25 @@ def count_status(boxes: list[Any], status: Any) -> int:
     return sum(1 for box in boxes if box.safety_status == status)
 
 
+def set_if_available(obj: Any, name: str, value: Any) -> bool:
+    try:
+        setattr(obj, name, value)
+        return True
+    except AttributeError:
+        return False
+
+
+def set_path_if_available(obj: Any, path: str, value: Any) -> bool:
+    current = obj
+    parts = path.split(".")
+    for part in parts[:-1]:
+        try:
+            current = getattr(current, part)
+        except AttributeError:
+            return False
+    return set_if_available(current, parts[-1], value)
+
+
 def query_payload(query: Any, result: sbf.QueryResult, wall_s: float) -> dict[str, Any]:
     waypoints = [[float(value) for value in waypoint] for waypoint in result.path]
     return {
@@ -118,6 +137,8 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     cfg.runtime.n_threads = max(1, int(args.threads))
     cfg.runtime.batch_size = max(1, int(args.task_batch_size))
     cfg.runtime.parallel_threshold = 1
+    database_path = args.database_path or (args.out_json.parent / "cache" / args.out_json.stem)
+    cfg.database.path = str(database_path)
 
     if args.preset == "ifk_strict":
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
@@ -171,18 +192,14 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
 
     cfg.envelope_type.n_subdivisions = int(args.envelope_subdivisions)
     use_best_tighten = args.split_policy == "best-tighten"
-    cfg.grower.find_free_box.split.use_best_tighten = use_best_tighten
-    cfg.connector.pave.find_free_box.split.use_best_tighten = use_best_tighten
-    cfg.grower.find_free_box.split.best_tighten.depth_synchronous = bool(args.best_tighten_depth_synchronous)
-    cfg.grower.find_free_box.split.best_tighten.prefer_sector_boundary = bool(args.best_tighten_prefer_sector_boundary)
-    cfg.grower.find_free_box.split.best_tighten.use_minimax = bool(args.best_tighten_use_minimax)
-    cfg.grower.find_free_box.split.best_tighten.shape_balancing = bool(args.best_tighten_shape_balancing)
-    cfg.grower.find_free_box.split.best_tighten.recent_dim_cooling = bool(args.best_tighten_recent_dim_cooling)
-    cfg.connector.pave.find_free_box.split.best_tighten.depth_synchronous = bool(args.best_tighten_depth_synchronous)
-    cfg.connector.pave.find_free_box.split.best_tighten.prefer_sector_boundary = bool(args.best_tighten_prefer_sector_boundary)
-    cfg.connector.pave.find_free_box.split.best_tighten.use_minimax = bool(args.best_tighten_use_minimax)
-    cfg.connector.pave.find_free_box.split.best_tighten.shape_balancing = bool(args.best_tighten_shape_balancing)
-    cfg.connector.pave.find_free_box.split.best_tighten.recent_dim_cooling = bool(args.best_tighten_recent_dim_cooling)
+    set_path_if_available(cfg, "grower.find_free_box.split.use_best_tighten", use_best_tighten)
+    set_path_if_available(cfg, "connector.pave.find_free_box.split.use_best_tighten", use_best_tighten)
+    for prefix in ("grower.find_free_box", "connector.pave.find_free_box"):
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.depth_synchronous", bool(args.best_tighten_depth_synchronous))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.prefer_sector_boundary", bool(args.best_tighten_prefer_sector_boundary))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.use_minimax", bool(args.best_tighten_use_minimax))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.shape_balancing", bool(args.best_tighten_shape_balancing))
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.recent_dim_cooling", bool(args.best_tighten_recent_dim_cooling))
     cfg.grower.mode = sbf.GrowerMode.RRT
     cfg.grower.rng_seed = int(args.seed_base) + int(seed)
     cfg.grower.max_boxes = int(args.max_boxes)
@@ -196,29 +213,29 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     cfg.grower.find_free_box.split_reserved_leaf = True
     cfg.grower.find_free_box.split_unknown_leaf = True
     cfg.grower.find_free_box.reject_seed_collision = False
-    cfg.grower.rrt_goal_bias = float(args.rrt_goal_bias)
-    cfg.grower.intertree_goal_bias = float(args.intertree_goal_bias)
-    cfg.grower.sustained_goal_bias_cap = min(0.25, float(args.intertree_goal_bias))
-    cfg.grower.rrt_step_ratio = float(args.step_ratio)
-    cfg.grower.unexplored_sample_prob = float(args.unexplored_prob)
+    set_if_available(cfg.grower, "rrt_goal_bias", float(args.rrt_goal_bias))
+    set_if_available(cfg.grower, "intertree_goal_bias", float(args.intertree_goal_bias))
+    set_if_available(cfg.grower, "sustained_goal_bias_cap", min(0.25, float(args.intertree_goal_bias)))
+    set_if_available(cfg.grower, "rrt_step_ratio", float(args.step_ratio))
+    set_if_available(cfg.grower, "unexplored_sample_prob", float(args.unexplored_prob))
     cfg.grower.connect_mode = True
     cfg.grower.expand_all_roots_per_sample = True
-    cfg.grower.component_connect_prob = float(args.component_connect_prob)
-    cfg.grower.component_connect_candidate_limit = int(args.component_connect_candidate_limit)
+    set_if_available(cfg.grower, "component_connect_prob", float(args.component_connect_prob))
+    set_if_available(cfg.grower, "component_connect_candidate_limit", int(args.component_connect_candidate_limit))
     cfg.grower.component_connect_island_aware = True
     cfg.grower.component_connect_frontier_cache = True
     cfg.grower.component_connect_staged_growth = True
-    cfg.grower.component_connect_stage_normalized_linf = float(args.component_connect_stage_normalized_linf)
-    cfg.grower.component_connect_adaptive_ffb = True
-    cfg.grower.component_connect_ffb_depth_increment = int(args.component_connect_ffb_depth_increment)
-    cfg.grower.component_connect_ffb_max_depth = int(args.component_connect_ffb_max_depth)
-    cfg.grower.stop_after_connect = bool(args.stop_after_connect)
-    cfg.grower.post_connect_extra_boxes = int(args.post_connect_extra_boxes)
-    cfg.grower.quality_min_connected_boxes = int(args.quality_min_connected_boxes)
-    cfg.grower.post_connect_time_budget_ms = float(args.post_connect_time_budget_ms)
-    cfg.grower.coverage_first_stop_loss = bool(args.coverage_first_stop_loss)
-    cfg.grower.hard_frontier_failure_threshold = int(args.hard_frontier_failure_threshold)
-    cfg.grower.hard_frontier_box_horizon = int(args.hard_frontier_box_horizon)
+    set_if_available(cfg.grower, "component_connect_stage_normalized_linf", float(args.component_connect_stage_normalized_linf))
+    set_if_available(cfg.grower, "component_connect_adaptive_ffb", True)
+    set_if_available(cfg.grower, "component_connect_ffb_depth_increment", int(args.component_connect_ffb_depth_increment))
+    set_if_available(cfg.grower, "component_connect_ffb_max_depth", int(args.component_connect_ffb_max_depth))
+    set_if_available(cfg.grower, "stop_after_connect", bool(args.stop_after_connect))
+    set_if_available(cfg.grower, "post_connect_extra_boxes", int(args.post_connect_extra_boxes))
+    set_if_available(cfg.grower, "quality_min_connected_boxes", int(args.quality_min_connected_boxes))
+    set_if_available(cfg.grower, "post_connect_time_budget_ms", float(args.post_connect_time_budget_ms))
+    set_if_available(cfg.grower, "coverage_first_stop_loss", bool(args.coverage_first_stop_loss))
+    set_if_available(cfg.grower, "hard_frontier_failure_threshold", int(args.hard_frontier_failure_threshold))
+    set_if_available(cfg.grower, "hard_frontier_box_horizon", int(args.hard_frontier_box_horizon))
 
     cfg.query.nearest_if_outside = False
     cfg.query.shortcut_boxes = True
@@ -230,20 +247,20 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     cfg.query.repair_max_attempts = int(args.repair_max_attempts)
     cfg.query.repair_rrt_max_iters = int(args.repair_rrt_max_iters)
     cfg.query.repair_timeout_ms = float(args.repair_timeout_ms)
-    cfg.query.repair_local_sampling_radius = float(args.repair_local_sampling_radius)
-    cfg.query.repair_local_sampling_growth = float(args.repair_local_sampling_growth)
+    set_if_available(cfg.query, "repair_local_sampling_radius", float(args.repair_local_sampling_radius))
+    set_if_available(cfg.query, "repair_local_sampling_growth", float(args.repair_local_sampling_growth))
     cfg.validation.enable_validation_cache = bool(args.validation_cache)
     cfg.validation.validation_cache_max_entries = int(args.validation_cache_max_entries)
-    cfg.connector.frontier_bridge = bool(args.frontier_bridge)
+    set_if_available(cfg.connector, "frontier_bridge", bool(args.frontier_bridge))
     cfg.connector.max_total_bridge_boxes = int(args.connector_bridge_boxes)
     cfg.connector.segment_edges_enabled = bool(args.segment_edges)
     cfg.connector.rrt_segment_edges = bool(args.segment_edges)
     cfg.connector.point_gap_segment_edges = bool(args.segment_edges)
     cfg.connector.n_threads = max(1, int(args.threads))
-    cfg.connector.pair_batch_size = max(1, int(args.connector_pair_batch_size))
+    set_if_available(cfg.connector, "pair_batch_size", max(1, int(args.connector_pair_batch_size)))
     cfg.connector.parallel_threshold = 1
-    cfg.connector.per_pair_timeout_ms = float(args.connector_pair_timeout_ms)
-    cfg.connector.max_pairs_per_gap = int(args.connector_max_pairs_per_gap)
+    set_if_available(cfg.connector, "per_pair_timeout_ms", float(args.connector_pair_timeout_ms))
+    set_if_available(cfg.connector, "max_pairs_per_gap", int(args.connector_max_pairs_per_gap))
     cfg.connector.rrt.max_iters = int(args.connector_rrt_iters)
     cfg.connector.rrt.timeout_ms = float(args.connector_rrt_timeout_ms)
     cfg.connector.rrt.step_size = float(args.connector_rrt_step_size)
@@ -376,6 +393,7 @@ def run_exp4_baselines(args: argparse.Namespace) -> dict[str, Any] | None:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Standalone SBF paper Exp.4 Marcucci combined runner.")
     parser.add_argument("--out-json", type=Path, default=ROOT / "outputs" / "paper" / "marcucci_combined_standalone.json")
+    parser.add_argument("--database-path", type=Path, default=None)
     parser.add_argument("--v6-json", type=Path, default=None, help="Optional legacy diagnostic comparison JSON; omitted for paper-facing current artifacts.")
     parser.add_argument(
         "--preset",
@@ -586,6 +604,7 @@ def main() -> int:
         "params": {
             "preset": args.preset,
             "envelope": args.envelope,
+            "database_path": str(args.database_path) if args.database_path is not None else str(args.out_json.parent / "cache" / args.out_json.stem),
             "grow_only": args.grow_only,
             "seed_points": ["AS", "TS", "CS", "LB", "RB"],
             "max_boxes": args.max_boxes,

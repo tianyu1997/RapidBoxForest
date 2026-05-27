@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,29 @@ from experiments.common.experiment_io import (  # noqa: E402
 LEGACY_SCRIPT = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_01_epiaabb_pipeline.py"
 DEFAULT_SOURCES = "IFK,AAFK,HIFK_3,HIFK_5,CritSample,Analytical,MC"
 DEFAULT_WIDTHS = "0.02,0.05,0.10,0.20,0.30,0.50"
+
+
+def bootstrap_lie_import() -> None:
+    os.environ.setdefault("RBF_ENVELOPE_MODULE_DIR", str(REPO_ROOT / "link_interval_envelope"))
+    candidates = [
+        REPO_ROOT / "build-rbf-only-exec" / "python",
+        REPO_ROOT / "build-consolidated-python" / "python",
+        REPO_ROOT / "link_interval_envelope" / "build_py310" / "python",
+    ]
+    for candidate in candidates:
+        package_dir = candidate / "link_interval_envelope"
+        if not package_dir.exists() or not any(package_dir.glob("_link_interval_envelope_cpp*.so")):
+            continue
+        text = str(candidate)
+        if text in sys.path:
+            sys.path.remove(text)
+        sys.path.insert(0, text)
+        importlib.import_module("link_interval_envelope")
+        return
+    raise ImportError(
+        "link_interval_envelope Python extension was not found; "
+        "build target link_interval_envelope_python_package first"
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -122,6 +147,7 @@ def main() -> int:
     if args.dry_run:
         print(f"wrote dry-run manifest: {args.out_dir / 'run_manifest.json'}")
         return 0
+    bootstrap_lie_import()
     module = load_module_from_path("exp01_legacy_epiaabb", LEGACY_SCRIPT)
     patch_aafk_source(module, sources)
     old_argv = sys.argv

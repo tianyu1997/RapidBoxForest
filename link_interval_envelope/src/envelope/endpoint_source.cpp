@@ -211,14 +211,12 @@ EndpointIAABBResult compute_endpoint_iaabb(
                                          42, changed_dim);
 
     case EndpointSource::HIFK: {
-        const int effective_hifk_max_depth =
+        EndpointSourceConfig effective_config = config;
+        effective_config.hifk_max_depth =
             config.hifk_max_depth < 0
                 ? recommend_hifk_depth(robot, intervals)
                 : config.hifk_max_depth;
-        return compute_endpoint_iaabb_hifk_aa(robot, intervals,
-                                              effective_hifk_max_depth,
-                                              config.hifk_n_threads,
-                                              config.hifk_vol_ratio_thresh);
+        return compute_endpoint_iaabb_hifk_aa(robot, intervals, effective_config);
     }
 
     default:

@@ -6,11 +6,13 @@
 
 #include <sbf/core/fk_state.h>
 #include <sbf/core/robot.h>
+#include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/endpoint_source.h>
 #include <sbf/envelope/envelope_type.h>
 #include <sbf/envelope/gcpc_source.h>
 
 #include <chrono>
+#include <array>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -42,6 +44,25 @@ OutputOptions parse_output_mode(const std::string& mode) {
         return {false, false, false};
     }
     throw std::invalid_argument("output_mode must be one of: full, arrays, summary, metadata, compact");
+}
+
+rbf::EnvelopeCollisionMode parse_collision_mode(const std::string& mode) {
+    if (mode.empty() || mode == "auto") {
+        return rbf::EnvelopeCollisionMode::Auto;
+    }
+    if (mode == "aabb_only" || mode == "link_aabb") {
+        return rbf::EnvelopeCollisionMode::LinkAABB;
+    }
+    if (mode == "kdop_only" || mode == "kdop") {
+        return rbf::EnvelopeCollisionMode::KDOP;
+    }
+    if (mode == "support_hull_only" || mode == "gjk") {
+        return rbf::EnvelopeCollisionMode::GJK;
+    }
+    if (mode == "kdop_then_support_hull") {
+        return rbf::EnvelopeCollisionMode::KDOPThenGJK;
+    }
+    throw std::invalid_argument("collision_mode must be one of: auto, aabb_only, kdop_only, support_hull_only, kdop_then_support_hull");
 }
 
 std::vector<double> active_link_radii_vec(const rbf::Robot& robot) {
@@ -145,9 +166,13 @@ py::dict envelope_to_dict(
     }
     result["envelope_type"] = std::string(rbf::envelope_type_name(envelope.type));
     result["n_subdivisions"] = envelope.n_subdivisions;
+    result["kdop_n_axes"] = envelope.kdop_n_axes;
+    result["kdop_direction_set"] = static_cast<int>(envelope.kdop_direction_set);
     result["link_shape"] = py::make_tuple(envelope.n_active_links, envelope.n_subdivisions, 6);
     if (output.include_arrays) {
         result["link_iaabbs"] = envelope.link_iaabbs;
+        result["kdop_intervals"] = envelope.kdop_intervals;
+        result["support_hulls"] = envelope.support_hulls;
     }
     if (output.include_inflated) {
         result["inflated_link_iaabbs"] = inflate_link_iaabbs(
@@ -200,12 +225,16 @@ py::dict batch_result_to_dict(
     }
     result["envelope_type"] = std::string(rbf::envelope_type_name(item.envelope.type));
     result["n_subdivisions"] = item.envelope.n_subdivisions;
+    result["kdop_n_axes"] = item.envelope.kdop_n_axes;
+    result["kdop_direction_set"] = static_cast<int>(item.envelope.kdop_direction_set);
     result["link_shape"] = py::make_tuple(
         item.envelope.n_active_links,
         item.envelope.n_subdivisions,
         6);
     if (output.include_arrays) {
         result["link_iaabbs"] = item.envelope.link_iaabbs;
+        result["kdop_intervals"] = item.envelope.kdop_intervals;
+        result["support_hulls"] = item.envelope.support_hulls;
     }
     if (output.include_inflated) {
         result["inflated_link_iaabbs"] = inflate_link_iaabbs(
@@ -423,6 +452,77 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         return result;
     }, py::arg("robot"), py::arg("endpoint_iaabbs"), py::arg("envelope_config"),
        py::arg("output_mode") = "full");
+
+    module.def("compute_collision_from_endpoint_iaabbs", [](
+        const rbf::Robot& robot,
+        const std::vector<float>& endpoint_iaabbs,
+        const std::vector<std::array<float, 6>>& obstacle_bounds,
+        const rbf::EnvelopeTypeConfig& envelope_config,
+        const std::string& collision_mode,
+        bool count_all_pairs,
+        double safety_epsilon) {
+        const int n_active = robot.n_active_links();
+        if (static_cast<int>(endpoint_iaabbs.size()) != n_active * 2 * 6) {
+            throw std::invalid_argument("endpoint_iaabbs must have shape [n_active, 2, 6]");
+        }
+        const rbf::LinkEnvelope envelope = rbf::compute_link_envelope(
+            endpoint_iaabbs.data(),
+            n_active,
+            robot.active_link_radii(),
+            envelope_config);
+
+        std::vector<rbf::Obstacle> obstacles;
+        obstacles.reserve(obstacle_bounds.size());
+        for (const auto& bounds : obstacle_bounds) {
+            obstacles.emplace_back(bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], bounds[5]);
+        }
+
+        rbf::EnvelopeCollisionOptions options;
+        options.mode = parse_collision_mode(collision_mode);
+        options.count_all_pairs = count_all_pairs;
+        options.safety_epsilon = safety_epsilon;
+
+        rbf::EnvelopeCollisionStats stats;
+        rbf::CollisionResultKind kind = rbf::CollisionResultKind::MaybeColliding;
+        Clock::time_point start;
+        Clock::time_point stop;
+        {
+            py::gil_scoped_release release;
+            start = Clock::now();
+            kind = rbf::collide_envelope_aabbs(
+                envelope,
+                obstacles.empty() ? nullptr : obstacles.data(),
+                static_cast<int>(obstacles.size()),
+                options,
+                &stats);
+            stop = Clock::now();
+        }
+
+        py::dict result;
+        result["robot_name"] = robot.name();
+        result["n_active_links"] = n_active;
+        result["envelope_type"] = std::string(rbf::envelope_type_name(envelope.type));
+        result["n_subdivisions"] = envelope.n_subdivisions;
+        result["collision_mode"] = collision_mode;
+        result["is_definitely_free"] = (kind == rbf::CollisionResultKind::DefinitelyFree);
+        result["collision_time_us"] = std::chrono::duration<double, std::micro>(stop - start).count();
+        result["total_time_us"] = std::chrono::duration<double, std::micro>(stop - start).count();
+        result["envelope_aabb_tests"] = stats.envelope_aabb_tests;
+        result["envelope_aabb_rejects"] = stats.envelope_aabb_rejects;
+        result["link_union_aabb_tests"] = stats.link_union_aabb_tests;
+        result["link_union_aabb_rejects"] = stats.link_union_aabb_rejects;
+        result["link_aabb_tests"] = stats.link_aabb_tests;
+        result["link_aabb_rejects"] = stats.link_aabb_rejects;
+        result["kdop_tests"] = stats.kdop_tests;
+        result["kdop_rejects"] = stats.kdop_rejects;
+        result["kdop_axes_tested"] = stats.kdop_axes_tested;
+        result["gjk_tests"] = stats.gjk_tests;
+        result["gjk_rejects"] = stats.gjk_rejects;
+        result["gjk_iterations"] = stats.gjk_iterations;
+        result["maybe_pairs"] = stats.maybe_pairs;
+        return result;
+    }, py::arg("robot"), py::arg("endpoint_iaabbs"), py::arg("obstacles"), py::arg("envelope_config"),
+       py::arg("collision_mode") = "auto", py::arg("count_all_pairs") = false, py::arg("safety_epsilon") = 0.0);
 
     module.def("compute_envelope_info", [](
         const rbf::Robot& robot,

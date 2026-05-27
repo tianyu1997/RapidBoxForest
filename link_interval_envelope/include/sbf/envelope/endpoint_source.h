@@ -71,6 +71,12 @@ inline const char* endpoint_source_name(EndpointSource s) {
     }
 }
 
+enum class HifkSplitStrategy : uint8_t {
+    RoundRobin = 0,
+    WidestRoot = 1,
+    FixedDepthSchedule = 2,
+};
+
 // ─── Configuration ──────────────────────────────────────────────────────────
 struct EndpointSourceConfig {
     EndpointSource source = EndpointSource::IFK;
@@ -86,6 +92,11 @@ struct EndpointSourceConfig {
     int hifk_max_depth = 9;               // HIFK total bisection depth; <0 selects interval-aware auto depth
     int hifk_n_threads = 1;               // reserved for future parallel HIFK
     double hifk_vol_ratio_thresh = 0.0;  // >0 enables adaptive BFS splitting
+    HifkSplitStrategy hifk_split_strategy = HifkSplitStrategy::RoundRobin;
+    int hifk_depth_offset = 0;
+    double hifk_min_split_width = 0.0;
+    std::vector<int> hifk_depth_dimensions;
+    std::vector<Interval> hifk_root_intervals;
 };
 
 // ─── Result ─────────────────────────────────────────────────────────────────

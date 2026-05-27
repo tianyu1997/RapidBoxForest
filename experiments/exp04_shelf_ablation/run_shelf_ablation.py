@@ -25,6 +25,17 @@ from experiments.common.experiment_io import (  # noqa: E402
 SBF_COMBINED = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_04_marcucci_combined.py"
 
 
+def legacy_sbf_env() -> dict[str, str]:
+    candidates = [
+        REPO_ROOT / "build-rbf-only-exec",
+        REPO_ROOT / "build-consolidated-python",
+    ]
+    build_dir = next((candidate for candidate in candidates if (candidate / "python" / "sbf").exists()), None)
+    if build_dir is None:
+        return {}
+    return {"SBF_BUILD_DIR": str(build_dir)}
+
+
 def parse_args() -> argparse.Namespace:
     output_dir = DEFAULT_OUTPUT_ROOT / "exp04_shelf_ablation"
     parser = argparse.ArgumentParser(description="Run Experiment 4 shelf planning ablation matrix.")
@@ -40,11 +51,13 @@ def parse_args() -> argparse.Namespace:
 
 
 def combined_command(args: argparse.Namespace, name: str, preset: str, envelope: str, threads: int, split_policy: str) -> list[str]:
-    return [
+    command = [
         sys.executable,
         str(SBF_COMBINED),
         "--out-json",
         str(args.out_dir / f"{name}.json"),
+        "--database-path",
+        str(args.out_dir / "cache" / name),
         "--preset",
         preset,
         "--envelope",
@@ -61,6 +74,9 @@ def combined_command(args: argparse.Namespace, name: str, preset: str, envelope:
         "--audit-resolution",
         "32",
     ]
+    if envelope == "support_hull":
+        command.append("--no-support-hull-keep-kdop")
+    return command
 
 
 def matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
@@ -87,16 +103,17 @@ def matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
             "command": combined_command(args, "no_aafk_critsample_support_hull", "support_hull_coverage", "support_hull", int(args.threads), "best-tighten"),
         },
         {
-            "name": "no_support_hull_aabb",
-            "factor": "envelope",
+            "name": "envelope_aabb_only",
+            "factor": "envelope_collision",
             "supported": True,
-            "command": combined_command(args, "no_support_hull_aabb", "ifk_strict", "link", int(args.threads), "best-tighten"),
+            "command": combined_command(args, "envelope_aabb_only", "ifk_strict", "link", int(args.threads), "best-tighten"),
         },
         {
-            "name": "no_support_hull_kdop26",
-            "factor": "envelope",
+            "name": "envelope_aabb_to_support_hull_chain",
+            "factor": "envelope_collision",
             "supported": True,
-            "command": combined_command(args, "no_support_hull_kdop26", "ifk_strict", "kdop26", int(args.threads), "best-tighten"),
+            "implementation": "legacy support_hull already runs shared AABB broadphase followed by SupportHull narrow phase when support_hull_keep_kdop=false",
+            "command": combined_command(args, "envelope_aabb_to_support_hull_chain", "ifk_strict", "support_hull", int(args.threads), "best-tighten"),
         },
         {
             "name": "single_thread",
@@ -123,12 +140,16 @@ def main() -> int:
     out_json = args.out_json or (args.out_dir / "shelf_ablation_manifest.json")
     rows = matrix(args)
     run_records = []
+    extra_env = legacy_sbf_env()
     if args.execute:
         for row in rows:
             if not row.get("supported"):
                 run_records.append({"name": row["name"], "skipped": True, "reason": row.get("requires_new_hook")})
                 continue
-            run_records.append({"name": row["name"], "measurement": run_command(row["command"], dry_run=bool(args.dry_run))})
+            run_records.append({
+                "name": row["name"],
+                "measurement": run_command(row["command"], dry_run=bool(args.dry_run), extra_env=extra_env),
+            })
     payload = {
         "experiment": "exp04_shelf_ablation",
         "run_id": run_id("exp04"),

@@ -1374,9 +1374,17 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
     };
     auto descend_to_seed_child = [&](OracleNodeId& current_node, int& current_changed_dim) {
         current_changed_dim = oracle_->split_dim(current_node);
-        current_node = (seed[current_changed_dim] <= oracle_->split_value(current_node))
+        if (current_changed_dim < 0 || current_changed_dim >= seed.size()) {
+            return false;
+        }
+        const OracleNodeId child = (seed[current_changed_dim] <= oracle_->split_value(current_node))
             ? oracle_->left_child(current_node)
             : oracle_->right_child(current_node);
+        if (child == kInvalidOracleNodeId) {
+            return false;
+        }
+        current_node = child;
+        return true;
     };
 
     if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth) {
@@ -1469,6 +1477,13 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                     }
                     probe_result.splits += 1;
                     changed_dim = split_dim;
+                    if (split_dim < 0 || split_dim >= seed.size() ||
+                        split.left == kInvalidOracleNodeId || split.right == kInvalidOracleNodeId) {
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 6;
+                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                    }
                     node = (seed[split_dim] <= split_value) ? split.left : split.right;
                     continue;
                 }
@@ -1487,7 +1502,12 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                         return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
                     }
                     probe_result.splits += 1;
-                    descend_to_seed_child(node, changed_dim);
+                    if (!descend_to_seed_child(node, changed_dim)) {
+                        probe_result.node = node;
+                        probe_result.intervals = std::move(intervals);
+                        probe_result.fail_code = 6;
+                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
+                    }
                     continue;
                 }
 
@@ -1604,6 +1624,13 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             }
             result.splits += 1;
             changed_dim = split_dim;
+            if (split_dim < 0 || split_dim >= seed.size() ||
+                split.left == kInvalidOracleNodeId || split.right == kInvalidOracleNodeId) {
+                result.node = node;
+                result.intervals = std::move(intervals);
+                result.fail_code = 6;
+                break;
+            }
             node = (seed[split_dim] <= split_value) ? split.left : split.right;
             continue;
         }
@@ -1622,7 +1649,12 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 break;
             }
             result.splits += 1;
-            descend_to_seed_child(node, changed_dim);
+            if (!descend_to_seed_child(node, changed_dim)) {
+                result.node = node;
+                result.intervals = std::move(intervals);
+                result.fail_code = 6;
+                break;
+            }
             continue;
         }
 
