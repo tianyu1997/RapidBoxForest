@@ -70,7 +70,7 @@ ld::LectDatabaseIdentity identity_for(const std::vector<rbf::Interval>& root,
     identity.split_policy_descriptor = ld::split_policy_descriptor(split);
     identity.endpoint_descriptor = "test_endpoint";
     identity.envelope_descriptor = "test_envelope";
-    identity.payload_layout = "endpoint_envelope_v1";
+    identity.payload_layout = "endpoint_envelope";
     return identity;
 }
 

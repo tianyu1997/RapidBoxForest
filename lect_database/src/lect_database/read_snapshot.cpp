@@ -274,17 +274,15 @@ struct SnapshotDirectEvidenceHeader {
 };
 
 struct SnapshotDirectEvidenceEntry {
-    std::uint64_t node_id = kInvalidNodeId;
-    std::int32_t sector = 0;
-    std::uint32_t channel = 0;
-    std::uint32_t endpoint_source = 0;
-    std::uint32_t payload_kind = 0;
-    std::uint32_t flags = 0;
     std::uint64_t payload_offset = 0;
-    std::uint32_t payload_count = 0;
-    std::uint32_t reserved = 0;
     std::uint64_t generation = 0;
     std::uint64_t checksum = 0;
+    std::int32_t sector = 0;
+    std::uint32_t payload_count = 0;
+    std::uint8_t channel = 0;
+    std::uint8_t endpoint_source = 0;
+    std::uint8_t payload_kind = 0;
+    std::uint8_t flags = 0;
 };
 
 struct SnapshotEvidenceTableHeader {
@@ -501,6 +499,142 @@ struct LectReadSnapshot::Impl {
     }
 };
 
+std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
+                                                       const EvidenceKey& key,
+                                                       const std::shared_ptr<MappedFile>& payload_file) {
+    const auto direct_index = static_cast<std::size_t>(key.node_id);
+    if (direct_index >= direct_evidence.size()) {
+        return std::nullopt;
+    }
+    const auto& direct = direct_evidence[direct_index];
+    if ((direct.flags & kSnapshotEvidencePresent) == 0 ||
+        direct.sector != key.sector ||
+        direct.channel != static_cast<std::uint8_t>(key.channel) ||
+        direct.endpoint_source != static_cast<std::uint8_t>(key.endpoint_source) ||
+        direct.payload_kind != static_cast<std::uint8_t>(key.payload_kind)) {
+        return std::nullopt;
+    }
+    const auto payload_bytes = static_cast<std::uint64_t>(direct.payload_count) * sizeof(float);
+    if (direct.payload_offset > payload_file->size() || payload_bytes > payload_file->size() - direct.payload_offset) {
+        return std::nullopt;
+    }
+    const auto payload = payload_file->bytes();
+    EvidenceRecordView view;
+    view.key = key;
+    view.key.node_path = {};
+    view.key.node_path_valid = false;
+    view.child_hull = (direct.flags & kSnapshotEvidenceChildHull) != 0;
+    view.unavailable = (direct.flags & kSnapshotEvidenceUnavailable) != 0;
+    view.generation = direct.generation;
+    view.checksum = direct.checksum;
+    view.storage = std::static_pointer_cast<const void>(payload_file);
+    view.payload = std::span<const float>(
+        reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(direct.payload_offset)),
+        direct.payload_count);
+    return view;
+}
+
+std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot& slot,
+                                                     const EvidenceKey& key,
+                                                     const std::shared_ptr<MappedFile>& payload_file) {
+    const auto payload_bytes = static_cast<std::uint64_t>(slot.payload_count) * sizeof(float);
+    if (slot.payload_offset > payload_file->size() || payload_bytes > payload_file->size() - slot.payload_offset) {
+        return std::nullopt;
+    }
+    const auto payload = payload_file->bytes();
+    EvidenceRecordView view;
+    view.key = key;
+    view.key.node_path = {};
+    view.key.node_path_valid = false;
+    view.child_hull = (slot.flags & kSnapshotEvidenceChildHull) != 0;
+    view.unavailable = (slot.flags & kSnapshotEvidenceUnavailable) != 0;
+    view.generation = slot.generation;
+    view.checksum = slot.checksum;
+    view.storage = std::static_pointer_cast<const void>(payload_file);
+    view.payload = std::span<const float>(
+        reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(slot.payload_offset)),
+        slot.payload_count);
+    return view;
+}
+
+std::optional<EvidenceRecordView> lookup_evidence_slot(std::span<const SnapshotEvidenceSlot> evidence_slots,
+                                                       const EvidenceKey& key,
+                                                       const std::shared_ptr<MappedFile>& payload_file) {
+    if (evidence_slots.empty()) {
+        return std::nullopt;
+    }
+    const auto hash = hash_evidence_key(key.node_id, key.sector, key.channel, key.endpoint_source, key.payload_kind);
+    std::size_t position = static_cast<std::size_t>(hash) & (evidence_slots.size() - 1u);
+    for (std::size_t probe = 0; probe < evidence_slots.size(); ++probe) {
+        const auto& slot = evidence_slots[position];
+        if ((slot.flags & kSnapshotEvidencePresent) == 0) {
+            return std::nullopt;
+        }
+        if (slot.node_id == key.node_id && slot.sector == key.sector &&
+            slot.channel == static_cast<std::uint32_t>(key.channel) &&
+            slot.endpoint_source == static_cast<std::uint32_t>(key.endpoint_source) &&
+            slot.payload_kind == static_cast<std::uint32_t>(key.payload_kind)) {
+            return evidence_slot_view(slot, key, payload_file);
+        }
+        position = (position + 1u) & (evidence_slots.size() - 1u);
+    }
+    return std::nullopt;
+}
+
+std::optional<EvidenceRecordView> lookup_evidence_uncached(std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
+                                                           std::span<const SnapshotEvidenceSlot> evidence_slots,
+                                                           const EvidenceKey& key,
+                                                           const std::shared_ptr<MappedFile>& payload_file) {
+    if (auto view = direct_evidence_view(direct_evidence, key, payload_file)) {
+        return view;
+    }
+    return lookup_evidence_slot(evidence_slots, key, payload_file);
+}
+
+std::optional<EvidenceRecordView> lookup_endpoint_exact_uncached(std::span<const SnapshotNodeRow> nodes,
+                                                                 const std::vector<Interval>& root,
+                                                                 std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
+                                                                 std::span<const SnapshotEvidenceSlot> evidence_slots,
+                                                                 const std::shared_ptr<MappedFile>& payload_file,
+                                                                 const BoxKey& box,
+                                                                 EvidenceKey key_template) {
+    auto has_node = [&](NodeId node_id) {
+        const auto index = static_cast<std::size_t>(node_id);
+        return node_id != kInvalidNodeId && index < nodes.size() &&
+               (nodes[index].flags & kSnapshotNodePresent) != 0;
+    };
+    auto node = [&](NodeId node_id) -> const SnapshotNodeRow* {
+        return has_node(node_id) ? &nodes[static_cast<std::size_t>(node_id)] : nullptr;
+    };
+
+    NodeId cursor = 0;
+    auto intervals = root;
+    while (has_node(cursor)) {
+        if (intervals_equal(intervals, box.intervals, box.tolerance)) {
+            key_template.node_id = cursor;
+            key_template.node_path = {};
+            key_template.node_path_valid = false;
+            return lookup_evidence_uncached(direct_evidence, evidence_slots, key_template, payload_file);
+        }
+        const auto* row = node(cursor);
+        if (row == nullptr || (row->left == kInvalidNodeId && row->right == kInvalidNodeId) ||
+            row->split_dim < 0 || row->split_dim >= static_cast<int>(intervals.size())) {
+            break;
+        }
+        const auto dim = static_cast<std::size_t>(row->split_dim);
+        if (box.intervals[dim].hi <= row->split_value + box.tolerance && has_node(row->left)) {
+            intervals[dim].hi = row->split_value;
+            cursor = row->left;
+        } else if (box.intervals[dim].lo + box.tolerance >= row->split_value && has_node(row->right)) {
+            intervals[dim].lo = row->split_value;
+            cursor = row->right;
+        } else {
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
 LectReadSnapshot::LectReadSnapshot() : impl_(std::make_unique<Impl>()) {}
 LectReadSnapshot::~LectReadSnapshot() = default;
 LectReadSnapshot::LectReadSnapshot(LectReadSnapshot&&) noexcept = default;
@@ -553,9 +687,6 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
 
     std::vector<SnapshotNodeRow> node_rows(static_cast<std::size_t>(max_node_id) + 1u);
     std::vector<SnapshotDirectEvidenceEntry> direct_evidence_rows(static_cast<std::size_t>(max_node_id) + 1u);
-    for (auto& entry : direct_evidence_rows) {
-        entry.node_id = kInvalidNodeId;
-    }
     std::size_t loaded_nodes = 0;
     for (std::uint64_t index = 0; index < legacy_node_header.entry_count; ++index) {
         LegacyNodeIndexSidecarEntry entry;
@@ -639,16 +770,15 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
 
             auto& direct = direct_evidence_rows[static_cast<std::size_t>(raw.node_id)];
             if ((direct.flags & kSnapshotEvidencePresent) == 0) {
-                direct.node_id = raw.node_id;
-                direct.sector = raw.sector;
-                direct.channel = raw.channel;
-                direct.endpoint_source = raw.endpoint_source;
-                direct.payload_kind = raw.payload_kind;
-                direct.flags = slot.flags;
                 direct.payload_offset = slot.payload_offset;
-                direct.payload_count = slot.payload_count;
                 direct.generation = slot.generation;
                 direct.checksum = slot.checksum;
+                direct.sector = raw.sector;
+                direct.channel = static_cast<std::uint8_t>(raw.channel);
+                direct.endpoint_source = static_cast<std::uint8_t>(raw.endpoint_source);
+                direct.payload_kind = static_cast<std::uint8_t>(raw.payload_kind);
+                direct.flags = static_cast<std::uint8_t>(slot.flags);
+                direct.payload_count = slot.payload_count;
             }
 
             const auto hash = hash_evidence_key(slot.node_id,
@@ -730,6 +860,7 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
             if (reason) *reason = "failed to write snapshot direct evidence header";
             return false;
         }
+
         out.write(reinterpret_cast<const char*>(direct_evidence_rows.data()),
                   static_cast<std::streamsize>(direct_evidence_rows.size() * sizeof(SnapshotDirectEvidenceEntry)));
         if (!out) {
@@ -1106,82 +1237,29 @@ std::vector<NodeId> LectReadSnapshot::range_query(const std::vector<Interval>& b
 }
 
 std::optional<EvidenceRecordView> LectReadSnapshot::evidence(const EvidenceKey& key) const {
-    if (!impl_->has_node(key.node_id) || impl_->evidence_slots.empty()) {
+    if (!impl_->has_node(key.node_id)) {
         return std::nullopt;
     }
-    const auto direct_index = static_cast<std::size_t>(key.node_id);
-    if (direct_index < impl_->direct_evidence.size()) {
-        const auto& direct = impl_->direct_evidence[direct_index];
-        if ((direct.flags & kSnapshotEvidencePresent) != 0 && direct.node_id == key.node_id &&
-            direct.sector == key.sector &&
-            direct.channel == static_cast<std::uint32_t>(key.channel) &&
-            direct.endpoint_source == static_cast<std::uint32_t>(key.endpoint_source) &&
-            direct.payload_kind == static_cast<std::uint32_t>(key.payload_kind)) {
-        const auto payload_bytes = static_cast<std::uint64_t>(direct.payload_count) * sizeof(float);
-        if (direct.payload_offset + payload_bytes > impl_->payload_file->size()) {
-            return std::nullopt;
-        }
-        const auto payload = impl_->payload_file->bytes();
-        EvidenceRecordView view;
-        view.key = key;
-        view.key.node_path = {};
-        view.key.node_path_valid = false;
-        view.child_hull = (direct.flags & kSnapshotEvidenceChildHull) != 0;
-        view.unavailable = (direct.flags & kSnapshotEvidenceUnavailable) != 0;
-        view.generation = direct.generation;
-        view.checksum = direct.checksum;
-        view.storage = std::static_pointer_cast<const void>(impl_->payload_file);
-        view.payload = std::span<const float>(
-            reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(direct.payload_offset)),
-            direct.payload_count);
-        return view;
-        }
-    }
-    const auto hash = hash_evidence_key(key.node_id, key.sector, key.channel, key.endpoint_source, key.payload_kind);
-    std::size_t position = static_cast<std::size_t>(hash) & (impl_->evidence_slots.size() - 1u);
-    for (std::size_t probe = 0; probe < impl_->evidence_slots.size(); ++probe) {
-        const auto& slot = impl_->evidence_slots[position];
-        if ((slot.flags & kSnapshotEvidencePresent) == 0) {
-            return std::nullopt;
-        }
-        if (slot.node_id == key.node_id && slot.sector == key.sector &&
-            slot.channel == static_cast<std::uint32_t>(key.channel) &&
-            slot.endpoint_source == static_cast<std::uint32_t>(key.endpoint_source) &&
-            slot.payload_kind == static_cast<std::uint32_t>(key.payload_kind)) {
-            const auto payload_bytes = static_cast<std::uint64_t>(slot.payload_count) * sizeof(float);
-            if (slot.payload_offset + payload_bytes > impl_->payload_file->size()) {
-                return std::nullopt;
-            }
-            const auto payload = impl_->payload_file->bytes();
-            EvidenceRecordView view;
-            view.key = key;
-            view.key.node_path = {};
-            view.key.node_path_valid = false;
-            view.child_hull = (slot.flags & kSnapshotEvidenceChildHull) != 0;
-            view.unavailable = (slot.flags & kSnapshotEvidenceUnavailable) != 0;
-            view.generation = slot.generation;
-            view.checksum = slot.checksum;
-            view.storage = std::static_pointer_cast<const void>(impl_->payload_file);
-            view.payload = std::span<const float>(
-                reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(slot.payload_offset)),
-                slot.payload_count);
-            return view;
-        }
-        position = (position + 1u) & (impl_->evidence_slots.size() - 1u);
-    }
-    return std::nullopt;
+    return lookup_evidence_uncached(impl_->direct_evidence,
+                                    impl_->evidence_slots,
+                                    key,
+                                    impl_->payload_file);
 }
 
 std::optional<EvidenceRecordView> LectReadSnapshot::endpoint_for_box_exact(const BoxKey& box,
                                                                              EvidenceKey key_template) const {
-    const auto lookup = box_to_node_exact(box);
-    if (!lookup.found) {
+    if (box.root_domain_fingerprint != impl_->manifest.root_domain_fingerprint ||
+        box.split_policy_hash != impl_->manifest.split_policy_hash ||
+        box.intervals.size() != impl_->root.size()) {
         return std::nullopt;
     }
-    key_template.node_id = lookup.node_id;
-    key_template.node_path = {};
-    key_template.node_path_valid = false;
-    return evidence(key_template);
+    return lookup_endpoint_exact_uncached(impl_->nodes,
+                                          impl_->root,
+                                          impl_->direct_evidence,
+                                          impl_->evidence_slots,
+                                          impl_->payload_file,
+                                          box,
+                                          key_template);
 }
 
 }  // namespace rbf::lect_database

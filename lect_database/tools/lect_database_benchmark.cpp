@@ -19,6 +19,8 @@ namespace {
 using Clock = std::chrono::steady_clock;
 namespace ld = rbf::lect_database;
 
+volatile float g_payload_probe_sink = 0.0f;
+
 struct Options {
     std::filesystem::path db_path = "outputs/lect_database_benchmark/db";
     std::filesystem::path csv_path;
@@ -176,7 +178,7 @@ ld::LectDatabaseIdentity identity_for(const std::vector<rbf::Interval>& root,
     identity.endpoint_descriptor = "benchmark_endpoint";
     identity.envelope_descriptor = "benchmark_envelope";
     identity.payload_layout = "float_payload";
-    identity.builder_version = "lect_database_benchmark_v1";
+    identity.builder_version = "lect_database_benchmark_snapshot";
     return identity;
 }
 
@@ -257,6 +259,18 @@ ld::EvidenceRecord materialize_record(const ld::EvidenceRecordView& view) {
     record.checksum = view.checksum;
     record.payload.assign(view.payload.begin(), view.payload.end());
     return record;
+}
+
+float payload_probe_sum(const ld::EvidenceRecordView& view) {
+    if (view.payload.empty()) {
+        return 0.0f;
+    }
+    const auto mid = view.payload.size() / 2u;
+    return view.payload.front() + view.payload[mid] + view.payload.back();
+}
+
+std::size_t hot_working_set_size(std::size_t size, std::size_t preferred = 2u) {
+    return std::max<std::size_t>(1u, std::min(size, preferred));
 }
 
 template <typename Fn>
@@ -673,6 +687,7 @@ int main(int argc, char** argv) {
         }
 
         std::vector<StageRow> rows;
+        if (!options.snapshot) {
         rows.push_back(measure_open_existing("load.open_read_only", options.db_path, true, false));
         rows.push_back(measure_reopened_db("read.node_box_disk",
                                            options.queries,
@@ -772,6 +787,7 @@ int main(int argc, char** argv) {
                                                }
                                                return true;
                                            }));
+        }
 
         if (options.snapshot) {
             rows.push_back(measure_snapshot_build(options.db_path, options.snapshot_path));
@@ -816,6 +832,41 @@ int main(int argc, char** argv) {
                                                    }
                                                    return true;
                                                }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.endpoint_for_box_exact_hot2",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats&) {
+                                                   const auto hot = hot_working_set_size(std::min(fixture.sampled_boxes.size(),
+                                                                                                 fixture.evidence_samples.size()));
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       const auto index = static_cast<std::size_t>(i % hot);
+                                                       const auto& box = fixture.sampled_boxes[index];
+                                                       auto key_template = fixture.evidence_samples[index].key;
+                                                       const auto endpoint = snapshot.endpoint_for_box_exact(snapshot.make_box_key(box), key_template);
+                                                       if (!endpoint) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   return true;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.endpoint_for_box_exact_touch_payload",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats&) {
+                                                   float payload_accum = 0.0f;
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       const auto index = static_cast<std::size_t>(i % fixture.sampled_boxes.size());
+                                                       const auto& box = fixture.sampled_boxes[index];
+                                                       auto key_template = fixture.evidence_samples[static_cast<std::size_t>(i % fixture.evidence_samples.size())].key;
+                                                       const auto endpoint = snapshot.endpoint_for_box_exact(snapshot.make_box_key(box), key_template);
+                                                       if (!endpoint) {
+                                                           return false;
+                                                       }
+                                                       payload_accum += payload_probe_sum(*endpoint);
+                                                   }
+                                                   g_payload_probe_sink = payload_accum;
+                                                   return true;
+                                               }));
             rows.push_back(measure_reopened_snapshot("snapshot.read.range_query",
                                                options.queries,
                                                options.snapshot_path,
@@ -844,9 +895,39 @@ int main(int argc, char** argv) {
                                                    delta.evidence_reads = static_cast<std::uint64_t>(fixture.evidence_samples.size());
                                                    return true;
                                                }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.evidence_hot2",
+                                               options.queries,
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats& delta) {
+                                                   const auto hot = hot_working_set_size(fixture.evidence_samples.size());
+                                                   for (std::uint64_t i = 0; i < options.queries; ++i) {
+                                                       const auto& record = fixture.evidence_samples[static_cast<std::size_t>(i % hot)];
+                                                       if (!snapshot.evidence(record.key)) {
+                                                           return false;
+                                                       }
+                                                   }
+                                                   delta.evidence_reads = options.queries;
+                                                   return true;
+                                               }));
+            rows.push_back(measure_reopened_snapshot("snapshot.read.evidence_touch_payload",
+                                               static_cast<std::uint64_t>(fixture.evidence_samples.size()),
+                                               options.snapshot_path,
+                                               [&](const ld::LectReadSnapshot& snapshot, ld::LectDatabaseStats& delta) {
+                                                   float payload_accum = 0.0f;
+                                                   for (const auto& record : fixture.evidence_samples) {
+                                                       const auto view = snapshot.evidence(record.key);
+                                                       if (!view) {
+                                                           return false;
+                                                       }
+                                                       payload_accum += payload_probe_sum(*view);
+                                                   }
+                                                   g_payload_probe_sink = payload_accum;
+                                                   delta.evidence_reads = static_cast<std::uint64_t>(fixture.evidence_samples.size());
+                                                   return true;
+                                               }));
         }
 
-        if (!options.read_stages_only) {
+        if (!options.snapshot && !options.read_stages_only) {
             const auto checkpoint_db = sibling_stage_path(options.db_path, "checkpoint_dirty");
             if (!copy_database_tree(options.db_path, checkpoint_db)) {
                 rows.push_back(failed_stage("write.checkpoint_dirty", 1));

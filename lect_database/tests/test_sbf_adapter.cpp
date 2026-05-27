@@ -66,7 +66,7 @@ ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
     identity.split_policy_descriptor = ld::split_policy_descriptor(split);
     identity.endpoint_descriptor = std::move(endpoint_descriptor);
     identity.envelope_descriptor = std::move(envelope_descriptor);
-    identity.payload_layout = "endpoint_envelope_v1";
+    identity.payload_layout = "endpoint_envelope";
 
     ld::LectDatabaseConfig db_config;
     db_config.path = dir;

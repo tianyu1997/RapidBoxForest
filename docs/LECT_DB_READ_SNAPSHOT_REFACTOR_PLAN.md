@@ -1,4 +1,4 @@
-# LECT DB snapshot Read-Snapshot Refactor Plan
+# LECT DB Read-Snapshot Refactor Plan
 
 ## Goal
 
@@ -62,7 +62,7 @@ All files include fixed magic/version/header-size fields, count validation, and 
 6. Implement snapshot evidence queries: static open-address table lookup and mmap-backed `EvidenceRecordView` payload spans.
 7. Add benchmark support for building/opening/probing the snapshot from the existing real cache.
 8. Validate compilation and run the same real persisted-cache probe with snapshot stages enabled.
-9. Compare v1 and read snapshot-only open/query numbers and record final results.
+9. Compare the previous persisted database baseline and read snapshot-only open/query numbers, then record final results.
 
 ## First Landing Scope
 
@@ -83,13 +83,13 @@ The first landing scope is implemented in `LectReadSnapshot` and benchmarked on 
 
 Final measured rows from `outputs/logs/exp03_persisted_cache_snapshot_stages.csv`:
 
-- `snapshot.build`: 254.856 ms
-- `snapshot.load.open_read_only`: 0.026 ms
-- `snapshot.read.node_box`: 1.073 us/op
-- `snapshot.read.exact_box_lookup`: 0.969 us/op
-- `snapshot.read.endpoint_for_box_exact`: 1.735 us/op
-- `snapshot.read.range_query`: 50.494 us/op
-- `snapshot.read.evidence`: 0.945 us/op
+- `snapshot.build`: 243.606 ms
+- `snapshot.load.open_read_only`: 0.025 ms
+- `snapshot.read.node_box`: 1.310 us/op
+- `snapshot.read.exact_box_lookup`: 0.846 us/op
+- `snapshot.read.endpoint_for_box_exact`: 1.368 us/op
+- `snapshot.read.range_query`: 50.406 us/op
+- `snapshot.read.evidence`: 0.901 us/op
 
 ## Follow-Up Integration Phase
 

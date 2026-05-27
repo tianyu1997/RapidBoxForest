@@ -18,7 +18,7 @@ struct LectDatabaseIdentity {
     std::string split_policy_descriptor;
     std::string endpoint_descriptor = "endpoint_identity_unspecified";
     std::string envelope_descriptor = "envelope_identity_unspecified";
-    std::string payload_layout = "endpoint_envelope_v1";
+    std::string payload_layout = "endpoint_envelope";
     std::string builder_version;
 };
 
