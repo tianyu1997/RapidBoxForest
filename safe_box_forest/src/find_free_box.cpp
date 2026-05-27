@@ -97,7 +97,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     };
 
-    int node = oracle_.root_node();
+    const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
+    OracleNodeId node = oracle_.root_node();
     int changed_dim = -1;
     while (true) {
         if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
@@ -110,7 +111,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         auto intervals = oracle_.node_intervals(node);
         record_elapsed(context, "oracle.node_intervals", intervals_start);
         if (oracle_.is_reserved(node)) {
-            if (oracle_.depth(node) >= options.max_depth || !options.split_reserved_leaf) {
+            if (oracle_.depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
                 result.hit_reserved_depth_cap = true;
                 result.node = node;
                 result.intervals = std::move(intervals);
@@ -155,7 +156,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             result.fail_code = 3;
             break;
         }
-        if (oracle_.depth(node) >= options.max_depth || !options.split_unknown_leaf) {
+        if (oracle_.depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
             result.hit_unknown_depth_cap = true;
             result.node = node;
             result.intervals = std::move(intervals);

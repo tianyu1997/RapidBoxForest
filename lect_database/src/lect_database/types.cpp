@@ -90,8 +90,27 @@ int PathCode::common_prefix_bits(const PathCode& other) const {
     return limit;
 }
 
+bool PathCode::operator==(const PathCode& other) const noexcept {
+    return bit_count == other.bit_count && words == other.words;
+}
+
+std::size_t PathCodeHash::operator()(const PathCode& path) const noexcept {
+    std::size_t seed = 0;
+    auto mix = [&](std::uint64_t value) {
+        seed ^= std::hash<std::uint64_t>{}(value) + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+    };
+    mix(static_cast<std::uint64_t>(path.bit_count));
+    for (std::uint64_t word : path.words) {
+        mix(word);
+    }
+    return seed;
+}
+
 bool EvidenceKey::operator==(const EvidenceKey& other) const noexcept {
-    return node_id == other.node_id &&
+    const bool same_node = node_path_valid && other.node_path_valid
+        ? node_path == other.node_path
+        : node_id == other.node_id;
+    return same_node &&
            sector == other.sector &&
            channel == other.channel &&
            endpoint_source == other.endpoint_source &&
@@ -103,7 +122,12 @@ std::size_t EvidenceKeyHash::operator()(const EvidenceKey& key) const noexcept {
     auto mix = [&](auto value) {
         seed ^= std::hash<decltype(value)>{}(value) + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
     };
-    mix(key.node_id);
+    mix(static_cast<int>(key.node_path_valid));
+    if (key.node_path_valid) {
+        mix(PathCodeHash{}(key.node_path));
+    } else {
+        mix(key.node_id);
+    }
     mix(key.sector);
     mix(static_cast<int>(key.channel));
     mix(static_cast<int>(key.endpoint_source));

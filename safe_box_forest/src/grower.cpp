@@ -472,7 +472,7 @@ double normalized_linf_distance(const std::vector<Interval>& root,
     return distance;
 }
 
-int common_ancestor_depth(const BoxOracle& oracle, int lhs_node, int rhs_node) {
+int common_ancestor_depth(const BoxOracle& oracle, OracleNodeId lhs_node, OracleNodeId rhs_node) {
     return oracle.common_ancestor_depth(lhs_node, rhs_node);
 }
 
@@ -639,11 +639,11 @@ void finalize_result(GrowerResult& result, double adjacency_tol) {
     }
 }
 
-int find_leaf_containing(BoxOracle& oracle, const Eigen::Ref<const Eigen::VectorXd>& q) {
+OracleNodeId find_leaf_containing(BoxOracle& oracle, const Eigen::Ref<const Eigen::VectorXd>& q) {
     if (q.size() != oracle.n_dims() || !oracle.contains_point(oracle.root_node(), q)) {
-        return -1;
+        return kInvalidOracleNodeId;
     }
-    int node = oracle.root_node();
+    OracleNodeId node = oracle.root_node();
     while (!oracle.is_leaf(node)) {
         const int dim = oracle.split_dim(node);
         node = q[dim] <= oracle.split_value(node) ? oracle.left_child(node) : oracle.right_child(node);
@@ -1027,7 +1027,7 @@ std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<E
                                                              StageContext& context) {
     const auto& root = oracle_.root_intervals();
     std::vector<Eigen::VectorXd> selected;
-    std::vector<int> selected_leaves;
+    std::vector<OracleNodeId> selected_leaves;
 
     auto try_add_root = [&](const Eigen::VectorXd& candidate,
                             bool user_seed,
@@ -1053,9 +1053,9 @@ std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<E
                 }
             }
         }
-        const int leaf = find_leaf_containing(oracle_, candidate);
+        const OracleNodeId leaf = find_leaf_containing(oracle_, candidate);
         if (config_.root_seed_max_lca_depth >= 0 && leaf >= 0) {
-            for (int selected_leaf : selected_leaves) {
+            for (OracleNodeId selected_leaf : selected_leaves) {
                 if (selected_leaf < 0) continue;
                 const int ancestor_depth = common_ancestor_depth(oracle_, leaf, selected_leaf);
                 if (ancestor_depth < 0) {
@@ -1089,7 +1089,7 @@ std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<E
     int empty_rounds = 0;
     while (static_cast<int>(selected.size()) < target_count && empty_rounds < 4) {
         Eigen::VectorXd best_candidate;
-        int best_leaf = -1;
+        OracleNodeId best_leaf = kInvalidOracleNodeId;
         double best_score = -1.0;
         bool found = false;
         for (int candidate_index = 0; candidate_index < candidates_per_round; ++candidate_index) {
@@ -1107,10 +1107,10 @@ std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<E
                 context.diagnostics().add_counter("grower.root_seed_min_distance_rejected");
                 continue;
             }
-            const int leaf = find_leaf_containing(oracle_, candidate);
+            const OracleNodeId leaf = find_leaf_containing(oracle_, candidate);
             bool lca_ok = true;
             if (config_.root_seed_max_lca_depth >= 0 && leaf >= 0) {
-                for (int selected_leaf : selected_leaves) {
+                for (OracleNodeId selected_leaf : selected_leaves) {
                     if (selected_leaf < 0) continue;
                     const int ancestor_depth = common_ancestor_depth(oracle_, leaf, selected_leaf);
                     if (ancestor_depth < 0) {
@@ -1562,7 +1562,7 @@ int RrtGrower::create_box(const Eigen::VectorXd& seed,
         return -1;
     }
     const FindFreeBoxOptions& options = override_options != nullptr ? *override_options : config_.find_free_box;
-    int domain_node = -1;
+    OracleNodeId domain_node = kInvalidOracleNodeId;
     if (seed_in_failure_cooling(seed,
                                 options.max_depth,
                                 static_cast<int>(boxes.size()),
@@ -1831,7 +1831,7 @@ std::vector<GrowWorkerResult> RrtGrower::run_worker_ffb_tasks(const std::vector<
             context.diagnostics().add_counter("grower.worker_ffb_commit_failures");
             continue;
         }
-        const int master_node = sessions[i]->map_node_to_master(results[i].free_box.node);
+        const OracleNodeId master_node = sessions[i]->map_node_to_master(results[i].free_box.node);
         if (master_node < 0) {
             results[i].accepted_by_worker = false;
             context.diagnostics().add_counter("grower.worker_ffb_remap_failures");
@@ -2106,7 +2106,7 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
     });
 
     std::vector<GrowTask> out;
-    std::unordered_set<int> used_domains;
+    std::unordered_set<OracleNodeId> used_domains;
     const bool require_worker_domain = config_.worker_local_ffb && context.executor().n_threads() > 1;
     int skipped_frontier = 0;
     out.reserve(tasks.size());
@@ -2119,7 +2119,7 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
             context.diagnostics().add_counter("grower.seed_already_covered");
             continue;
         }
-        const int domain_root = find_leaf_containing(oracle_, task.seed);
+        const OracleNodeId domain_root = find_leaf_containing(oracle_, task.seed);
         if (node_in_failure_cooling(domain_root,
                                     base_options.max_depth,
                                     static_cast<int>(boxes.size()),
@@ -2779,7 +2779,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
     return true;
 }
 
-bool RrtGrower::node_in_failure_cooling(int node,
+bool RrtGrower::node_in_failure_cooling(OracleNodeId node,
                                         int active_depth,
                                         int box_count,
                                         StageContext& context) {
@@ -2821,8 +2821,8 @@ bool RrtGrower::seed_in_failure_cooling(const Eigen::Ref<const Eigen::VectorXd>&
                                         int active_depth,
                                         int box_count,
                                         StageContext& context,
-                                        int* domain_node) {
-    int node = -1;
+                                        OracleNodeId* domain_node) {
+    OracleNodeId node = kInvalidOracleNodeId;
     if (hard_frontier_stop_loss_enabled()) {
         node = find_leaf_containing(oracle_, seed);
     }
@@ -2833,7 +2833,7 @@ bool RrtGrower::seed_in_failure_cooling(const Eigen::Ref<const Eigen::VectorXd>&
 }
 
 void RrtGrower::record_failure_cooling(const FindFreeBoxResult& result,
-                                       int fallback_node,
+                                       OracleNodeId fallback_node,
                                        int active_depth,
                                        int box_count,
                                        StageContext& context) {
@@ -2846,7 +2846,7 @@ void RrtGrower::record_failure_cooling(const FindFreeBoxResult& result,
     if (!eligible) {
         return;
     }
-    const int node = result.node >= 0 ? result.node : fallback_node;
+    const OracleNodeId node = result.node >= 0 ? result.node : fallback_node;
     if (node < 0) {
         return;
     }
@@ -2894,7 +2894,7 @@ void RrtGrower::record_failure_cooling(const FindFreeBoxResult& result,
     }
 }
 
-void RrtGrower::record_failure_cooling_success(int node,
+void RrtGrower::record_failure_cooling_success(OracleNodeId node,
                                                StageContext& context) {
     if (!hard_frontier_stop_loss_enabled() || node < 0) {
         return;
@@ -2937,7 +2937,7 @@ Eigen::VectorXd RrtGrower::sample_uniform() {
 }
 
 Eigen::VectorXd RrtGrower::sample_unexplored() {
-    const int node = oracle_.select_unexplored_node();
+    const OracleNodeId node = oracle_.select_unexplored_node();
     const auto intervals = node >= 0 ? oracle_.node_intervals(node) : oracle_.root_intervals();
     Eigen::VectorXd q(static_cast<int>(intervals.size()));
     std::uniform_real_distribution<double> u01(0.0, 1.0);
@@ -3308,7 +3308,7 @@ GrowerResult FrontwaveGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         bool handled_batch = false;
         if (context.executor().n_threads() > 1 && boundaries.size() > 1) {
             std::vector<GrowTask> tasks;
-            std::unordered_set<int> used_domains;
+            std::unordered_set<OracleNodeId> used_domains;
             tasks.reserve(boundaries.size());
             for (int task_index = 0; task_index < static_cast<int>(boundaries.size()); ++task_index) {
                 const auto& boundary = boundaries[static_cast<std::size_t>(task_index)];
@@ -3321,7 +3321,7 @@ GrowerResult FrontwaveGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                     context.diagnostics().add_counter("grower.seed_already_covered");
                     continue;
                 }
-                const int domain_root = find_leaf_containing(oracle_, task.seed);
+                const OracleNodeId domain_root = find_leaf_containing(oracle_, task.seed);
                 if (domain_root >= 0 && !oracle_.is_reserved(domain_root) &&
                     used_domains.find(domain_root) == used_domains.end()) {
                     task.domain_root_node = domain_root;
@@ -3564,7 +3564,7 @@ std::vector<GrowWorkerResult> FrontwaveGrower::run_worker_ffb_tasks(const std::v
             context.diagnostics().add_counter("frontwave.worker_ffb_commit_failures");
             continue;
         }
-        const int master_node = sessions[i]->map_node_to_master(results[i].free_box.node);
+        const OracleNodeId master_node = sessions[i]->map_node_to_master(results[i].free_box.node);
         if (master_node < 0) {
             results[i].accepted_by_worker = false;
             context.diagnostics().add_counter("frontwave.worker_ffb_remap_failures");

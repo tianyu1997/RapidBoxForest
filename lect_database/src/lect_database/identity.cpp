@@ -28,7 +28,7 @@ std::uint64_t identity_hash(const LectDatabaseIdentity& identity) {
 bool identity_compatible(const LectDatabaseIdentity& stored,
                          const LectDatabaseIdentity& requested,
                          std::string* reason) {
-    if (stored.schema_version != requested.schema_version) {
+    if (stored.schema_version > requested.schema_version) {
         if (reason) *reason = "schema version differs";
         return false;
     }
@@ -54,11 +54,13 @@ bool identity_compatible(const LectDatabaseIdentity& stored,
         if (reason) *reason = "split policy differs";
         return false;
     }
-    if (stored.endpoint_descriptor != requested.endpoint_descriptor) {
+    if (!requested.endpoint_descriptor.empty() &&
+        stored.endpoint_descriptor != requested.endpoint_descriptor) {
         if (reason) *reason = "endpoint descriptor differs";
         return false;
     }
-    if (stored.envelope_descriptor != requested.envelope_descriptor) {
+    if (!requested.envelope_descriptor.empty() &&
+        stored.envelope_descriptor != requested.envelope_descriptor) {
         if (reason) *reason = "envelope descriptor differs";
         return false;
     }

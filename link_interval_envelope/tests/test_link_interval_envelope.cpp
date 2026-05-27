@@ -48,22 +48,17 @@ int main() {
         envelope_config);
     assert(envelope.n_subdivisions == 4);
     assert(envelope.link_iaabbs.size() == static_cast<std::size_t>(robot.n_active_links() * 4 * 6));
-    assert(!envelope.has_grid());
 
-    envelope_config.type = rbf::EnvelopeType::Hull16_Grid;
+    envelope_config.type = rbf::EnvelopeType::SupportHull;
     envelope_config.n_subdivisions = 1;
-    envelope_config.grid_config.voxel_delta = 0.05;
-    const auto grid_envelope = rbf::compute_link_envelope(
+    const auto shape_envelope = rbf::compute_link_envelope(
         endpoint.endpoint_iaabbs.data(),
         endpoint.n_active_links,
         robot.active_link_radii(),
         envelope_config);
-    assert(grid_envelope.has_grid());
-    assert(grid_envelope.sparse_grid->count_occupied() > 0);
-    assert(grid_envelope.grid_fill_time_us >= 0.0);
-    assert(grid_envelope.grid_capacity >= grid_envelope.sparse_grid->num_bricks());
-    assert(grid_envelope.grid_brick_write_count > 0);
-    assert(grid_envelope.grid_range_write_count > 0);
+    assert(shape_envelope.kdop_n_axes > 0);
+    assert(!shape_envelope.kdop_intervals.empty());
+    assert(!shape_envelope.support_hulls.empty());
 
     std::vector<rbf::Interval> parent_intervals = {
         {-0.4, 0.4},

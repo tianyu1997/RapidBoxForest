@@ -19,7 +19,6 @@ EndpointSource = _cpp.EndpointSource
 EnvelopeType = _cpp.EnvelopeType
 EndpointSourceConfig = _cpp.EndpointSourceConfig
 EnvelopeTypeConfig = _cpp.EnvelopeTypeConfig
-GridConfig = _cpp.GridConfig
 GcpcCache = _cpp.GcpcCache
 FKState = _cpp.FKState
 
@@ -141,7 +140,7 @@ def make_envelope_config(
     envelope: str | Any = "link_iaabb",
     *,
     n_subdivisions: int = 1,
-    voxel_delta: float = 0.05,
+    support_hull_keep_kdop: bool | None = None,
 ) -> Any:
     cfg = EnvelopeTypeConfig()
     if isinstance(envelope, str):
@@ -149,10 +148,10 @@ def make_envelope_config(
         mapping = {
             "link_iaabb": EnvelopeType.LinkIAABB,
             "linkiaabb": EnvelopeType.LinkIAABB,
-            "link_iaabb_grid": EnvelopeType.LinkIAABB_Grid,
-            "linkiaabb_grid": EnvelopeType.LinkIAABB_Grid,
-            "hull16_grid": EnvelopeType.Hull16_Grid,
-            "hull16": EnvelopeType.Hull16_Grid,
+            "kdop": EnvelopeType.KDOP,
+            "kdop26": EnvelopeType.KDOP,
+            "support_hull": EnvelopeType.SupportHull,
+            "supporthull": EnvelopeType.SupportHull,
         }
         if key not in mapping:
             raise ValueError(f"unknown envelope type: {envelope!r}")
@@ -160,7 +159,8 @@ def make_envelope_config(
     else:
         cfg.type = envelope
     cfg.n_subdivisions = max(1, int(n_subdivisions))
-    cfg.grid_config.voxel_delta = float(voxel_delta)
+    if support_hull_keep_kdop is not None:
+        cfg.support_hull_config.keep_kdop = bool(support_hull_keep_kdop)
     return cfg
 
 
@@ -208,10 +208,6 @@ def normalize_result(
                 "raw_aabb": _aabb_pair(link_flat, idx * 6),
                 "inflated_aabb": _aabb_pair(inflated_flat, idx * 6),
             })
-
-    grid = dict(raw.get("grid", {}))
-    if "centres_flat" in grid:
-        grid["centres"] = _group_centres(grid.pop("centres_flat"))
 
     endpoint: dict[str, Any] = {
         "source": str(raw.get("endpoint_source", raw.get("source", ""))),
@@ -268,7 +264,6 @@ def normalize_result(
             "link_iaabbs_flat": link_flat,
             "inflated_link_iaabbs_flat": inflated_flat,
             "links": links,
-            "grid": grid,
         },
         "timing_us": {
             "endpoint": float(raw.get("endpoint_time_us", 0.0)),
@@ -285,7 +280,6 @@ def compute_envelope(
     endpoint_source: str | Any = "ifk",
     envelope_type: str | Any = "link_iaabb",
     n_subdivisions: int = 1,
-    voxel_delta: float = 0.05,
     n_samples_crit: int = 1000,
     endpoint_threads: int = 1,
     parallel_min_combos: int = 0,
@@ -296,8 +290,8 @@ def compute_envelope(
     hifk_n_threads: int = 1,
     hifk_vol_ratio_thresh: float = 0.0,
     gcpc_cache: Any | None = None,
-    include_voxels: str = "none",
     include_endpoint_iaabbs: bool = True,
+    support_hull_keep_kdop: bool | None = None,
 ) -> dict[str, Any]:
     robot_obj = load_robot(robot)
     interval_objs = make_intervals(intervals)
@@ -317,7 +311,7 @@ def compute_envelope(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        voxel_delta=voxel_delta,
+        support_hull_keep_kdop=support_hull_keep_kdop,
     )
     raw = _cpp.compute_envelope_info(
         robot_obj,
@@ -325,7 +319,6 @@ def compute_envelope(
         endpoint_config,
         envelope_config,
         gcpc_cache,
-        include_voxels,
     )
     return normalize_result(
         raw,
@@ -342,7 +335,6 @@ def compute_envelope_batch(
     endpoint_source: str | Any = "ifk",
     envelope_type: str | Any = "link_iaabb",
     n_subdivisions: int = 1,
-    voxel_delta: float = 0.05,
     n_samples_crit: int = 1000,
     endpoint_threads: int = 1,
     parallel_min_combos: int = 0,
@@ -350,8 +342,8 @@ def compute_envelope_batch(
     hifk_n_threads: int = 1,
     hifk_vol_ratio_thresh: float = 0.0,
     n_threads: int = 0,
-    include_voxels: str = "none",
     include_endpoint_iaabbs: bool = True,
+    support_hull_keep_kdop: bool | None = None,
 ) -> list[dict[str, Any]]:
     robot_obj = load_robot(robot)
     endpoint_config = make_endpoint_config(
@@ -366,7 +358,7 @@ def compute_envelope_batch(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        voxel_delta=voxel_delta,
+        support_hull_keep_kdop=support_hull_keep_kdop,
     )
     interval_objs = [make_intervals(box) for box in interval_boxes]
     interval_pairs = [
@@ -379,7 +371,6 @@ def compute_envelope_batch(
         endpoint_config,
         envelope_config,
         int(n_threads),
-        include_voxels,
     )
     robot_path = str(robot) if isinstance(robot, (str, Path)) else None
     return [
@@ -399,20 +390,17 @@ def compute_from_endpoint_iaabbs(
     *,
     envelope_type: str | Any = "link_iaabb",
     n_subdivisions: int = 1,
-    voxel_delta: float = 0.05,
-    include_voxels: str = "none",
 ) -> dict[str, Any]:
     robot_obj = load_robot(robot)
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        voxel_delta=voxel_delta,
+        support_hull_keep_kdop=None,
     )
     raw = _cpp.compute_link_envelope_from_endpoints(
         robot_obj,
         _flatten_numbers(endpoint_iaabbs),
         envelope_config,
-        include_voxels,
     )
     return normalize_result(raw, robot_path=str(robot) if isinstance(robot, (str, Path)) else None)
 
@@ -434,7 +422,6 @@ class IncrementalEnvelopeComputer:
         endpoint_source: str | Any = "ifk",
         envelope_type: str | Any = "link_iaabb",
         n_subdivisions: int = 1,
-        voxel_delta: float = 0.05,
         n_samples_crit: int = 1000,
         endpoint_threads: int = 1,
         parallel_min_combos: int = 0,
@@ -466,7 +453,7 @@ class IncrementalEnvelopeComputer:
         envelope_config = make_envelope_config(
             envelope_type,
             n_subdivisions=n_subdivisions,
-            voxel_delta=voxel_delta,
+            support_hull_keep_kdop=None,
         )
         self._context = _cpp.IncrementalEnvelopeContext(
             self.robot,
@@ -489,12 +476,11 @@ class IncrementalEnvelopeComputer:
         intervals: Sequence[Sequence[float]] | Sequence[Any],
         *,
         changed_dim: int = -1,
-        include_voxels: str = "none",
         include_endpoint_iaabbs: bool = True,
     ) -> dict[str, Any]:
         interval_objs = make_intervals(intervals)
         interval_pairs = [[float(iv.lo), float(iv.hi)] for iv in interval_objs]
-        raw = self._context.compute(interval_objs, include_voxels, int(changed_dim))
+        raw = self._context.compute(interval_objs, int(changed_dim))
         result = normalize_result(
             raw,
             intervals=interval_pairs,
@@ -525,7 +511,6 @@ __all__ = [
     "EnvelopeType",
     "EndpointSourceConfig",
     "EnvelopeTypeConfig",
-    "GridConfig",
     "GcpcCache",
     "FKState",
     "IncrementalEnvelopeComputer",

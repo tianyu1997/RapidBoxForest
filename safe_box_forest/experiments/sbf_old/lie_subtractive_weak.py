@@ -135,7 +135,6 @@ class EnvelopeOracle:
             endpoint_source=self.args.endpoint_source,
             envelope_type=self.args.envelope_type,
             n_subdivisions=self.args.n_subdivisions,
-            voxel_delta=self.args.voxel_delta,
             n_samples_crit=self.args.n_samples_crit,
             endpoint_threads=self.args.endpoint_threads,
             parallel_min_combos=self.args.parallel_min_combos,
@@ -662,9 +661,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--robot-json", type=Path, default=ROOT / "python" / "sbf" / "data" / "iiwa14.json")
     parser.add_argument("--out-json", type=Path, default=ROOT / "outputs" / "paper" / "lie_subtractive_weak.json")
     parser.add_argument("--endpoint-source", choices=["ifk", "crit", "analytical", "gcpc", "mc"], default="ifk")
-    parser.add_argument("--envelope-type", choices=["link_iaabb", "link_iaabb_grid", "hull16_grid"], default="link_iaabb")
+    parser.add_argument("--envelope-type", choices=["link_iaabb", "kdop", "support_hull"], default="link_iaabb")
     parser.add_argument("--n-subdivisions", type=int, default=4)
-    parser.add_argument("--voxel-delta", type=float, default=0.05)
     parser.add_argument("--n-samples-crit", type=int, default=1000)
     parser.add_argument("--endpoint-threads", type=int, default=1)
     parser.add_argument("--parallel-min-combos", type=int, default=0)

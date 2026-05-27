@@ -34,9 +34,7 @@ add_library(link_interval_envelope_core STATIC
     src/envelope/endpoint_source.cpp
     src/envelope/envelope_type.cpp
     src/envelope/link_iaabb.cpp
-    src/envelope/link_grid.cpp
     src/envelope/dh_enumerate.cpp
-    src/voxel/hull_rasteriser.cpp
 )
 add_library(link_interval_envelope::core ALIAS link_interval_envelope_core)
 

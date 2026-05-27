@@ -20,14 +20,13 @@ bash tests/run_all.sh
 - C++ robot JSON loading.
 - IFK endpoint-iAABB computation.
 - `LinkIAABB` envelope generation.
-- `Hull16_Grid` sparse voxel generation.
+- `KDOP` and `SupportHull` envelope generation.
 - Low-level FKState incremental endpoint equivalence against full recompute.
 - IFK `IncrementalEnvelopeContext` equivalence against full recompute.
 - CritSample candidate/DH-cache incremental equivalence against full recompute.
 - Unchanged interval reuse for IFK FK extraction and CritSample endpoint cache.
 - CritSample serial and parallel combo enumeration produce identical endpoint iAABBs.
 - Endpoint diagnostics expose combo count, enumeration threads, changed dimension, auto threshold/chunk sizing, dirty candidates, `PreDH` rebuilds, and cache reuse.
-- Grid diagnostics expose fill time, FlatBrickMap grow/reserve counts, range writes, local BitBrick coalescing writes, global brick writes, and fallback writes.
 - IFK and CritSample batch results match sequential one-shot results at 1 and 2 threads.
 - Python one-shot API schema.
 - Python `IncrementalEnvelopeComputer` IFK and CritSample incremental equivalence.
@@ -99,7 +98,7 @@ build/lie_microbench \
   --threads 4
 ```
 
-The default C++ microbench reports median/p95 timings for full FK, incremental-copy FK, in-place FK, scalar FK, an explicit scalar-FMA FK experiment, CritSample serial/parallel endpoints, grid envelope fill time, combo count, thread count, auto threshold/chunk sizing, FlatBrickMap grow/reserve counts, voxel write counters, and changed-dimension distribution.
+The default C++ microbench reports median/p95 timings for full FK, incremental-copy FK, in-place FK, scalar FK, an explicit scalar-FMA FK experiment, CritSample serial/parallel endpoints, `LinkIAABB`/`KDOP`/`SupportHull` envelope timings, combo count, thread count, auto threshold/chunk sizing, and changed-dimension distribution.
 
 CritSample sweep mode scans interval scale, thread count, and requested parallel threshold (`0` means auto):
 

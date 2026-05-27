@@ -110,11 +110,8 @@ endpoint cache was reused.
 
 Configure with `sbf::EnvelopeTypeConfig`:
 
-- `type`: `LinkIAABB`, `LinkIAABB_Grid`, or `Hull16_Grid`
+- `type`: `LinkIAABB`, `KDOP`, or `SupportHull`
 - `n_subdivisions`
-- `grid_config.voxel_delta`
-
-`sbf::GridConfig` currently exposes `voxel_delta`.
 
 Compute entry point:
 
@@ -127,8 +124,9 @@ sbf::LinkEnvelope compute_link_envelope(
 ```
 
 `link_iaabbs` are the raw non-radius-inflated boxes. Grid modes use the active
-link radii during voxelization. The resulting `sbf::LinkEnvelope` reports grid
-fill time, grow/reserve counters, capacity, and brick/range-write statistics.
+link radii during envelope construction. `KDOP` and `SupportHull` select tighter
+no-grid predicates for downstream collision checks while preserving the same
+high-level entry point.
 
 ### `sbf::GcpcCache`
 
@@ -204,7 +202,7 @@ endpoint path.
 Top-level exports include:
 
 - bound low-level types: `Interval`, `JointLimits`, `Robot`, `EndpointSource`,
-  `EnvelopeType`, `EndpointSourceConfig`, `EnvelopeTypeConfig`, `GridConfig`,
+  `EnvelopeType`, `EndpointSourceConfig`, `EnvelopeTypeConfig`,
   `GcpcCache`, `FKState`
 - facade helpers: `load_robot`, `make_intervals`, `make_endpoint_config`,
   `make_envelope_config`, `write_json`
@@ -225,7 +223,6 @@ result = compute_envelope(
     parallel_min_combos=0,
     envelope_type="link_iaabb",
     n_subdivisions=4,
-    include_voxels="none",
     include_endpoint_iaabbs=True,
 )
 ```
@@ -236,8 +233,8 @@ Public keyword arguments cover:
   `endpoint_threads`, `parallel_min_combos`, `max_phase_analytical`,
   `bypass_narrow_skip`, `gcpc_match_analytical`, `hifk_max_depth`,
   `hifk_n_threads`, `hifk_vol_ratio_thresh`, `gcpc_cache`)
-- envelope selection (`envelope_type`, `n_subdivisions`, `voxel_delta`)
-- output shaping (`include_voxels`, `include_endpoint_iaabbs`)
+- envelope selection (`envelope_type`, `n_subdivisions`)
+- output shaping (`include_endpoint_iaabbs`)
 
 ### Incremental compute
 
@@ -256,8 +253,8 @@ result = computer.compute([[-0.4, 0.4], [-0.1, 0.3]], changed_dim=1)
 assert result["incremental"]["changed_dim"] == 1
 ```
 
-`IncrementalEnvelopeComputer.compute(...)` accepts `changed_dim`,
-`include_voxels`, and `include_endpoint_iaabbs`.
+`IncrementalEnvelopeComputer.compute(...)` accepts `changed_dim` and
+`include_endpoint_iaabbs`.
 
 ### Batch compute
 
@@ -284,9 +281,7 @@ from link_interval_envelope import compute_from_endpoint_iaabbs
 envelope_only = compute_from_endpoint_iaabbs(
     "examples/data/2dof_planar.json",
     result["endpoint"]["endpoint_iaabbs_flat"],
-    envelope_type="hull16_grid",
-    voxel_delta=0.05,
-    include_voxels="bricks",
+  envelope_type="support_hull",
 )
 ```
 
@@ -300,15 +295,12 @@ The normalized Python result layout is:
 - `endpoint`: endpoint source, safety flag, shape, and optional
   `endpoint_iaabbs_flat`
 - `diagnostics`: source timing and reuse counters
-- `envelope`: type, subdivisions, raw/inflated link AABBs, per-link records,
-  and optional grid payloads
+- `envelope`: type, subdivisions, raw/inflated link AABBs, and per-link records
 - `timing_us`: endpoint, envelope, and total wall-clock microseconds
 
 Incremental results also include `incremental` with `changed_dim`,
 `used_incremental_fk`, `used_source_incremental_state`, `reused_fk`,
 `reused_endpoint_cache`, and `fk_valid`.
-
-`include_voxels` accepts `none`, `centres`, or `bricks`.
 
 ### Raw pybind layer
 

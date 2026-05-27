@@ -9,7 +9,6 @@
 #include <sbf/envelope/endpoint_source.h>
 #include <sbf/envelope/envelope_type.h>
 #include <sbf/envelope/gcpc_source.h>
-#include <sbf/voxel/voxel_grid.h>
 
 #include <chrono>
 #include <stdexcept>
@@ -111,69 +110,12 @@ std::vector<double> midpoint_endpoint_positions(
     return positions;
 }
 
-void append_grid_info(py::dict& result, const rbf::LinkEnvelope& envelope, const std::string& include_voxels) {
-    py::dict grid;
-    grid["has_grid"] = envelope.has_grid();
-    grid["delta"] = envelope.has_grid() ? envelope.sparse_grid->delta() : 0.0;
-    grid["safety_pad"] = envelope.has_grid() ? envelope.sparse_grid->safety_pad() : 0.0;
-    grid["n_bricks"] = envelope.has_grid() ? envelope.sparse_grid->num_bricks() : 0;
-    grid["n_occupied"] = envelope.has_grid() ? envelope.sparse_grid->count_occupied() : 0;
-    grid["occupied_volume"] = envelope.has_grid() ? envelope.sparse_grid->occupied_volume() : 0.0;
-    grid["fill_time_us"] = envelope.grid_fill_time_us;
-    grid["grow_count"] = envelope.grid_grow_count;
-    grid["reserve_count"] = envelope.grid_reserve_count;
-    grid["capacity"] = envelope.grid_capacity;
-    grid["range_write_count"] = envelope.grid_range_write_count;
-    grid["local_range_write_count"] = envelope.grid_local_range_write_count;
-    grid["brick_write_count"] = envelope.grid_brick_write_count;
-    grid["fallback_range_write_count"] = envelope.grid_fallback_range_write_count;
-
-    if (envelope.has_grid() && include_voxels == "centres") {
-        std::vector<double> centres;
-        centres.reserve(static_cast<std::size_t>(envelope.sparse_grid->count_occupied()) * 3);
-        for (auto entry : envelope.sparse_grid->bricks()) {
-            for (int z = 0; z < 8; ++z) {
-                for (int y = 0; y < 8; ++y) {
-                    for (int x = 0; x < 8; ++x) {
-                        if (!entry.value.test(x, y, z)) continue;
-                        const int gx = entry.key.bx * 8 + x;
-                        const int gy = entry.key.by * 8 + y;
-                        const int gz = entry.key.bz * 8 + z;
-                        centres.push_back(envelope.sparse_grid->cell_center(gx, 0));
-                        centres.push_back(envelope.sparse_grid->cell_center(gy, 1));
-                        centres.push_back(envelope.sparse_grid->cell_center(gz, 2));
-                    }
-                }
-            }
-        }
-        grid["centres_flat"] = centres;
-    } else if (envelope.has_grid() && include_voxels == "bricks") {
-        py::list bricks;
-        for (auto entry : envelope.sparse_grid->bricks()) {
-            py::dict brick;
-            brick["coord"] = py::make_tuple(entry.key.bx, entry.key.by, entry.key.bz);
-            brick["popcount"] = entry.value.popcount();
-            std::vector<unsigned long long> words;
-            words.reserve(8);
-            for (int w = 0; w < 8; ++w) {
-                words.push_back(static_cast<unsigned long long>(entry.value.words[w]));
-            }
-            brick["words"] = words;
-            bricks.append(brick);
-        }
-        grid["bricks"] = bricks;
-    }
-
-    result["grid"] = grid;
-}
-
 py::dict envelope_to_dict(
     const rbf::Robot& robot,
     const rbf::EndpointIAABBResult& endpoint_result,
     const rbf::LinkEnvelope& envelope,
     double endpoint_time_us,
     double envelope_time_us,
-    const std::string& include_voxels,
     const std::string& output_mode,
     const std::vector<rbf::Interval>* intervals)
 {
@@ -222,14 +164,12 @@ py::dict envelope_to_dict(
     } else if (output.include_midpoints) {
         result["midpoint_endpoint_positions"] = std::vector<double>{};
     }
-    append_grid_info(result, envelope, include_voxels);
     return result;
 }
 
 py::dict batch_result_to_dict(
     const rbf::Robot& robot,
     const lie::EnvelopeBatchResult& item,
-    const std::string& include_voxels,
     const std::string& output_mode,
     const std::vector<rbf::Interval>& intervals)
 {
@@ -280,7 +220,6 @@ py::dict batch_result_to_dict(
     if (output.include_midpoints) {
         result["midpoint_endpoint_positions"] = midpoint_endpoint_positions(robot, intervals);
     }
-    append_grid_info(result, item.envelope, include_voxels);
     return result;
 }
 
@@ -332,12 +271,13 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
 
     py::enum_<rbf::EnvelopeType>(module, "EnvelopeType")
         .value("LinkIAABB", rbf::EnvelopeType::LinkIAABB)
-        .value("LinkIAABB_Grid", rbf::EnvelopeType::LinkIAABB_Grid)
-        .value("Hull16_Grid", rbf::EnvelopeType::Hull16_Grid);
+        .value("KDOP", rbf::EnvelopeType::KDOP)
+        .value("SupportHull", rbf::EnvelopeType::SupportHull);
 
-    py::class_<rbf::GridConfig>(module, "GridConfig")
-        .def(py::init<>())
-        .def_readwrite("voxel_delta", &rbf::GridConfig::voxel_delta);
+    py::enum_<rbf::KdopDirectionSet>(module, "KdopDirectionSet")
+        .value("DOP6", rbf::KdopDirectionSet::DOP6)
+        .value("DOP18", rbf::KdopDirectionSet::DOP18)
+        .value("DOP26", rbf::KdopDirectionSet::DOP26);
 
     py::class_<rbf::EndpointSourceConfig>(module, "EndpointSourceConfig")
         .def(py::init<>())
@@ -355,11 +295,22 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             self.gcpc_cache = &cache;
         }, py::arg("cache"));
 
+    py::class_<rbf::KdopConfig>(module, "KdopConfig")
+        .def(py::init<>())
+        .def_readwrite("direction_set", &rbf::KdopConfig::direction_set)
+        .def_readwrite("safety_epsilon", &rbf::KdopConfig::safety_epsilon);
+
+    py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
+        .def(py::init<>())
+        .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
+        .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
+
     py::class_<rbf::EnvelopeTypeConfig>(module, "EnvelopeTypeConfig")
         .def(py::init<>())
         .def_readwrite("type", &rbf::EnvelopeTypeConfig::type)
         .def_readwrite("n_subdivisions", &rbf::EnvelopeTypeConfig::n_subdivisions)
-        .def_readwrite("grid_config", &rbf::EnvelopeTypeConfig::grid_config);
+        .def_readwrite("kdop_config", &rbf::EnvelopeTypeConfig::kdop_config)
+        .def_readwrite("support_hull_config", &rbf::EnvelopeTypeConfig::support_hull_config);
 
     py::class_<rbf::GcpcCache>(module, "GcpcCache")
         .def(py::init<>())
@@ -436,7 +387,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         const rbf::Robot& robot,
         const std::vector<float>& endpoint_iaabbs,
         const rbf::EnvelopeTypeConfig& envelope_config,
-        const std::string& include_voxels,
         const std::string& output_mode) {
         const OutputOptions output = parse_output_mode(output_mode);
         const int n_active = robot.n_active_links();
@@ -470,9 +420,8 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
                 envelope.link_iaabbs, n_active, envelope.n_subdivisions, robot.active_link_radii());
         }
         result["envelope_time_us"] = std::chrono::duration<double, std::micro>(stop - start).count();
-        append_grid_info(result, envelope, include_voxels);
         return result;
-    }, py::arg("robot"), py::arg("endpoint_iaabbs"), py::arg("envelope_config"), py::arg("include_voxels") = "none",
+    }, py::arg("robot"), py::arg("endpoint_iaabbs"), py::arg("envelope_config"),
        py::arg("output_mode") = "full");
 
     module.def("compute_envelope_info", [](
@@ -481,7 +430,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         rbf::EndpointSourceConfig endpoint_config,
         const rbf::EnvelopeTypeConfig& envelope_config,
         const rbf::GcpcCache* gcpc_cache,
-        const std::string& include_voxels,
         const std::string& output_mode) {
         if (endpoint_config.source == rbf::EndpointSource::GCPC) {
             if (!gcpc_cache) {
@@ -517,12 +465,11 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             envelope,
             std::chrono::duration<double, std::micro>(endpoint_stop - endpoint_start).count(),
             std::chrono::duration<double, std::micro>(envelope_stop - envelope_start).count(),
-            include_voxels,
-              output_mode,
+                        output_mode,
             &intervals);
     }, py::arg("robot"), py::arg("intervals"), py::arg("endpoint_config"),
        py::arg("envelope_config"), py::arg("gcpc_cache") = nullptr,
-          py::arg("include_voxels") = "none", py::arg("output_mode") = "full");
+             py::arg("output_mode") = "full");
 
     module.def("compute_envelope_batch_info", [](
         const rbf::Robot& robot,
@@ -530,7 +477,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         const rbf::EndpointSourceConfig& endpoint_config,
         const rbf::EnvelopeTypeConfig& envelope_config,
         int n_threads,
-        const std::string& include_voxels,
         const std::string& output_mode) {
         std::vector<lie::EnvelopeBatchResult> computed;
         {
@@ -547,14 +493,13 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             out.append(batch_result_to_dict(
                 robot,
                 computed[i],
-                include_voxels,
                 output_mode,
                 interval_boxes[i]));
         }
         return out;
     }, py::arg("robot"), py::arg("interval_boxes"), py::arg("endpoint_config"),
        py::arg("envelope_config"), py::arg("n_threads") = 0,
-       py::arg("include_voxels") = "none", py::arg("output_mode") = "full");
+         py::arg("output_mode") = "full");
 
     py::class_<lie::IncrementalEnvelopeContext>(module, "IncrementalEnvelopeContext")
         .def(py::init<rbf::Robot, rbf::EndpointSourceConfig, rbf::EnvelopeTypeConfig>(),
@@ -567,7 +512,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         .def("compute", [](
             lie::IncrementalEnvelopeContext& self,
             const std::vector<rbf::Interval>& intervals,
-            const std::string& include_voxels,
             int changed_dim,
             const std::string& output_mode) {
             lie::IncrementalEnvelopeResult computed;
@@ -581,7 +525,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
                 computed.envelope,
                 computed.endpoint_time_us,
                 computed.envelope_time_us,
-                include_voxels,
                 output_mode,
                 &intervals);
             result["changed_dim"] = computed.changed_dim;
@@ -591,6 +534,5 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             result["reused_endpoint_cache"] = computed.reused_endpoint_cache;
             result["fk_valid"] = self.has_valid_fk();
             return result;
-            }, py::arg("intervals"), py::arg("include_voxels") = "none", py::arg("changed_dim") = -1,
-               py::arg("output_mode") = "full");
+                }, py::arg("intervals"), py::arg("changed_dim") = -1, py::arg("output_mode") = "full");
 }

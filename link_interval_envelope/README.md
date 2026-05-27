@@ -15,9 +15,9 @@ queries.
 - C++ static library target `link_interval_envelope::core` (backed by the
   concrete target `link_interval_envelope_core`).
 - Low-level `sbf` types: `Robot`, `Interval`, `FKState`, `JointLimits`,
-  `EndpointSourceConfig`, `EnvelopeTypeConfig`, `GridConfig`, and `GcpcCache`.
+  `EndpointSourceConfig`, `EnvelopeTypeConfig`, and `GcpcCache`.
 - Endpoint sources `IFK`, `CritSample`, `Analytical`, `GCPC`, and `MC`.
-- Envelope types `LinkIAABB`, `LinkIAABB_Grid`, and `Hull16_Grid`.
+- Envelope types `LinkIAABB`, `KDOP`, and `SupportHull`.
 - Stateful C++ helper `link_interval_envelope::IncrementalEnvelopeContext` for
   neighboring boxes.
 - C++/Python batch API `compute_envelope_batch(...)` for independent boxes.
@@ -89,7 +89,6 @@ result = compute_envelope(
     endpoint_source="ifk",
     envelope_type="link_iaabb",
     n_subdivisions=4,
-    include_voxels="none",
 )
 
 write_json(result, "lie_2dof.json")
@@ -105,9 +104,7 @@ from link_interval_envelope import compute_from_endpoint_iaabbs
 envelope_only = compute_from_endpoint_iaabbs(
     "examples/data/2dof_planar.json",
     result["endpoint"]["endpoint_iaabbs_flat"],
-    envelope_type="hull16_grid",
-    voxel_delta=0.05,
-    include_voxels="centres",
+  envelope_type="support_hull",
 )
 ```
 

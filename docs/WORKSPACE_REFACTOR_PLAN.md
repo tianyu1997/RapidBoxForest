@@ -1,4 +1,4 @@
-# RBF Workspace Refactor Plan
+# RapidBoxForest Workspace Refactor Plan
 
 Date: 2026-05-26
 
@@ -15,7 +15,7 @@ The root repository must no longer read as "LECTDatabase owns SafeBoxForest and 
 ## Final Repository Shape
 
 ```text
-RBFWorkspace/
+RapidBoxForest/
   CMakeLists.txt
   README.md
   .gitignore
@@ -26,11 +26,11 @@ RBFWorkspace/
   safe_box_forest/
 ```
 
-The physical checkout directory has been renamed to `RBFWorkspace`. Build directories created before the rename are treated as disposable; validation uses freshly configured build trees under the new root path.
+The physical checkout directory has been renamed to `RapidBoxForest`. Build directories created before the rename are treated as disposable; validation uses freshly configured build trees under the new root path.
 
 ## Naming Rules
 
-1. Root project name: `RBFWorkspace`.
+1. Root project name: `RapidBoxForest`.
 2. Root documentation should describe a workspace or integrated repo, not the `LECTDatabase` package.
 3. The database module directory is `lect_database`.
 4. The envelope module directory is `link_interval_envelope` until/unless its public package is renamed separately.
@@ -103,7 +103,7 @@ Run these checks after implementing the refactor. A failed check must be fixed o
 
 The refactor is complete only when:
 
-1. The physical module layout matches the final repository shape under the `RBFWorkspace` checkout folder.
+1. The physical module layout matches the final repository shape under the `RapidBoxForest` checkout folder.
 2. CMake configures, builds, and tests the integrated C++ workspace.
 3. Removed warmup APIs are absent from C++, Python bindings, docs, and experiments.
 4. Documentation and scripts describe the same workspace model that CMake actually builds.
@@ -113,7 +113,7 @@ The refactor is complete only when:
 
 Status on 2026-05-26:
 
-- Physical checkout directory renamed from `LECTDatabase` to `RBFWorkspace`.
+- Physical checkout directory renamed from `LECTDatabase` to `RapidBoxForest`.
 - Root stale CMake build directories from the old path were removed and fresh build trees were generated under the new root.
 - Root workspace CMake owns integrated module ordering and top-level CTest aggregation.
 - Module-local standalone override names now use module-dir wording: `LECTDB_ENVELOPE_MODULE_DIR` and `SBF_LECT_DATABASE_MODULE_DIR`.

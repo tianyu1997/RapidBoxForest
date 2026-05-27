@@ -241,7 +241,6 @@ rbf::EnvelopeTypeConfig envelope_config(rbf::EnvelopeType type) {
     rbf::EnvelopeTypeConfig config;
     config.type = type;
     config.n_subdivisions = 4;
-    config.grid_config.voxel_delta = 0.05;
     return config;
 }
 
@@ -256,20 +255,6 @@ void print_endpoint_probe(const std::string& name, const rbf::EndpointIAABBResul
               << ",dirty," << probe.candidate_dirty_count
               << ",predh," << probe.predh_rebuild_count
               << ",cache_reused," << (probe.endpoint_cache_reused ? 1 : 0) << "\n";
-}
-
-void print_grid_probe(const std::string& name, const rbf::LinkEnvelope& probe) {
-    std::cout << name << ",bricks,"
-              << (probe.sparse_grid ? probe.sparse_grid->num_bricks() : 0)
-              << ",grow_count," << probe.grid_grow_count
-              << ",reserve_count," << probe.grid_reserve_count
-              << ",fill_us," << std::fixed << std::setprecision(3)
-              << probe.grid_fill_time_us
-              << ",range_writes," << probe.grid_range_write_count
-              << ",local_range_writes," << probe.grid_local_range_write_count
-              << ",brick_writes," << probe.grid_brick_write_count
-              << ",fallback_range_writes," << probe.grid_fallback_range_write_count
-              << "\n";
 }
 
 void run_default(const rbf::Robot& robot, const Args& args) {
@@ -342,25 +327,23 @@ void run_default(const rbf::Robot& robot, const Args& args) {
     print_endpoint_probe("critsample_parallel_combos", crit_probe);
 
     const auto ifk_endpoint = rbf::compute_endpoint_iaabb(robot, base, rbf::EndpointSourceConfig{});
-    rbf::LinkEnvelope grid_probe;
-    const auto grid_cfg = envelope_config(rbf::EnvelopeType::LinkIAABB_Grid);
-    measure_and_print("link_iaabb_grid_envelope", args.repeats, std::max(1, args.iterations / 10), [&](int) {
-        grid_probe = rbf::compute_link_envelope(
+    rbf::LinkEnvelope kdop_probe;
+    const auto kdop_cfg = envelope_config(rbf::EnvelopeType::KDOP);
+    measure_and_print("kdop_envelope", args.repeats, std::max(1, args.iterations / 10), [&](int) {
+        kdop_probe = rbf::compute_link_envelope(
             ifk_endpoint.endpoint_iaabbs.data(), ifk_endpoint.n_active_links,
-            robot.active_link_radii(), grid_cfg);
-        consume(grid_probe.sparse_grid ? grid_probe.sparse_grid->num_bricks() : 0);
+            robot.active_link_radii(), kdop_cfg);
+        consume(kdop_probe.kdop_intervals.size());
     });
-    print_grid_probe("link_iaabb_grid_stats", grid_probe);
 
-    rbf::LinkEnvelope hull_probe;
-    const auto hull_cfg = envelope_config(rbf::EnvelopeType::Hull16_Grid);
-    measure_and_print("hull16_grid_envelope", args.repeats, std::max(1, args.iterations / 10), [&](int) {
-        hull_probe = rbf::compute_link_envelope(
+    rbf::LinkEnvelope support_probe;
+    const auto support_cfg = envelope_config(rbf::EnvelopeType::SupportHull);
+    measure_and_print("support_hull_envelope", args.repeats, std::max(1, args.iterations / 10), [&](int) {
+        support_probe = rbf::compute_link_envelope(
             ifk_endpoint.endpoint_iaabbs.data(), ifk_endpoint.n_active_links,
-            robot.active_link_radii(), hull_cfg);
-        consume(hull_probe.sparse_grid ? hull_probe.sparse_grid->num_bricks() : 0);
+            robot.active_link_radii(), support_cfg);
+        consume(support_probe.support_hulls.size());
     });
-    print_grid_probe("hull16_grid_stats", hull_probe);
 
     std::cout << "changed_dim_counts";
     for (int changed_dim = 0; changed_dim < n_joints; ++changed_dim) {
@@ -431,7 +414,7 @@ void run_sequence(const rbf::Robot& robot, const Args& args) {
     const auto base = make_base_box(robot);
     const auto sequence = make_sequence(robot, base, args.sequence_length, 0);
     const auto link_cfg = envelope_config(rbf::EnvelopeType::LinkIAABB);
-    const auto grid_cfg = envelope_config(rbf::EnvelopeType::Hull16_Grid);
+    const auto support_cfg = envelope_config(rbf::EnvelopeType::SupportHull);
     const auto ifk_config = rbf::EndpointSourceConfig{};
     const auto crit_auto = crit_config(args.threads, 0);
     rbf::EndpointIAABBResult endpoint_probe;
@@ -481,16 +464,16 @@ void run_sequence(const rbf::Robot& robot, const Args& args) {
     auto reset_pool = [&]() {
         pool.clear();
         for (int worker = 0; worker < pool_size; ++worker) {
-            pool.emplace_back(robot, crit_auto, grid_cfg);
+            pool.emplace_back(robot, crit_auto, support_cfg);
         }
     };
-    measure_sequence("sequence_critsample_state_pool_hull16", args.repeats,
+    measure_sequence("sequence_critsample_state_pool_support_hull", args.repeats,
         args.sequence_length * pool_size, reset_pool, [&](int item) {
             const int worker = item % pool_size;
             const int step = item / pool_size;
             const auto result = pool[static_cast<std::size_t>(worker)].compute(
                 streams[static_cast<std::size_t>(worker)][static_cast<std::size_t>(step)]);
-            consume(result.envelope.sparse_grid ? result.envelope.sparse_grid->num_bricks() : 0);
+            consume(result.envelope.support_hulls.size());
         });
 }
 

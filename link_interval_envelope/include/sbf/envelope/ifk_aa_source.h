@@ -20,6 +20,11 @@ EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
     int max_depth = 7,
     int n_threads = 1,
     double vol_ratio_thresh = 0.0);
+
+std::vector<int> aafk_volume_min_depth_schedule(
+    const Robot& robot,
+    const std::vector<Interval>& root_intervals,
+    int max_depth);
 // HIFK uses a shared depth->dim schedule internally: each depth commits one
 // split dimension on first visit and reuses it for all later nodes at that
 // depth in the same evaluation.

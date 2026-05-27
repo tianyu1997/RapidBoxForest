@@ -1108,8 +1108,11 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
     database_config.open.create_if_missing = config.database.create_if_missing;
     database_config.open.verify_identity = config.database.verify_identity;
     database_config.open.replay_journal = config.database.replay_journal;
+    database_config.propagate_parent_hulls = config.database.propagate_parent_hulls;
+    database_config.defer_parent_hull_writes = config.database.defer_parent_hull_writes;
     database_config.page_size_bytes = config.database.page_size_bytes;
     database_config.max_resident_pages = config.database.max_resident_pages;
+    database_config.max_tree_depth = config.database.max_tree_depth;
     database_config.identity = lect_database::make_identity_for_robot(
         robot,
         database_config.root_intervals,
@@ -1134,6 +1137,22 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
     std::string open_reason;
     if (!database_->open(make_database_config(robot_, config_), &open_reason)) {
         throw std::runtime_error("failed to open LECTDatabase runtime: " + open_reason);
+    }
+    if (!config_.database.external_evidence_path.empty()) {
+        auto external_config = make_database_config(robot_, config_);
+        external_config.path = config_.database.external_evidence_path;
+        external_config.open.read_only = true;
+        external_config.open.create_if_missing = false;
+        external_config.open.verify_identity = config_.database.verify_identity;
+        external_config.open.replay_journal = config_.database.replay_journal;
+        // External evidence reuse only consumes endpoint materialization, so
+        // envelope families may differ from the active planning config.
+        external_config.identity.envelope_descriptor.clear();
+        external_evidence_database_ = std::make_unique<lect_database::LectDatabase>();
+        std::string external_reason;
+        if (!external_evidence_database_->open(std::move(external_config), &external_reason)) {
+            throw std::runtime_error("failed to open external LECTDatabase evidence source: " + external_reason);
+        }
     }
     online_cache_ = std::make_unique<lect_database::OnlineEnvelopeCacheTree>(*database_, config_.database.online_cache);
     reset_oracle(Scene{});
@@ -1340,7 +1359,8 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         return split_dim >= 0;
     };
 
-    int node = oracle_->root_node();
+    const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_->max_tree_depth() - 1));
+    OracleNodeId node = oracle_->root_node();
     int changed_dim = -1;
     while (true) {
         if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
@@ -1365,7 +1385,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         }
 
         if (!intervals_subset_local(intervals, domain, 1e-12)) {
-            if (oracle_->depth(node) >= options.max_depth) {
+            if (oracle_->depth(node) >= effective_max_depth) {
                 result.hit_unknown_depth_cap = true;
                 result.node = node;
                 result.intervals = std::move(intervals);
@@ -1394,7 +1414,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         }
 
         if (oracle_->is_reserved(node)) {
-            if (oracle_->depth(node) >= options.max_depth || !options.split_reserved_leaf) {
+            if (oracle_->depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
                 result.hit_reserved_depth_cap = true;
                 result.node = node;
                 result.intervals = std::move(intervals);
@@ -1431,7 +1451,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             result.fail_code = 3;
             break;
         }
-        if (oracle_->depth(node) >= options.max_depth || !options.split_unknown_leaf) {
+        if (oracle_->depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
             result.hit_unknown_depth_cap = true;
             result.node = node;
             result.intervals = std::move(intervals);
@@ -2583,7 +2603,8 @@ void RBFPlanningForest::reset_oracle(Scene scene) {
     }
     online_cache_->clear_payloads();
     oracle_ = std::make_unique<DatabaseBoxOracle>(
-        robot_, *online_cache_, std::move(scene), config_.endpoint_source, config_.envelope_type, config_.validation);
+        robot_, *online_cache_, std::move(scene), config_.endpoint_source, config_.envelope_type, config_.validation,
+        external_evidence_database_.get());
 }
 
 void RBFPlanningForest::reserve_existing_boxes() {

@@ -80,7 +80,7 @@ def run_case(args: argparse.Namespace, robot_name: str, difficulty: str, method:
             "segment_edges": 0,
             "diagnostics": {},
         }
-    cfg = configure_standalone_sbf(args, scene_seed, preset=method)
+    cfg = configure_standalone_sbf(args, scene_seed, preset=method, robot=robot)
     forest = sbf.SafeBoxForest(robot, cfg)
     build_t0 = time.perf_counter()
     profile = forest.build_coverage(scene.obstacles, [scene.start, scene.goal])

@@ -32,6 +32,10 @@ REPO_ROOT = ROOT.parents[1]
 import sbf  # noqa: E402
 
 
+RBF_LIFELONG_PRESET = "rbf_ifk_aa_aafkvol_d40_s15_canonical_lifelong"
+RBF_ONLY_OUTPUT_ROOT = ROOT / "outputs" / "paper" / "rbf_only"
+
+
 def mean(values: Iterable[float]) -> float | None:
     data = list(values)
     return sum(data) / len(data) if data else None
@@ -85,10 +89,118 @@ def set_path_if_available(obj: Any, path: str, value: Any) -> bool:
     return set_if_available(current, parts[-1], value)
 
 
+def serialize_depth_dimensions(depth_dimensions: Iterable[int]) -> str:
+    return ",".join(str(int(dim)) for dim in depth_dimensions)
+
+
+def make_aafk_volume_min_split_policy(robot: Any, max_depth: int) -> Any:
+    schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth)))
+    if len(schedule) < int(max_depth):
+        raise RuntimeError(
+            f"AAFKVolumeMin schedule has {len(schedule)} entries, expected at least {int(max_depth)}"
+        )
+    descriptor = sbf.SplitPolicyDescriptor()
+    descriptor.strategy = sbf.SplitStrategy.AAFKVolumeMin
+    descriptor.min_width = 0.0
+    descriptor.midpoint = True
+    descriptor.deterministic_tie_break = True
+    descriptor.depth_dimensions = schedule
+    descriptor.dimension_schedule_hash = str(sbf.stable_hash(serialize_depth_dimensions(schedule)))
+    return descriptor
+
+
+def set_rbf_envelope(cfg: Any, envelope: str, args: Namespace) -> None:
+    if envelope == "link":
+        cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
+    elif envelope == "kdop26":
+        cfg.envelope_type.type = sbf.EnvelopeType.KDOP
+        cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
+        cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
+    elif envelope == "support_hull":
+        cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
+        cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
+        cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
+        cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
+        cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
+    else:
+        raise ValueError(f"unknown RBF envelope {envelope!r}")
+
+
+def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int, preset: str) -> None:
+    if robot is None:
+        raise ValueError(f"preset {preset!r} requires a robot to generate the AAFKVolumeMin depth schedule")
+    max_depth = int(args.rbf_max_depth)
+    skip_depth = int(args.rbf_ffb_start_depth)
+    if skip_depth > max_depth:
+        raise ValueError(f"rbf ffb start depth {skip_depth} cannot exceed max depth {max_depth}")
+
+    split_policy = make_aafk_volume_min_split_policy(robot, max_depth)
+    cfg.database.split_policy = split_policy
+    cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
+    cfg.database.create_if_missing = True
+    cfg.database.read_only = False
+    cfg.database.verify_identity = True
+    cfg.database.replay_journal = True
+    cfg.database.max_tree_depth = int(args.rbf_max_tree_depth)
+    set_if_available(cfg.database, "propagate_parent_hulls", True)
+    set_if_available(cfg.database, "defer_parent_hull_writes", True)
+    cfg.database.checkpoint_after_build = True
+    cfg.database.online_cache.max_nodes = int(args.rbf_online_cache_max_nodes)
+    cfg.database.online_cache.max_payload_bytes = int(args.rbf_online_cache_max_payload_bytes)
+    cfg.database.online_cache.allow_database_backfill = True
+    cache_label = str(args.rbf_cache_label or f"{preset}_seed{int(seed)}")
+    cfg.database.path = str(Path(args.rbf_cache_root) / cache_label)
+
+    cfg.endpoint_source.source = sbf.EndpointSource.IFK
+    set_rbf_envelope(cfg, str(args.rbf_envelope), args)
+    cfg.validation.mode = sbf.OracleValidationMode.StrictCertificate
+    cfg.validation.accept_unsafe_free = False
+    cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+    cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+    cfg.grower.find_free_box.max_depth = max_depth
+    cfg.grower.find_free_box.skip_to_depth = skip_depth
+    cfg.connector.pave.find_free_box.max_depth = max_depth
+    cfg.connector.pave.find_free_box.skip_to_depth = skip_depth
+
+
+def set_online_cache_backfill(cfg: Any, allow_database_backfill: bool) -> None:
+    cfg.database.online_cache.allow_database_backfill = bool(allow_database_backfill)
+
+
+def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dict[str, Any]:
+    split_policy = cfg.database.split_policy
+    depth_dimensions = list(split_policy.depth_dimensions)
+    rbf_envelope_arg = str(getattr(args, "rbf_envelope", "support_hull")) if args is not None else None
+    return {
+        "preset": RBF_LIFELONG_PRESET,
+        "endpoint_source": "IFK_AA-backed EndpointSource.IFK",
+        "split_policy": "AAFKVolumeMin",
+        "split_policy_descriptor": sbf.split_policy_descriptor(split_policy),
+        "split_policy_hash": int(sbf.split_policy_hash(split_policy)),
+        "dimension_schedule_hash": str(split_policy.dimension_schedule_hash),
+        "depth_dimensions": depth_dimensions,
+        "schedule_depth": len(depth_dimensions),
+        "max_depth": int(cfg.grower.find_free_box.max_depth),
+        "ffb_start_depth": int(cfg.grower.find_free_box.skip_to_depth),
+        "envelope": rbf_envelope_arg,
+        "envelope_type_raw": str(cfg.envelope_type.type).split(".")[-1],
+        "canonical_mode": bool(cfg.database.canonical_mode),
+        "database_path": str(cfg.database.path),
+        "external_evidence_path": str(getattr(cfg.database, "external_evidence_path", "")),
+        "propagate_parent_hulls": bool(getattr(cfg.database, "propagate_parent_hulls", True)),
+        "defer_parent_hull_writes": bool(getattr(cfg.database, "defer_parent_hull_writes", False)),
+            "checkpoint_after_build": bool(getattr(cfg.database, "checkpoint_after_build", False)),
+            "online_cache_allow_database_backfill": bool(getattr(cfg.database.online_cache, "allow_database_backfill", True)),
+        "external_evidence_materialization": bool(getattr(cfg.validation, "external_evidence_materialization", True)),
+        "external_evidence_backfill_active": bool(getattr(cfg.validation, "external_evidence_backfill_active", True)),
+        "prewarm_depth": int(getattr(args, "rbf_prewarm_depth", 18)) if args is not None else 18,
+    }
+
+
 def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument(
         "--preset",
-        choices=["ifk_strict", "crit_link_coverage", "kdop26_coverage", "support_hull_coverage", "coverage_hybrid"],
+        choices=["ifk_strict", "crit_link_coverage", "kdop26_coverage", "support_hull_coverage", "coverage_hybrid", RBF_LIFELONG_PRESET],
         default="support_hull_coverage",
     )
     parser.add_argument("--seeds", type=int, default=1)
@@ -163,9 +275,19 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--connector-pave-max-chain", type=int, default=0)
     parser.add_argument("--connector-pave-steps", type=int, default=12)
     parser.add_argument("--connector-pave-depth", type=int, default=120)
+    parser.add_argument("--rbf-max-depth", type=int, default=40)
+    parser.add_argument("--rbf-max-tree-depth", type=int, default=64)
+    parser.add_argument("--rbf-ffb-start-depth", type=int, default=15)
+    parser.add_argument("--rbf-prewarm-depth", type=int, default=18)
+    parser.add_argument("--rbf-envelope", choices=["link", "kdop26", "support_hull"], default="support_hull")
+    parser.add_argument("--rbf-canonical-cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--rbf-cache-root", type=Path, default=RBF_ONLY_OUTPUT_ROOT / "cache")
+    parser.add_argument("--rbf-cache-label", default="")
+    parser.add_argument("--rbf-online-cache-max-nodes", type=int, default=200000)
+    parser.add_argument("--rbf-online-cache-max-payload-bytes", type=int, default=512 * 1024 * 1024)
 
 
-def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = None) -> sbf.SBFConfig:
+def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = None, robot: Any | None = None) -> sbf.SBFConfig:
     chosen = preset or args.preset
     cfg = sbf.SBFConfig()
     bridge_segment_resolution = segment_resolution_from_step(
@@ -179,7 +301,13 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.runtime.batch_size = max(1, int(args.task_batch_size))
     cfg.runtime.parallel_threshold = 1
 
-    if chosen == "ifk_strict":
+    if chosen == RBF_LIFELONG_PRESET:
+        cfg.endpoint_source.source = sbf.EndpointSource.IFK
+        set_rbf_envelope(cfg, str(args.rbf_envelope), args)
+        cfg.validation.mode = sbf.OracleValidationMode.StrictCertificate
+        cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+        cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
+    elif chosen == "ifk_strict":
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
         cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
         cfg.validation.mode = sbf.OracleValidationMode.StrictCertificate
@@ -301,6 +429,8 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True
     cfg.connector.pave.find_free_box.reject_seed_collision = False
+    if chosen == RBF_LIFELONG_PRESET:
+        apply_rbf_lifelong_defaults(cfg, args, robot, seed, chosen)
     return cfg
 
 

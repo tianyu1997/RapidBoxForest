@@ -70,7 +70,7 @@ struct GrowTask {
 	int root_id = -1;
 	int source_root_id = -1;
 	int target_root_id = -1;
-	int domain_root_node = -1;
+	OracleNodeId domain_root_node = kInvalidOracleNodeId;
 	int ffb_depth = 0;
 	double intertree_goal_bias = 0.0;
 	double component_connect_gap_sq = std::numeric_limits<double>::infinity();
@@ -303,7 +303,7 @@ private:
 											  std::vector<GrowTraceFace>* face_candidates,
 											  StageContext& context,
 											  const void* component_graph_override = nullptr);
-	bool node_in_failure_cooling(int node,
+	bool node_in_failure_cooling(OracleNodeId node,
 								 int active_depth,
 								 int box_count,
 								 StageContext& context);
@@ -311,13 +311,13 @@ private:
 								 int active_depth,
 								 int box_count,
 								 StageContext& context,
-								 int* domain_node = nullptr);
+								 OracleNodeId* domain_node = nullptr);
 	void record_failure_cooling(const FindFreeBoxResult& result,
-								int fallback_node,
+								OracleNodeId fallback_node,
 								int active_depth,
 								int box_count,
 								StageContext& context);
-	void record_failure_cooling_success(int node, StageContext& context);
+	void record_failure_cooling_success(OracleNodeId node, StageContext& context);
 	bool hard_frontier_stop_loss_enabled() const;
 	int hard_frontier_failure_threshold() const;
 	int hard_frontier_box_horizon() const;
@@ -364,7 +364,7 @@ private:
 	mutable std::unordered_set<std::string> covered_frontier_seed_cache_;
 	std::unordered_map<std::uint64_t, int> component_pair_unknown_failures_;
 	std::unordered_map<int, int> component_parent_failures_;
-	std::unordered_map<int, FailureCoolingEntry> failure_cooling_;
+	std::unordered_map<OracleNodeId, FailureCoolingEntry> failure_cooling_;
 };
 
 class FrontwaveGrower final : public IGrower {

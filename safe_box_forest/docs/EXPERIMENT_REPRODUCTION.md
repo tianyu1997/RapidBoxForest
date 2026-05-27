@@ -1,6 +1,6 @@
 # SBF Experiment Reproduction Guide
 
-This guide covers the SBF module inside the `RBFWorkspace` repository.
+This guide covers the SBF module inside the `RapidBoxForest` repository.
 
 ## 1. Prerequisites
 

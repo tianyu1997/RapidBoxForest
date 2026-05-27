@@ -4,14 +4,15 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 from pathlib import Path
 from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parents[1]
-DEFAULT_OUT_DIR = ROOT / "doc" / "paper" / "tro_rewrite_2026" / "generated"
+REPO_ROOT = ROOT.parents[0]
+DEFAULT_OUT_DIR = REPO_ROOT / "paper" / "sbf_old" / "generated"
 PAPER_OUTPUTS = ROOT / "outputs" / "paper"
 # Keep the paper-facing LECT reuse table pinned to the archived ~250-box artifact.
 # The mutable default JSON is reused by later reruns (for example 512-box studies)
@@ -118,6 +119,13 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
+def maybe_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def tex_escape(value: Any) -> str:
     text = str(value)
     return (
@@ -222,7 +230,7 @@ def table(
         body.append(rf"\resizebox{{{resize_width}}}{{!}}{{%")
     body.append(r"\begin{tabular}{" + columns + r"}")
     body.append(r"\toprule")
-    body.append(" & ".join(header) + r" \\")
+    body.append(" & ".join(tex_escape(item) for item in header) + r" \\")
     body.append(r"\midrule")
     if rows:
         for row in rows:
@@ -265,7 +273,7 @@ def table_star(
         body.append(rf"\resizebox{{{resize_width}}}{{!}}{{%")
     body.append(r"\begin{tabular}{" + columns + r"}")
     body.append(r"\toprule")
-    body.append(" & ".join(header) + r" \\")
+    body.append(" & ".join(tex_escape(item) for item in header) + r" \\")
     body.append(r"\midrule")
     if rows:
         for row in rows:
@@ -307,7 +315,7 @@ def fixed_caption_table(
         body.append(rf"\resizebox{{{resize_width}}}{{!}}{{%")
     body.append(r"\begin{tabular}{" + columns + r"}")
     body.append(r"\toprule")
-    body.append(" & ".join(header) + r" \\")
+    body.append(" & ".join(tex_escape(item) for item in header) + r" \\")
     body.append(r"\midrule")
     if rows:
         for row in rows:
@@ -351,6 +359,195 @@ def appendix_table(
 
 def table_has_missing_artifact(content: str) -> bool:
     return "No result artifact available." in content
+
+
+def load_rbf_only_json(outputs: Path, name: str) -> dict[str, Any] | None:
+    return load_json(outputs / "rbf_only" / name)
+
+
+def rbf_envelope_label(name: Any) -> str:
+    mapping = {
+        "link": "LinkIAABB",
+        "kdop26": "KDOP26",
+        "support_hull": "SupportHull",
+    }
+    return mapping.get(str(name), str(name))
+
+
+def rbf_scene_label(name: Any) -> str:
+    mapping = {
+        "shelf_iiwa_combined": "Shelf+IIWA",
+        "random_iiwa_easy": "Random IIWA (easy)",
+    }
+    return mapping.get(str(name), str(name))
+
+
+def rbf_mode_label(name: Any) -> str:
+    mapping = {
+        "cold": "Cold",
+        "warm_d18": "Warm d18",
+    }
+    return mapping.get(str(name), str(name))
+
+
+def gibibytes(value: Any) -> float | None:
+    number = maybe_float(value)
+    if number is None:
+        return None
+    return number / float(1024 ** 3)
+
+
+def rbf_query_summary(queries: list[dict[str, Any]] | None) -> dict[str, Any]:
+    rows = queries or []
+    passed = sum(1 for row in rows if row.get("audit_passed"))
+    return {
+        "audit": f"{passed}/{len(rows)}",
+        "median_query_ms": median((maybe_float(row.get("t_s")) or 0.0) * 1000.0 for row in rows) if rows else None,
+        "median_path_length": median(maybe_float(row.get("length")) for row in rows),
+        "repair_count": sum(int(row.get("repair_count", 0) or 0) for row in rows),
+    }
+
+
+def rbf_build_summary(row: dict[str, Any]) -> dict[str, Any]:
+    build = row.get("build", {}) or {}
+    diagnostics = build.get("diagnostics", {}) or {}
+    wall_s = maybe_float(build.get("wall_s"))
+    planning_s = None
+    total_ms = maybe_float(build.get("total_ms"))
+    if total_ms is not None:
+        planning_s = total_ms / 1000.0
+    maintenance_s = None
+    if wall_s is not None and planning_s is not None:
+        maintenance_s = wall_s - planning_s
+    return {
+        "wall_s": wall_s,
+        "planning_s": planning_s,
+        "maintenance_s": maintenance_s,
+        "endpoint_hits": int(diagnostics.get("oracle.materialization_reused_endpoint_cache", 0) or 0),
+        "external_hits": int(diagnostics.get("oracle.materialization_reused_external_evidence", 0) or 0),
+    }
+
+
+def rbf_only_cache_mechanism_table(outputs: Path) -> str:
+    gate0 = load_rbf_only_json(outputs, "gate0_api_smoke.json")
+    e5 = load_rbf_only_json(outputs, "e5_lifelong_cache_mechanism_smoke.json")
+    rows: list[list[Any]] = []
+    if gate0 is not None:
+        checks = gate0.get("checks", {}) or {}
+        passed = sum(1 for ok in checks.values() if ok)
+        rows.append([
+            "Gate 0",
+            f"{passed}/{len(checks)}",
+            "--",
+            "--",
+            "--",
+            "--",
+            "--",
+            "--",
+            "--",
+        ])
+    if e5 is not None:
+        first = e5.get("first_prewarm", {}) or {}
+        reopen = e5.get("reopen_prewarm", {}) or {}
+        cache_gib = gibibytes(e5.get("cache_bytes"))
+        rows.append([
+            "E5 prewarm",
+            "pass" if first.get("ok") else "fail",
+            first.get("target_depth"),
+            first.get("materializations"),
+            first.get("node_count"),
+            first.get("evidence_after"),
+            maybe_float(first.get("wall_s")),
+            first.get("reused_endpoint_cache"),
+            cache_gib,
+        ])
+        rows.append([
+            "E5 reopen",
+            "pass" if reopen.get("ok") else "fail",
+            reopen.get("target_depth"),
+            reopen.get("materializations"),
+            reopen.get("node_count"),
+            reopen.get("evidence_after"),
+            maybe_float(reopen.get("wall_s")),
+            reopen.get("reused_endpoint_cache"),
+            cache_gib,
+        ])
+    return appendix_table(
+        "RBF-only Gate 0 and lifelong-cache mechanism status after the no-grid refactor. In E5, FK/link-envelope materialization is charged only on the target leaf layer; parent layers are reconstructed by child-hull propagation during checkpoint.",
+        "tab:tro_appendix_rbf_only_cache_mechanism",
+        "llrrrrrrr",
+        ["Stage", "Status", "Depth", "Leaf FK", "Nodes", "Evidence", "Wall s", "Reuse", "Cache GiB"],
+        rows,
+        tabcolsep=2.4,
+    )
+
+
+def rbf_only_sweep_table(outputs: Path) -> str:
+    rows: list[list[Any]] = []
+    summary_rows = link_representation_summary_rows(outputs)
+    for rank, row in enumerate(summary_rows, start=1):
+        escalation_pct = "--"
+        chain_rates = row.get("chain_stage_execution_rates") or {}
+        if chain_rates:
+            later_rates = [
+                100.0 * safe_float(rate)
+                for stage, rate in chain_rates.items()
+                if str(stage) != "link_s4"
+            ]
+            if later_rates:
+                escalation_pct = fmt_fixed(max(later_rates), 1)
+        rows.append([
+            rank,
+            link_representation_display_label(row.get("variant")),
+            row.get("compact_payload_label", "--"),
+            row.get("t_eval_us_mean"),
+            escalation_pct,
+        ])
+    return appendix_table(
+        "Standalone link-envelope representation summary over the 2400-box fixed-width corpus. The table reports per-box staged materialization cost for LinkIAABB, KDOP26, SupportHull, and the AABB-first chain variants; the escalation column is the fraction of boxes that must run at least one post-AABB stage.",
+        "tab:tro_appendix_rbf_only_sweep",
+        "rllrr",
+        ["Rank", "Representation", "Payload", "Build/box us", "Escalation %"],
+        rows,
+        tabcolsep=2.3,
+    )
+
+
+def rbf_only_warm_reuse_table(outputs: Path) -> str:
+    rows: list[list[Any]] = []
+    for experiment, artifact in [
+        ("E2", "e2_warm_d18_baseline.json"),
+        ("E3", "e3_shelf_iiwa_main.json"),
+    ]:
+        payload = load_rbf_only_json(outputs, artifact)
+        if payload is None:
+            continue
+        for row in payload.get("rows", []) or []:
+            build = rbf_build_summary(row)
+            query = rbf_query_summary(row.get("queries"))
+            rows.append([
+                experiment,
+                rbf_scene_label(row.get("scene")),
+                rbf_mode_label(row.get("mode")),
+                "yes" if row.get("metadata", {}).get("online_cache_allow_database_backfill") else "no",
+                build.get("wall_s"),
+                build.get("planning_s"),
+                build.get("maintenance_s"),
+                query.get("median_query_ms"),
+                query.get("audit"),
+                query.get("repair_count"),
+                build.get("external_hits"),
+                build.get("endpoint_hits"),
+            ])
+    return table_star(
+        "RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.",
+        "tab:tro_appendix_rbf_only_warm_reuse",
+        "llllrrrrrrrr",
+        ["Exp.", "Scene", "Mode", "Backfill", "Wall s", "Plan s", "Maint s", "Query ms", "Audit", "Repairs", "Ext reuse", "Active reuse"],
+        rows,
+        tabcolsep=2.0,
+        resize_width=r"\textwidth",
+    )
 
 
 def placeholder_table(caption: str, label: str, columns: str, header: list[str]) -> str:
@@ -695,6 +892,16 @@ def write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def read_existing_macro_values(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    pattern = re.compile(r"\\(?:re)?newcommand\{\\([A-Za-z]+)\}\{([^}]*)\}")
+    values: dict[str, str] = {}
+    for name, value in pattern.findall(path.read_text(encoding="utf-8")):
+        values[name] = value
+    return values
+
+
 def endpoint_table(outputs: Path) -> str:
     _, payload = first_existing(outputs, [
         "tro2026_exp01_endpoint_full.json",
@@ -732,12 +939,18 @@ LINK_REPRESENTATION_VARIANT_ORDER = [
     "link_s4",
     "kdop26_s4",
     "support_hull_nokdop_s4",
+    "chain_aabb_kdop26_s4",
+    "chain_aabb_support_hull_s4",
+    "chain_aabb_kdop26_support_hull_s4",
 ]
 
 LINK_REPRESENTATION_STYLES = {
     "link_s4": ("LinkIAABB", "#1f77b4", "s", "-", True),
     "kdop26_s4": ("KDOP26", "#d95f02", "^", "--", True),
     "support_hull_nokdop_s4": ("SupportHull", "#7b2cbf", "D", "-.", True),
+    "chain_aabb_kdop26_s4": ("AABB->KDOP26", "#2a9d8f", "o", ":", True),
+    "chain_aabb_support_hull_s4": ("AABB->SupportHull", "#457b9d", "P", ":", True),
+    "chain_aabb_kdop26_support_hull_s4": ("AABB->KDOP26->SupportHull", "#264653", "X", ":", True),
 }
 
 
@@ -807,8 +1020,8 @@ def link_representation_widthwise_table(outputs: Path) -> str:
                 tex_escape(fmt_fixed(width, 2)),
                 tex_escape(label),
                 tex_escape(fmt(row.get("volume_mean"), 3)),
+                tex_escape(row.get("compact_payload_label", fmt(row.get("compact_payload_bytes_mean"), 3))),
                 tex_escape(fmt_fixed(row.get("t_eval_us_mean"), 1)),
-                tex_escape(fmt_fixed(row.get("collision_us_mean"), 1)),
             ]) + r" \\")
         if width != width_order[-1]:
             body.append(r"\addlinespace")
@@ -818,7 +1031,7 @@ def link_representation_widthwise_table(outputs: Path) -> str:
         "% Auto-generated from the width-wise CritSample link-envelope representation artifact.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Width-wise CritSample link-envelope comparison under the same $S=4$ short-link split.}",
+        r"\captionof{table}{Width-wise CritSample link-envelope comparison under the same $S=4$ short-link split, including staged AABB/KDOP26/SupportHull cascades.}",
         r"\label{tab:tro_link_envelopes}",
         r"\label{tab:tro_link_envelope_widthwise}",
         r"\scriptsize",
@@ -826,7 +1039,7 @@ def link_representation_widthwise_table(outputs: Path) -> str:
         r"\renewcommand{\arraystretch}{0.82}",
         r"\begin{tabular}{@{}llrrr@{}}",
         r"\toprule",
-        r"Width & Envelope & $V$ (m$^3$) & Eval ($\mu$s) & Collision ($\mu$s) \\",
+        r"Width & Envelope & $V$ (m$^3$) & Payload & Eval ($\mu$s) \\",
         r"\midrule",
         *body,
         r"\bottomrule",
@@ -2752,7 +2965,7 @@ def main_random_profile_selection_table(outputs: Path) -> str:
         r"\resizebox{\textwidth}{!}{%",
         r"\begin{tabular}{@{}lcccc@{}}",
         r"\toprule",
-        " & ".join(header) + r" \\",
+        " & ".join(tex_escape(item) for item in header) + r" \\",
         r"\midrule",
         *row_lines,
         r"\bottomrule",
@@ -3376,11 +3589,16 @@ def implementation_optimization_table(outputs: Path) -> str:
     )
 
 
-def macros(outputs: Path) -> str:
+def macros(outputs: Path, existing_values: dict[str, str] | None = None) -> str:
+    existing = existing_values or {}
     audited = load_json(outputs / "tro2026_exp07_gcs_full.json") or load_json(outputs / "marcucci_audited_corridor_gcs.json")
     direct = load_json(outputs / "marcucci_merger_gcs.json")
     marcucci = load_json(outputs / "tro2026_exp04_marcucci_full.json") or load_json(outputs / "tro2026_exp04_marcucci_support_hull_full.json") or load_json(outputs / "marcucci_corridor_refine_selfedge_s10.json")
     suite = load_json(outputs / "tro2026_safety_accounting_full.json") or load_json(outputs / "paper_soundness_audit_suite.json")
+    rbf_e5 = load_rbf_only_json(outputs, "e5_lifelong_cache_mechanism_smoke.json")
+    rbf_e1 = load_rbf_only_json(outputs, "e1_appendix_config_sweep.json")
+    rbf_e3 = load_rbf_only_json(outputs, "e3_shelf_iiwa_main.json")
+    rbf_e4 = load_rbf_only_json(outputs, "e4_random_robot_scenes.json")
     lines = [
         "% Auto-generated by experiments/tro2026_generate_tables.py",
         r"\newcommand{\TroAuditedGcsAuditPass}{--/--}",
@@ -3389,6 +3607,25 @@ def macros(outputs: Path) -> str:
         r"\newcommand{\TroSbfBuildMean}{--}",
         r"\newcommand{\TroSbfBoxMean}{--}",
         r"\newcommand{\TroPaperAuditPass}{--/--}",
+        r"\newcommand{\TroRbfOnlyEFiveLeafFk}{--}",
+        r"\newcommand{\TroRbfOnlyEFiveEvidence}{--}",
+        r"\newcommand{\TroRbfOnlyEFiveFirstWall}{--}",
+        r"\newcommand{\TroRbfOnlyEFiveReopenWall}{--}",
+        r"\newcommand{\TroRbfOnlyEFiveReopenReuse}{--}",
+        r"\newcommand{\TroRbfOnlySweepBestEnvelope}{--}",
+        r"\newcommand{\TroRbfOnlySweepBestBudget}{--}",
+        r"\newcommand{\TroRbfOnlySweepBestBuild}{--}",
+        r"\newcommand{\TroRbfOnlySweepBestQueryMs}{--}",
+        r"\newcommand{\TroRbfOnlySweepBestReuse}{--}",
+        r"\newcommand{\TroRbfOnlySweepFullPassRows}{--}",
+        r"\newcommand{\TroRbfOnlyShelfWarmBuild}{--}",
+        r"\newcommand{\TroRbfOnlyShelfWarmQueryMs}{--}",
+        r"\newcommand{\TroRbfOnlyShelfWarmExternalReuse}{--}",
+        r"\newcommand{\TroRbfOnlyEFourWarmBuildMin}{--}",
+        r"\newcommand{\TroRbfOnlyEFourWarmBuildMax}{--}",
+        r"\newcommand{\TroRbfOnlyEFourWarmQueryMinMs}{--}",
+        r"\newcommand{\TroRbfOnlyEFourWarmQueryMaxMs}{--}",
+        r"\newcommand{\TroRbfOnlyEFourWarmAuditMin}{--}",
     ]
     if audited:
         summary = audited.get("summary", {})
@@ -3401,17 +3638,96 @@ def macros(outputs: Path) -> str:
                     expanded_solved += 1 if attempt.get("ok") else 0
                     expanded_pass += 1 if attempt.get("strict_audit_passed") else 0
         lines.append(r"\renewcommand{\TroExpandedGcsAuditPass}{" + fmt(expanded_pass, 0) + r"/" + fmt(expanded_solved, 0) + r"}")
+    else:
+        if "TroAuditedGcsAuditPass" in existing:
+            lines.append(r"\renewcommand{\TroAuditedGcsAuditPass}{" + existing["TroAuditedGcsAuditPass"] + r"}")
+        if "TroExpandedGcsAuditPass" in existing:
+            lines.append(r"\renewcommand{\TroExpandedGcsAuditPass}{" + existing["TroExpandedGcsAuditPass"] + r"}")
     if direct:
         pass_count = sum(1 for row in direct.get("gcs_queries", []) if row.get("audit", {}).get("passed"))
         solved = sum(1 for row in direct.get("gcs_queries", []) if row.get("ok"))
         lines.append(r"\renewcommand{\TroDirectGcsAuditPass}{" + fmt(pass_count, 0) + r"/" + fmt(solved, 0) + r"}")
+    elif "TroDirectGcsAuditPass" in existing:
+        lines.append(r"\renewcommand{\TroDirectGcsAuditPass}{" + existing["TroDirectGcsAuditPass"] + r"}")
     if marcucci:
         build = marcucci.get("build", {})
         lines.append(r"\renewcommand{\TroSbfBuildMean}{" + fmt(build.get("mean_s")) + r"}")
         lines.append(r"\renewcommand{\TroSbfBoxMean}{" + fmt(build.get("mean_unique_box_count"), 1) + r"}")
+    else:
+        if "TroSbfBuildMean" in existing:
+            lines.append(r"\renewcommand{\TroSbfBuildMean}{" + existing["TroSbfBuildMean"] + r"}")
+        if "TroSbfBoxMean" in existing:
+            lines.append(r"\renewcommand{\TroSbfBoxMean}{" + existing["TroSbfBoxMean"] + r"}")
     if suite:
         summary = suite.get("summary", {})
         lines.append(r"\renewcommand{\TroPaperAuditPass}{" + str(int(summary.get("audit_pass_count", 0))) + r"/" + str(int(summary.get("path_count", 0))) + r"}")
+    elif "TroPaperAuditPass" in existing:
+        lines.append(r"\renewcommand{\TroPaperAuditPass}{" + existing["TroPaperAuditPass"] + r"}")
+    if rbf_e5:
+        first = rbf_e5.get("first_prewarm", {}) or {}
+        reopen = rbf_e5.get("reopen_prewarm", {}) or {}
+        lines.append(r"\renewcommand{\TroRbfOnlyEFiveLeafFk}{" + fmt(first.get("materializations"), 0) + r"}")
+        lines.append(r"\renewcommand{\TroRbfOnlyEFiveEvidence}{" + fmt(first.get("evidence_after"), 0) + r"}")
+        lines.append(r"\renewcommand{\TroRbfOnlyEFiveFirstWall}{" + fmt(first.get("wall_s")) + r"}")
+        lines.append(r"\renewcommand{\TroRbfOnlyEFiveReopenWall}{" + fmt(reopen.get("wall_s")) + r"}")
+        lines.append(r"\renewcommand{\TroRbfOnlyEFiveReopenReuse}{" + fmt(reopen.get("reused_endpoint_cache"), 0) + r"}")
+    if rbf_e1:
+        summary_rows = list(rbf_e1.get("summary", []) or [])
+        summary_rows.sort(key=lambda row: (
+            -safe_float(row.get("strict_audit_success_rate")),
+            safe_float(row.get("median_build_s")) + safe_float(row.get("median_query_s")),
+            safe_float(row.get("median_cache_bytes")),
+            str(row.get("envelope", "")),
+            int(row.get("budget", 0) or 0),
+        ))
+        if summary_rows:
+            best = summary_rows[0]
+            lines.append(r"\renewcommand{\TroRbfOnlySweepBestEnvelope}{" + tex_escape(rbf_envelope_label(best.get("envelope"))) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlySweepBestBudget}{" + fmt(best.get("budget"), 0) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlySweepBestBuild}{" + fmt(best.get("median_build_s")) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlySweepBestQueryMs}{" + fmt(safe_float(best.get("median_query_s")) * 1000.0) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlySweepBestReuse}{" + fmt(best.get("median_cache_hits"), 0) + r"}")
+        full_pass_rows = sum(1 for row in summary_rows if safe_float(row.get("strict_audit_success_rate")) >= FULL_SUCCESS_THRESHOLD)
+        lines.append(r"\renewcommand{\TroRbfOnlySweepFullPassRows}{" + fmt(full_pass_rows, 0) + r"}")
+    if rbf_e3:
+        shelf_warm_rows = [
+            row for row in (rbf_e3.get("rows", []) or [])
+            if str(row.get("scene")) == "shelf_iiwa_combined" and str(row.get("mode")) == "warm_d18"
+        ]
+        if shelf_warm_rows:
+            warm_row = shelf_warm_rows[0]
+            build = rbf_build_summary(warm_row)
+            query = rbf_query_summary(warm_row.get("queries"))
+            lines.append(r"\renewcommand{\TroRbfOnlyShelfWarmBuild}{" + fmt(build.get("wall_s")) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlyShelfWarmQueryMs}{" + fmt(query.get("median_query_ms")) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlyShelfWarmExternalReuse}{" + fmt(build.get("external_hits"), 0) + r"}")
+    if rbf_e4:
+        warm_summary_rows = [
+            row for row in (rbf_e4.get("summary", []) or [])
+            if str(row.get("mode")) == "warm_d18"
+        ]
+        build_values = [
+            maybe_float(row.get("build_mean_s"))
+            for row in warm_summary_rows
+            if maybe_float(row.get("build_mean_s")) is not None
+        ]
+        query_values_ms = [
+            safe_float(row.get("query_median_s")) * 1000.0
+            for row in warm_summary_rows
+            if maybe_float(row.get("query_median_s")) is not None
+        ]
+        audit_values = [
+            safe_float(row.get("audit_sr")) * 100.0
+            for row in warm_summary_rows
+        ]
+        if build_values:
+            lines.append(r"\renewcommand{\TroRbfOnlyEFourWarmBuildMin}{" + fmt(min(build_values)) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlyEFourWarmBuildMax}{" + fmt(max(build_values)) + r"}")
+        if query_values_ms:
+            lines.append(r"\renewcommand{\TroRbfOnlyEFourWarmQueryMinMs}{" + fmt(min(query_values_ms)) + r"}")
+            lines.append(r"\renewcommand{\TroRbfOnlyEFourWarmQueryMaxMs}{" + fmt(max(query_values_ms)) + r"}")
+        if audit_values:
+            lines.append(r"\renewcommand{\TroRbfOnlyEFourWarmAuditMin}{" + fmt(min(audit_values), 1) + r"}")
     lines.append("")
     return "\n".join(lines)
 
@@ -3420,6 +3736,7 @@ def main() -> int:
     args = parse_args()
     outputs = args.outputs
     out_dir = args.out_dir
+    existing_macros = read_existing_macro_values(out_dir / "tro_macros.tex")
     main_writers = {
         "tab_tro_main_lect_cache_footprint.tex": main_lect_cache_footprint_table(outputs),
         "tab_tro_main_evidence_validation.tex": main_evidence_validation_table(outputs),
@@ -3429,7 +3746,7 @@ def main() -> int:
         "tab_tro_link_envelope_widthwise.tex": link_representation_widthwise_table(outputs),
         "tab_tro_dynamic_rebuild.tex": rebuild_table(outputs),
         "text_tro_safety_fallback.tex": safety_fallback_text(outputs),
-        "tro_macros.tex": macros(outputs),
+        "tro_macros.tex": macros(outputs, existing_macros),
     }
     if args.placeholder:
         main_writers = {
@@ -3461,7 +3778,7 @@ def main() -> int:
             "tab_tro_link_envelope_widthwise.tex": link_representation_widthwise_table(outputs),
             "tab_tro_dynamic_rebuild.tex": rebuild_table(outputs),
             "text_tro_safety_fallback.tex": safety_fallback_text(outputs),
-            "tro_macros.tex": macros(outputs),
+            "tro_macros.tex": macros(outputs, existing_macros),
         }
     appendix_writers: dict[str, str] = {
         "tab_tro_experiment_matrix.tex": experiment_matrix_table(),
@@ -3474,6 +3791,9 @@ def main() -> int:
         "tab_tro_parallel_scaling.tex": parallel_table(outputs),
         "tab_tro_mechanism_diagnostics.tex": mechanism_diagnostics_table(outputs),
         "tab_tro_soundness_audit.tex": audit_suite_table(outputs),
+        "tab_tro_rbf_only_cache_mechanism.tex": rbf_only_cache_mechanism_table(outputs),
+        "tab_tro_rbf_only_sweep.tex": rbf_only_sweep_table(outputs),
+        "tab_tro_rbf_only_warm_reuse.tex": rbf_only_warm_reuse_table(outputs),
     }
     if args.mode == "main":
         writers = main_writers
@@ -3491,11 +3811,13 @@ def main() -> int:
     if args.strict_missing and missing:
         raise SystemExit("Missing result artifacts for: " + ", ".join(missing))
     for name, content in writers.items():
+        if not args.placeholder and name != "tro_macros.tex" and table_has_missing_artifact(content):
+            continue
         write(out_dir / name, content)
     manifest_path = args.manifest or out_dir / "tro_table_generation_manifest.json"
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
-    if not args.placeholder:
+    if not args.placeholder and not missing:
         write_evidence_validation_tradeoff_plot(outputs, out_dir)
         write_marcucci_baseline_plot(outputs, out_dir)
         write_sbf_time_quality_tradeoff_plot(outputs, out_dir)

@@ -95,18 +95,6 @@ OPTIMIZATION_ROWS: list[dict[str, Any]] = [
     },
     {
         "package": "link-interval-envelope",
-        "id": "LIE-03",
-        "priority": "P1",
-        "target": "Sparse voxel grid reserve/mask/SIMD paths",
-        "source_files": ["link-interval-envelope/include/sbf/voxel/voxel_grid.h", "link-interval-envelope/include/sbf/voxel/bit_brick.h"],
-        "artifact": "tro2026_lie_voxel_grid.json",
-        "primary_metric": "grid fill time, occupied bricks, intersection time",
-        "validation_gate": "conservative voxel occupancy is not reduced incorrectly",
-        "paper_mapping": "tab:tro_main_evidence_validation",
-        "status": "planned",
-    },
-    {
-        "package": "link-interval-envelope",
         "id": "LIE-04",
         "priority": "P0",
         "target": "Lightweight Python binding output modes",

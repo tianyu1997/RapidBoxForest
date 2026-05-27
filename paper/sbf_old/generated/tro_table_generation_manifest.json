@@ -1,16 +1,41 @@
 {
   "generated": [
+    "tab_tro_audited_gcs.tex",
     "tab_tro_dynamic_rebuild.tex",
+    "tab_tro_experiment_matrix.tex",
+    "tab_tro_grower_tradeoff.tex",
     "tab_tro_link_envelope_widthwise.tex",
+    "tab_tro_link_envelopes.tex",
     "tab_tro_main_evidence_validation.tex",
     "tab_tro_main_lect_cache_footprint.tex",
     "tab_tro_main_lect_reuse.tex",
     "tab_tro_main_random_best_tradeoff.tex",
     "tab_tro_main_shelf_best_tradeoff.tex",
+    "tab_tro_mechanism_diagnostics.tex",
+    "tab_tro_merger_control.tex",
+    "tab_tro_parallel_scaling.tex",
+    "tab_tro_random_rrt_baseline.tex",
+    "tab_tro_random_scenes.tex",
+    "tab_tro_rbf_only_cache_mechanism.tex",
+    "tab_tro_rbf_only_sweep.tex",
+    "tab_tro_rbf_only_warm_reuse.tex",
+    "tab_tro_soundness_audit.tex",
     "text_tro_safety_fallback.tex",
     "tro_macros.tex"
   ],
-  "missing_artifact_tables": [],
-  "mode": "main",
-  "out_dir": "/home/tian/\u684c\u9762/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated"
+  "missing_artifact_tables": [
+    "tab_tro_audited_gcs.tex",
+    "tab_tro_dynamic_rebuild.tex",
+    "tab_tro_grower_tradeoff.tex",
+    "tab_tro_main_lect_reuse.tex",
+    "tab_tro_main_random_best_tradeoff.tex",
+    "tab_tro_mechanism_diagnostics.tex",
+    "tab_tro_merger_control.tex",
+    "tab_tro_parallel_scaling.tex",
+    "tab_tro_random_rrt_baseline.tex",
+    "tab_tro_random_scenes.tex",
+    "tab_tro_soundness_audit.tex"
+  ],
+  "mode": "all",
+  "out_dir": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/paper/sbf_old/generated"
 }

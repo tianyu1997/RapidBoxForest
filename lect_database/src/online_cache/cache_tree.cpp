@@ -5,6 +5,21 @@
 
 namespace rbf::lect_database {
 
+namespace {
+
+EvidenceKey canonicalize_evidence_key(const LectDatabase& database, EvidenceKey key) {
+    if (!key.node_path_valid && valid_node_id(key.node_id)) {
+        const auto topology = database.topology(key.node_id);
+        if (valid_node_id(topology.id)) {
+            key.node_path = topology.path;
+            key.node_path_valid = true;
+        }
+    }
+    return key;
+}
+
+}  // namespace
+
 OnlineEnvelopeCacheTree::OnlineEnvelopeCacheTree(LectDatabase& database,
                                                  OnlineEnvelopeCacheConfig config)
     : database_(database), config_(config) {}
@@ -59,6 +74,7 @@ std::pair<NodeId, NodeId> OnlineEnvelopeCacheTree::split_leaf(NodeId node_id) {
 }
 
 std::optional<EvidenceRecord> OnlineEnvelopeCacheTree::evidence(EvidenceKey key) {
+    key = canonicalize_evidence_key(database_, std::move(key));
     auto cache_it = payload_cache_.find(key);
     if (cache_it != payload_cache_.end()) {
         stats_.cache_hits += 1;
@@ -85,6 +101,7 @@ std::optional<EvidenceRecord> OnlineEnvelopeCacheTree::evidence(EvidenceKey key)
 }
 
 bool OnlineEnvelopeCacheTree::put_evidence(EvidenceRecord record, bool allow_backfill) {
+    record.key = canonicalize_evidence_key(database_, std::move(record.key));
     if (!insert_cache_record(record)) {
         return false;
     }
@@ -99,7 +116,7 @@ bool OnlineEnvelopeCacheTree::put_evidence(EvidenceRecord record, bool allow_bac
 }
 
 bool OnlineEnvelopeCacheTree::has_cached_payload(const EvidenceKey& key) const {
-    return payload_cache_.find(key) != payload_cache_.end();
+    return payload_cache_.find(canonicalize_evidence_key(database_, key)) != payload_cache_.end();
 }
 
 void OnlineEnvelopeCacheTree::clear_payloads() {
@@ -116,6 +133,7 @@ void OnlineEnvelopeCacheTree::touch(CacheEntry& entry) noexcept {
 }
 
 bool OnlineEnvelopeCacheTree::insert_cache_record(EvidenceRecord record) {
+    record.key = canonicalize_evidence_key(database_, std::move(record.key));
     const std::size_t bytes = payload_bytes(record);
     if (config_.max_payload_bytes > 0 && bytes > config_.max_payload_bytes) {
         stats_.memory_limit_rejections += 1;

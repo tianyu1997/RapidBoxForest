@@ -48,7 +48,7 @@ Implementation opportunities to validate:
 
 - unified thread budget for CritSample and batch API;
 - CritSample candidate cache and dirty-joint tracking;
-- voxel-grid reserve/mask/SIMD optimization;
+- KDOP/SupportHull predicate optimization;
 - lightweight Python binding output modes;
 - GCPC interval lookup indexing.
 
@@ -58,14 +58,14 @@ Required experiment artifacts:
 |---|---|---|---|
 | LIE-01 | `tro2026_lie_thread_budget.json` | detect nested-parallel oversubscription | total time, CPU efficiency, worker count, variance |
 | LIE-02 | `tro2026_lie_critsample_cache.json` | compare raw candidate recompute vs cached candidates | endpoint time, candidate count, dirty joints |
-| LIE-03 | `tro2026_lie_voxel_grid.json` | compare grid fill/intersection variants | fill time, occupied bricks, intersects time |
+| LIE-03 | `tro2026_lie_envelope_predicates.json` | compare LinkIAABB, KDOP, and SupportHull predicate cost | envelope time, predicate rejects, intersection time |
 | LIE-04 | `tro2026_lie_python_payload.json` | quantify Python list/dict output overhead | return time, payload size, optional-field cost |
 
 Validation gates:
 
 - IFK/LinkIAABB conservative rows must remain numerically identical within tolerance;
 - CritSample changes must be treated as provisional and discharged by SBF strict audit;
-- voxel changes must not shrink conservative occupied sets incorrectly;
+- tighter envelope predicates must not shrink conservative occupied sets incorrectly;
 - Python schema changes must be opt-in or backwards compatible.
 
 ### 2.3 sbf-standalone
@@ -149,7 +149,7 @@ Recommended follow-up figures:
 1. stage-time stacked bar for SBF parallel scaling;
 2. query-latency breakdown before/after query-index caching;
 3. LECT cold/warm/lazy-load timeline;
-4. voxel-grid fill/intersection microbenchmark bar chart.
+4. LinkIAABB/KDOP/SupportHull predicate microbenchmark bar chart.
 
 ## 6. Execution order
 

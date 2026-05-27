@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query", default="AS->TS", help="query label to run, or 'all'")
     parser.add_argument("--scene", choices=["combined", "shelves", "bins", "table"], default="combined")
     parser.add_argument("--endpoint-source", choices=["critsample", "ifk"], default="critsample")
-    parser.add_argument("--envelope", choices=["link", "hull"], default="link")
+    parser.add_argument("--envelope", choices=["link", "support_hull"], default="link")
     parser.add_argument("--seed-set", choices=["query", "canonical", "extended"], default="query")
     parser.add_argument("--max-boxes", type=int, default=900)
     parser.add_argument("--timeout-ms", type=float, default=90000.0)
@@ -68,7 +68,7 @@ def configure_sbf(args: argparse.Namespace) -> sbf.SBFConfig:
     config.endpoint_source.source = sbf.EndpointSource.CritSample if args.endpoint_source == "critsample" else sbf.EndpointSource.IFK
     envelope_map = {
         "link": sbf.EnvelopeType.LinkIAABB,
-        "hull": sbf.EnvelopeType.Hull_Grid,
+        "support_hull": sbf.EnvelopeType.SupportHull,
     }
     config.envelope_type.type = envelope_map[args.envelope]
     config.envelope_type.n_subdivisions = 4

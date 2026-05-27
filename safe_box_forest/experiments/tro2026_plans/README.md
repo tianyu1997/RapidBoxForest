@@ -26,6 +26,10 @@ Use smoke commands first to validate schema and nonempty artifacts. Full command
 
 ## Formal Experiment Order
 
+### RBF-Only Updated Track
+
+The RBF-only track is frozen in `rbf_only_lifelong_cache_execution_plan.md`. For that track, the Lifelong/canonical cache mechanism is executed before the main experiments, and later RBF experiments use that mechanism by default unless a row is explicitly marked as a cache ablation.
+
 1. `exp01_link_envelope_foundation.md` - endpoint and link envelope microbenchmarks.
 2. `exp02_lect_reuse_cache_attribution.md` - LECT reuse and cache attribution.
 3. `exp03_sbf_construction_ablation.md` - grow-stop, connector, merger, and repair ablations.

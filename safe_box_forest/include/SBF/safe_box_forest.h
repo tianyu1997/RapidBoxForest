@@ -47,17 +47,21 @@ struct SubtractiveBuildOptions {
 
 struct LectDatabaseRuntimeConfig {
 	std::filesystem::path path;
+	std::filesystem::path external_evidence_path;
 	lect_database::SplitPolicyDescriptor split_policy;
 	lect_database::OnlineEnvelopeCacheConfig online_cache;
 	bool read_only = false;
 	bool create_if_missing = true;
 	bool verify_identity = true;
 	bool replay_journal = true;
+	bool propagate_parent_hulls = true;
+	bool defer_parent_hull_writes = false;
 	bool canonical_mode = false;
 	bool checkpoint_after_build = true;
 	std::string symmetry_descriptor;
 	std::uint32_t page_size_bytes = 64u * 1024u;
 	std::uint32_t max_resident_pages = 256u;
+	int max_tree_depth = 64;
 };
 
 struct RBFPlanningConfig {
@@ -212,6 +216,7 @@ private:
 	RBFPlanningConfig config_;
 	Scene scene_;
 	std::unique_ptr<lect_database::LectDatabase> database_;
+	std::unique_ptr<lect_database::LectDatabase> external_evidence_database_;
 	std::unique_ptr<lect_database::OnlineEnvelopeCacheTree> online_cache_;
 	std::unique_ptr<DatabaseBoxOracle> oracle_;
 	std::vector<BoxNode> boxes_;

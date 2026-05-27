@@ -1,5 +1,7 @@
 #include <SBF/sbf.h>
 
+#include <sbf/envelope/ifk_aa_source.h>
+
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -347,6 +349,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("active_link_map", &active_link_map_vec)
         .def("active_link_radii", &active_link_radii_vec);
 
+    module.def("aafk_volume_min_depth_schedule",
+        [](const rbf::Robot& robot, int max_depth) {
+            return rbf::aafk_volume_min_depth_schedule(robot, robot.joint_limits().limits, max_depth);
+        },
+        py::arg("robot"), py::arg("max_depth"));
+
     py::enum_<rbf::EndpointSource>(module, "EndpointSource")
         .value("IFK", rbf::EndpointSource::IFK)
         .value("CritSample", rbf::EndpointSource::CritSample)
@@ -509,11 +517,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("validation_cache_max_entries", &rbf::OracleValidationConfig::validation_cache_max_entries)
         .def_readwrite("endpoint_cache_min_effective_width", &rbf::OracleValidationConfig::endpoint_cache_min_effective_width)
         .def_readwrite("external_evidence_materialization", &rbf::OracleValidationConfig::external_evidence_materialization)
-        .def_readwrite("external_evidence_scoring", &rbf::OracleValidationConfig::external_evidence_scoring);
+        .def_readwrite("external_evidence_scoring", &rbf::OracleValidationConfig::external_evidence_scoring)
+        .def_readwrite("external_evidence_backfill_active", &rbf::OracleValidationConfig::external_evidence_backfill_active);
 
     py::class_<rbf::FindFreeBoxOptions>(module, "FindFreeBoxOptions")
         .def(py::init<>())
         .def_readwrite("max_depth", &rbf::FindFreeBoxOptions::max_depth)
+        .def_readwrite("skip_to_depth", &rbf::FindFreeBoxOptions::skip_to_depth)
         .def_readwrite("deadline_ms", &rbf::FindFreeBoxOptions::deadline_ms)
         .def_readwrite("split_reserved_leaf", &rbf::FindFreeBoxOptions::split_reserved_leaf)
         .def_readwrite("split_unknown_leaf", &rbf::FindFreeBoxOptions::split_unknown_leaf)
@@ -661,6 +671,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("dimension_schedule_hash", &rbf::lect_database::SplitPolicyDescriptor::dimension_schedule_hash)
         .def_readwrite("depth_dimensions", &rbf::lect_database::SplitPolicyDescriptor::depth_dimensions);
 
+    module.def("split_policy_descriptor", &rbf::lect_database::split_policy_descriptor, py::arg("descriptor"));
+    module.def("split_policy_hash", &rbf::lect_database::split_policy_hash, py::arg("descriptor"));
+    module.def("stable_hash",
+        [](const std::string& text) {
+            return rbf::lect_database::stable_hash(text);
+        },
+        py::arg("text"));
+
     py::class_<rbf::lect_database::OnlineEnvelopeCacheConfig>(module, "OnlineEnvelopeCacheConfig")
         .def(py::init<>())
         .def_readwrite("max_nodes", &rbf::lect_database::OnlineEnvelopeCacheConfig::max_nodes)
@@ -672,17 +690,23 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_property("path",
             [](const rbf::LectDatabaseRuntimeConfig& config) { return config.path.string(); },
             [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.path = path; })
+        .def_property("external_evidence_path",
+            [](const rbf::LectDatabaseRuntimeConfig& config) { return config.external_evidence_path.string(); },
+            [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.external_evidence_path = path; })
         .def_readwrite("split_policy", &rbf::LectDatabaseRuntimeConfig::split_policy)
         .def_readwrite("online_cache", &rbf::LectDatabaseRuntimeConfig::online_cache)
         .def_readwrite("read_only", &rbf::LectDatabaseRuntimeConfig::read_only)
         .def_readwrite("create_if_missing", &rbf::LectDatabaseRuntimeConfig::create_if_missing)
         .def_readwrite("verify_identity", &rbf::LectDatabaseRuntimeConfig::verify_identity)
         .def_readwrite("replay_journal", &rbf::LectDatabaseRuntimeConfig::replay_journal)
+        .def_readwrite("propagate_parent_hulls", &rbf::LectDatabaseRuntimeConfig::propagate_parent_hulls)
+        .def_readwrite("defer_parent_hull_writes", &rbf::LectDatabaseRuntimeConfig::defer_parent_hull_writes)
         .def_readwrite("canonical_mode", &rbf::LectDatabaseRuntimeConfig::canonical_mode)
         .def_readwrite("checkpoint_after_build", &rbf::LectDatabaseRuntimeConfig::checkpoint_after_build)
         .def_readwrite("symmetry_descriptor", &rbf::LectDatabaseRuntimeConfig::symmetry_descriptor)
         .def_readwrite("page_size_bytes", &rbf::LectDatabaseRuntimeConfig::page_size_bytes)
-        .def_readwrite("max_resident_pages", &rbf::LectDatabaseRuntimeConfig::max_resident_pages);
+        .def_readwrite("max_resident_pages", &rbf::LectDatabaseRuntimeConfig::max_resident_pages)
+        .def_readwrite("max_tree_depth", &rbf::LectDatabaseRuntimeConfig::max_tree_depth);
 
     py::class_<rbf::QueryConfig>(module, "QueryConfig")
         .def(py::init<>())
@@ -843,6 +867,62 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("remove_obstacle_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_and_regrow, py::arg("obstacle_index"))
         .def("remove_obstacle_suffix_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_suffix_and_regrow, py::arg("target_obstacle_count"))
         .def("clear_forest", &rbf::RBFPlanningForest::clear_forest)
+        .def("database_node_count", [](const rbf::RBFPlanningForest& forest) {
+            return forest.database().node_count();
+        })
+        .def("database_evidence_count", [](const rbf::RBFPlanningForest& forest) {
+            return forest.database().evidence_count();
+        })
+        .def("database_checkpoint", [](rbf::RBFPlanningForest& forest) {
+            return forest.database().checkpoint();
+        })
+        .def("database_verify", [](const rbf::RBFPlanningForest& forest, bool strict) {
+            return forest.database().verify(strict).ok;
+        }, py::arg("strict") = true)
+        .def("prewarm_lifelong_cache",
+             [](rbf::RBFPlanningForest& forest,
+                int target_depth,
+                const std::vector<rbf::Obstacle>& obstacles) {
+                 if (obstacles.empty()) {
+                     throw std::invalid_argument("prewarm_lifelong_cache requires a non-empty obstacle scene so endpoint evidence is materialized");
+                 }
+                 const auto start = std::chrono::steady_clock::now();
+                 const bool depth_ok = forest.database().ensure_depth(std::max(0, target_depth));
+                 rbf::DatabaseBoxOracle oracle(forest.robot(),
+                                               forest.online_cache(),
+                                               rbf::Scene(obstacles),
+                                               forest.config().endpoint_source,
+                                               forest.config().envelope_type,
+                                               forest.config().validation);
+                 std::size_t nodes_touched = 0;
+                 const std::size_t evidence_before = forest.database().evidence_count();
+                 const int materialize_depth = std::max(0, target_depth);
+                 for (rbf::lect_database::NodeId node_id : forest.database().layer_nodes(materialize_depth)) {
+                     auto intervals = forest.database().node_box(node_id);
+                     if (!intervals) {
+                         continue;
+                     }
+                     oracle.validate_node(static_cast<int>(node_id), *intervals, -1);
+                     nodes_touched += 1;
+                 }
+                 const bool checkpoint_ok = forest.database().checkpoint();
+                 const auto end = std::chrono::steady_clock::now();
+                 const auto& counters = oracle.counters();
+                 py::dict result;
+                 result["ok"] = depth_ok && checkpoint_ok;
+                 result["target_depth"] = materialize_depth;
+                 result["depth_ok"] = depth_ok;
+                 result["checkpoint_ok"] = checkpoint_ok;
+                 result["nodes_touched"] = nodes_touched;
+                 result["node_count"] = forest.database().node_count();
+                 result["evidence_before"] = evidence_before;
+                 result["evidence_after"] = forest.database().evidence_count();
+                 result["materializations"] = counters.materializations;
+                 result["reused_endpoint_cache"] = counters.materialization_reused_endpoint_cache;
+                 result["wall_s"] = std::chrono::duration<double>(end - start).count();
+                 return result;
+             },
+             py::arg("target_depth"), py::arg("obstacles"))
         .def("boxes", [](const rbf::RBFPlanningForest& forest) { return forest.boxes(); })
         .def("raw_boxes", [](const rbf::RBFPlanningForest& forest) { return forest.raw_boxes(); })
         .def("adjacency", [](const rbf::RBFPlanningForest& forest) { return forest.adjacency(); })

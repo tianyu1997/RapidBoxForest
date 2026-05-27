@@ -298,7 +298,7 @@ def main() -> int:
             raise ValueError(f"unknown query label {args.query!r}")
 
     seeds = [list(seed) for seed in make_coverage_seeds(include_extra_anchors=False)]
-    cfg = configure_standalone_sbf(args, seed=0, preset=args.preset)
+    cfg = configure_standalone_sbf(args, seed=0, preset=args.preset, robot=robot)
     apply_visualization_protocol(cfg, args)
     forest = sbf.SafeBoxForest(robot, cfg)
 

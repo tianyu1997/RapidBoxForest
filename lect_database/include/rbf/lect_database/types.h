@@ -20,7 +20,7 @@ using SectorId = int;
 
 inline constexpr NodeId kInvalidNodeId = std::numeric_limits<NodeId>::max();
 inline constexpr SectorId kPrimarySector = 0;
-inline constexpr std::uint32_t kLectDatabaseSchemaVersion = 1;
+inline constexpr std::uint32_t kLectDatabaseSchemaVersion = 3;
 
 bool valid_node_id(NodeId id) noexcept;
 
@@ -39,6 +39,11 @@ struct PathCode {
     bool bit(int index) const;
     bool is_prefix_of(const PathCode& other) const;
     int common_prefix_bits(const PathCode& other) const;
+    bool operator==(const PathCode& other) const noexcept;
+};
+
+struct PathCodeHash {
+    std::size_t operator()(const PathCode& path) const noexcept;
 };
 
 struct NodeRecord {
@@ -105,6 +110,8 @@ enum class EvidencePayloadKind : std::uint8_t {
 
 struct EvidenceKey {
     NodeId node_id = kInvalidNodeId;
+    PathCode node_path;
+    bool node_path_valid = false;
     SectorId sector = kPrimarySector;
     EvidenceChannel channel = EvidenceChannel::Safe;
     EndpointSource endpoint_source = EndpointSource::IFK;

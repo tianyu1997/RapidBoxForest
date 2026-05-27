@@ -46,6 +46,7 @@ from ._sbf_cpp import (
     SubtractiveBuildOptions,
     SubtractiveObstacleGroup,
     SupportHullConfig,
+    aafk_volume_min_depth_schedule,
     check_config_collision,
     ompl_simplify_path,
     ompl_bitstar_path,
@@ -54,6 +55,9 @@ from ._sbf_cpp import (
     ompl_rrt_connect_path,
     path_length,
     rrt_connect_path,
+    split_policy_descriptor,
+    split_policy_hash,
+    stable_hash,
 )
 
 SBFConfig = RBFPlanningConfig
@@ -120,6 +124,7 @@ __all__ = [
     "SubtractiveBuildOptions",
     "SubtractiveObstacleGroup",
     "SupportHullConfig",
+    "aafk_volume_min_depth_schedule",
     "check_config_collision",
     "ompl_simplify_path",
     "ompl_bitstar_path",
@@ -138,4 +143,7 @@ __all__ = [
     "make_table_obstacles",
     "path_length",
     "rrt_connect_path",
+    "split_policy_descriptor",
+    "split_policy_hash",
+    "stable_hash",
 ]

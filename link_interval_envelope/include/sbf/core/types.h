@@ -135,7 +135,7 @@ struct BoxNode {
     std::vector<Interval> joint_intervals;      ///< Per-joint [lo, hi] defining the box.
     Eigen::VectorXd seed_config;                ///< C-space seed that created this box.
     double volume = 0.0;                        ///< Product of interval widths.
-    int tree_id = -1;                           ///< LECT leaf node backing this box.
+    std::int64_t tree_id = -1;                  ///< LECT leaf node backing this box.
     int parent_box_id = -1;                     ///< Parent box in the RRT/wavefront tree (-1 for roots).
     int root_id = -1;                           ///< Root box of this subtree.
     BoxSafetyStatus safety_status = BoxSafetyStatus::Unknown;  ///< Validation provenance.

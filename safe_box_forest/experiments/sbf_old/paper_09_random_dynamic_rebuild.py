@@ -133,8 +133,8 @@ def stage_names(args: argparse.Namespace) -> list[str]:
     return names
 
 
-def configure_case(args: argparse.Namespace, method: str, seed: int) -> sbf.SBFConfig:
-    cfg = configure_standalone_sbf(args, seed, preset=method)
+def configure_case(args: argparse.Namespace, method: str, seed: int, robot: Any | None = None) -> sbf.SBFConfig:
+    cfg = configure_standalone_sbf(args, seed, preset=method, robot=robot)
     dynamic = getattr(cfg, "dynamic_update", None)
     if dynamic is not None:
         set_if_available(dynamic, "enable_spatial_dirty_region", True)
@@ -152,8 +152,8 @@ def configure_case(args: argparse.Namespace, method: str, seed: int) -> sbf.SBFC
     return cfg
 
 
-def configure_warm_case(args: argparse.Namespace, method: str, seed: int, namespace: str) -> sbf.SBFConfig:
-    cfg = configure_case(args, method, seed)
+def configure_warm_case(args: argparse.Namespace, method: str, seed: int, namespace: str, robot: Any | None = None) -> sbf.SBFConfig:
+    cfg = configure_case(args, method, seed, robot=robot)
     cfg.database.path = str(args.cache_root / namespace)
     cfg.database.create_if_missing = True
     cfg.database.verify_identity = True
@@ -274,7 +274,7 @@ def cold_baseline_rows(args: argparse.Namespace,
     if not args.cold_baseline:
         return rows
     for stage_index, stage in enumerate(stages):
-        cfg = configure_case(args, method, seed=100000 * scene_seed + 997 * stage_index)
+        cfg = configure_case(args, method, seed=100000 * scene_seed + 997 * stage_index, robot=robot)
         forest = sbf.SafeBoxForest(robot, cfg)
         obstacles = prefix_obstacles(scene.obstacles, stage)
         build_t0 = time.perf_counter()
@@ -322,7 +322,7 @@ def run_warm_rebuild_path(args: argparse.Namespace,
     for transition_index, (from_stage, to_stage) in enumerate(zip(order, order[1:])):
         namespace = warm_cache_namespace(args, robot_name, method, direction, from_stage, to_stage, scene_seed)
         seed_base = 200000 * scene_seed + (11 if direction == "few_to_many" else 29) + 1009 * transition_index
-        source_cfg = configure_warm_case(args, method, seed_base, namespace)
+        source_cfg = configure_warm_case(args, method, seed_base, namespace, robot=robot)
         source_forest = sbf.SafeBoxForest(robot, source_cfg)
         source_obstacles = prefix_obstacles(scene.obstacles, from_stage)
         source_t0 = time.perf_counter()
@@ -332,7 +332,7 @@ def run_warm_rebuild_path(args: argparse.Namespace,
             initial_build_s = float(source_build_s)
             initial_profile = source_profile
 
-        target_cfg = configure_warm_case(args, method, seed_base, namespace)
+        target_cfg = configure_warm_case(args, method, seed_base, namespace, robot=robot)
         target_forest = sbf.SafeBoxForest(robot, target_cfg)
         target_obstacles = prefix_obstacles(scene.obstacles, to_stage)
         warm_t0 = time.perf_counter()
@@ -361,7 +361,8 @@ def run_warm_rebuild_path(args: argparse.Namespace,
         })
     if initial_build_s is None:
         cfg = configure_warm_case(args, method, 200000 * scene_seed + (11 if direction == "few_to_many" else 29),
-                                  warm_cache_namespace(args, robot_name, method, direction, initial_stage, initial_stage, scene_seed))
+                      warm_cache_namespace(args, robot_name, method, direction, initial_stage, initial_stage, scene_seed),
+                      robot=robot)
         initial_forest = sbf.SafeBoxForest(robot, cfg)
         build_t0 = time.perf_counter()
         initial_profile = initial_forest.build_coverage(initial_obstacles, [scene.start, scene.goal])
@@ -444,7 +445,7 @@ def run_few_to_many(args: argparse.Namespace,
                     stages: list[str],
                     cold: dict[str, dict[str, Any]],
                     warm: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    cfg = configure_case(args, method, seed=200000 * scene_seed + 11)
+    cfg = configure_case(args, method, seed=200000 * scene_seed + 11, robot=robot)
     forest = sbf.SafeBoxForest(robot, cfg)
     initial_stage = stages[0]
     initial_obstacles = prefix_obstacles(scene.obstacles, initial_stage)
@@ -487,7 +488,7 @@ def run_many_to_few(args: argparse.Namespace,
                     stages: list[str],
                     cold: dict[str, dict[str, Any]],
                     warm: dict[str, dict[str, Any]]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    cfg = configure_case(args, method, seed=200000 * scene_seed + 29)
+    cfg = configure_case(args, method, seed=200000 * scene_seed + 29, robot=robot)
     forest = sbf.SafeBoxForest(robot, cfg)
     ordered = list(stages)
     initial_stage = ordered[-1]

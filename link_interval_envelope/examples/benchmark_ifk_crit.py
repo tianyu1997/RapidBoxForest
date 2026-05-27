@@ -138,7 +138,7 @@ def main() -> None:
     parser.add_argument(
         "--envelope-type",
         default="link_iaabb",
-        choices=["link_iaabb", "link_iaabb_grid", "hull16_grid"],
+        choices=["link_iaabb", "kdop", "support_hull"],
     )
     parser.add_argument(
         "--sources",

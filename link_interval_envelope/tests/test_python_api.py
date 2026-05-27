@@ -192,7 +192,7 @@ class LinkIntervalEnvelopePythonTests(unittest.TestCase):
             ROBOT,
             intervals,
             endpoint_source="critsample",
-            envelope_type="link_iaabb_grid",
+            envelope_type="support_hull",
             n_subdivisions=4,
             endpoint_threads=1,
         )
@@ -200,7 +200,7 @@ class LinkIntervalEnvelopePythonTests(unittest.TestCase):
             ROBOT,
             intervals,
             endpoint_source="critsample",
-            envelope_type="link_iaabb_grid",
+            envelope_type="support_hull",
             n_subdivisions=4,
             endpoint_threads=2,
             parallel_min_combos=1,
@@ -213,11 +213,7 @@ class LinkIntervalEnvelopePythonTests(unittest.TestCase):
             serial["endpoint"]["endpoint_iaabbs_flat"],
             parallel["endpoint"]["endpoint_iaabbs_flat"],
         )
-        grid = parallel["envelope"]["grid"]
-        self.assertGreaterEqual(grid["fill_time_us"], 0.0)
-        self.assertGreaterEqual(grid["capacity"], grid["n_bricks"])
-        self.assertGreater(grid["range_write_count"], 0)
-        self.assertGreater(grid["brick_write_count"], 0)
+        self.assertEqual(parallel["envelope"]["type"], "SupportHull")
 
     def test_ifk_hifk_and_critsample_batch_matches_sequential(self) -> None:
         boxes = [

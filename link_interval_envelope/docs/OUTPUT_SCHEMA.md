@@ -44,7 +44,7 @@ Endpoint box layout is per active link, two endpoints per link, six numbers per 
 
 ## `envelope`
 
-- `type`: `LinkIAABB`, `LinkIAABB_Grid`, or `Hull16_Grid`.
+- `type`: `LinkIAABB`, `KDOP`, or `SupportHull`.
 - `n_subdivisions`
 - `shape`: `[n_active_links, n_subdivisions, 6]`.
 - `active_link_map`
@@ -52,18 +52,8 @@ Endpoint box layout is per active link, two endpoints per link, six numbers per 
 - `link_iaabbs_flat`: raw core link boxes, not radius-inflated.
 - `inflated_link_iaabbs_flat`: visualization boxes inflated by active link radii.
 - `links`: per-link/per-subdivision records with raw and inflated AABBs.
-- `grid`: grid metadata for grid envelope types.
 
-## `grid`
-
-- `has_grid`
-- `delta`
-- `safety_pad`
-- `n_bricks`
-- `n_occupied`
-- `occupied_volume`
-- `centres`: optional occupied voxel centers when `include_voxels="centres"`.
-- `bricks`: optional sparse brick payload when `include_voxels="bricks"`.
+The current no-grid schema does not emit a separate `grid` section.
 
 ## `incremental`
 

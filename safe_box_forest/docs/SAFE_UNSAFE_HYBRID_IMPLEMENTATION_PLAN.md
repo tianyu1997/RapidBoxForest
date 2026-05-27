@@ -2,8 +2,8 @@
 
 This document is the phased implementation plan for turning standalone SBF into a coverage-first hybrid planner. The central split is:
 
-- **Safe path**: conservative endpoint source, strict padding, certified boxes.
-- **Unsafe path**: fast heuristic endpoint source, relaxed grid padding, provisional boxes, final path audit and local repair.
+- **Safe path**: conservative endpoint source, certified no-grid envelopes, certified boxes.
+- **Unsafe path**: fast heuristic endpoint source, tighter no-grid envelopes, provisional boxes, final path audit and local repair.
 
 The current project goal is not to prove every near-obstacle point with a large box. The grower should spend most time producing few, large boxes that cover as much free space as possible and keep the number of islands small. Hard areas are handed to the connector as point-validated segment edges.
 
@@ -12,8 +12,7 @@ The current project goal is not to prove every near-obstacle point with a large 
 Implemented in the current SBF branch:
 
 - Phase 0 API: `EndpointSafetyLevel` is stored on endpoint and batch results, exposed through C++/Python bindings, and reported by the Python wrapper.
-- Phase 1 API: `GridPadPolicy` with `StrictHalfDiagonal`, `NoExtraPad`, and `Custom` is wired into `GridConfig` and `SparseVoxelGrid` construction. The default remains strict.
-- Phase 1 correctness guard: LECT grid lookup now requires matching `safety_pad`, so strict and no-pad grids are not silently reused across modes.
+- Phase 1 surface: the old rasterized envelope branch has been retired in favor of `LinkIAABB`, `KDOP`, and `SupportHull`. The default certified path remains conservative.
 - Phase 2 foundation: `OracleValidationMode` supports `StrictCertificate` and `CoverageHeuristic`. Strict mode rejects unsafe endpoint free evidence; coverage mode can classify it as `ProvisionalFree`.
 - Phase 3 foundation: `BoxCommitPolicy` supports `CommitCertifiedOnly`, `CommitProvisionalAllowed`, and `AuditBeforeCommit`. Committed `BoxNode`s carry `safety_status` and `strict_audit_required`.
 - Phase 4 foundation: `GrowerConfig.coverage_first_stop_loss` turns repeated hard FFB leaves into hard-frontier stop-loss diagnostics while preserving strict defaults. Build diagnostics now separate certified/provisional committed volume.
@@ -25,10 +24,8 @@ Minimal unsafe coverage configuration:
 
 ```python
 cfg.endpoint_source.source = sbf.EndpointSource.CritSample
-cfg.envelope_type.type = sbf.EnvelopeType.Hull_Grid
-cfg.envelope_type.grid_config.pad_policy = sbf.GridPadPolicy.NoExtraPad
+cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
 cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
-cfg.validation.enable_grid_refinement = True
 cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
 cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitProvisionalAllowed
 cfg.grower.coverage_first_stop_loss = True
@@ -74,33 +71,26 @@ Acceptance criteria:
 - Analytical/GCPC are not silently promoted by channel; they remain explicit policy decisions.
 - Existing source/channel behavior remains backward-compatible.
 
-## Phase 1: Grid Pad Policy
+## Phase 1: Envelope Tightness Policy
 
-**Goal**: allow unsafe coverage to avoid the strict voxel safety pad without claiming a certificate.
+**Goal**: allow unsafe coverage to choose tighter no-grid envelopes without claiming a certificate.
 
 Current state:
 
-- `SparseVoxelGrid(delta)` defaults to `sqrt(3) * delta / 2` safety pad.
-- With `delta=0.04`, this is `0.034641`, which is larger than the clearance of the 177 Marcucci depth-cap point leaves.
+- The rasterized envelope branch has been removed.
+- `LinkIAABB`, `KDOP`, and `SupportHull` are the only active envelope families.
 
 Implementation tasks:
 
-1. Add `GridPadPolicy`:
-   - `StrictHalfDiagonal`: current default, sound baseline.
-   - `NoExtraPad`: removes only the voxel-discretization pad, not link radius.
-   - `Custom`: caller-provided pad.
-2. Add fields to `GridConfig`:
-   - `pad_policy`.
-   - `custom_safety_pad`.
-3. Route `GridConfig` into `SparseVoxelGrid(delta, ..., safety_pad)` in `compute_link_envelope()`.
-4. Expose policy and custom pad in Python bindings and wrappers.
-5. Add metadata in experiment outputs: `safety_pad` already reports the effective pad; outputs should also report the policy.
+1. Make the coverage path choose between `LinkIAABB`, `KDOP`, and `SupportHull` explicitly.
+2. Keep the strict certified path on the most conservative requested representation.
+3. Report the chosen representation in experiment metadata and planner diagnostics.
 
 Acceptance criteria:
 
 - Default behavior stays strict and unchanged.
-- Unsafe configurations can set `NoExtraPad`.
-- Any no-pad grid result is metadata-marked and must not be used as certified free by itself.
+- Unsafe configurations may tighten envelopes, but they remain metadata-marked and cannot certify free space by themselves.
+- Experiment outputs make the representation choice explicit.
 
 ## Phase 2: Dual Oracle Modes
 

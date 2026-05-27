@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <filesystem>
+#include <limits>
 #include <optional>
 #include <vector>
 
@@ -30,22 +31,22 @@ void require(bool condition) {
     }
 }
 
-void test_database_box_oracle_topology_and_cache() {
-    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_adapter_test";
-    std::filesystem::remove_all(dir);
-    auto robot = make_toy_robot();
-    const auto root = robot.joint_limits().limits;
-
+ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
+                                          const rbf::Robot& robot,
+                                          const std::vector<rbf::Interval>& root,
+                                          std::string endpoint_descriptor,
+                                          std::string envelope_descriptor) {
     ld::SplitPolicyDescriptor split;
     split.strategy = ld::SplitStrategy::WidestRoot;
     split.midpoint = true;
+
     ld::LectDatabaseIdentity identity;
     identity.robot_fingerprint = robot.fingerprint();
     identity.root_domain_fingerprint = ld::fingerprint_intervals(root);
     identity.split_policy_hash = ld::split_policy_hash(split);
     identity.split_policy_descriptor = ld::split_policy_descriptor(split);
-    identity.endpoint_descriptor = "planning_database_oracle_ifk";
-    identity.envelope_descriptor = "planning_database_oracle_link_iaabb";
+    identity.endpoint_descriptor = std::move(endpoint_descriptor);
+    identity.envelope_descriptor = std::move(envelope_descriptor);
     identity.payload_layout = "endpoint_envelope_v1";
 
     ld::LectDatabaseConfig db_config;
@@ -53,6 +54,21 @@ void test_database_box_oracle_topology_and_cache() {
     db_config.root_intervals = root;
     db_config.split_policy = split;
     db_config.identity = identity;
+    return db_config;
+}
+
+void test_database_box_oracle_topology_and_cache() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_adapter_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabaseConfig db_config = make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
     db_config.page_size_bytes = 160;
     db_config.max_resident_pages = 2;
     ld::LectDatabase database;
@@ -105,23 +121,12 @@ void test_database_box_oracle_sessions_commit_and_remap() {
     auto robot = make_toy_robot();
     const auto root = robot.joint_limits().limits;
 
-    ld::SplitPolicyDescriptor split;
-    split.strategy = ld::SplitStrategy::WidestRoot;
-    split.midpoint = true;
-    ld::LectDatabaseIdentity identity;
-    identity.robot_fingerprint = robot.fingerprint();
-    identity.root_domain_fingerprint = ld::fingerprint_intervals(root);
-    identity.split_policy_hash = ld::split_policy_hash(split);
-    identity.split_policy_descriptor = ld::split_policy_descriptor(split);
-    identity.endpoint_descriptor = "planning_database_oracle_ifk";
-    identity.envelope_descriptor = "planning_database_oracle_link_iaabb";
-    identity.payload_layout = "endpoint_envelope_v1";
-
-    ld::LectDatabaseConfig db_config;
-    db_config.path = dir;
-    db_config.root_intervals = root;
-    db_config.split_policy = split;
-    db_config.identity = identity;
+    ld::LectDatabaseConfig db_config = make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
     ld::LectDatabase database;
     std::string reason;
     require(database.open(db_config, &reason));
@@ -183,10 +188,209 @@ void test_database_box_oracle_sessions_commit_and_remap() {
     std::filesystem::remove_all(dir);
 }
 
+void test_database_box_oracle_supports_deep_path_keys() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_deep_path_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabaseConfig db_config = make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+    db_config.max_tree_depth = 80;
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(db_config, &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::DatabaseBoxOracle oracle(robot, database, rbf::Scene{}, endpoint_config, envelope_config, {});
+
+    rbf::OracleNodeId node = oracle.root_node();
+    for (int depth = 0; depth < 70; ++depth) {
+        const auto intervals = oracle.node_intervals(node);
+        const auto split = oracle.split_node(node, intervals, -1, {});
+        require(split.split);
+        require(split.left >= 0);
+        require(split.right >= 0);
+        require(split.left != split.right);
+        node = split.right;
+        require(oracle.depth(node) == depth + 1);
+        require(!oracle.node_intervals(node).empty());
+    }
+
+    require(oracle.depth(node) == 70);
+    oracle.reserve_node(node, 99);
+    require(oracle.is_reserved(node));
+    require(oracle.reservation_owner(node).value() == 99);
+    oracle.release_node(node);
+    require(!oracle.is_reserved(node));
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_external_evidence_reuses_when_handles_differ() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_active_mismatch_test";
+    const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_external_mismatch_test";
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    auto active_config = make_test_db_config(
+        active_dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+    auto external_config = make_test_db_config(
+        external_dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+
+    ld::LectDatabase active_database;
+    ld::LectDatabase external_database;
+    std::string reason;
+    require(active_database.open(active_config, &reason));
+    require(external_database.open(external_config, &reason));
+
+    const auto active_root_children = active_database.split_leaf(active_database.root_node());
+    require(ld::valid_node_id(active_root_children.first));
+    require(ld::valid_node_id(active_root_children.second));
+    const auto active_left_children = active_database.split_leaf(active_root_children.first);
+    require(ld::valid_node_id(active_left_children.first));
+    const auto active_right_children = active_database.split_leaf(active_root_children.second);
+    const ld::NodeId active_target = active_right_children.first;
+
+    const auto external_root_children = external_database.split_leaf(external_database.root_node());
+    require(ld::valid_node_id(external_root_children.first));
+    require(ld::valid_node_id(external_root_children.second));
+    const auto external_right_children = external_database.split_leaf(external_root_children.second);
+    const ld::NodeId external_target = external_right_children.first;
+    require(active_target != external_target);
+
+    ld::EvidenceRecord external_record;
+    external_record.key.node_id = external_target;
+    external_record.key.sector = ld::kPrimarySector;
+    external_record.key.channel = ld::EvidenceChannel::Safe;
+    external_record.key.endpoint_source = rbf::EndpointSource::IFK;
+    external_record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+    external_record.payload.assign(12, 0.0f);
+    require(external_database.put_evidence(std::move(external_record)));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.external_evidence_materialization = true;
+    validation_config.external_evidence_backfill_active = false;
+
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        active_database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config,
+        &external_database);
+
+    const auto target_box = oracle.node_intervals(static_cast<rbf::OracleNodeId>(active_target));
+    (void)oracle.validate_node(static_cast<rbf::OracleNodeId>(active_target),
+                               target_box,
+                               active_database.topology(active_root_children.second).split_dim);
+    require(oracle.counters().materialization_reused_external_evidence == 1);
+    require(oracle.counters().materializations == 0);
+    require(active_database.evidence_count() == 0);
+    require(oracle.last_validation_detail().reused_external_evidence);
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
+void test_external_child_hull_reuses_unified_envelope_evidence() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_active_child_hull_test";
+    const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_external_child_hull_test";
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    auto active_config = make_test_db_config(
+        active_dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+    auto external_config = make_test_db_config(
+        external_dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+
+    ld::LectDatabase active_database;
+    ld::LectDatabase external_database;
+    std::string reason;
+    require(active_database.open(active_config, &reason));
+    require(external_database.open(external_config, &reason));
+
+    ld::EvidenceRecord external_record;
+    external_record.key.node_id = 0;
+    external_record.key.sector = ld::kPrimarySector;
+    external_record.key.channel = ld::EvidenceChannel::Safe;
+    external_record.key.endpoint_source = rbf::EndpointSource::IFK;
+    external_record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+    external_record.child_hull = true;
+    external_record.payload.assign(12, 0.0f);
+    require(external_database.put_evidence(std::move(external_record)));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.external_evidence_materialization = true;
+    validation_config.external_evidence_backfill_active = false;
+
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        active_database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config,
+        &external_database);
+
+    const auto root_box = oracle.root_intervals();
+    (void)oracle.validate_node(oracle.root_node(), root_box, -1);
+    require(oracle.counters().materialization_reused_external_evidence == 1);
+    require(oracle.counters().materializations == 0);
+    require(active_database.evidence_count() == 0);
+    require(oracle.last_validation_detail().reused_external_evidence);
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
 }  // namespace
 
 int main() {
     test_database_box_oracle_topology_and_cache();
     test_database_box_oracle_sessions_commit_and_remap();
+    test_database_box_oracle_supports_deep_path_keys();
+    test_external_evidence_reuses_when_handles_differ();
+    test_external_child_hull_reuses_unified_envelope_evidence();
     return 0;
 }

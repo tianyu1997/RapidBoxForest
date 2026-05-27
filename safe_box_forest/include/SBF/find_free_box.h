@@ -26,7 +26,7 @@ struct FindFreeBoxResult {
 	bool hit_unknown_depth_cap = false;
 	bool deadline_reached = false;
 	int fail_code = 0;
-	int node = -1;
+	OracleNodeId node = kInvalidOracleNodeId;
 	int decisions = 0;
 	int splits = 0;
 	int changed_dim = -1;

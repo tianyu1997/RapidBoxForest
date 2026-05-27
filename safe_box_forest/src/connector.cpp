@@ -366,7 +366,7 @@ bool point_covered_by_existing_box(const std::vector<BoxNode>& boxes,
     });
 }
 
-bool tree_node_committed(const std::vector<BoxNode>& boxes, int tree_node) {
+bool tree_node_committed(const std::vector<BoxNode>& boxes, std::int64_t tree_node) {
     return std::any_of(boxes.begin(), boxes.end(), [&](const BoxNode& box) {
         return box.tree_id == tree_node;
     });

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <system_error>
 
@@ -55,9 +56,21 @@ rbf::lect_database::LectDatabaseConfig make_worker_database_config(const Databas
     return config;
 }
 
-int remap_lookup(const std::unordered_map<int, int>& node_remap, int worker_node) {
+lect_database::NodeId to_database_node(OracleNodeId node) {
+    if (node < 0 || static_cast<std::uint64_t>(node) > std::numeric_limits<lect_database::NodeId>::max()) {
+        return lect_database::kInvalidNodeId;
+    }
+    return static_cast<lect_database::NodeId>(node);
+}
+
+OracleNodeId from_database_node(lect_database::NodeId node) {
+    return lect_database::valid_node_id(node) ? static_cast<OracleNodeId>(node) : kInvalidOracleNodeId;
+}
+
+OracleNodeId remap_lookup(const std::unordered_map<OracleNodeId, OracleNodeId>& node_remap,
+                          OracleNodeId worker_node) {
     const auto it = node_remap.find(worker_node);
-    return it == node_remap.end() ? -1 : it->second;
+    return it == node_remap.end() ? kInvalidOracleNodeId : it->second;
 }
 
 }  // namespace
@@ -67,9 +80,11 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
                                      Scene scene,
                                      EndpointSourceConfig endpoint_config,
                                      EnvelopeTypeConfig envelope_config,
-                                     OracleValidationConfig validation_config)
+                                                                         OracleValidationConfig validation_config,
+                                                                         const lect_database::LectDatabase* external_evidence_database)
     : robot_(std::move(robot)),
       database_(database),
+            external_evidence_database_(external_evidence_database),
       endpoint_config_(std::move(endpoint_config)),
       envelope_config_(std::move(envelope_config)),
       validation_config_(std::move(validation_config)),
@@ -81,10 +96,12 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
                                                                          Scene scene,
                                                                          EndpointSourceConfig endpoint_config,
                                                                          EnvelopeTypeConfig envelope_config,
-                                                                         OracleValidationConfig validation_config)
+                                                                         OracleValidationConfig validation_config,
+                                                                         const lect_database::LectDatabase* external_evidence_database)
         : robot_(std::move(robot)),
             database_(online_cache.database()),
             online_cache_(&online_cache),
+            external_evidence_database_(external_evidence_database),
             endpoint_config_(std::move(endpoint_config)),
             envelope_config_(std::move(envelope_config)),
             validation_config_(std::move(validation_config)),
@@ -95,21 +112,25 @@ int DatabaseBoxOracle::n_dims() const {
     return static_cast<int>(database_.root_intervals().size());
 }
 
+int DatabaseBoxOracle::max_tree_depth() const {
+    return database_.max_tree_depth();
+}
+
 const std::vector<Interval>& DatabaseBoxOracle::root_intervals() const {
     return database_.root_intervals();
 }
 
-std::vector<Interval> DatabaseBoxOracle::node_intervals(int node) const {
+std::vector<Interval> DatabaseBoxOracle::node_intervals(OracleNodeId node) const {
     if (online_cache_ != nullptr) {
-        auto box = online_cache_->node_intervals(static_cast<lect_database::NodeId>(node));
+        auto box = online_cache_->node_intervals(to_database_node(node));
         return box ? std::move(*box) : database_.root_intervals();
     }
-    auto box = database_.node_box(static_cast<lect_database::NodeId>(node));
+    auto box = database_.node_box(to_database_node(node));
     return box ? std::move(*box) : database_.root_intervals();
 }
 
-bool DatabaseBoxOracle::contains_point(int node, const Eigen::Ref<const Eigen::VectorXd>& q) const {
-    const auto box = database_.node_box(static_cast<lect_database::NodeId>(node));
+bool DatabaseBoxOracle::contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const {
+    const auto box = database_.node_box(to_database_node(node));
     if (!box || q.size() != static_cast<int>(box->size())) {
         return false;
     }
@@ -121,39 +142,39 @@ bool DatabaseBoxOracle::contains_point(int node, const Eigen::Ref<const Eigen::V
     return true;
 }
 
-bool DatabaseBoxOracle::is_leaf(int node) const {
+bool DatabaseBoxOracle::is_leaf(OracleNodeId node) const {
     if (online_cache_ != nullptr) {
-        return online_cache_->is_leaf(static_cast<lect_database::NodeId>(node));
+        return online_cache_->is_leaf(to_database_node(node));
     }
-    return database_.topology(static_cast<lect_database::NodeId>(node)).leaf;
+    return database_.topology(to_database_node(node)).leaf;
 }
 
-int DatabaseBoxOracle::depth(int node) const {
+int DatabaseBoxOracle::depth(OracleNodeId node) const {
     if (online_cache_ != nullptr) {
-        return online_cache_->depth(static_cast<lect_database::NodeId>(node));
+        return online_cache_->depth(to_database_node(node));
     }
-    return database_.topology(static_cast<lect_database::NodeId>(node)).depth;
+    return database_.topology(to_database_node(node)).depth;
 }
 
-int DatabaseBoxOracle::split_dim(int node) const {
-    return database_.topology(static_cast<lect_database::NodeId>(node)).split_dim;
+int DatabaseBoxOracle::split_dim(OracleNodeId node) const {
+    return database_.topology(to_database_node(node)).split_dim;
 }
 
-double DatabaseBoxOracle::split_value(int node) const {
-    return database_.topology(static_cast<lect_database::NodeId>(node)).split_value;
+double DatabaseBoxOracle::split_value(OracleNodeId node) const {
+    return database_.topology(to_database_node(node)).split_value;
 }
 
-int DatabaseBoxOracle::left_child(int node) const {
-    const auto id = database_.topology(static_cast<lect_database::NodeId>(node)).left;
-    return lect_database::valid_node_id(id) ? static_cast<int>(id) : -1;
+OracleNodeId DatabaseBoxOracle::left_child(OracleNodeId node) const {
+    const auto id = database_.topology(to_database_node(node)).left;
+    return from_database_node(id);
 }
 
-int DatabaseBoxOracle::right_child(int node) const {
-    const auto id = database_.topology(static_cast<lect_database::NodeId>(node)).right;
-    return lect_database::valid_node_id(id) ? static_cast<int>(id) : -1;
+OracleNodeId DatabaseBoxOracle::right_child(OracleNodeId node) const {
+    const auto id = database_.topology(to_database_node(node)).right;
+    return from_database_node(id);
 }
 
-SplitNodeResult DatabaseBoxOracle::split_node(int node,
+SplitNodeResult DatabaseBoxOracle::split_node(OracleNodeId node,
                                               const std::vector<Interval>& intervals,
                                               int changed_dim,
                                               const OracleSplitOptions& options) {
@@ -162,32 +183,32 @@ SplitNodeResult DatabaseBoxOracle::split_node(int node,
     (void)options;
     SplitNodeResult result;
     const auto children = online_cache_ != nullptr
-        ? online_cache_->split_leaf(static_cast<lect_database::NodeId>(node))
-        : database_.split_leaf(static_cast<lect_database::NodeId>(node));
+        ? online_cache_->split_leaf(to_database_node(node))
+        : database_.split_leaf(to_database_node(node));
     if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
         return result;
     }
-    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    const auto topology = database_.topology(to_database_node(node));
     result.split = true;
     result.node = node;
-    result.left = static_cast<int>(children.first);
-    result.right = static_cast<int>(children.second);
+    result.left = from_database_node(children.first);
+    result.right = from_database_node(children.second);
     result.split_dim = topology.split_dim;
     result.split_value = topology.split_value;
     return result;
 }
 
-SplitNodeResult DatabaseBoxOracle::split_node_at(int node, int split_dim, double split_value) {
+SplitNodeResult DatabaseBoxOracle::split_node_at(OracleNodeId node, int split_dim, double split_value) {
     SplitNodeResult result;
-    const auto children = database_.split_leaf(static_cast<lect_database::NodeId>(node), split_dim, split_value);
+    const auto children = database_.split_leaf(to_database_node(node), split_dim, split_value);
     if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
         return result;
     }
-    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
+    const auto topology = database_.topology(to_database_node(node));
     result.split = true;
     result.node = node;
-    result.left = static_cast<int>(children.first);
-    result.right = static_cast<int>(children.second);
+    result.left = from_database_node(children.first);
+    result.right = from_database_node(children.second);
     result.split_dim = topology.split_dim;
     result.split_value = topology.split_value;
     return result;
@@ -197,9 +218,12 @@ bool DatabaseBoxOracle::point_in_collision(const Eigen::Ref<const Eigen::VectorX
     return checker_.check_config(q);
 }
 
-lect_database::EvidenceKey DatabaseBoxOracle::endpoint_key(int node) const {
+lect_database::EvidenceKey DatabaseBoxOracle::endpoint_key(OracleNodeId node) const {
     lect_database::EvidenceKey key;
-    key.node_id = static_cast<lect_database::NodeId>(node);
+    key.node_id = to_database_node(node);
+    const auto topology = database_.topology(key.node_id);
+    key.node_path = topology.path;
+    key.node_path_valid = lect_database::valid_node_id(topology.id);
     key.sector = lect_database::kPrimarySector;
     key.channel = database_channel_for_endpoint(endpoint_config_.source);
     key.endpoint_source = endpoint_config_.source;
@@ -208,22 +232,36 @@ lect_database::EvidenceKey DatabaseBoxOracle::endpoint_key(int node) const {
 }
 
 std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
-    int node,
+    OracleNodeId node,
     const std::vector<Interval>& intervals,
     int changed_dim) {
     const auto key = endpoint_key(node);
-    const auto topology = database_.topology(static_cast<lect_database::NodeId>(node));
     if (online_cache_ != nullptr) {
         if (auto cached = online_cache_->evidence(key)) {
-            if (topology.leaf || cached->child_hull) {
-                counters_.materialization_reused_endpoint_cache += 1;
-                return std::move(cached->payload);
-            }
+            counters_.materialization_reused_endpoint_cache += 1;
+            return std::move(cached->payload);
         }
     }
     if (auto cached = database_.evidence(key)) {
-        if (topology.leaf || cached->child_hull) {
-            counters_.materialization_reused_endpoint_cache += 1;
+        counters_.materialization_reused_endpoint_cache += 1;
+        return std::vector<float>(cached->payload.begin(), cached->payload.end());
+    }
+    if (validation_config_.external_evidence_materialization && external_evidence_database_ != nullptr) {
+        if (auto cached = external_evidence_database_->evidence(key)) {
+            counters_.materialization_reused_external_evidence += 1;
+            last_validation_detail_.reused_external_evidence = true;
+            if (validation_config_.external_evidence_backfill_active) {
+                lect_database::EvidenceRecord backfill;
+                backfill.key = key;
+                backfill.child_hull = cached->child_hull;
+                backfill.unavailable = cached->unavailable;
+                backfill.payload.assign(cached->payload.begin(), cached->payload.end());
+                if (online_cache_ != nullptr) {
+                    online_cache_->put_evidence(backfill);
+                } else {
+                    database_.put_evidence(std::move(backfill));
+                }
+            }
             return std::vector<float>(cached->payload.begin(), cached->payload.end());
         }
     }
@@ -256,7 +294,7 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
     return std::nullopt;
 }
 
-BoxValidation DatabaseBoxOracle::classify_payload(int node,
+BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
                                                   const std::vector<Interval>& intervals,
                                                   const std::vector<float>& endpoint_payload) {
     (void)intervals;
@@ -296,7 +334,7 @@ BoxValidation DatabaseBoxOracle::classify_payload(int node,
     return BoxValidation::Unknown;
 }
 
-BoxValidation DatabaseBoxOracle::validate_node(int node,
+BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
                                                const std::vector<Interval>& intervals,
                                                int changed_dim) {
     counters_.node_validations += 1;
@@ -327,21 +365,21 @@ bool DatabaseBoxOracle::validate_intervals(const std::vector<Interval>& interval
     return !checker_.check_box(intervals);
 }
 
-bool DatabaseBoxOracle::is_reserved(int node) const {
+bool DatabaseBoxOracle::is_reserved(OracleNodeId node) const {
     return node_to_box_.find(node) != node_to_box_.end();
 }
 
-std::optional<int> DatabaseBoxOracle::reservation_owner(int node) const {
+std::optional<int> DatabaseBoxOracle::reservation_owner(OracleNodeId node) const {
     const auto it = node_to_box_.find(node);
     return it == node_to_box_.end() ? std::nullopt : std::optional<int>(it->second);
 }
 
-void DatabaseBoxOracle::reserve_node(int node, int box_id) {
+void DatabaseBoxOracle::reserve_node(OracleNodeId node, int box_id) {
     node_to_box_[node] = box_id;
     box_to_node_[box_id] = node;
 }
 
-void DatabaseBoxOracle::release_node(int node) {
+void DatabaseBoxOracle::release_node(OracleNodeId node) {
     const auto it = node_to_box_.find(node);
     if (it == node_to_box_.end()) {
         return;
@@ -364,22 +402,21 @@ void DatabaseBoxOracle::clear_reservations() {
     box_to_node_.clear();
 }
 
-int DatabaseBoxOracle::select_unexplored_node() const {
-    for (lect_database::NodeId node_id = 0; node_id < database_.node_count(); ++node_id) {
+OracleNodeId DatabaseBoxOracle::select_unexplored_node() const {
+    for (lect_database::NodeId node_id : database_.node_ids()) {
         const auto topology = database_.topology(node_id);
-        const int node = static_cast<int>(node_id);
+        const OracleNodeId node = from_database_node(node_id);
         if (topology.leaf && !is_reserved(node)) {
             return node;
         }
     }
-    return -1;
+    return kInvalidOracleNodeId;
 }
 
-int DatabaseBoxOracle::common_ancestor_depth(int lhs_node, int rhs_node) const {
-    const auto lhs = static_cast<lect_database::NodeId>(lhs_node);
-    const auto rhs = static_cast<lect_database::NodeId>(rhs_node);
-    if (lhs_node < 0 || rhs_node < 0 ||
-        lhs >= database_.node_count() || rhs >= database_.node_count()) {
+int DatabaseBoxOracle::common_ancestor_depth(OracleNodeId lhs_node, OracleNodeId rhs_node) const {
+    const auto lhs = to_database_node(lhs_node);
+    const auto rhs = to_database_node(rhs_node);
+    if (lhs_node < 0 || rhs_node < 0 || !database_.node(lhs) || !database_.node(rhs)) {
         return -1;
     }
     const auto ancestor = database_.lca(lhs, rhs);
@@ -404,8 +441,8 @@ DatabaseBoxOracleSession::DatabaseBoxOracleSession(DatabaseBoxOracle& master,
       master_domain_root_(config.domain_root >= 0 ? config.domain_root : master.root_node()),
       read_only_(config.read_only),
       temp_dir_(make_temp_dir()) {
-    if (master_domain_root_ < 0 || !lect_database::valid_node_id(static_cast<NodeId>(master_domain_root_)) ||
-        static_cast<std::size_t>(master_domain_root_) >= master.database().node_count()) {
+    if (master_domain_root_ < 0 || !lect_database::valid_node_id(to_database_node(master_domain_root_)) ||
+        !master.database().node(to_database_node(master_domain_root_))) {
         throw std::out_of_range("LECTDatabase oracle session domain root is out of range");
     }
     const auto worker_root = master.node_intervals(master_domain_root_);
@@ -458,57 +495,57 @@ bool DatabaseBoxOracleSession::commit() {
     return true;
 }
 
-int DatabaseBoxOracleSession::map_node_to_master(int worker_node) const {
+OracleNodeId DatabaseBoxOracleSession::map_node_to_master(OracleNodeId worker_node) const {
     return remap_lookup(node_remap_, worker_node);
 }
 
-bool DatabaseBoxOracleSession::replay_structure(int worker_node, int master_node) {
+bool DatabaseBoxOracleSession::replay_structure(OracleNodeId worker_node, OracleNodeId master_node) {
     node_remap_[worker_node] = master_node;
-    const auto worker_topology = worker_database_->topology(static_cast<NodeId>(worker_node));
+    const auto worker_topology = worker_database_->topology(to_database_node(worker_node));
     if (worker_topology.leaf) {
         return true;
     }
 
-    auto master_topology = master_.database().topology(static_cast<NodeId>(master_node));
+    auto master_topology = master_.database().topology(to_database_node(master_node));
     if (master_topology.leaf) {
-        const auto children = master_.database().split_leaf(static_cast<NodeId>(master_node),
+        const auto children = master_.database().split_leaf(to_database_node(master_node),
                                                             worker_topology.split_dim,
                                                             worker_topology.split_value);
         if (!lect_database::valid_node_id(children.first) || !lect_database::valid_node_id(children.second)) {
             return false;
         }
-        master_topology = master_.database().topology(static_cast<NodeId>(master_node));
+        master_topology = master_.database().topology(to_database_node(master_node));
     } else if (master_topology.split_dim != worker_topology.split_dim ||
                std::abs(master_topology.split_value - worker_topology.split_value) > 1e-12) {
         return false;
     }
 
-    const int master_left = static_cast<int>(master_topology.left);
-    const int master_right = static_cast<int>(master_topology.right);
+    const OracleNodeId master_left = from_database_node(master_topology.left);
+    const OracleNodeId master_right = from_database_node(master_topology.right);
     if (master_left < 0 || master_right < 0) {
         return false;
     }
-    node_remap_[static_cast<int>(worker_topology.left)] = master_left;
-    node_remap_[static_cast<int>(worker_topology.right)] = master_right;
-    return replay_structure(static_cast<int>(worker_topology.left), master_left) &&
-           replay_structure(static_cast<int>(worker_topology.right), master_right);
+    node_remap_[from_database_node(worker_topology.left)] = master_left;
+    node_remap_[from_database_node(worker_topology.right)] = master_right;
+    return replay_structure(from_database_node(worker_topology.left), master_left) &&
+           replay_structure(from_database_node(worker_topology.right), master_right);
 }
 
 bool DatabaseBoxOracleSession::copy_worker_leaf_evidence() {
     for (const auto& record : worker_database_->evidence_records()) {
-        if (record.child_hull) {
-            continue;
-        }
         const auto topology = worker_database_->topology(record.key.node_id);
         if (!topology.leaf) {
             continue;
         }
-        const int mapped_node = remap_lookup(node_remap_, static_cast<int>(record.key.node_id));
+        const OracleNodeId mapped_node = remap_lookup(node_remap_, from_database_node(record.key.node_id));
         if (mapped_node < 0) {
             return false;
         }
         auto replay = record;
-        replay.key.node_id = static_cast<NodeId>(mapped_node);
+        replay.key.node_id = to_database_node(mapped_node);
+        const auto mapped_topology = master_.database().topology(replay.key.node_id);
+        replay.key.node_path = mapped_topology.path;
+        replay.key.node_path_valid = lect_database::valid_node_id(mapped_topology.id);
         if (!master_.database().put_evidence(std::move(replay))) {
             return false;
         }

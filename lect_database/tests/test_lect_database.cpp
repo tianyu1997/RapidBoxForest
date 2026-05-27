@@ -137,6 +137,55 @@ void test_identity_rejection() {
     std::filesystem::remove_all(dir);
 }
 
+void test_max_tree_depth_limit() {
+    const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_max_tree_depth";
+    std::filesystem::remove_all(dir);
+
+    auto config = config_for(dir);
+    config.max_tree_depth = 2;
+    ld::LectDatabase database;
+    std::string reason;
+    assert(database.open(config, &reason));
+    assert(database.max_tree_depth() == 2);
+
+    const auto root_children = database.split_leaf(database.root_node());
+    assert(root_children.first == 1);
+    assert(root_children.second == 2);
+    assert(!ld::valid_node_id(database.split_leaf(root_children.first).first));
+    assert(!database.ensure_depth(2));
+    assert(database.checkpoint());
+
+    auto reopened = ld::LectDatabase::open_existing(dir, true, &reason);
+    assert(reopened.has_value());
+    assert(reopened->max_tree_depth() == 2);
+
+    auto invalid_config = config_for(dir / "invalid");
+    invalid_config.max_tree_depth = 0;
+    ld::LectDatabase invalid_database;
+    reason.clear();
+    assert(!invalid_database.open(invalid_config, &reason));
+    assert(reason.find("positive") != std::string::npos);
+
+    auto deep_config = config_for(dir / "deep");
+    deep_config.max_tree_depth = 80;
+    ld::LectDatabase deep_database;
+    reason.clear();
+    assert(deep_database.open(deep_config, &reason));
+    ld::NodeId cursor = deep_database.root_node();
+    for (int depth = 0; depth < 70; ++depth) {
+        const auto children = deep_database.split_leaf(cursor);
+        assert(ld::valid_node_id(children.first));
+        assert(ld::valid_node_id(children.second));
+        cursor = children.first;
+        const auto topology = deep_database.topology(cursor);
+        assert(topology.depth == depth + 1);
+        assert(topology.path.bit_count == depth + 1);
+    }
+    assert(deep_database.topology(cursor).path.words.size() >= 2);
+    assert(deep_database.verify(true).ok);
+    std::filesystem::remove_all(dir);
+}
+
 void test_topology_box_and_range_queries() {
     const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_topology";
     {
@@ -233,6 +282,67 @@ void test_split_to_box_and_persistence() {
         assert(reopened->verify(true).ok);
     }
     std::filesystem::remove_all(dir);
+}
+
+void test_path_keys_are_split_order_independent() {
+    const auto dir_a = std::filesystem::temp_directory_path() / "rbf_lect_database_path_keys_a";
+    const auto dir_b = std::filesystem::temp_directory_path() / "rbf_lect_database_path_keys_b";
+    ld::NodeId target_a = ld::kInvalidNodeId;
+    {
+        auto database = make_database(dir_a);
+        const auto root_children = database.split_leaf(database.root_node());
+        assert(root_children.first == 1 && root_children.second == 2);
+        const auto right_children = database.split_leaf(root_children.second);
+        target_a = right_children.first;
+        assert(database.node_count() == 5);
+
+        ld::EvidenceRecord record;
+        record.key.node_id = target_a;
+        record.key.sector = ld::kPrimarySector;
+        record.key.channel = ld::EvidenceChannel::Safe;
+        record.key.endpoint_source = rbf::EndpointSource::IFK;
+        record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+        record.payload = {3.0f, 4.0f, 5.0f, 6.0f};
+        assert(database.put_evidence(record));
+
+        assert(database.checkpoint());
+        std::string reason;
+        auto reopened = ld::LectDatabase::open_existing(dir_a, true, &reason);
+        assert(reopened.has_value());
+        assert(reopened->node_count() == 5);
+        assert(reopened->node(target_a).has_value());
+        assert(reopened->verify(true).ok);
+    }
+    {
+        auto database_a = ld::LectDatabase::open_existing(dir_a, true).value();
+        auto database_b = make_database(dir_b);
+        const auto root_children = database_b.split_leaf(database_b.root_node());
+        assert(root_children.first == 1 && root_children.second == 2);
+        const auto left_children = database_b.split_leaf(root_children.first);
+        assert(left_children.first == 3 && left_children.second == 4);
+        const auto right_children = database_b.split_leaf(root_children.second);
+        assert(right_children.first == 5 && right_children.second == 6);
+        const ld::NodeId target_b = right_children.first;
+        assert(target_a != target_b);
+
+        ld::EvidenceKey cross_db_key;
+        cross_db_key.node_id = target_b;
+        cross_db_key.node_path = database_b.topology(target_b).path;
+        cross_db_key.node_path_valid = true;
+        cross_db_key.sector = ld::kPrimarySector;
+        cross_db_key.channel = ld::EvidenceChannel::Safe;
+        cross_db_key.endpoint_source = rbf::EndpointSource::IFK;
+        cross_db_key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+
+        const auto reused = database_a.evidence(cross_db_key);
+        assert(reused.has_value());
+        assert(reused->key.node_id == target_a);
+        assert(reused->payload.size() == 4);
+        assert(reused->payload[0] == 3.0f);
+        assert(reused->payload[3] == 6.0f);
+    }
+    std::filesystem::remove_all(dir_a);
+    std::filesystem::remove_all(dir_b);
 }
 
 void test_journal_replay_truncated_tail() {
@@ -556,9 +666,11 @@ void test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback() {
 
 int main() {
     test_identity_rejection();
+    test_max_tree_depth_limit();
     test_topology_box_and_range_queries();
     test_depth_synchronous_split_dimensions();
     test_split_to_box_and_persistence();
+    test_path_keys_are_split_order_independent();
     test_journal_replay_truncated_tail();
     test_evidence_journal_replay_without_checkpoint();
     test_evidence_parent_hull_and_exact_box_lookup();

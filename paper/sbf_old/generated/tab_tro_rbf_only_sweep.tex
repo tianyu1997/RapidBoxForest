@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{Standalone link-envelope representation summary over the 2400-box fixed-width corpus. The table reports per-box staged materialization cost for LinkIAABB, KDOP26, SupportHull, and the AABB-first chain variants; the escalation column is the fraction of boxes that must run at least one post-AABB stage.}
+\label{tab:tro_appendix_rbf_only_sweep}
+\footnotesize
+\setlength{\tabcolsep}{2.30pt}
+\renewcommand{\arraystretch}{0.95}
+\begin{tabular}{rllrr}
+\toprule
+Rank & Representation & Payload & Build/box us & Escalation \% \\
+\midrule
+1 & LinkIAABB & 384.0 B & 0.6809 & -- \\
+2 & KDOP26 & 1.62 KB & 1.942 & -- \\
+3 & SupportHull & 832.0 B & 1.767 & -- \\
+4 & AABB->KDOP26 & 854.8 B & 1.273 & 28.3 \\
+5 & AABB->SupportHull & 619.4 B & 1.254 & 28.3 \\
+6 & AABB->KDOP26->SupportHull & 1.06 KB & 1.847 & 28.3 \\
+\bottomrule
+\end{tabular}
+\end{table}

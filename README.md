@@ -1,6 +1,6 @@
-# RBF Workspace
+# RapidBoxForest
 
-This repository root is a workspace-style monorepo for three first-party modules:
+This repository root is the RapidBoxForest workspace-style monorepo for three first-party modules:
 
 - `link_interval_envelope/`: envelope and incremental-FK primitives.
 - `lect_database/`: database, online cache, and the SBF adapter layer.

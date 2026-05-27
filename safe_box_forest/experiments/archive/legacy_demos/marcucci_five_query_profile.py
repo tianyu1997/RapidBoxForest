@@ -33,8 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", type=Path, default=ROOT / "outputs" / "marcucci_five_query" / "critsample_link_grower_only.json")
     parser.add_argument("--attempt", default="critsample_link_grower_only")
     parser.add_argument("--endpoint-source", choices=["ifk", "critsample"], default="critsample")
-    parser.add_argument("--envelope", choices=["link", "hull"], default="link")
-    parser.add_argument("--grid-delta", type=float, default=0.05)
+    parser.add_argument("--envelope", choices=["link", "support_hull"], default="link")
     parser.add_argument("--max-boxes", type=int, default=3000)
     parser.add_argument("--timeout-ms", type=float, default=120000.0)
     parser.add_argument("--ffb-depth", type=int, default=80)
@@ -97,11 +96,10 @@ def configure(args: argparse.Namespace) -> sbf.SBFConfig:
     config.endpoint_source.source = sbf.EndpointSource.IFK if args.endpoint_source == "ifk" else sbf.EndpointSource.CritSample
     envelope_map = {
         "link": sbf.EnvelopeType.LinkIAABB,
-        "hull": sbf.EnvelopeType.Hull_Grid,
+        "support_hull": sbf.EnvelopeType.SupportHull,
     }
     config.envelope_type.type = envelope_map[args.envelope]
     config.envelope_type.n_subdivisions = 4
-    config.envelope_type.grid_config.voxel_delta = float(args.grid_delta)
 
     config.runtime.mode = sbf.ExecutionMode.Parallel if args.threads > 1 else sbf.ExecutionMode.Inline
     config.runtime.n_threads = max(1, int(args.threads))
@@ -679,7 +677,6 @@ def main() -> int:
         "config": {
             "endpoint_source": args.endpoint_source,
             "envelope": args.envelope,
-            "grid_delta": args.grid_delta,
             "max_boxes": args.max_boxes,
             "timeout_ms": args.timeout_ms,
             "ffb_depth": args.ffb_depth,

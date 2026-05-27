@@ -69,10 +69,8 @@ def build_parser() -> argparse.ArgumentParser:
     compute.add_argument("--hifk-n-threads", type=int, default=1, help="reserved HIFK worker count")
     compute.add_argument("--hifk-vol-ratio-thresh", type=float, default=0.0, help="adaptive HIFK split threshold; 0 uses fixed-depth mode")
     compute.add_argument("--gcpc-cache", help="GCPC cache file for --endpoint-source gcpc")
-    compute.add_argument("--env", default="link_iaabb", choices=["link_iaabb", "link_iaabb_grid", "hull16_grid"])
+    compute.add_argument("--env", default="link_iaabb", choices=["link_iaabb", "kdop", "support_hull"])
     compute.add_argument("--n-sub", type=int, default=1)
-    compute.add_argument("--voxel-delta", type=float, default=0.05)
-    compute.add_argument("--include-voxels", default="none", choices=["none", "centres", "bricks"])
     compute.add_argument("--out-json", help="write result JSON")
     compute.add_argument("--out-html", help="write interactive HTML visualization")
     compute.add_argument("--view", default="inflated", choices=["raw", "inflated"])
@@ -93,8 +91,6 @@ def main(argv: list[str] | None = None) -> int:
             endpoint_iaabbs,
             envelope_type=args.env,
             n_subdivisions=args.n_sub,
-            voxel_delta=args.voxel_delta,
-            include_voxels=args.include_voxels,
         )
     else:
         intervals = _load_intervals(args)
@@ -104,7 +100,6 @@ def main(argv: list[str] | None = None) -> int:
             endpoint_source=args.endpoint_source,
             envelope_type=args.env,
             n_subdivisions=args.n_sub,
-            voxel_delta=args.voxel_delta,
             n_samples_crit=args.n_samples_crit,
             endpoint_threads=args.endpoint_threads,
             parallel_min_combos=args.parallel_min_combos,
@@ -115,7 +110,6 @@ def main(argv: list[str] | None = None) -> int:
             hifk_n_threads=args.hifk_n_threads,
             hifk_vol_ratio_thresh=args.hifk_vol_ratio_thresh,
             gcpc_cache=gcpc_cache,
-            include_voxels=args.include_voxels,
         )
 
     if args.out_json:

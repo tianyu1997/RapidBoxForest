@@ -285,6 +285,28 @@ void hifk_aa_bfs_adaptive(
 
 }  // namespace
 
+std::vector<int> aafk_volume_min_depth_schedule(
+    const Robot& robot,
+    const std::vector<Interval>& root_intervals,
+    int max_depth)
+{
+    std::vector<int> schedule;
+    const int effective_max_depth = std::max(0, max_depth);
+    schedule.reserve(static_cast<std::size_t>(effective_max_depth));
+    std::vector<Interval> intervals(root_intervals);
+    for (int depth = 0; depth < effective_max_depth; ++depth) {
+        const int dim = aafk_volume_min_dim(robot, intervals);
+        if (dim < 0 || dim >= static_cast<int>(intervals.size())) {
+            break;
+        }
+        schedule.push_back(dim);
+        const double mid = 0.5 * (intervals[static_cast<std::size_t>(dim)].lo +
+                                  intervals[static_cast<std::size_t>(dim)].hi);
+        intervals[static_cast<std::size_t>(dim)].hi = mid;
+    }
+    return schedule;
+}
+
 EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
     const Robot& robot,
     const std::vector<Interval>& intervals,

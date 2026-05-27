@@ -1,4 +1,4 @@
-This is XeTeX, Version 3.141592653-2.6-0.999993 (TeX Live 2022/dev/Debian) (preloaded format=xelatex 2026.2.28)  26 MAY 2026 14:57
+This is XeTeX, Version 3.141592653-2.6-0.999993 (TeX Live 2022/dev/Debian) (preloaded format=xelatex 2026.2.28)  27 MAY 2026 11:23
 entering extended mode
  restricted \write18 enabled.
  %&-line parsing enabled.
@@ -892,7 +892,7 @@ File: figures/sbf_grow_3.png Graphic file (type bmp)
 File: figures/sbf_grow_5.png Graphic file (type bmp)
 <figures/sbf_grow_5.png>
 LaTeX Font Info:    Font shape `TU/LatinModernRoman(0)/b/n' will be
-(Font)              scaled to size 5.82431pt on input line 774.
+(Font)              scaled to size 5.82431pt on input line 785.
 File: figures/sbf_grow_2.png Graphic file (type bmp)
 <figures/sbf_grow_2.png>
 File: figures/sbf_grow_4.png Graphic file (type bmp)
@@ -901,7 +901,7 @@ File: figures/sbf_grow_6.png Graphic file (type bmp)
 <figures/sbf_grow_6.png>
  [7] [8]
 Package hyperref Info: bookmark level for unknown algorithm defaults to 0 on in
-put line 879.
+put line 890.
  [9] [10] [11]
 File: generated/fig_tro_shelf_anytime_tradeoff_clean.png Graphic file (type bmp
 )
@@ -911,8 +911,6 @@ File: figures/Marcucci_scene.png Graphic file (type bmp)
  (./generated/tab_tro_main_shelf_best_tradeoff.tex
 LaTeX Font Info:    Font shape `TU/LatinModernRoman(0)/m/sc' will be
 (Font)              scaled to size 8.0pt on input line 4.
-LaTeX Font Info:    Font shape `TU/LatinModernRoman(0)/m/n' will be
-(Font)              scaled to size 7.1pt on input line 11.
 ) [12]
 File: generated/fig_tro_random_anytime_tradeoff_clean.png Graphic file (type bm
 p)
@@ -926,23 +924,38 @@ File: generated/fig_tro_evidence_validation_tradeoff.pdf Graphic file (type pdf
 (./generated/tab_tro_link_envelope_widthwise.tex)
 (./generated/tab_tro_main_lect_reuse.tex)
 LaTeX Font Info:    Font shape `TU/LatinModernMono(0)/m/n' will be
-(Font)              scaled to size 10.0pt on input line 1486.
+(Font)              scaled to size 10.0pt on input line 1526.
 
 (./generated/tab_tro_dynamic_rebuild.tex
 LaTeX Font Info:    Font shape `TU/LatinModernRoman(0)/m/sc' will be
 (Font)              scaled to size 9.0pt on input line 3.
-) [15] (./sbf_tro_2026.bbl [16])
-[17] (./sbf_tro_2026.aux)
+) [15] [16]
+(./generated/tab_tro_rbf_only_cache_mechanism.tex
+Overfull \hbox (86.14827pt too wide) in paragraph at lines 8--17
+ [][] 
+ []
+
+) (./generated/tab_tro_rbf_only_sweep.tex
+Overfull \hbox (55.25941pt too wide) in paragraph at lines 8--20
+ [][] 
+ []
+
+) (./generated/tab_tro_rbf_only_warm_reuse.tex
+Overfull \hbox (237.9186pt too wide) in paragraph at lines 8--20
+ [][] 
+ []
+
+) (./sbf_tro_2026.bbl [17]) [18] (./sbf_tro_2026.aux)
 Package rerunfilecheck Info: File `sbf_tro_2026.out' has not changed.
-(rerunfilecheck)             Checksum: CFAFC0345ADD0489902D6A0E35CDCB17;5947.
+(rerunfilecheck)             Checksum: B760C4A64EB9E8CE0878DAC4A11E2FE5;6204.
  ) 
 Here is how much of TeX's memory you used:
- 16220 strings out of 476191
- 329219 string characters out of 5812072
- 705335 words of memory out of 5000000
- 36603 multiletter control sequences out of 15000+600000
- 482146 words of font info for 155 fonts, out of 8000000 for 9000
+ 16260 strings out of 476191
+ 330512 string characters out of 5812072
+ 707335 words of memory out of 5000000
+ 36635 multiletter control sequences out of 15000+600000
+ 482138 words of font info for 154 fonts, out of 8000000 for 9000
  1348 hyphenation exceptions out of 8191
  73i,14n,119p,819b,583s stack positions out of 5000i,500n,10000p,200000b,80000s
 
-Output written on sbf_tro_2026.pdf (17 pages).
+Output written on sbf_tro_2026.pdf (18 pages).

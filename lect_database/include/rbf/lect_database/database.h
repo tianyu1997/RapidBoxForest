@@ -11,6 +11,7 @@
 #include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace rbf::lect_database {
@@ -28,8 +29,11 @@ struct LectDatabaseConfig {
     std::vector<Interval> root_intervals;
     SplitPolicyDescriptor split_policy;
     LectDbOpenOptions open;
+    bool propagate_parent_hulls = true;
+    bool defer_parent_hull_writes = false;
     std::uint32_t page_size_bytes = 64u * 1024u;
     std::uint32_t max_resident_pages = 256u;
+    int max_tree_depth = 64;
     double exact_box_tolerance = 1e-12;
 };
 
@@ -81,6 +85,7 @@ public:
     std::uint64_t generation() const noexcept { return generation_; }
     std::size_t node_count() const noexcept { return static_cast<std::size_t>(node_count_); }
     std::size_t evidence_count() const noexcept { return std::max(evidence_.size(), evidence_index_count_); }
+    int max_tree_depth() const noexcept { return config_.max_tree_depth; }
     NodeId root_node() const noexcept { return node_count_ == 0 ? kInvalidNodeId : 0; }
 
     BoxKey make_box_key(std::vector<Interval> intervals) const;
@@ -91,6 +96,7 @@ public:
     NodeId sibling(NodeId node_id) const;
     bool is_ancestor(NodeId ancestor, NodeId node_id) const;
     NodeId lca(NodeId lhs, NodeId rhs) const;
+    std::vector<NodeId> node_ids() const;
     std::vector<NodeId> layer_nodes(int depth) const;
 
     std::optional<std::vector<Interval>> node_box(NodeId node_id) const;
@@ -204,12 +210,19 @@ private:
     bool propagate_parent_hulls_from(NodeId parent_id,
                                      EvidenceKey key_template,
                                      std::shared_ptr<const EvidenceRecord> child_record = nullptr);
+    bool drain_deferred_parent_hulls();
     std::optional<EvidenceRecord> build_parent_hull_from_child(const NodeRecord& parent_node,
                                                                const EvidenceRecord& child_record,
                                                                const EvidenceKey& key_template) const;
     std::optional<EvidenceRecord> build_parent_hull_from_node(const NodeRecord& parent_node,
                                                               const EvidenceKey& key_template) const;
     std::optional<EvidenceRecord> build_parent_hull(NodeId parent_id, const EvidenceKey& key_template) const;
+    bool normalize_evidence_key(EvidenceKey* key) const;
+    EvidenceKey evidence_key_for_node(NodeId node_id, const EvidenceKey* key_template = nullptr) const;
+    bool remember_node_record(const NodeRecord& record);
+    NodeId allocate_node_id();
+    bool remember_node_id(NodeId node_id);
+    std::vector<NodeId> sorted_node_ids() const;
 
     struct EvidenceIndexEntry {
         std::uint64_t offset = 0;
@@ -225,6 +238,10 @@ private:
         EvidenceIndexEntry entry;
     };
 
+    struct DeferredParentHullWrite {
+        EvidenceKey key;
+    };
+
     enum class EvidenceStoreFormat : std::uint8_t {
         Binary = 0,
         LegacyText = 1,
@@ -236,6 +253,10 @@ private:
     std::vector<Interval> root_intervals_;
     SplitPolicy split_policy_;
     NodeId node_count_ = 0;
+    NodeId max_node_id_ = 0;
+    NodeId next_node_id_ = 0;
+    std::unordered_set<NodeId> node_ids_;
+    std::unordered_map<PathCode, NodeId, PathCodeHash> node_path_index_;
     mutable std::unordered_map<std::uint64_t, NodePage> node_pages_;
     mutable std::uint64_t node_page_clock_ = 0;
     std::unordered_map<int, std::vector<NodeId>> layer_index_;
@@ -251,6 +272,7 @@ private:
     mutable std::uint64_t evidence_appends_since_flush_ = 0;
     mutable bool evidence_index_sidecar_dirty_ = false;
     std::ofstream journal_append_stream_;
+    std::vector<DeferredParentHullWrite> deferred_parent_hull_writes_;
     std::uint64_t generation_ = 0;
     bool pending_changes_ = false;
     mutable LectDatabaseStats stats_;

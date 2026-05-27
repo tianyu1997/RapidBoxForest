@@ -19,6 +19,9 @@
 
 namespace rbf {
 
+using OracleNodeId = std::int64_t;
+inline constexpr OracleNodeId kInvalidOracleNodeId = -1;
+
 enum class BoxValidation : std::uint8_t {
     Free = 0,
     Occupied = 1,
@@ -42,9 +45,9 @@ struct OracleSplitOptions {
 
 struct SplitNodeResult {
     bool split = false;
-    int node = -1;
-    int left = -1;
-    int right = -1;
+    OracleNodeId node = kInvalidOracleNodeId;
+    OracleNodeId left = kInvalidOracleNodeId;
+    OracleNodeId right = kInvalidOracleNodeId;
     int split_dim = -1;
     double split_value = 0.0;
 };
@@ -62,7 +65,7 @@ struct OracleValidationConfig {
 };
 
 struct OracleValidationDetail {
-    int node = -1;
+    OracleNodeId node = kInvalidOracleNodeId;
     int depth = 0;
     OracleValidationMode mode = OracleValidationMode::Strict;
     BoxValidation validation = BoxValidation::Unknown;
@@ -145,7 +148,7 @@ class BoxOracleSession;
 
 struct OracleSessionConfig {
     int worker_id = -1;
-    int domain_root = -1;
+    OracleNodeId domain_root = kInvalidOracleNodeId;
     bool read_only = true;
 };
 
@@ -153,32 +156,33 @@ class BoxOracle {
 public:
     virtual ~BoxOracle() = default;
     virtual int n_dims() const = 0;
-    virtual int root_node() const = 0;
+    virtual OracleNodeId root_node() const = 0;
+    virtual int max_tree_depth() const { return 64; }
     virtual const std::vector<Interval>& root_intervals() const = 0;
-    virtual std::vector<Interval> node_intervals(int node) const = 0;
-    virtual bool contains_point(int node, const Eigen::Ref<const Eigen::VectorXd>& q) const = 0;
-    virtual bool is_leaf(int node) const = 0;
-    virtual int depth(int node) const = 0;
-    virtual int split_dim(int node) const = 0;
-    virtual double split_value(int node) const = 0;
-    virtual int left_child(int node) const = 0;
-    virtual int right_child(int node) const = 0;
-    virtual SplitNodeResult split_node(int node,
+    virtual std::vector<Interval> node_intervals(OracleNodeId node) const = 0;
+    virtual bool contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const = 0;
+    virtual bool is_leaf(OracleNodeId node) const = 0;
+    virtual int depth(OracleNodeId node) const = 0;
+    virtual int split_dim(OracleNodeId node) const = 0;
+    virtual double split_value(OracleNodeId node) const = 0;
+    virtual OracleNodeId left_child(OracleNodeId node) const = 0;
+    virtual OracleNodeId right_child(OracleNodeId node) const = 0;
+    virtual SplitNodeResult split_node(OracleNodeId node,
                                        const std::vector<Interval>& intervals,
                                        int changed_dim,
                                        const OracleSplitOptions& options) = 0;
-    virtual SplitNodeResult split_node_at(int node, int split_dim, double split_value) = 0;
+    virtual SplitNodeResult split_node_at(OracleNodeId node, int split_dim, double split_value) = 0;
     virtual bool point_in_collision(const Eigen::Ref<const Eigen::VectorXd>& q) const = 0;
-    virtual BoxValidation validate_node(int node, const std::vector<Interval>& intervals, int changed_dim = -1) = 0;
+    virtual BoxValidation validate_node(OracleNodeId node, const std::vector<Interval>& intervals, int changed_dim = -1) = 0;
     virtual bool validate_intervals(const std::vector<Interval>& intervals) = 0;
-    virtual bool is_reserved(int node) const = 0;
-    virtual std::optional<int> reservation_owner(int node) const = 0;
-    virtual void reserve_node(int node, int box_id) = 0;
-    virtual void release_node(int node) = 0;
+    virtual bool is_reserved(OracleNodeId node) const = 0;
+    virtual std::optional<int> reservation_owner(OracleNodeId node) const = 0;
+    virtual void reserve_node(OracleNodeId node, int box_id) = 0;
+    virtual void release_node(OracleNodeId node) = 0;
     virtual void release_box(int box_id) = 0;
     virtual void clear_reservations() = 0;
-    virtual int select_unexplored_node() const = 0;
-    virtual int common_ancestor_depth(int lhs_node, int rhs_node) const {
+    virtual OracleNodeId select_unexplored_node() const = 0;
+    virtual int common_ancestor_depth(OracleNodeId lhs_node, OracleNodeId rhs_node) const {
         (void)lhs_node;
         (void)rhs_node;
         return -1;
@@ -197,9 +201,9 @@ public:
     virtual ~BoxOracleSession() = default;
     virtual BoxOracle& oracle() = 0;
     virtual const BoxOracle& oracle() const = 0;
-    virtual int domain_root() const = 0;
+    virtual OracleNodeId domain_root() const = 0;
     virtual bool commit() = 0;
-    virtual int map_node_to_master(int worker_node) const = 0;
+    virtual OracleNodeId map_node_to_master(OracleNodeId worker_node) const = 0;
 };
 
 class BoxOracleFactory {
@@ -215,41 +219,44 @@ public:
                       Scene scene = {},
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
-                      OracleValidationConfig validation_config = {});
+                      OracleValidationConfig validation_config = {},
+                      const lect_database::LectDatabase* external_evidence_database = nullptr);
     DatabaseBoxOracle(Robot robot,
                       lect_database::OnlineEnvelopeCacheTree& online_cache,
                       Scene scene = {},
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
-                      OracleValidationConfig validation_config = {});
+                      OracleValidationConfig validation_config = {},
+                      const lect_database::LectDatabase* external_evidence_database = nullptr);
 
     int n_dims() const override;
-    int root_node() const override { return 0; }
+    OracleNodeId root_node() const override { return 0; }
+    int max_tree_depth() const override;
     const std::vector<Interval>& root_intervals() const override;
-    std::vector<Interval> node_intervals(int node) const override;
-    bool contains_point(int node, const Eigen::Ref<const Eigen::VectorXd>& q) const override;
-    bool is_leaf(int node) const override;
-    int depth(int node) const override;
-    int split_dim(int node) const override;
-    double split_value(int node) const override;
-    int left_child(int node) const override;
-    int right_child(int node) const override;
-    SplitNodeResult split_node(int node,
+    std::vector<Interval> node_intervals(OracleNodeId node) const override;
+    bool contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const override;
+    bool is_leaf(OracleNodeId node) const override;
+    int depth(OracleNodeId node) const override;
+    int split_dim(OracleNodeId node) const override;
+    double split_value(OracleNodeId node) const override;
+    OracleNodeId left_child(OracleNodeId node) const override;
+    OracleNodeId right_child(OracleNodeId node) const override;
+    SplitNodeResult split_node(OracleNodeId node,
                                const std::vector<Interval>& intervals,
                                int changed_dim,
                                const OracleSplitOptions& options) override;
-    SplitNodeResult split_node_at(int node, int split_dim, double split_value) override;
+    SplitNodeResult split_node_at(OracleNodeId node, int split_dim, double split_value) override;
     bool point_in_collision(const Eigen::Ref<const Eigen::VectorXd>& q) const override;
-    BoxValidation validate_node(int node, const std::vector<Interval>& intervals, int changed_dim = -1) override;
+    BoxValidation validate_node(OracleNodeId node, const std::vector<Interval>& intervals, int changed_dim = -1) override;
     bool validate_intervals(const std::vector<Interval>& intervals) override;
-    bool is_reserved(int node) const override;
-    std::optional<int> reservation_owner(int node) const override;
-    void reserve_node(int node, int box_id) override;
-    void release_node(int node) override;
+    bool is_reserved(OracleNodeId node) const override;
+    std::optional<int> reservation_owner(OracleNodeId node) const override;
+    void reserve_node(OracleNodeId node, int box_id) override;
+    void release_node(OracleNodeId node) override;
     void release_box(int box_id) override;
     void clear_reservations() override;
-    int select_unexplored_node() const override;
-    int common_ancestor_depth(int lhs_node, int rhs_node) const override;
+    OracleNodeId select_unexplored_node() const override;
+    int common_ancestor_depth(OracleNodeId lhs_node, OracleNodeId rhs_node) const override;
     std::unique_ptr<BoxOracleSession> make_session(const OracleSessionConfig& config) override;
     OracleValidationDetail last_validation_detail() const override { return last_validation_detail_; }
     const OracleCounters& counters() const override { return counters_; }
@@ -261,21 +268,23 @@ public:
     const EndpointSourceConfig& endpoint_config() const { return endpoint_config_; }
     const EnvelopeTypeConfig& envelope_config() const { return envelope_config_; }
     const OracleValidationConfig& validation_config() const { return validation_config_; }
+    void set_external_evidence_database(const lect_database::LectDatabase* database) { external_evidence_database_ = database; }
     lect_database::LectDatabase& database() { return database_; }
     const lect_database::LectDatabase& database() const { return database_; }
 
 private:
-    lect_database::EvidenceKey endpoint_key(int node) const;
-    std::optional<std::vector<float>> endpoint_payload_for_node(int node,
+    lect_database::EvidenceKey endpoint_key(OracleNodeId node) const;
+    std::optional<std::vector<float>> endpoint_payload_for_node(OracleNodeId node,
                                                                 const std::vector<Interval>& intervals,
                                                                 int changed_dim);
-    BoxValidation classify_payload(int node,
+    BoxValidation classify_payload(OracleNodeId node,
                                    const std::vector<Interval>& intervals,
                                    const std::vector<float>& endpoint_payload);
 
     Robot robot_;
     lect_database::LectDatabase& database_;
     lect_database::OnlineEnvelopeCacheTree* online_cache_ = nullptr;
+    const lect_database::LectDatabase* external_evidence_database_ = nullptr;
     EndpointSourceConfig endpoint_config_;
     EnvelopeTypeConfig envelope_config_;
     OracleValidationConfig validation_config_;
@@ -283,8 +292,8 @@ private:
     CollisionChecker checker_;
     OracleCounters counters_;
     OracleValidationDetail last_validation_detail_;
-    std::unordered_map<int, int> node_to_box_;
-    std::unordered_map<int, int> box_to_node_;
+    std::unordered_map<OracleNodeId, int> node_to_box_;
+    std::unordered_map<int, OracleNodeId> box_to_node_;
 };
 
 class DatabaseBoxOracleSession final : public BoxOracleSession {
@@ -294,23 +303,23 @@ public:
 
     BoxOracle& oracle() override { return *worker_oracle_; }
     const BoxOracle& oracle() const override { return *worker_oracle_; }
-    int domain_root() const override { return master_domain_root_; }
+    OracleNodeId domain_root() const override { return master_domain_root_; }
     bool commit() override;
-    int map_node_to_master(int worker_node) const override;
+    OracleNodeId map_node_to_master(OracleNodeId worker_node) const override;
 
 private:
-    bool replay_structure(int worker_node, int master_node);
+    bool replay_structure(OracleNodeId worker_node, OracleNodeId master_node);
     bool copy_worker_leaf_evidence();
     static std::filesystem::path make_temp_dir();
 
     DatabaseBoxOracle& master_;
-    int master_domain_root_ = -1;
+    OracleNodeId master_domain_root_ = kInvalidOracleNodeId;
     bool read_only_ = true;
     bool committed_ = false;
     std::filesystem::path temp_dir_;
     std::optional<lect_database::LectDatabase> worker_database_;
     std::unique_ptr<DatabaseBoxOracle> worker_oracle_;
-    std::unordered_map<int, int> node_remap_;
+    std::unordered_map<OracleNodeId, OracleNodeId> node_remap_;
 };
 
 class DatabaseBoxOracleFactory final : public BoxOracleFactory {

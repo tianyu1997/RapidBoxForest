@@ -358,8 +358,8 @@ def stage_seed_offset(stage: dict[str, Any]) -> int:
     return 9176 * int(stage.get("stage_index", 0))
 
 
-def configure_warm(args: argparse.Namespace, seed: int, preset: str, namespace: str) -> Any:
-    cfg = configure_standalone_sbf(args, seed, preset=preset)
+def configure_warm(args: argparse.Namespace, seed: int, preset: str, namespace: str, robot: Any | None = None) -> Any:
+    cfg = configure_standalone_sbf(args, seed, preset=preset, robot=robot)
     cfg.database.path = str(args.cache_root / namespace)
     cfg.database.create_if_missing = True
     cfg.database.verify_identity = True
@@ -533,7 +533,7 @@ def prewarm_cache(args: argparse.Namespace, robot_name: str, method: str, stages
             for seed in range(max(0, int(args.prewarm_scene_seeds))):
                 print(f"[random-anytime] prewarm robot={robot_name} difficulty={difficulty} method={method} stage={stage['stage_id']} scene_seed={seed}", flush=True)
                 scene = make_random_scene(robot_name, difficulty, int(args.prewarm_seed_base) + 1009 * seed, scene_profile=args.scene_profile)
-                cfg = configure_warm(stage_args, seed, method, namespace)
+                cfg = configure_warm(stage_args, seed, method, namespace, robot=robot)
                 forest = sbf.SafeBoxForest(robot, cfg)
                 t0 = time.perf_counter()
                 forest.build_coverage(scene.obstacles, [scene.start, scene.goal])
@@ -742,7 +742,7 @@ def run_scene_trace(
                 seed_eval_cache_from_prewarm(args, prewarm_namespace, namespace)
             seed_offset = stage_seed_offset(stage)
             restart_seed = int(scene_seed) + 1000003 * int(restart) + int(seed_offset)
-            cfg = configure_warm(stage_args, restart_seed, method, namespace)
+            cfg = configure_warm(stage_args, restart_seed, method, namespace, robot=robot)
             forest = sbf.SafeBoxForest(robot, cfg)
             build_t0 = time.perf_counter()
             profile = forest.build_coverage(scene.obstacles, [scene.start, scene.goal])

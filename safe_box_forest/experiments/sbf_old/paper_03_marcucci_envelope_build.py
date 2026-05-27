@@ -514,7 +514,7 @@ def run_build_trial(
     return_validation_events: bool = False,
 ) -> dict[str, Any]:
     progress(f"start variant={variant} protocol={protocol} seed={seed} scene={scene_name} cache={cache_namespace or 'off'}")
-    cfg = configure_standalone_sbf(args, seed, preset=variant)
+    cfg = configure_standalone_sbf(args, seed, preset=variant, robot=robot)
     apply_cache_protocol(cfg, args, cache_namespace)
     if hasattr(args, "stateless_materialization_context"):
         cfg.validation.stateless_materialization_context = bool(args.stateless_materialization_context)

@@ -42,6 +42,8 @@ constexpr std::uint32_t kEvidenceStoreSchemaVersion = 1;
 constexpr std::uint64_t kEvidenceStoreMagic = 0x3156454242464652ull;
 constexpr std::uint32_t kEvidenceIndexSidecarSchemaVersion = 2;
 constexpr std::uint64_t kEvidenceIndexSidecarMagic = 0x3158444945424652ull;
+constexpr std::string_view kLegacyNodeIdScheme = "bfs_heap_v1";
+constexpr std::string_view kCurrentNodeIdScheme = "path_handle_v3";
 
 enum EvidenceIndexSidecarFlags : std::uint32_t {
     kEvidenceIndexFlagChildHull = 1u << 0,
@@ -659,6 +661,10 @@ bool merge_payload_hull(EvidencePayloadKind kind,
     return true;
 }
 
+bool valid_tree_depth_limit(int max_tree_depth) {
+    return max_tree_depth >= 1;
+}
+
 }  // namespace
 
 struct LectDatabase::EvidenceMappedFile {
@@ -858,6 +864,10 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
     config_ = std::move(config);
     opened_ = false;
     node_count_ = 0;
+    max_node_id_ = 0;
+    next_node_id_ = 0;
+    node_ids_.clear();
+    node_path_index_.clear();
     node_pages_.clear();
     node_page_clock_ = 0;
     layer_index_.clear();
@@ -869,11 +879,16 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
     evidence_append_offset_ = 0;
     evidence_appends_since_flush_ = 0;
     generation_ = 0;
+    deferred_parent_hull_writes_.clear();
     pending_changes_ = false;
     stats_ = {};
 
     if (config_.path.empty()) {
         if (reason) *reason = "database path is empty";
+        return false;
+    }
+    if (!valid_tree_depth_limit(config_.max_tree_depth)) {
+        if (reason) *reason = "max tree depth must be positive";
         return false;
     }
     std::error_code ignored;
@@ -890,6 +905,7 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
         if (!load_manifest(reason)) {
             return false;
         }
+        identity_.schema_version = std::max(identity_.schema_version, kLectDatabaseSchemaVersion);
         if (config_.open.verify_identity && has_requested_identity) {
             std::string mismatch;
             if (!identity_compatible(identity_, requested_identity, &mismatch)) {
@@ -924,6 +940,7 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
     root_intervals_ = config_.root_intervals;
     split_policy_ = SplitPolicy(config_.split_policy);
     identity_ = config_.identity;
+    identity_.schema_version = std::max(identity_.schema_version, kLectDatabaseSchemaVersion);
     if (identity_.root_domain_fingerprint == 0) {
         identity_.root_domain_fingerprint = fingerprint_intervals(root_intervals_);
     }
@@ -1034,6 +1051,10 @@ NodeId LectDatabase::lca(NodeId lhs, NodeId rhs) const {
         right = parent(right);
     }
     return left == right ? left : kInvalidNodeId;
+}
+
+std::vector<NodeId> LectDatabase::node_ids() const {
+    return sorted_node_ids();
 }
 
 std::vector<NodeId> LectDatabase::layer_nodes(int depth) const {
@@ -1230,6 +1251,9 @@ std::pair<NodeId, NodeId> LectDatabase::split_leaf(NodeId node_id, int split_dim
     const auto intervals = node_box_unchecked(node_id);
     const int parent_depth = parent_record->depth;
     const PathCode parent_path = parent_record->path;
+    if (parent_depth + 1 >= config_.max_tree_depth) {
+        return {kInvalidNodeId, kInvalidNodeId};
+    }
     if (split_dim < 0 || split_dim >= static_cast<int>(intervals.size())) {
         return {kInvalidNodeId, kInvalidNodeId};
     }
@@ -1245,8 +1269,11 @@ std::pair<NodeId, NodeId> LectDatabase::split_leaf(NodeId node_id, int split_dim
     left_path.push_child(false);
     right_path.push_child(true);
 
-    const NodeId left = node_count_;
-    const NodeId right = node_count_ + 1;
+    const NodeId left = allocate_node_id();
+    const NodeId right = allocate_node_id();
+    if (!valid_node_id(left) || !valid_node_id(right) || left == right) {
+        return {kInvalidNodeId, kInvalidNodeId};
+    }
 
     LectDbTransaction transaction;
     transaction.generation = generation_;
@@ -1289,6 +1316,9 @@ std::pair<NodeId, NodeId> LectDatabase::split_leaf(NodeId node_id, int split_dim
 
 bool LectDatabase::ensure_depth(int target_depth) {
     if (target_depth < 0) {
+        return false;
+    }
+    if (target_depth >= config_.max_tree_depth) {
         return false;
     }
     bool changed = false;
@@ -1343,7 +1373,8 @@ BoxLookupResult LectDatabase::split_to_box(const BoxKey& box, int max_depth) {
         if (!current) {
             break;
         }
-        if (current->depth >= max_depth) {
+        const int effective_max_depth = std::min(max_depth, config_.max_tree_depth - 1);
+        if (current->depth >= effective_max_depth) {
             result.reason = "max split depth reached before exact box";
             return result;
         }
@@ -1386,6 +1417,9 @@ bool LectDatabase::put_evidence(EvidenceRecord record) {
     if (config_.open.read_only) {
         return false;
     }
+    if (!normalize_evidence_key(&record.key)) {
+        return false;
+    }
     const EvidenceKey key = record.key;
     const auto node_item = read_node(key.node_id);
     if (!node_item) {
@@ -1407,23 +1441,29 @@ bool LectDatabase::put_evidence(EvidenceRecord record) {
     if (!append_evidence_record_to_store(*stored_it->second)) {
         return false;
     }
-    std::shared_ptr<const EvidenceRecord> propagated_child = stored_it->second;
-    if (direct_evidence && node_is_internal) {
-        if (auto child_hull = build_parent_hull_from_node(*node_item, key)) {
-            child_hull->generation = generation_;
-            child_hull->checksum = payload_checksum(child_hull->payload);
-            auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
-            auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
-                                                                                   child_hull_record);
-            (void)child_hull_inserted;
-            if (!append_evidence_record_to_store(*child_hull_it->second)) {
+    if (config_.propagate_parent_hulls) {
+        if (config_.defer_parent_hull_writes) {
+            deferred_parent_hull_writes_.push_back(DeferredParentHullWrite{key});
+        } else {
+            std::shared_ptr<const EvidenceRecord> propagated_child = stored_it->second;
+            if (direct_evidence && node_is_internal) {
+                if (auto child_hull = build_parent_hull_from_node(*node_item, key)) {
+                    child_hull->generation = generation_;
+                    child_hull->checksum = payload_checksum(child_hull->payload);
+                    auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
+                    auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
+                                                                                           child_hull_record);
+                    (void)child_hull_inserted;
+                    if (!append_evidence_record_to_store(*child_hull_it->second)) {
+                        return false;
+                    }
+                    propagated_child = child_hull_it->second;
+                }
+            }
+            if (!propagate_parent_hulls_from(parent_id, key, propagated_child)) {
                 return false;
             }
-            propagated_child = child_hull_it->second;
         }
-    }
-    if (!propagate_parent_hulls_from(parent_id, key, propagated_child)) {
-        return false;
     }
 
     LectDbTransaction transaction;
@@ -1441,9 +1481,13 @@ bool LectDatabase::put_evidence(EvidenceRecord record) {
 
 std::optional<EvidenceRecordView> LectDatabase::evidence(const EvidenceKey& key) const {
     ++stats_.evidence_reads;
-    auto it = evidence_.find(key);
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        return std::nullopt;
+    }
+    auto it = evidence_.find(normalized_key);
     if (it == evidence_.end()) {
-        auto loaded = load_indexed_evidence(key);
+        auto loaded = load_indexed_evidence(normalized_key);
         if (!loaded) {
             return std::nullopt;
         }
@@ -1470,11 +1514,15 @@ std::optional<std::uint64_t> LectDatabase::evidence_offset(const EvidenceKey& ke
 }
 
 bool LectDatabase::has_evidence(const EvidenceKey& key) const {
-    const auto loaded = evidence_.find(key);
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        return false;
+    }
+    const auto loaded = evidence_.find(normalized_key);
     if (loaded != evidence_.end()) {
         return loaded->second != nullptr && !loaded->second->unavailable;
     }
-    const auto* indexed = find_evidence_index(key);
+    const auto* indexed = find_evidence_index(normalized_key);
     return indexed != nullptr && !indexed->unavailable;
 }
 
@@ -1571,14 +1619,14 @@ VerificationResult LectDatabase::verify(bool strict) const {
     if (node_count_ == 0 || !root_record || root_record->id != 0 || valid_node_id(root_record->parent)) {
         result.add_error("root node is missing or malformed");
     }
-    for (NodeId index = 0; index < node_count_; ++index) {
-        const auto item_opt = read_node(index);
+    for (NodeId node_id : sorted_node_ids()) {
+        const auto item_opt = read_node(node_id);
         if (!item_opt) {
             result.add_error("node page is missing a row");
             continue;
         }
         const auto& item = *item_opt;
-        if (item.id != index) {
+        if (item.id != node_id) {
             result.add_error("node id does not match table position");
         }
         if (valid_node_id(item.parent)) {
@@ -1699,6 +1747,9 @@ bool LectDatabase::checkpoint() {
     if (config_.open.read_only || !opened_) {
         return false;
     }
+    if (!drain_deferred_parent_hulls()) {
+        return false;
+    }
     if (!pending_changes_) {
         return true;
     }
@@ -1738,14 +1789,17 @@ std::string LectDatabase::inspect_summary() const {
 }
 
 NodeId LectDatabase::append_child(NodeId parent_id, bool right_child, int depth, PathCode path) {
+    const NodeId child_id = allocate_node_id();
+    if (!valid_node_id(child_id)) {
+        return kInvalidNodeId;
+    }
     NodeRecord child;
-    child.id = node_count_;
+    child.id = child_id;
     child.parent = parent_id;
     child.depth = depth;
     child.path = std::move(path);
     child.generation = generation_;
     child.dirty = true;
-    const NodeId child_id = child.id;
     write_node_record(std::move(child));
     if (auto* parent_node = mutable_node(parent_id)) {
         if (right_child) {
@@ -1759,7 +1813,7 @@ NodeId LectDatabase::append_child(NodeId parent_id, bool right_child, int depth,
 }
 
 bool LectDatabase::has_node(NodeId node_id) const noexcept {
-    return node_id < node_count_;
+    return node_ids_.find(node_id) != node_ids_.end();
 }
 
 std::size_t LectDatabase::rows_per_node_page() const noexcept {
@@ -1795,10 +1849,6 @@ LectDatabase::NodePage& LectDatabase::touch_node_page(std::uint64_t page_id) con
     page.first_node_id = first_node_id_for_page(page_id);
     page.last_access = ++node_page_clock_;
     const auto rows_per_page = rows_per_node_page();
-    const std::size_t expected_rows = page.first_node_id >= node_count_
-        ? 0
-        : static_cast<std::size_t>(std::min<NodeId>(static_cast<NodeId>(rows_per_page), node_count_ - page.first_node_id));
-    page.rows.resize(expected_rows);
 
     std::ifstream input(node_page_path(config_.path, page_id));
     std::string line;
@@ -1811,6 +1861,9 @@ LectDatabase::NodePage& LectDatabase::touch_node_page(std::uint64_t page_id) con
             continue;
         }
         const auto offset = static_cast<std::size_t>(record->id - page.first_node_id);
+        if (offset >= rows_per_page) {
+            continue;
+        }
         if (offset >= page.rows.size()) {
             page.rows.resize(offset + 1);
         }
@@ -1840,7 +1893,7 @@ bool LectDatabase::flush_node_page(std::uint64_t page_id) const {
         return false;
     }
     for (auto& row : it->second.rows) {
-        if (!valid_node_id(row.id) || row.id >= node_count_) {
+        if (!valid_node_id(row.id) || !has_node(row.id)) {
             continue;
         }
         row.page_id = page_id;
@@ -1949,7 +2002,9 @@ bool LectDatabase::write_node_record(NodeRecord record) {
     if (!valid_node_id(record.id)) {
         return false;
     }
-    node_count_ = std::max<NodeId>(node_count_, record.id + 1);
+    if (!remember_node_record(record)) {
+        return false;
+    }
     record.page_id = page_id_for_node(record.id);
     const auto page_id = record.page_id;
     const auto offset = node_offset_in_page(record.id);
@@ -1962,6 +2017,94 @@ bool LectDatabase::write_node_record(NodeRecord record) {
     page.dirty = true;
     evict_node_pages_if_needed();
     return true;
+}
+
+bool LectDatabase::remember_node_id(NodeId node_id) {
+    if (!valid_node_id(node_id)) {
+        return false;
+    }
+    const auto inserted = node_ids_.insert(node_id).second;
+    if (inserted) {
+        ++node_count_;
+    }
+    max_node_id_ = std::max(max_node_id_, node_id);
+    if (node_id < kInvalidNodeId - 1) {
+        next_node_id_ = std::max(next_node_id_, node_id + 1);
+    }
+    return true;
+}
+
+bool LectDatabase::remember_node_record(const NodeRecord& record) {
+    if (!remember_node_id(record.id)) {
+        return false;
+    }
+    const auto existing = node_path_index_.find(record.path);
+    if (existing != node_path_index_.end() && existing->second != record.id) {
+        return false;
+    }
+    node_path_index_[record.path] = record.id;
+    return true;
+}
+
+NodeId LectDatabase::allocate_node_id() {
+    while (valid_node_id(next_node_id_) && has_node(next_node_id_)) {
+        if (next_node_id_ == kInvalidNodeId - 1) {
+            next_node_id_ = kInvalidNodeId;
+            break;
+        }
+        ++next_node_id_;
+    }
+    if (!valid_node_id(next_node_id_)) {
+        return kInvalidNodeId;
+    }
+    const NodeId allocated = next_node_id_;
+    if (next_node_id_ == kInvalidNodeId - 1) {
+        next_node_id_ = kInvalidNodeId;
+    } else {
+        ++next_node_id_;
+    }
+    return allocated;
+}
+
+bool LectDatabase::normalize_evidence_key(EvidenceKey* key) const {
+    if (key == nullptr) {
+        return false;
+    }
+    if (!key->node_path_valid) {
+        if (!valid_node_id(key->node_id)) {
+            return false;
+        }
+        const auto node_item = read_node(key->node_id);
+        if (!node_item) {
+            return false;
+        }
+        key->node_path = node_item->path;
+        key->node_path_valid = true;
+        return true;
+    }
+    if (!valid_node_id(key->node_id)) {
+        const auto found = node_path_index_.find(key->node_path);
+        if (found == node_path_index_.end()) {
+            return false;
+        }
+        key->node_id = found->second;
+    }
+    return true;
+}
+
+EvidenceKey LectDatabase::evidence_key_for_node(NodeId node_id, const EvidenceKey* key_template) const {
+    EvidenceKey key = key_template == nullptr ? EvidenceKey{} : *key_template;
+    key.node_id = node_id;
+    key.node_path_valid = false;
+    key.node_path = {};
+    normalize_evidence_key(&key);
+    return key;
+}
+
+std::vector<NodeId> LectDatabase::sorted_node_ids() const {
+    std::vector<NodeId> ids(node_ids_.begin(), node_ids_.end());
+    std::sort(ids.begin(), ids.end());
+    return ids;
 }
 
 std::vector<Interval> LectDatabase::node_box_unchecked(NodeId node_id) const {
@@ -2073,7 +2216,7 @@ bool LectDatabase::box_overlaps(const std::vector<Interval>& lhs,
 
 void LectDatabase::rebuild_layer_index() {
     layer_index_.clear();
-    for (NodeId node_id = 0; node_id < node_count_; ++node_id) {
+    for (NodeId node_id : sorted_node_ids()) {
         const auto node_record = read_node(node_id);
         if (node_record) {
             layer_index_[node_record->depth].push_back(node_record->id);
@@ -2082,7 +2225,7 @@ void LectDatabase::rebuild_layer_index() {
 }
 
 void LectDatabase::assign_page_ids() {
-    for (NodeId node_id = 0; node_id < node_count_; ++node_id) {
+    for (NodeId node_id : sorted_node_ids()) {
         auto node_record = read_node(node_id);
         if (!node_record) {
             continue;
@@ -2101,6 +2244,11 @@ bool LectDatabase::load_manifest(std::string* reason) {
     const auto values = read_key_values(manifest_path(config_.path));
     if (values.empty()) {
         if (reason) *reason = "manifest is empty or unreadable";
+        return false;
+    }
+    const std::string node_id_scheme = get_value(values, "node_id_scheme");
+    if (node_id_scheme != kLegacyNodeIdScheme && node_id_scheme != kCurrentNodeIdScheme) {
+        if (reason) *reason = "node id scheme is missing or unsupported; rebuild the database";
         return false;
     }
     identity_.schema_version = static_cast<std::uint32_t>(get_u64(values, "schema_version", kLectDatabaseSchemaVersion));
@@ -2127,7 +2275,13 @@ bool LectDatabase::load_manifest(std::string* reason) {
     generation_ = get_u64(values, "generation");
     config_.page_size_bytes = static_cast<std::uint32_t>(get_u64(values, "page_size_bytes", config_.page_size_bytes));
     config_.max_resident_pages = static_cast<std::uint32_t>(get_u64(values, "max_resident_pages", config_.max_resident_pages));
+    config_.max_tree_depth = get_int(values, "max_tree_depth", config_.max_tree_depth);
+    if (!valid_tree_depth_limit(config_.max_tree_depth)) {
+        if (reason) *reason = "manifest max_tree_depth must be positive";
+        return false;
+    }
     node_count_ = static_cast<NodeId>(get_u64(values, "node_count", node_count_));
+    max_node_id_ = static_cast<NodeId>(get_u64(values, "max_node_id", max_node_id_));
 
     const int dims = get_int(values, "root_dims");
     root_intervals_.clear();
@@ -2162,6 +2316,7 @@ bool LectDatabase::save_manifest() const {
         << "envelope_descriptor=" << identity_.envelope_descriptor << '\n'
         << "payload_layout=" << identity_.payload_layout << '\n'
         << "builder_version=" << identity_.builder_version << '\n'
+        << "node_id_scheme=" << kCurrentNodeIdScheme << '\n'
         << "split_strategy=" << static_cast<int>(descriptor.strategy) << '\n'
         << "split_min_width=" << std::setprecision(17) << descriptor.min_width << '\n'
         << "split_midpoint=" << (descriptor.midpoint ? 1 : 0) << '\n'
@@ -2171,7 +2326,9 @@ bool LectDatabase::save_manifest() const {
         << "root_dims=" << root_intervals_.size() << '\n'
         << "page_size_bytes=" << config_.page_size_bytes << '\n'
         << "max_resident_pages=" << config_.max_resident_pages << '\n'
+        << "max_tree_depth=" << config_.max_tree_depth << '\n'
         << "node_count=" << node_count_ << '\n'
+        << "max_node_id=" << max_node_id_ << '\n'
         << "generation=" << generation_ << '\n';
     for (std::size_t dim = 0; dim < root_intervals_.size(); ++dim) {
         out << "root_" << dim << "_lo=" << std::setprecision(17) << root_intervals_[dim].lo << '\n'
@@ -2184,9 +2341,13 @@ bool LectDatabase::save_manifest() const {
 bool LectDatabase::load_nodes(std::string* reason) {
     node_pages_.clear();
     node_page_clock_ = 0;
+    node_ids_.clear();
+    node_path_index_.clear();
+    node_count_ = 0;
+    max_node_id_ = 0;
+    next_node_id_ = 0;
     const bool has_page_dir = std::filesystem::is_directory(node_pages_path(config_.path));
-    if (has_page_dir && node_count_ > 0) {
-        NodeId discovered_count = node_count_;
+    if (has_page_dir) {
         for (const auto& entry : std::filesystem::directory_iterator(node_pages_path(config_.path))) {
             if (!entry.is_regular_file()) {
                 continue;
@@ -2199,16 +2360,17 @@ bool LectDatabase::load_nodes(std::string* reason) {
                 }
                 auto record = parse_node_record(line);
                 if (record && valid_node_id(record->id)) {
-                    discovered_count = std::max<NodeId>(discovered_count, record->id + 1);
+                    if (!remember_node_record(*record)) {
+                        if (reason) *reason = "node path index is malformed";
+                        return false;
+                    }
                 }
             }
         }
-        node_count_ = discovered_count;
         update_resident_page_stats();
         return true;
     }
 
-    node_count_ = 0;
     std::ifstream input(nodes_path(config_.path));
     if (!input) {
         if (reason) *reason = "nodes.pages is missing";
@@ -2242,7 +2404,7 @@ bool LectDatabase::save_nodes() const {
     if (!out) {
         return false;
     }
-    for (NodeId node_id = 0; node_id < node_count_; ++node_id) {
+    for (NodeId node_id : sorted_node_ids()) {
         const auto record = read_node(node_id);
         if (!record) {
             return false;
@@ -2374,14 +2536,18 @@ const LectDatabase::EvidenceIndexEntry* LectDatabase::find_evidence_index(const 
     if (evidence_index_count_ == 0 || evidence_index_.empty()) {
         return nullptr;
     }
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        return nullptr;
+    }
     const auto mask = evidence_index_.size() - 1;
-    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(key)) & mask;
+    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(normalized_key)) & mask;
     while (true) {
         const auto& slot = evidence_index_[probe];
         if (slot.key.node_id == kInvalidNodeId) {
             return nullptr;
         }
-        if (slot.key == key) {
+        if (slot.key == normalized_key) {
             return &slot.entry;
         }
         probe = (probe + 1) & mask;
@@ -2392,14 +2558,18 @@ LectDatabase::EvidenceIndexEntry* LectDatabase::find_evidence_index(const Eviden
     if (evidence_index_count_ == 0 || evidence_index_.empty()) {
         return nullptr;
     }
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        return nullptr;
+    }
     const auto mask = evidence_index_.size() - 1;
-    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(key)) & mask;
+    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(normalized_key)) & mask;
     while (true) {
         auto& slot = evidence_index_[probe];
         if (slot.key.node_id == kInvalidNodeId) {
             return nullptr;
         }
-        if (slot.key == key) {
+        if (slot.key == normalized_key) {
             return &slot.entry;
         }
         probe = (probe + 1) & mask;
@@ -2407,22 +2577,26 @@ LectDatabase::EvidenceIndexEntry* LectDatabase::find_evidence_index(const Eviden
 }
 
 void LectDatabase::upsert_evidence_index(const EvidenceKey& key, EvidenceIndexEntry entry) {
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        normalized_key = key;
+    }
     if (evidence_index_.empty() ||
         evidence_index_slot_count(evidence_index_count_ + 1) > evidence_index_.size()) {
         reserve_evidence_index(evidence_index_count_ + 1);
     }
 
     const auto mask = evidence_index_.size() - 1;
-    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(key)) & mask;
+    std::size_t probe = static_cast<std::size_t>(EvidenceKeyHash{}(normalized_key)) & mask;
     while (true) {
         auto& slot = evidence_index_[probe];
         if (slot.key.node_id == kInvalidNodeId) {
-            slot.key = key;
+            slot.key = normalized_key;
             slot.entry = entry;
             ++evidence_index_count_;
             return;
         }
-        if (slot.key == key) {
+        if (slot.key == normalized_key) {
             slot.entry = entry;
             return;
         }
@@ -2578,6 +2752,9 @@ bool LectDatabase::load_evidence_index_sidecar(std::uint64_t evidence_file_size)
         key.channel = static_cast<EvidenceChannel>(raw_entry.channel);
         key.endpoint_source = static_cast<EndpointSource>(raw_entry.endpoint_source);
         key.payload_kind = static_cast<EvidencePayloadKind>(raw_entry.payload_kind);
+        if (!normalize_evidence_key(&key)) {
+            return false;
+        }
         EvidenceIndexEntry entry;
         entry.offset = raw_entry.offset;
         entry.size = raw_entry.size;
@@ -2657,6 +2834,10 @@ bool LectDatabase::scan_binary_evidence_store(std::ifstream& input,
         key.channel = static_cast<EvidenceChannel>(record_header.channel);
         key.endpoint_source = static_cast<EndpointSource>(record_header.endpoint_source);
         key.payload_kind = static_cast<EvidencePayloadKind>(record_header.payload_kind);
+        if (!normalize_evidence_key(&key)) {
+            if (reason) *reason = "evidence store references an unknown node handle";
+            return false;
+        }
 
         EvidenceIndexEntry entry;
         entry.offset = offset;
@@ -2707,6 +2888,10 @@ bool LectDatabase::scan_legacy_text_evidence_store(std::ifstream& input,
         auto record = parse_evidence_record(line);
         if (!record) {
             if (reason) *reason = "legacy evidence row is malformed";
+            return false;
+        }
+        if (!normalize_evidence_key(&record->key)) {
+            if (reason) *reason = "legacy evidence row references an unknown node handle";
             return false;
         }
         if (line_storage.size() > std::numeric_limits<std::uint32_t>::max()) {
@@ -2920,11 +3105,15 @@ bool LectDatabase::append_evidence_record_to_store(const EvidenceRecord& record)
 }
 
 std::shared_ptr<const EvidenceRecord> LectDatabase::load_indexed_evidence(const EvidenceKey& key) const {
-    const auto* index_entry = find_evidence_index(key);
+    EvidenceKey normalized_key = key;
+    if (!normalize_evidence_key(&normalized_key)) {
+        return {};
+    }
+    const auto* index_entry = find_evidence_index(normalized_key);
     if (index_entry == nullptr) {
         return {};
     }
-    const auto cached = evidence_.find(key);
+    const auto cached = evidence_.find(normalized_key);
     if (cached != evidence_.end()) {
         return cached->second;
     }
@@ -2945,8 +3134,11 @@ std::shared_ptr<const EvidenceRecord> LectDatabase::load_indexed_evidence(const 
     if (!record) {
         return {};
     }
+    if (!normalize_evidence_key(&record->key)) {
+        return {};
+    }
     auto shared_record = std::make_shared<EvidenceRecord>(std::move(*record));
-    auto [it, inserted] = evidence_.insert_or_assign(key, shared_record);
+    auto [it, inserted] = evidence_.insert_or_assign(shared_record->key, shared_record);
     (void)inserted;
     return it->second;
 }
@@ -3053,6 +3245,9 @@ void LectDatabase::replay_journal() {
                     const NodeId right_id = static_cast<NodeId>(std::stoull(parts[3]));
                     const int split_dim = std::stoi(parts[4]);
                     const double split_value = std::stod(parts[5]);
+                    if (!valid_node_id(left_id) || !valid_node_id(right_id) || left_id == right_id) {
+                        continue;
+                    }
                     const auto parent_record = read_node(parent_id);
                     if (parent_record) {
                         const auto left_existing = read_node(left_id);
@@ -3098,13 +3293,18 @@ void LectDatabase::replay_journal() {
                 } else if (record.rfind("evidence|", 0) == 0) {
                     auto parsed = parse_evidence_record(record.substr(9));
                     if (parsed) {
+                        if (!normalize_evidence_key(&parsed->key)) {
+                            continue;
+                        }
                         auto shared_record = std::make_shared<EvidenceRecord>(std::move(*parsed));
                         evidence_[shared_record->key] = shared_record;
                         remember_evidence_metadata(*shared_record);
                         if (!config_.open.read_only) {
                             append_evidence_record_to_store(*shared_record);
                         }
-                        propagate_parent_hulls(shared_record->key.node_id, shared_record->key);
+                        if (config_.propagate_parent_hulls) {
+                            propagate_parent_hulls(shared_record->key.node_id, shared_record->key);
+                        }
                     }
                 }
             }
@@ -3190,6 +3390,49 @@ bool LectDatabase::propagate_parent_hulls_from(NodeId parent_id,
     return true;
 }
 
+bool LectDatabase::drain_deferred_parent_hulls() {
+    if (deferred_parent_hull_writes_.empty()) {
+        return true;
+    }
+    if (!config_.propagate_parent_hulls) {
+        deferred_parent_hull_writes_.clear();
+        return true;
+    }
+
+    std::vector<DeferredParentHullWrite> pending;
+    pending.swap(deferred_parent_hull_writes_);
+    for (const auto& item : pending) {
+        const auto node_item = read_node(item.key.node_id);
+        if (!node_item) {
+            return false;
+        }
+        auto stored = evidence(item.key);
+        if (!stored) {
+            continue;
+        }
+        std::shared_ptr<const EvidenceRecord> propagated_child = stored->storage;
+        if (!stored->child_hull && !node_item->is_leaf()) {
+            if (auto child_hull = build_parent_hull_from_node(*node_item, item.key)) {
+                child_hull->generation = generation_;
+                child_hull->checksum = payload_checksum(child_hull->payload);
+                auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
+                auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
+                                                                                       child_hull_record);
+                (void)child_hull_inserted;
+                if (!append_evidence_record_to_store(*child_hull_it->second)) {
+                    return false;
+                }
+                propagated_child = child_hull_it->second;
+                pending_changes_ = true;
+            }
+        }
+        if (!propagate_parent_hulls_from(node_item->parent, item.key, propagated_child)) {
+            return false;
+        }
+    }
+    return true;
+}
+
 std::optional<EvidenceRecord> LectDatabase::build_parent_hull_from_child(const NodeRecord& parent_node,
                                                                          const EvidenceRecord& child_record,
                                                                          const EvidenceKey& key_template) const {
@@ -3202,8 +3445,8 @@ std::optional<EvidenceRecord> LectDatabase::build_parent_hull_from_child(const N
         return build_parent_hull_from_node(parent_node, key_template);
     }
 
-    EvidenceKey sibling_key = key_template;
-    sibling_key.node_id = child_is_left ? parent_node.right : parent_node.left;
+    EvidenceKey sibling_key = evidence_key_for_node(child_is_left ? parent_node.right : parent_node.left,
+                                                    &key_template);
     const auto sibling_record = evidence(sibling_key);
     if (!sibling_record || sibling_record->payload.size() != child_record.payload.size()) {
         return std::nullopt;
@@ -3214,8 +3457,7 @@ std::optional<EvidenceRecord> LectDatabase::build_parent_hull_from_child(const N
     const auto right_payload = child_is_left ? sibling_record->payload
                                              : std::span<const float>(child_record.payload);
     EvidenceRecord out;
-    out.key = key_template;
-    out.key.node_id = parent_node.id;
+    out.key = evidence_key_for_node(parent_node.id, &key_template);
     out.child_hull = true;
     if (!merge_payload_hull(key_template.payload_kind,
                             left_payload,
@@ -3231,18 +3473,15 @@ std::optional<EvidenceRecord> LectDatabase::build_parent_hull_from_node(const No
     if (parent_node.is_leaf()) {
         return std::nullopt;
     }
-    EvidenceKey left_key = key_template;
-    EvidenceKey right_key = key_template;
-    left_key.node_id = parent_node.left;
-    right_key.node_id = parent_node.right;
+    EvidenceKey left_key = evidence_key_for_node(parent_node.left, &key_template);
+    EvidenceKey right_key = evidence_key_for_node(parent_node.right, &key_template);
     const auto left_record = evidence(left_key);
     const auto right_record = evidence(right_key);
     if (!left_record || !right_record || left_record->payload.size() != right_record->payload.size()) {
         return std::nullopt;
     }
     EvidenceRecord out;
-    out.key = key_template;
-    out.key.node_id = parent_node.id;
+    out.key = evidence_key_for_node(parent_node.id, &key_template);
     out.child_hull = true;
     if (!merge_payload_hull(key_template.payload_kind,
                             left_record->payload,

@@ -15,10 +15,13 @@ from scipy.spatial import ConvexHull, QhullError
 
 ROOT = Path(__file__).resolve().parents[1]
 LIE_ROOT = ROOT.parent / "link_interval_envelope"
+WORKSPACE_ROOT = ROOT.parent
 
 
 def bootstrap_imports() -> None:
     paths = [
+        WORKSPACE_ROOT / "build-rbf-only-exec" / "python",
+        WORKSPACE_ROOT / "build-consolidated-python" / "python",
         LIE_ROOT / "build_py310" / "python",
         ROOT / "build_py310" / "python",
         ROOT / "build" / "python",
@@ -72,6 +75,7 @@ def make_marcucci_combined_obstacle_bounds() -> list[list[float]]:
 
 DEFAULT_BOX_TABLE = ROOT / "outputs" / "paper" / "epiaabb_pipeline_standalone_n400_fixed_widths_endpoint_only_fixed_boxes.json"
 DEFAULT_VARIANTS = "link_s4,kdop26_s4,support_hull_nokdop_s4"
+DEFAULT_CHAIN_VARIANTS = "chain_aabb_kdop26_s4,chain_aabb_support_hull_s4,chain_aabb_kdop26_support_hull_s4"
 D32_NODES = 10_000_000_000
 
 
@@ -104,31 +108,7 @@ def parse_variant(text: str) -> dict[str, Any]:
             "n_subdivisions": n_sub,
             "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
-            "voxel_delta": None,
-            "grid_pad_policy": "strict_half_diagonal",
-            "custom_safety_pad": 0.0,
             "diagnostic": False,
-        }
-    if key.startswith("hull_d"):
-        body = key.removeprefix("hull_d")
-        pad_policy = "strict_half_diagonal"
-        if body.endswith("_nopad"):
-            body = body.removesuffix("_nopad")
-            pad_policy = "no_extra_pad"
-        delta = float(body)
-        suffix = " no-pad" if pad_policy == "no_extra_pad" else " strict-pad"
-        return {
-            "key": key,
-            "label": f"Crit+HullGrid d={delta:g}{suffix}",
-            "endpoint_source": "critsample",
-            "envelope_type": "hull_grid",
-            "n_subdivisions": 1,
-            "support_hull_keep_kdop": False,
-            "volume_reference_variant": None,
-            "voxel_delta": delta,
-            "grid_pad_policy": pad_policy,
-            "custom_safety_pad": 0.0,
-            "diagnostic": pad_policy == "no_extra_pad",
         }
     if key.startswith("kdop26_s"):
         n_sub = int(float(key.removeprefix("kdop26_s")))
@@ -140,9 +120,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "n_subdivisions": n_sub,
             "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
-            "voxel_delta": None,
-            "grid_pad_policy": "strict_half_diagonal",
-            "custom_safety_pad": 0.0,
             "diagnostic": False,
         }
     if key.startswith("support_hull_nokdop_s") or key.startswith("support_hull_plain_s"):
@@ -156,9 +133,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "n_subdivisions": n_sub,
             "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
-            "voxel_delta": None,
-            "grid_pad_policy": "strict_half_diagonal",
-            "custom_safety_pad": 0.0,
             "diagnostic": False,
         }
     if key == "ifk_link_s4":
@@ -170,26 +144,27 @@ def parse_variant(text: str) -> dict[str, Any]:
             "n_subdivisions": 4,
             "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
-            "voxel_delta": None,
-            "grid_pad_policy": "strict_half_diagonal",
-            "custom_safety_pad": 0.0,
-            "diagnostic": True,
-        }
-    if key == "ifk_hull_d0.04":
-        return {
-            "key": key,
-            "label": "IFK+HullGrid d=0.04 strict-pad",
-            "endpoint_source": "ifk",
-            "envelope_type": "hull_grid",
-            "n_subdivisions": 1,
-            "support_hull_keep_kdop": False,
-            "volume_reference_variant": None,
-            "voxel_delta": 0.04,
-            "grid_pad_policy": "strict_half_diagonal",
-            "custom_safety_pad": 0.0,
             "diagnostic": True,
         }
     raise ValueError(f"unknown variant '{text}'")
+
+
+def parse_chain_variant(text: str) -> dict[str, Any]:
+    key = text.strip()
+    if not key:
+        raise ValueError("empty chain variant")
+    specs = {
+        "chain_aabb_kdop26_s4": ("AABB->KDOP26", ["link_s4", "kdop26_s4"]),
+        "chain_aabb_support_hull_s4": ("AABB->SupportHull", ["link_s4", "support_hull_nokdop_s4"]),
+        "chain_aabb_kdop26_support_hull_s4": (
+            "AABB->KDOP26->SupportHull",
+            ["link_s4", "kdop26_s4", "support_hull_nokdop_s4"],
+        ),
+    }
+    if key not in specs:
+        raise ValueError(f"unknown chain variant '{text}'")
+    label, stages = specs[key]
+    return {"key": key, "label": label, "stages": stages}
 
 
 def load_box_table(path: Path, max_boxes_per_width: int | None = None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -460,9 +435,16 @@ def compact_payload_bytes(result: dict[str, Any]) -> float:
     if kdop_intervals_flat and str(envelope.get("type", "")).upper() in {"KDOP", "KDOP26"}:
         return float(len(kdop_intervals_flat) * 4)
 
+    n_active = int((envelope.get("shape") or [0, 0, 0])[0] or 0)
+    n_sub = int((envelope.get("shape") or [0, 0, 0])[1] or 0)
+    if env_type in {"kdop", "kdop26"} and n_active > 0 and n_sub > 0:
+        return float(n_active * n_sub * 26 * 4)
+
     support_hulls_flat = envelope.get("support_hulls_flat", [])
     if support_hulls_flat and env_type in {"supporthull", "support_hull"}:
         return float((len(support_hulls_flat) + len(kdop_intervals_flat)) * 4)
+    if env_type in {"supporthull", "support_hull"} and n_active > 0 and n_sub > 0:
+        return float(n_active * n_sub * 13 * 4)
     return 0.0
 
 
@@ -472,6 +454,31 @@ def cache_payload_label(bytes_per_node: float) -> str:
     if bytes_per_node >= 1024.0:
         return f"{bytes_per_node / 1024.0:.2f} KB"
     return f"{bytes_per_node:.1f} B"
+
+
+def aabb_overlap(a: list[float], b: list[float]) -> bool:
+    return (
+        a[0] <= b[3] and b[0] <= a[3]
+        and a[1] <= b[4] and b[1] <= a[4]
+        and a[2] <= b[5] and b[2] <= a[5]
+    )
+
+
+def envelope_aabb_definitely_free(result: dict[str, Any], obstacle_bounds: list[list[float]]) -> bool:
+    if not obstacle_bounds:
+        return False
+    envelope = result.get("envelope", {})
+    flat = [float(value) for value in envelope.get("inflated_link_iaabbs_flat") or envelope.get("link_iaabbs_flat", [])]
+    if not flat:
+        return False
+    for offset in range(0, len(flat), 6):
+        if offset + 5 >= len(flat):
+            break
+        link_box = flat[offset:offset + 6]
+        for obstacle in obstacle_bounds:
+            if aabb_overlap(link_box, [float(value) for value in obstacle]):
+                return False
+    return True
 
 
 def d32_time_hours(t_eval_us: float, n_nodes: int) -> float:
@@ -498,10 +505,6 @@ def summarize_results(
     combo_counts = [float(item.get("diagnostics", {}).get("combo_count", 0.0)) for item in results]
     enum_threads = [float(item.get("diagnostics", {}).get("enumerate_threads", 1.0)) for item in results]
     payloads = [compact_payload_bytes(item) for item in results]
-    grids = [item.get("envelope", {}).get("grid", {}) for item in results]
-    voxels = [float(grid.get("n_occupied", 0.0)) for grid in grids]
-    bricks = [float(grid.get("n_bricks", 0.0)) for grid in grids]
-    safety_pads = [float(grid.get("safety_pad", 0.0)) for grid in grids]
 
     volume_stats = stats(volumes)
     raw_volume_stats = stats(raw_volumes)
@@ -509,11 +512,8 @@ def summarize_results(
     envelope_stats = stats(envelope_us)
     total_stats = stats(total_us)
     payload_stats = stats(payloads)
-    voxel_stats = stats(voxels)
-    brick_stats = stats(bricks)
     thread_stats = stats(enum_threads)
     combo_stats = stats(combo_counts)
-    safety_pad_stats = stats(safety_pads)
     t_eval_us = envelope_stats["mean"]
     return {
         "variant": variant["key"],
@@ -523,8 +523,6 @@ def summarize_results(
         "n_subdivisions": int(variant["n_subdivisions"]),
         "support_hull_keep_kdop": bool(variant.get("support_hull_keep_kdop", False)),
         "volume_reference_variant": variant.get("volume_reference_variant"),
-        "voxel_delta": variant["voxel_delta"],
-        "grid_pad_policy": variant["grid_pad_policy"],
         "diagnostic": bool(variant["diagnostic"]),
         "n_boxes": len(results),
         "volume_mean": volume_stats["mean"],
@@ -540,13 +538,99 @@ def summarize_results(
         "combo_count_mean": combo_stats["mean"],
         "enumerate_threads_mean": thread_stats["mean"],
         "enumerate_threads_max": thread_stats["max"],
-        "voxel_count_mean": voxel_stats["mean"],
-        "voxel_brick_count_mean": brick_stats["mean"],
-        "grid_safety_pad_mean": safety_pad_stats["mean"],
         "compact_payload_bytes_mean": payload_stats["mean"],
         "compact_payload_label": cache_payload_label(payload_stats["mean"]),
         "d32_nodes": int(d32_nodes),
         "d32_eval_time_h": d32_time_hours(t_eval_us, d32_nodes),
+        "d32_disk_gb": d32_disk_gb(payload_stats["mean"], d32_nodes),
+    }
+
+
+def summarize_chain_results(
+    result_rows_by_variant: dict[str, list[dict[str, Any]]],
+    chain: dict[str, Any],
+    d32_nodes: int,
+    obstacle_bounds: list[list[float]],
+    selected_indices: list[int] | None = None,
+) -> dict[str, Any]:
+    stages = list(chain["stages"])
+    if selected_indices is None:
+        n_items = len(result_rows_by_variant[stages[0]]) if stages else 0
+        selected_indices = list(range(n_items))
+    stage_exec_counts = {stage: 0 for stage in stages}
+    stage_pass_counts = {stage: 0 for stage in stages}
+    volumes: list[float] = []
+    raw_volumes: list[float] = []
+    eval_us: list[float] = []
+    total_us: list[float] = []
+    payloads: list[float] = []
+
+    for index in selected_indices:
+        item_eval_us = 0.0
+        item_total_us = 0.0
+        item_payload = 0.0
+        final_result = result_rows_by_variant[stages[-1]][index]
+        for stage in stages:
+            stage_result = result_rows_by_variant[stage][index]
+            stage_exec_counts[stage] += 1
+            item_eval_us += float(stage_result.get("timing_us", {}).get("envelope", 0.0))
+            item_total_us += float(stage_result.get("timing_us", {}).get("total", 0.0))
+            item_payload += compact_payload_bytes(stage_result)
+            final_result = stage_result
+            if envelope_aabb_definitely_free(stage_result, obstacle_bounds):
+                stage_pass_counts[stage] += 1
+                break
+        eval_us.append(item_eval_us)
+        total_us.append(item_total_us)
+        payloads.append(item_payload)
+        volumes.append(envelope_volume(final_result))
+        raw_volumes.append(raw_link_volume(final_result))
+
+    n_boxes = len(selected_indices)
+    eval_stats = stats(eval_us)
+    total_stats = stats(total_us)
+    payload_stats = stats(payloads)
+    volume_stats = stats(volumes)
+    raw_volume_stats = stats(raw_volumes)
+    stage_execution_rates = {
+        stage: float(stage_exec_counts[stage] / n_boxes) if n_boxes else 0.0
+        for stage in stages
+    }
+    stage_pass_rates = {
+        stage: float(stage_pass_counts[stage] / n_boxes) if n_boxes else 0.0
+        for stage in stages
+    }
+    return {
+        "variant": chain["key"],
+        "label": chain["label"],
+        "endpoint_source": "critsample",
+        "envelope_type": "chain",
+        "n_subdivisions": 4,
+        "support_hull_keep_kdop": False,
+        "volume_reference_variant": None,
+        "diagnostic": False,
+        "chain": True,
+        "chain_stages": stages,
+        "chain_stage_execution_rates": stage_execution_rates,
+        "chain_stage_pass_rates": stage_pass_rates,
+        "n_boxes": n_boxes,
+        "volume_mean": volume_stats["mean"],
+        "volume_median": volume_stats["median"],
+        "volume_std": volume_stats["std"],
+        "raw_link_volume_mean": raw_volume_stats["mean"],
+        "endpoint_us_mean": 0.0,
+        "envelope_us_mean": eval_stats["mean"],
+        "total_us_mean": total_stats["mean"],
+        "t_eval_us_mean": eval_stats["mean"],
+        "t_eval_us_median": eval_stats["median"],
+        "t_eval_us_std": eval_stats["std"],
+        "combo_count_mean": 0.0,
+        "enumerate_threads_mean": 0.0,
+        "enumerate_threads_max": 0.0,
+        "compact_payload_bytes_mean": payload_stats["mean"],
+        "compact_payload_label": cache_payload_label(payload_stats["mean"]),
+        "d32_nodes": int(d32_nodes),
+        "d32_eval_time_h": d32_time_hours(eval_stats["mean"], d32_nodes),
         "d32_disk_gb": d32_disk_gb(payload_stats["mean"], d32_nodes),
     }
 
@@ -584,12 +668,10 @@ def summarize_collision_results(
                 obstacle_bounds,
                 envelope_type=variant["envelope_type"],
                 n_subdivisions=int(variant["n_subdivisions"]),
-                voxel_delta=float(variant["voxel_delta"] or 0.05),
                 kdop_directions="dop26",
                 support_hull_keep_kdop=bool(variant.get("support_hull_keep_kdop", False)),
                 collision_mode=collision_mode_for_variant(variant),
                 count_all_pairs=True,
-                include_voxels="none",
             )
         )
     collision_us = stats(float(item.get("timing_us", {}).get("collision", 0.0)) for item in collision_runs)
@@ -617,6 +699,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--boxes-json", type=Path, default=DEFAULT_BOX_TABLE)
     parser.add_argument("--out-json", type=Path, default=ROOT / "outputs" / "paper" / "link_envelope_pipeline_standalone_envelope_only.json")
     parser.add_argument("--variants", default=DEFAULT_VARIANTS)
+    parser.add_argument("--chain-variants", default=DEFAULT_CHAIN_VARIANTS)
     parser.add_argument("--endpoint-threads", type=int, default=0)
     parser.add_argument("--batch-threads", type=int, default=1)
     parser.add_argument("--parallel-min-combos", type=int, default=0)
@@ -634,6 +717,13 @@ def main() -> int:
     robot = lie.Robot.from_json(str(robot_path))
     box_table, boxes = load_box_table(args.boxes_json, args.max_boxes_per_width)
     variants = [parse_variant(item) for item in args.variants.split(",") if item.strip()]
+    chain_variants = [parse_chain_variant(item) for item in args.chain_variants.split(",") if item.strip()]
+    seen_variants = {variant["key"] for variant in variants}
+    for chain in chain_variants:
+        for stage in chain["stages"]:
+            if stage not in seen_variants:
+                variants.append(parse_variant(stage))
+                seen_variants.add(stage)
     if args.include_ifk_controls:
         seen = {variant["key"] for variant in variants}
         for key in ["ifk_link_s4"]:
@@ -646,7 +736,7 @@ def main() -> int:
     batch_wall_s_by_variant: dict[str, float] = {}
     interval_boxes = [box["intervals"] for box in boxes]
     width_values = sorted({float(box["width"]) for box in boxes})
-    obstacle_bounds = marcucci_collision_obstacle_bounds() if args.include_collision_benchmark else []
+    obstacle_bounds = marcucci_collision_obstacle_bounds() if (args.include_collision_benchmark or chain_variants) else []
 
     for variant in variants:
         t0 = time.perf_counter()
@@ -656,14 +746,10 @@ def main() -> int:
             endpoint_source=variant["endpoint_source"],
             envelope_type=variant["envelope_type"],
             n_subdivisions=int(variant["n_subdivisions"]),
-            voxel_delta=float(variant["voxel_delta"] or 0.05),
-            grid_pad_policy=variant["grid_pad_policy"],
-            custom_safety_pad=float(variant["custom_safety_pad"]),
             endpoint_threads=int(args.endpoint_threads),
             parallel_min_combos=int(args.parallel_min_combos),
             n_threads=int(args.batch_threads),
             support_hull_keep_kdop=bool(variant.get("support_hull_keep_kdop", False)),
-            include_voxels="none",
             include_endpoint_iaabbs=bool(args.include_collision_benchmark),
         )
         wall_s = time.perf_counter() - t0
@@ -699,6 +785,24 @@ def main() -> int:
             width_row["width_label"] = next(box["width_label"] for box in boxes if float(box["width"]) == width)
             if args.include_collision_benchmark:
                 width_row.update(summarize_collision_results(robot_path, selected, variant, obstacle_bounds))
+            rows_by_width.append(width_row)
+
+    for chain in chain_variants:
+        rows.append(summarize_chain_results(result_rows_by_variant, chain, int(args.d32_nodes), obstacle_bounds))
+        for width in width_values:
+            selected_indices = [
+                index for index, box in enumerate(boxes)
+                if abs(float(box["width"]) - float(width)) < 1e-12
+            ]
+            width_row = summarize_chain_results(
+                result_rows_by_variant,
+                chain,
+                int(args.d32_nodes),
+                obstacle_bounds,
+                selected_indices=selected_indices,
+            )
+            width_row["fixed_width"] = float(width)
+            width_row["width_label"] = next(box["width_label"] for box in boxes if float(box["width"]) == width)
             rows_by_width.append(width_row)
 
     baseline = next((row for row in rows if row["variant"] == "link_s1"), None)
@@ -737,13 +841,13 @@ def main() -> int:
         "d32_time_model": "envelope_only_compute_extrapolation: mean envelope_us * d32_nodes; endpoint enumeration is excluded from the representation microbenchmark",
         "d32_disk_model": "compact payload estimate after short-link pruning: LinkIAABB=6 floats per retained sub-box; KDOP26=26 floats per retained sub-box; pure SupportHull=13 support floats per retained sub-box",
         "collision_benchmark_enabled": bool(args.include_collision_benchmark),
+        "chain_variants": chain_variants,
         "collision_obstacle_set": args.collision_obstacle_set if args.include_collision_benchmark else None,
         "collision_metric": "envelope-only obstacle test using all surviving link/obstacle pairs; bottom-level collision time excludes endpoint enumeration and envelope construction",
         "collision_mode_policy": "LinkIAABB=aabb_only, KDOP26=kdop_only, pure SupportHull=support_hull_only",
         "support_hull_volume_policy": "Pure SupportHull volume is computed directly from each uninflated short-link endpoint-AABB convex hull. KDOP axes match the C++ DOP26 order, and link-radius expansion is applied only by the collision test.",
         "incremental_fk_policy": "not used in main t_eval; fixed boxes are independent, so parent-FK reuse would mix grower-local behavior into the envelope microkernel",
         "t_read_policy": "not part of Exp.2 cold t_eval; grower/cache-hit reuse is reported by Exp.3 diagnostics",
-        "grid_pad_policy_main": "legacy hull-grid parser retained for archaeology; default paper variants exclude grid rows",
         "rows": rows,
         "rows_by_width": rows_by_width,
     }
