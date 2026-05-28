@@ -300,6 +300,9 @@ public:
 
 private:
     lect_database::EvidenceKey endpoint_key(OracleNodeId node) const;
+    std::optional<std::vector<float>> materialize_endpoint_payload_for_node(OracleNodeId node,
+                                                                            const std::vector<Interval>& intervals,
+                                                                            int changed_dim);
     std::optional<std::vector<float>> endpoint_payload_for_node(OracleNodeId node,
                                                                 const std::vector<Interval>& intervals,
                                                                 int changed_dim);

@@ -28,6 +28,7 @@ import sbf
 DEFAULT_P18_CACHE_LABEL = "iiwa_shelf_endpoint_only_p18"
 DEFAULT_PREWARM_THREADS = 8
 DEFAULT_SNAPSHOT_DIRNAME = "lect_snapshot"
+DEFAULT_AAFK_SCHEDULE_DEPTH = 50
 
 
 def directory_size(path: Path | None) -> int:
@@ -109,6 +110,9 @@ def make_prewarm_config_args(cache_path: Path, prewarm_depth: int, envelope: str
     args.rbf_cache_root = cache_path.parent
     args.rbf_cache_label = cache_path.name
     args.rbf_prewarm_depth = int(prewarm_depth)
+    args.rbf_max_depth = DEFAULT_AAFK_SCHEDULE_DEPTH
+    args.ffb_depth = DEFAULT_AAFK_SCHEDULE_DEPTH
+    args.connector_pave_depth = DEFAULT_AAFK_SCHEDULE_DEPTH
     args.rbf_envelope = str(envelope)
     args.threads = max(1, int(prewarm_threads))
     args.task_batch_size = max(1, int(prewarm_threads))
@@ -179,7 +183,13 @@ def existing_p18_cache_summary(cache_path: Path, prewarm_depth: int, envelope: s
         "snapshot": snapshot,
         "verify_ok": None,
         "manifest": manifest,
-        "metadata": {"prewarm_depth": int(prewarm_depth), "envelope": str(envelope), "prewarm_threads": int(prewarm_threads)},
+        "metadata": {
+            "prewarm_depth": int(prewarm_depth),
+            "envelope": str(envelope),
+            "prewarm_threads": int(prewarm_threads),
+            "max_depth": manifest_schedule_depth(manifest),
+            "lect_schedule_depth": manifest_schedule_depth(manifest),
+        },
         "prewarm": {
             "skipped_existing_cache": True,
             "prewarm_depth": int(prewarm_depth),
@@ -201,7 +211,29 @@ def prewarm_summary_matches(summary: dict[str, Any], *, cache_path: Path, prewar
         int(metadata.get("prewarm_depth", -1)) == int(prewarm_depth)
         and str(metadata.get("envelope", "")) == str(envelope)
         and int(metadata.get("prewarm_threads", -1)) == int(prewarm_threads)
+        and int(metadata.get("max_depth", metadata.get("lect_schedule_depth", -1))) >= DEFAULT_AAFK_SCHEDULE_DEPTH
     )
+
+
+def manifest_schedule_depth(manifest: dict[str, str]) -> int:
+    raw = str(manifest.get("split_depth_dimensions", ""))
+    if not raw:
+        return -1
+    return len([item for item in raw.split(",") if item.strip()])
+
+
+def p18_cache_manifest_matches(cache_path: Path, *, envelope: str) -> bool:
+    manifest = read_manifest(cache_path / "manifest.json")
+    if not manifest:
+        return False
+    if manifest_schedule_depth(manifest) < DEFAULT_AAFK_SCHEDULE_DEPTH:
+        return False
+    envelope_descriptor = str(manifest.get("envelope_descriptor", ""))
+    if str(envelope) == "support_hull" and "type=2" not in envelope_descriptor:
+        return False
+    if str(envelope) == "link" and "type=0" not in envelope_descriptor:
+        return False
+    return True
 
 
 def ensure_p18_prewarm_summary(
@@ -252,7 +284,7 @@ def ensure_p18_prewarm_summary(
             )
             write_json(prewarm_json, existing)
             return existing
-    if not clean_cache and (cache_path / "manifest.json").exists():
+    if not clean_cache and (cache_path / "manifest.json").exists() and p18_cache_manifest_matches(cache_path, envelope=str(envelope)):
         summary = existing_p18_cache_summary(
             cache_path=cache_path,
             prewarm_depth=int(prewarm_depth),
@@ -261,7 +293,7 @@ def ensure_p18_prewarm_summary(
         )
         write_json(prewarm_json, summary)
         return summary
-    rebuild_clean = bool(clean_cache or (prewarm_json.exists() and not bool(existing.get("dry_run"))))
+    rebuild_clean = bool(clean_cache or cache_path.exists() or (prewarm_json.exists() and not bool(existing.get("dry_run"))))
     summary = run_p18_prewarm(
         cache_path=cache_path,
         prewarm_depth=int(prewarm_depth),

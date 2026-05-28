@@ -90,10 +90,12 @@ class ThresholdOracle final : public rbf::BoxOracle {
 public:
     explicit ThresholdOracle(int free_depth,
                              int max_tree_depth = 16,
-                             rbf::BoxValidation blocked_validation = rbf::BoxValidation::Unknown)
+                                                         rbf::BoxValidation blocked_validation = rbf::BoxValidation::Unknown,
+                                                         bool reuse_external_evidence = false)
         : free_depth_(free_depth),
           max_tree_depth_(std::max(max_tree_depth, free_depth + 1)),
-          blocked_validation_(blocked_validation) {
+                    blocked_validation_(blocked_validation),
+                    reuse_external_evidence_(reuse_external_evidence) {
         Node root;
         root.depth = 0;
         root.intervals = {{0.0, 1.0}, {0.0, 1.0}};
@@ -166,17 +168,7 @@ public:
     rbf::BoxValidation validate_node(rbf::OracleNodeId node,
                                      const std::vector<rbf::Interval>&,
                                      int = -1) override {
-        counters_.node_validations += 1;
-        if (depth(node) >= free_depth_) {
-            counters_.certified_free += 1;
-            return rbf::BoxValidation::Free;
-        }
-        if (blocked_validation_ == rbf::BoxValidation::Occupied) {
-            counters_.collision_possible += 1;
-            return rbf::BoxValidation::Occupied;
-        }
-        counters_.collision_possible += 1;
-        return rbf::BoxValidation::Unknown;
+        return classify(node, free_depth_, reuse_external_evidence_);
     }
     bool validate_intervals(const std::vector<rbf::Interval>&) override { return true; }
     bool is_reserved(rbf::OracleNodeId) const override { return false; }
@@ -186,8 +178,12 @@ public:
     void release_box(int) override {}
     void clear_reservations() override {}
     rbf::OracleNodeId select_unexplored_node() const override { return -1; }
+    rbf::OracleValidationDetail last_validation_detail() const override { return last_detail_; }
     const rbf::OracleCounters& counters() const override { return counters_; }
-    void reset_counters() override { counters_ = {}; }
+    void reset_counters() override {
+        counters_ = {};
+        last_detail_ = {};
+    }
 
 private:
     struct Node {
@@ -246,8 +242,36 @@ private:
     int free_depth_ = 0;
     int max_tree_depth_ = 0;
     rbf::BoxValidation blocked_validation_ = rbf::BoxValidation::Unknown;
+    bool reuse_external_evidence_ = false;
     std::vector<Node> nodes_;
     rbf::OracleCounters counters_;
+    rbf::OracleValidationDetail last_detail_;
+
+    rbf::BoxValidation classify(rbf::OracleNodeId node,
+                                int free_depth,
+                                bool reused_external_evidence) {
+        counters_.node_validations += 1;
+        last_detail_ = {};
+        last_detail_.node = node;
+        last_detail_.depth = depth(node);
+        last_detail_.reused_external_evidence = reused_external_evidence;
+        if (depth(node) >= free_depth) {
+            counters_.certified_free += 1;
+            last_detail_.validation = rbf::BoxValidation::Free;
+            last_detail_.collision_possible = false;
+            return rbf::BoxValidation::Free;
+        }
+        if (blocked_validation_ == rbf::BoxValidation::Occupied) {
+            counters_.collision_possible += 1;
+            last_detail_.validation = rbf::BoxValidation::Occupied;
+            last_detail_.collision_possible = true;
+            return rbf::BoxValidation::Occupied;
+        }
+        counters_.collision_possible += 1;
+        last_detail_.validation = rbf::BoxValidation::Unknown;
+        last_detail_.collision_possible = true;
+        return rbf::BoxValidation::Unknown;
+    }
 };
 
 rbf::BoxNode make_test_box(int id, double x0, double x1) {
@@ -545,6 +569,7 @@ void test_find_free_box_linear_mode_ignores_start_depth() {
     seed << 0.25, 0.25;
 
     rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::Linear;
     options.start_depth = 5;
     options.max_depth = 6;
 
@@ -552,6 +577,26 @@ void test_find_free_box_linear_mode_ignores_start_depth() {
     assert(result.found);
     assert(oracle.depth(result.node) == 3);
     assert(result.decisions == 4);
+}
+
+void test_find_free_box_binary_external_unknown_stays_nonfree_at_max_depth() {
+    ThresholdOracle oracle(99, 12, rbf::BoxValidation::Unknown, true);
+    rbf::FindFreeBoxService service(oracle);
+    Eigen::VectorXd seed(2);
+    seed << 0.25, 0.25;
+
+    rbf::FindFreeBoxOptions options;
+    options.search_mode = rbf::FindFreeBoxSearchMode::BinaryDepth;
+    options.start_depth = 2;
+    options.max_depth = 6;
+
+    const auto result = service.find(seed, options);
+    assert(!result.found);
+    assert(result.hit_unknown_depth_cap);
+    assert(result.fail_code == 2);
+    assert(oracle.depth(result.node) == 6);
+    assert(result.decisions == 2);
+    assert(result.validation_detail.reused_external_evidence);
 }
 
 void test_build_subtractive_hits_domain_binary_ffb() {
@@ -619,6 +664,7 @@ int main() {
     test_find_free_box_binary_fails_when_max_depth_not_free();
     test_find_free_box_binary_treats_occupied_as_nonfree();
     test_find_free_box_linear_mode_ignores_start_depth();
+    test_find_free_box_binary_external_unknown_stays_nonfree_at_max_depth();
     test_build_subtractive_hits_domain_binary_ffb();
     std::cout << "SBF C++ tests passed.\n";
     return 0;

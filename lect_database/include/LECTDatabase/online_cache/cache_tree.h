@@ -54,9 +54,13 @@ public:
     int depth(NodeId node_id) const;
     std::pair<NodeId, NodeId> split_leaf(NodeId node_id);
 
-    std::optional<EvidenceRecord> evidence(EvidenceKey key);
+    std::optional<EvidenceRecord> evidence(EvidenceKey key,
+                                           const std::vector<Interval>* exact_intervals = nullptr,
+                                           const LectExternalEvidenceSource* external_evidence_source = nullptr,
+                                           bool* reused_external_evidence = nullptr);
     bool put_evidence(EvidenceRecord record, bool allow_backfill = true);
     bool has_cached_payload(const EvidenceKey& key) const;
+    bool flush_payloads_to_database();
 
     void clear_payloads();
     std::size_t memory_used_bytes() const noexcept { return payload_bytes_; }

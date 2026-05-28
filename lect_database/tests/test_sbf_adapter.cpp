@@ -389,7 +389,7 @@ void test_external_evidence_reuses_when_handles_differ() {
     validation_config.external_evidence_materialization = true;
     validation_config.external_evidence_backfill_active = false;
 
-    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(100.0f, 100.0f, 100.0f, 110.0f, 110.0f, 110.0f)};
     rbf::DatabaseBoxOracle oracle(
         robot,
         *reopened_active,
@@ -458,7 +458,7 @@ void test_external_child_hull_reuses_unified_envelope_evidence() {
     validation_config.external_evidence_materialization = true;
     validation_config.external_evidence_backfill_active = false;
 
-    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(100.0f, 100.0f, 100.0f, 110.0f, 110.0f, 110.0f)};
     rbf::DatabaseBoxOracle oracle(
         robot,
         active_database,

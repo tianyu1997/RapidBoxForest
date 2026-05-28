@@ -2074,6 +2074,9 @@ bool RBFPlanningForest::checkpoint_database() {
     if (!database_) {
         return false;
     }
+    if (online_cache_ && !online_cache_->flush_payloads_to_database()) {
+        return false;
+    }
     const bool checkpoint_ok = database_->checkpoint();
     if (!checkpoint_ok || !config_.database.auto_publish_snapshot_after_checkpoint) {
         return checkpoint_ok;

@@ -76,6 +76,48 @@ bool descend_to_seed_child(BoxOracle& oracle,
 }
 
 void record_elapsed(StageContext& context,
+              const std::string& key,
+              SteadyTimePoint start);
+
+DepthProbeOutcome apply_terminal_validation(FindFreeBoxResult& result,
+                                            OracleNodeId node,
+                                            int changed_dim,
+                                            std::vector<Interval> intervals,
+                                            BoxValidation validation) {
+    if (validation == BoxValidation::Free) {
+        result.found = true;
+        result.node = node;
+        result.changed_dim = changed_dim;
+        result.intervals = std::move(intervals);
+        result.fail_code = 0;
+        return DepthProbeOutcome::Free;
+    }
+    result.node = node;
+    result.intervals = std::move(intervals);
+    if (validation == BoxValidation::Occupied) {
+        result.fail_code = 3;
+    } else {
+        result.hit_unknown_depth_cap = true;
+        result.fail_code = 2;
+    }
+    return DepthProbeOutcome::NonFree;
+}
+
+DepthProbeOutcome validate_target_node(BoxOracle& oracle,
+                                       StageContext& context,
+                                       OracleNodeId node,
+                                       int changed_dim,
+                                       const std::vector<Interval>& intervals,
+                                       FindFreeBoxResult& result) {
+    const auto validation_start = SteadyClock::now();
+    const auto validation = oracle.validate_node(node, intervals, changed_dim);
+    result.validation_detail = oracle.last_validation_detail();
+    record_elapsed(context, "oracle.validate_node", validation_start);
+    result.decisions += 1;
+    return apply_terminal_validation(result, node, changed_dim, intervals, validation);
+}
+
+void record_elapsed(StageContext& context,
                     const std::string& key,
                     SteadyTimePoint start) {
     context.diagnostics().record_timing(
@@ -144,28 +186,14 @@ DepthProbeResult probe_binary_target_depth(BoxOracle& oracle,
                 return {DepthProbeOutcome::NonFree, std::move(result)};
             }
 
-            const auto validation_start = SteadyClock::now();
-            const auto validation = oracle.validate_node(node, intervals, changed_dim);
-            result.validation_detail = oracle.last_validation_detail();
-            record_elapsed(context, "oracle.validate_node", validation_start);
-            result.decisions += 1;
-            if (validation == BoxValidation::Free) {
-                result.found = true;
-                result.node = node;
-                result.changed_dim = changed_dim;
-                result.intervals = std::move(intervals);
-                result.fail_code = 0;
-                return {DepthProbeOutcome::Free, std::move(result)};
-            }
-            result.node = node;
-            result.intervals = std::move(intervals);
-            if (validation == BoxValidation::Occupied) {
-                result.fail_code = 3;
-            } else {
-                result.hit_unknown_depth_cap = true;
-                result.fail_code = 2;
-            }
-            return {DepthProbeOutcome::NonFree, std::move(result)};
+            const auto outcome = validate_target_node(
+                oracle,
+                context,
+                node,
+                changed_dim,
+                std::move(intervals),
+                result);
+            return {outcome, std::move(result)};
         }
 
         if (oracle.is_reserved(node)) {
@@ -265,30 +293,17 @@ FindFreeBoxResult run_linear_search(BoxOracle& oracle,
             continue;
         }
 
-        const auto validation_start = SteadyClock::now();
-        const auto validation = oracle.validate_node(node, intervals, changed_dim);
-        result.validation_detail = oracle.last_validation_detail();
-        record_elapsed(context, "oracle.validate_node", validation_start);
-        result.decisions += 1;
-        if (validation == BoxValidation::Free) {
-            result.found = true;
-            result.node = node;
-            result.changed_dim = changed_dim;
-            result.intervals = std::move(intervals);
-            result.fail_code = 0;
-            break;
-        }
-        if (validation == BoxValidation::Occupied) {
-            result.node = node;
-            result.intervals = std::move(intervals);
-            result.fail_code = 3;
+        const auto outcome = validate_target_node(
+            oracle,
+            context,
+            node,
+            changed_dim,
+            std::move(intervals),
+            result);
+        if (outcome == DepthProbeOutcome::Free || result.fail_code == 3) {
             break;
         }
         if (oracle.depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
-            result.hit_unknown_depth_cap = true;
-            result.node = node;
-            result.intervals = std::move(intervals);
-            result.fail_code = 2;
             break;
         }
         if (oracle.is_leaf(node)) {
@@ -329,13 +344,25 @@ FindFreeBoxResult run_binary_depth_search(BoxOracle& oracle,
         return probe_result;
     };
 
-    auto lower_probe = probe_binary_target_depth(oracle, seed, context, options, depth_range.start_depth, start);
+    auto lower_probe = probe_binary_target_depth(
+        oracle,
+        seed,
+        context,
+        options,
+        depth_range.start_depth,
+        start);
     absorb_probe(lower_probe.result);
     if (lower_probe.outcome != DepthProbeOutcome::NonFree || depth_range.start_depth >= depth_range.max_depth) {
         return finalize(std::move(lower_probe.result));
     }
 
-    auto upper_probe = probe_binary_target_depth(oracle, seed, context, options, depth_range.max_depth, start);
+    auto upper_probe = probe_binary_target_depth(
+        oracle,
+        seed,
+        context,
+        options,
+        depth_range.max_depth,
+        start);
     absorb_probe(upper_probe.result);
     if (upper_probe.outcome != DepthProbeOutcome::Free) {
         return finalize(std::move(upper_probe.result));
@@ -346,7 +373,13 @@ FindFreeBoxResult run_binary_depth_search(BoxOracle& oracle,
     FindFreeBoxResult best_free = std::move(upper_probe.result);
     while (free_depth - nonfree_depth > 1) {
         const int mid_depth = nonfree_depth + (free_depth - nonfree_depth) / 2;
-        auto mid_probe = probe_binary_target_depth(oracle, seed, context, options, mid_depth, start);
+        auto mid_probe = probe_binary_target_depth(
+            oracle,
+            seed,
+            context,
+            options,
+            mid_depth,
+            start);
         absorb_probe(mid_probe.result);
         if (mid_probe.outcome == DepthProbeOutcome::Fatal) {
             return finalize(std::move(mid_probe.result));

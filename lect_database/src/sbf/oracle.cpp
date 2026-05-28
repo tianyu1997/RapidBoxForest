@@ -302,16 +302,24 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
     int changed_dim) {
     const auto key = endpoint_key(node);
     if (online_cache_ != nullptr) {
-        if (auto cached = online_cache_->evidence(key)) {
-            counters_.materialization_reused_endpoint_cache += 1;
+        bool reused_external_evidence = false;
+        const auto* exact_intervals =
+            validation_config_.external_evidence_materialization ? &intervals : nullptr;
+        const auto* external_source =
+            validation_config_.external_evidence_materialization ? external_evidence_source_ : nullptr;
+        if (auto cached = online_cache_->evidence(key, exact_intervals, external_source, &reused_external_evidence)) {
+            if (reused_external_evidence) {
+                counters_.materialization_reused_external_evidence += 1;
+                last_validation_detail_.reused_external_evidence = true;
+            } else {
+                counters_.materialization_reused_endpoint_cache += 1;
+            }
             return std::move(cached->payload);
         }
-    }
-    if (auto cached = database_.evidence(key)) {
+    } else if (auto cached = database_.evidence(key)) {
         counters_.materialization_reused_endpoint_cache += 1;
         return std::vector<float>(cached->payload.begin(), cached->payload.end());
-    }
-    if (validation_config_.external_evidence_materialization && external_evidence_source_ != nullptr) {
+    } else if (validation_config_.external_evidence_materialization && external_evidence_source_ != nullptr) {
         auto cached = external_evidence_source_->endpoint_for_box_exact(intervals, key);
         if (!cached && key.node_path_valid) {
             cached = external_evidence_source_->evidence(key);
@@ -335,6 +343,15 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
         }
     }
 
+    return materialize_endpoint_payload_for_node(node, intervals, changed_dim);
+}
+
+std::optional<std::vector<float>> DatabaseBoxOracle::materialize_endpoint_payload_for_node(
+    OracleNodeId node,
+    const std::vector<Interval>& intervals,
+    int changed_dim) {
+    const auto key = endpoint_key(node);
+
     const EndpointSourceConfig materialization_endpoint_config =
         hifk_config_for_materialization(*this, node, endpoint_config_);
     EndpointIAABBResult endpoint =
@@ -347,7 +364,7 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
     record.payload = std::move(endpoint.endpoint_iaabbs);
     record.child_hull = false;
     if (online_cache_ != nullptr) {
-        online_cache_->put_evidence(record);
+        online_cache_->put_evidence(record, false);
     } else {
         database_.put_evidence(record);
     }
@@ -429,7 +446,17 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
         last_validation_detail_.collision_possible = true;
         return BoxValidation::Unknown;
     }
-    return classify_payload(node, intervals, *payload);
+    auto validation = classify_payload(node, intervals, *payload);
+    if (validation == BoxValidation::Unknown &&
+        last_validation_detail_.reused_external_evidence &&
+        validation_config_.external_evidence_materialization) {
+        auto refined_payload = materialize_endpoint_payload_for_node(node, intervals, changed_dim);
+        if (refined_payload) {
+            last_validation_detail_.reused_external_evidence = false;
+            validation = classify_payload(node, intervals, *refined_payload);
+        }
+    }
+    return validation;
 }
 
 bool DatabaseBoxOracle::validate_intervals(const std::vector<Interval>& intervals) {

@@ -97,10 +97,76 @@ void test_payload_cache_and_backfill() {
     std::filesystem::remove_all(dir);
 }
 
+void test_external_exact_hit_stays_in_cache_until_flush() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "rbf_online_cache_external_active";
+    const auto external_dir = std::filesystem::temp_directory_path() / "rbf_online_cache_external_snapshot";
+    auto active_database = make_database(active_dir);
+    auto external_database = make_database(external_dir);
+
+    auto external_record = record_for(external_database.root_node(), 21.0f);
+    const auto active_key = record_for(active_database.root_node(), 0.0f).key;
+    assert(external_database.put_evidence(external_record));
+
+    ld::OnlineEnvelopeCacheConfig config;
+    config.allow_database_backfill = false;
+    ld::OnlineEnvelopeCacheTree cache(active_database, config);
+    ld::LectDatabaseEvidenceSource external_source(external_database);
+    const auto root_box = root2();
+
+    bool reused_external = false;
+    auto loaded = cache.evidence(active_key, &root_box, &external_source, &reused_external);
+    assert(loaded.has_value());
+    assert(reused_external);
+    assert(cache.has_cached_payload(active_key));
+    assert(!active_database.has_evidence(active_key));
+
+    assert(cache.flush_payloads_to_database());
+    assert(active_database.has_evidence(active_key));
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
+void test_external_child_hull_exact_hit_stays_in_cache_until_flush() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "rbf_online_cache_external_child_hull_active";
+    const auto external_dir = std::filesystem::temp_directory_path() / "rbf_online_cache_external_child_hull_snapshot";
+    auto active_database = make_database(active_dir);
+    auto external_database = make_database(external_dir);
+
+    auto external_record = record_for(external_database.root_node(), 42.0f);
+    external_record.child_hull = true;
+    const auto active_key = record_for(active_database.root_node(), 0.0f).key;
+    assert(external_database.put_evidence(external_record));
+
+    ld::OnlineEnvelopeCacheConfig config;
+    config.allow_database_backfill = false;
+    ld::OnlineEnvelopeCacheTree cache(active_database, config);
+    ld::LectDatabaseEvidenceSource external_source(external_database);
+    const auto root_box = root2();
+
+    bool reused_external = false;
+    auto loaded = cache.evidence(active_key, &root_box, &external_source, &reused_external);
+    assert(loaded.has_value());
+    assert(reused_external);
+    assert(loaded->child_hull);
+    assert(cache.has_cached_payload(active_key));
+    assert(!active_database.has_evidence(active_key));
+
+    assert(cache.flush_payloads_to_database());
+    auto persisted = active_database.evidence(active_key);
+    assert(persisted.has_value());
+    assert(persisted->child_hull);
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
 }  // namespace
 
 int main() {
     test_split_uses_database_topology();
     test_payload_cache_and_backfill();
+    test_external_exact_hit_stays_in_cache_until_flush();
+    test_external_child_hull_exact_hit_stays_in_cache_until_flush();
     return 0;
 }
