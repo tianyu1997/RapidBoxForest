@@ -38,6 +38,7 @@ struct Options {
     bool verify = true;
     bool read_stages_only = false;
     bool snapshot = false;
+    bool reuse_snapshot = false;
     std::filesystem::path snapshot_path;
 };
 
@@ -97,6 +98,7 @@ void usage() {
         << "  --existing-db             benchmark an already-persisted database instead of building synthetic data\n"
         << "  --snapshot               build and benchmark a read snapshot from the database\n"
         << "  --snapshot-path PATH      snapshot directory (default DB/lect_snapshot)\n"
+        << "  --reuse-snapshot         reuse an existing snapshot if it opens cleanly\n"
         << "  --reuse                   do not delete an existing database first\n"
         << "  --read-stages-only        run only open/query/evidence read stages\n"
         << "  --no-verify               skip final strict verify\n"
@@ -127,6 +129,7 @@ Options parse_args(int argc, char** argv) {
         else if (arg == "--existing-db") options.existing_db = true;
         else if (arg == "--snapshot") options.snapshot = true;
         else if (arg == "--snapshot-path") options.snapshot_path = next();
+        else if (arg == "--reuse-snapshot") options.reuse_snapshot = true;
         else if (arg == "--reuse") options.fresh = false;
         else if (arg == "--read-stages-only") options.read_stages_only = true;
         else if (arg == "--no-verify") options.verify = false;
@@ -209,6 +212,29 @@ ld::EvidenceKey evidence_key(std::uint64_t index, ld::NodeId node_id, std::uint6
     key.endpoint_source = rbf::EndpointSource::IFK;
     key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
     return key;
+}
+
+std::vector<ld::EvidenceKey> fixture_key_templates() {
+    std::vector<ld::EvidenceKey> key_templates;
+    key_templates.reserve(24);
+    for (auto channel : {ld::EvidenceChannel::Safe, ld::EvidenceChannel::Rapid}) {
+        for (auto endpoint_source : {rbf::EndpointSource::IFK,
+                                     rbf::EndpointSource::CritSample,
+                                     rbf::EndpointSource::Analytical,
+                                     rbf::EndpointSource::GCPC,
+                                     rbf::EndpointSource::MC,
+                                     rbf::EndpointSource::HIFK}) {
+            for (auto payload_kind : {ld::EvidencePayloadKind::EndpointEnvelope,
+                                      ld::EvidencePayloadKind::LinkEnvelope}) {
+                ld::EvidenceKey key;
+                key.channel = channel;
+                key.endpoint_source = endpoint_source;
+                key.payload_kind = payload_kind;
+                key_templates.push_back(key);
+            }
+        }
+    }
+    return key_templates;
 }
 
 std::vector<rbf::Interval> random_query_box(int dims, std::mt19937& rng) {
@@ -384,6 +410,21 @@ StageRow measure_snapshot_open(const std::string& stage,
     return row;
 }
 
+void prepare_snapshot_rows(const Options& options, std::vector<StageRow>* rows) {
+    if (rows == nullptr) {
+        return;
+    }
+    if (options.reuse_snapshot && std::filesystem::exists(options.snapshot_path / "manifest.bin")) {
+        rows->push_back(measure_snapshot_open("snapshot.load.open_read_only", options.snapshot_path));
+        if (rows->back().ok) {
+            return;
+        }
+        rows->pop_back();
+    }
+    rows->push_back(measure_snapshot_build(options.db_path, options.snapshot_path));
+    rows->push_back(measure_snapshot_open("snapshot.load.open_read_only", options.snapshot_path));
+}
+
 template <typename Fn>
 StageRow measure_reopened_snapshot(const std::string& stage,
                                    std::uint64_t operations,
@@ -519,10 +560,117 @@ bool build_baseline_database(const Options& options,
     return true;
 }
 
-bool load_existing_fixture(const Options& options,
+bool load_snapshot_fixture(const Options& options,
+                           const std::filesystem::path& snapshot_path,
                            BenchmarkFixture* fixture,
                            std::string* reason) {
+    ld::LectReadSnapshot snapshot;
+    if (!snapshot.open(snapshot_path, reason)) {
+        return false;
+    }
+    fixture->node_count = static_cast<std::uint64_t>(snapshot.node_count());
+    fixture->node_ids.clear();
+    if (fixture->node_count == 0) {
+        if (reason) *reason = "snapshot fixture has no nodes";
+        return false;
+    }
+
+    std::mt19937 rng(options.seed);
+    std::uniform_int_distribution<std::uint64_t> node_dist(0, fixture->node_count - 1u);
+    fixture->random_nodes.clear();
+    fixture->random_nodes.reserve(static_cast<std::size_t>(options.queries));
+    fixture->sampled_boxes.clear();
+    fixture->sampled_boxes.reserve(static_cast<std::size_t>(std::min<std::uint64_t>(options.queries, 4096)));
+
+    auto try_add_node = [&](ld::NodeId node_id) {
+        auto box = snapshot.node_box(node_id);
+        if (!box) {
+            return false;
+        }
+        fixture->random_nodes.push_back(node_id);
+        if (fixture->sampled_boxes.size() < 4096) {
+            fixture->sampled_boxes.push_back(std::move(*box));
+        }
+        return true;
+    };
+
+    const std::uint64_t max_random_attempts = std::max<std::uint64_t>(options.queries * 4u, 1024u);
+    for (std::uint64_t attempt = 0; attempt < max_random_attempts && fixture->random_nodes.size() < options.queries; ++attempt) {
+        try_add_node(static_cast<ld::NodeId>(node_dist(rng)));
+    }
+    for (std::uint64_t node_id = 0; node_id < fixture->node_count && fixture->random_nodes.size() < options.queries; ++node_id) {
+        try_add_node(static_cast<ld::NodeId>(node_id));
+    }
+    if (fixture->random_nodes.empty() || fixture->sampled_boxes.empty()) {
+        if (reason) *reason = "snapshot fixture could not sample node boxes";
+        return false;
+    }
+    const auto random_seed_size = fixture->random_nodes.size();
+    for (std::uint64_t i = static_cast<std::uint64_t>(random_seed_size); i < options.queries; ++i) {
+        fixture->random_nodes.push_back(fixture->random_nodes[static_cast<std::size_t>(i % random_seed_size)]);
+    }
+
+    fixture->query_boxes.clear();
+    fixture->query_boxes.reserve(static_cast<std::size_t>(options.queries));
+    for (std::uint64_t i = 0; i < options.queries; ++i) {
+        const auto& box = fixture->sampled_boxes[static_cast<std::size_t>(i % fixture->sampled_boxes.size())];
+        fixture->query_boxes.push_back(expanded_query_box(box));
+    }
+
+    fixture->evidence_samples.clear();
+    fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    const auto key_templates = fixture_key_templates();
+    auto try_collect_record = [&](ld::NodeId node_id) {
+        for (const auto& key_template : key_templates) {
+            auto key = key_template;
+            key.node_id = node_id;
+            const auto view = snapshot.evidence(key);
+            if (!view || view->unavailable || view->payload.empty()) {
+                continue;
+            }
+            fixture->evidence_samples.push_back(materialize_record(*view));
+            return true;
+        }
+        return false;
+    };
+
+    for (const auto node_id : fixture->random_nodes) {
+        if (try_collect_record(node_id) && fixture->evidence_samples.size() >= static_cast<std::size_t>(options.evidence_records)) {
+            break;
+        }
+    }
+    for (std::uint64_t node_id = 0; node_id < fixture->node_count && fixture->evidence_samples.size() < static_cast<std::size_t>(options.evidence_records); ++node_id) {
+        try_collect_record(static_cast<ld::NodeId>(node_id));
+    }
+    if (fixture->evidence_samples.empty()) {
+        if (reason) *reason = "snapshot fixture could not load sampled evidence";
+        return false;
+    }
+    const auto evidence_seed_size = fixture->evidence_samples.size();
+    for (std::uint64_t i = static_cast<std::uint64_t>(evidence_seed_size); i < options.evidence_records; ++i) {
+        fixture->evidence_samples.push_back(fixture->evidence_samples[static_cast<std::size_t>(i % evidence_seed_size)]);
+    }
+    return true;
+}
+
+bool load_existing_fixture(const Options& options,
+                           BenchmarkFixture* fixture,
+                           std::string* reason,
+                           StageRow* open_stage = nullptr) {
+    const auto begin = Clock::now();
     auto database = ld::LectDatabase::open_existing(options.db_path, true, reason);
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - begin).count();
+    if (open_stage != nullptr) {
+        open_stage->stage = "load.open_read_only";
+        open_stage->operations = 1;
+        open_stage->elapsed_ms = elapsed;
+        open_stage->ok = database.has_value();
+        if (database) {
+            open_stage->nodes = database->node_count();
+            open_stage->evidence = database->evidence_count();
+            open_stage->delta = database->stats();
+        }
+    }
     if (!database) {
         return false;
     }
@@ -566,16 +714,71 @@ bool load_existing_fixture(const Options& options,
 
     fixture->evidence_samples.clear();
     fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
-    for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
-        const auto node_id = fixture->random_nodes[static_cast<std::size_t>(i % fixture->random_nodes.size())];
-        ld::EvidenceKey key;
-        key.node_id = node_id;
-        const auto view = database->evidence(key);
-        if (!view || view->unavailable || view->payload.empty()) {
-            if (reason) *reason = "existing database fixture could not load sampled evidence";
+
+    std::vector<ld::EvidenceKey> key_templates;
+    key_templates.reserve(24);
+    for (auto channel : {ld::EvidenceChannel::Safe, ld::EvidenceChannel::Rapid}) {
+        for (auto endpoint_source : {rbf::EndpointSource::IFK,
+                                     rbf::EndpointSource::CritSample,
+                                     rbf::EndpointSource::Analytical,
+                                     rbf::EndpointSource::GCPC,
+                                     rbf::EndpointSource::MC,
+                                     rbf::EndpointSource::HIFK}) {
+            for (auto payload_kind : {ld::EvidencePayloadKind::EndpointEnvelope,
+                                      ld::EvidencePayloadKind::LinkEnvelope}) {
+                ld::EvidenceKey key;
+                key.channel = channel;
+                key.endpoint_source = endpoint_source;
+                key.payload_kind = payload_kind;
+                key_templates.push_back(key);
+            }
+        }
+    }
+
+    auto try_collect_record = [&](ld::NodeId node_id) {
+        for (const auto& key_template : key_templates) {
+            auto key = key_template;
+            key.node_id = node_id;
+            const auto view = database->evidence(key);
+            if (!view || view->unavailable || view->payload.empty()) {
+                continue;
+            }
+            fixture->evidence_samples.push_back(materialize_record(*view));
+            return true;
+        }
+        return false;
+    };
+
+    for (const auto node_id : fixture->random_nodes) {
+        if (try_collect_record(node_id) && fixture->evidence_samples.size() >= static_cast<std::size_t>(options.evidence_records)) {
+            break;
+        }
+    }
+    for (const auto node_id : fixture->node_ids) {
+        if (fixture->evidence_samples.size() >= static_cast<std::size_t>(options.evidence_records)) {
+            break;
+        }
+        try_collect_record(node_id);
+    }
+
+    if (fixture->evidence_samples.empty()) {
+        const auto available_evidence = database->evidence_records();
+        if (available_evidence.empty()) {
+            if (reason) *reason = "existing database fixture has no readable evidence records";
             return false;
         }
-        fixture->evidence_samples.push_back(materialize_record(*view));
+        std::uniform_int_distribution<std::size_t> evidence_dist(0, available_evidence.size() - 1);
+        for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
+            const auto& record = available_evidence[evidence_dist(rng)];
+            if (record.unavailable || record.payload.empty()) {
+                continue;
+            }
+            fixture->evidence_samples.push_back(record);
+        }
+    }
+    if (fixture->evidence_samples.empty()) {
+        if (reason) *reason = "existing database fixture could not load sampled evidence";
+        return false;
     }
     return true;
 }
@@ -674,10 +877,28 @@ int main(int argc, char** argv) {
 
         std::string reason;
         BenchmarkFixture fixture;
+        StageRow initial_open_row;
+        std::vector<StageRow> rows;
         if (options.existing_db) {
-            if (!load_existing_fixture(options, &fixture, &reason)) {
-                std::cerr << "failed to load existing database fixture: " << reason << '\n';
-                return 1;
+            if (options.snapshot) {
+                prepare_snapshot_rows(options, &rows);
+                const bool snapshot_ready = std::all_of(rows.begin(), rows.end(), [](const StageRow& row) { return row.ok; });
+                if (!snapshot_ready) {
+                    print_rows(rows);
+                    if (!options.csv_path.empty()) {
+                        write_csv(options.csv_path, rows);
+                    }
+                    return 1;
+                }
+                if (!load_snapshot_fixture(options, options.snapshot_path, &fixture, &reason)) {
+                    std::cerr << "failed to load snapshot fixture: " << reason << '\n';
+                    return 1;
+                }
+            } else {
+                if (!load_existing_fixture(options, &fixture, &reason, &initial_open_row)) {
+                    std::cerr << "failed to load existing database fixture: " << reason << '\n';
+                    return 1;
+                }
             }
         } else {
             if (!build_baseline_database(options, &fixture, &reason)) {
@@ -686,9 +907,12 @@ int main(int argc, char** argv) {
             }
         }
 
-        std::vector<StageRow> rows;
         if (!options.snapshot) {
-        rows.push_back(measure_open_existing("load.open_read_only", options.db_path, true, false));
+        if (options.existing_db) {
+            rows.push_back(initial_open_row);
+        } else {
+            rows.push_back(measure_open_existing("load.open_read_only", options.db_path, true, false));
+        }
         rows.push_back(measure_reopened_db("read.node_box_disk",
                                            options.queries,
                                            options.db_path,
@@ -790,8 +1014,9 @@ int main(int argc, char** argv) {
         }
 
         if (options.snapshot) {
-            rows.push_back(measure_snapshot_build(options.db_path, options.snapshot_path));
-            rows.push_back(measure_snapshot_open("snapshot.load.open_read_only", options.snapshot_path));
+            if (!options.existing_db) {
+                prepare_snapshot_rows(options, &rows);
+            }
             rows.push_back(measure_reopened_snapshot("snapshot.read.node_box",
                                                options.queries,
                                                options.snapshot_path,
@@ -979,7 +1204,11 @@ int main(int argc, char** argv) {
                     : failed_stage("write.compact_tombstones", 1));
             }
 
-            rows.push_back(measure_open_existing("read.reopen_verify", options.db_path, true, options.verify));
+            rows.push_back(measure_open_existing(options.verify ? "read.reopen_verify"
+                                                               : "read.reopen_read_only",
+                                                 options.db_path,
+                                                 true,
+                                                 options.verify));
         }
 
         print_rows(rows);

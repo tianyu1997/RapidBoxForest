@@ -71,6 +71,31 @@ High-value nested config types:
 - `DynamicUpdateConfig`: dirty-region detection, local regrow limits, and warm
 	rebuild fallback thresholds.
 
+### LECT Warm-Reuse Best Practice
+
+For the current LECT runtime, the recommended split is:
+
+- active planning cache: writable `LectDatabaseRuntimeConfig.path`
+- warm evidence source: read-only `LectDatabaseRuntimeConfig.external_evidence_path`
+- reopen format for that warm source: snapshot via
+	`LectDatabaseRuntimeConfig.external_evidence_use_snapshot = true`
+
+When snapshot mode is enabled, `SafeBoxForest` opens the warm source through
+`LectReadSnapshot` and keeps the active database writable for newly
+materialized evidence. This avoids reopening the full mutable LECT store on the
+warm-read path while preserving the existing active-cache/update behavior.
+
+Relevant `LectDatabaseRuntimeConfig` fields:
+
+- `external_evidence_path`: legacy writable cache root that owns the prewarmed evidence
+- `external_evidence_snapshot_path`: optional explicit snapshot directory; empty means `external_evidence_path/lect_snapshot`
+- `external_evidence_use_snapshot`: switch the external read source from legacy DB open to `LectReadSnapshot`
+- `external_evidence_auto_build_snapshot`: build the snapshot from the legacy cache if it is missing
+
+The oracle consumes external evidence through exact box lookup first and only
+falls back to direct key lookup when needed. This is the intended fast path for
+snapshot-backed warm reuse.
+
 ## Facade: `sbf::SafeBoxForest`
 
 Constructor:
@@ -286,6 +311,10 @@ Stable top-level exports include:
 
 The Python layer currently centers on the facade and utility functions. It does
 not expose the grower/merger/query stage classes as first-class Python objects.
+
+The bound `LectDatabaseRuntimeConfig` also exposes the snapshot-backed warm
+reuse controls listed above, so Python experiment runners can switch between
+`legacy` and `snapshot` external evidence modes without changing C++ code.
 
 ### Python facade example
 

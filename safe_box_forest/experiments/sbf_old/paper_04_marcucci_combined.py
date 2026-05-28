@@ -34,6 +34,8 @@ REPO_ROOT = ROOT.parents[1]
 import sbf
 from sbf.marcucci import make_combined_obstacles, make_combined_queries, make_coverage_seeds, load_iiwa14_robot
 
+from common_sbf_config import configure_external_evidence_reuse
+
 
 BASELINE_WRAPPER = ROOT / "experiments" / "paper_04_baselines_marcucci.py"
 
@@ -139,6 +141,7 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     cfg.runtime.parallel_threshold = 1
     database_path = args.database_path or (args.out_json.parent / "cache" / args.out_json.stem)
     cfg.database.path = str(database_path)
+    cfg.database.create_if_missing = True
 
     if args.preset == "ifk_strict":
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
@@ -251,6 +254,19 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     set_if_available(cfg.query, "repair_local_sampling_growth", float(args.repair_local_sampling_growth))
     cfg.validation.enable_validation_cache = bool(args.validation_cache)
     cfg.validation.validation_cache_max_entries = int(args.validation_cache_max_entries)
+    if bool(args.use_external_evidence):
+        warm_source_path = Path(args.rbf_cache_root) / str(args.warm_cache_label)
+        if not warm_source_path.exists():
+            raise FileNotFoundError(f"warm d18 cache does not exist: {warm_source_path}")
+        configure_external_evidence_reuse(
+            cfg,
+            warm_source_path,
+            args,
+            materialization=True,
+            scoring=True,
+            backfill_active=bool(args.external_evidence_backfill_active),
+        )
+        cfg.database.online_cache.allow_database_backfill = bool(args.online_cache_allow_database_backfill)
     set_if_available(cfg.connector, "frontier_bridge", bool(args.frontier_bridge))
     cfg.connector.max_total_bridge_boxes = int(args.connector_bridge_boxes)
     cfg.connector.segment_edges_enabled = bool(args.segment_edges)
@@ -454,6 +470,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repair-local-sampling-growth", type=float, default=2.0)
     parser.add_argument("--validation-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--validation-cache-max-entries", type=int, default=200000)
+    parser.add_argument("--rbf-cache-root", type=Path, default=ROOT / "outputs" / "paper" / "rbf_only" / "cache")
+    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
+    parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--external-evidence-backfill-active", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--online-cache-allow-database-backfill", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--connector-pair-batch-size", type=int, default=1)
     parser.add_argument("--connector-pair-timeout-ms", type=float, default=250.0)
     parser.add_argument("--connector-max-pairs-per-gap", type=int, default=8)

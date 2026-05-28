@@ -10,6 +10,7 @@ from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,
+    configure_external_evidence_reuse,
     configure_standalone_sbf,
     query_result_payload,
     rbf_lifelong_config_metadata,
@@ -61,7 +62,6 @@ def parse_csv(text: str) -> list[str]:
 
 def make_config(args: argparse.Namespace, robot: Any, cache_label: str, seed: int) -> Any:
     local_args = argparse.Namespace(**vars(args))
-    local_args.rbf_envelope = "link"
     local_args.rbf_cache_label = cache_label
     return configure_standalone_sbf(local_args, seed=seed, preset=RBF_LIFELONG_PRESET, robot=robot)
 
@@ -79,10 +79,7 @@ def run_row(args: argparse.Namespace, robot: Any, mode: str, seed: int) -> dict[
             raise FileNotFoundError(f"warm d18 cache does not exist: {warm_source_path}")
         if args.clean_warm_active_cache and cache_path.exists():
             shutil.rmtree(cache_path)
-        cfg.database.external_evidence_path = str(warm_source_path)
-        cfg.validation.external_evidence_materialization = True
-        cfg.validation.external_evidence_scoring = True
-        cfg.validation.external_evidence_backfill_active = False
+        configure_external_evidence_reuse(cfg, warm_source_path, args, backfill_active=False)
     cfg.database.create_if_missing = True
 
     obstacles = sbf.make_combined_obstacles()
@@ -147,7 +144,7 @@ def main() -> int:
         "ok": all(bool(row["ok"]) for row in rows),
         "selected_configuration": {
             "preset": RBF_LIFELONG_PRESET,
-            "envelope": "link",
+            "envelope": str(args.rbf_envelope),
             "prewarm_depth": int(args.rbf_prewarm_depth),
             "warm_cache_label": args.warm_cache_label,
         },

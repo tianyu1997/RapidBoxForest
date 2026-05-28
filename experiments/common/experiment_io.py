@@ -105,6 +105,25 @@ def environment_metadata() -> dict[str, Any]:
     }
 
 
+def default_sbf_subprocess_env() -> dict[str, str]:
+    env: dict[str, str] = {}
+    candidates = [
+        REPO_ROOT / "build-rbf-only-exec",
+        REPO_ROOT / "build-rbf-python-current",
+        REPO_ROOT / "build-consolidated-python",
+    ]
+    build_dir = next((candidate for candidate in candidates if (candidate / "python" / "sbf").exists()), None)
+    if build_dir is not None:
+        env["SBF_BUILD_DIR"] = str(build_dir)
+    repo_parent = REPO_ROOT.parent
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    entries = [str(repo_parent)]
+    if existing_pythonpath:
+        entries.append(existing_pythonpath)
+    env["PYTHONPATH"] = os.pathsep.join(entries)
+    return env
+
+
 def command_record(command: Sequence[str], *, cwd: Path | None = None) -> dict[str, Any]:
     return {"command": [str(part) for part in command], "cwd": str(cwd or REPO_ROOT)}
 

@@ -222,12 +222,26 @@ public:
                       OracleValidationConfig validation_config = {},
                       const lect_database::LectDatabase* external_evidence_database = nullptr);
     DatabaseBoxOracle(Robot robot,
+                      lect_database::LectDatabase& database,
+                      Scene scene,
+                      EndpointSourceConfig endpoint_config,
+                      EnvelopeTypeConfig envelope_config,
+                      OracleValidationConfig validation_config,
+                      const lect_database::LectExternalEvidenceSource* external_evidence_source);
+    DatabaseBoxOracle(Robot robot,
                       lect_database::OnlineEnvelopeCacheTree& online_cache,
                       Scene scene = {},
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
                       OracleValidationConfig validation_config = {},
                       const lect_database::LectDatabase* external_evidence_database = nullptr);
+    DatabaseBoxOracle(Robot robot,
+                      lect_database::OnlineEnvelopeCacheTree& online_cache,
+                      Scene scene,
+                      EndpointSourceConfig endpoint_config,
+                      EnvelopeTypeConfig envelope_config,
+                      OracleValidationConfig validation_config,
+                      const lect_database::LectExternalEvidenceSource* external_evidence_source);
 
     int n_dims() const override;
     OracleNodeId root_node() const override { return 0; }
@@ -268,7 +282,19 @@ public:
     const EndpointSourceConfig& endpoint_config() const { return endpoint_config_; }
     const EnvelopeTypeConfig& envelope_config() const { return envelope_config_; }
     const OracleValidationConfig& validation_config() const { return validation_config_; }
-    void set_external_evidence_database(const lect_database::LectDatabase* database) { external_evidence_database_ = database; }
+    void set_external_evidence_database(const lect_database::LectDatabase* database) {
+        if (database == nullptr) {
+            external_evidence_database_source_.reset();
+            external_evidence_source_ = nullptr;
+            return;
+        }
+        external_evidence_database_source_.emplace(*database);
+        external_evidence_source_ = &*external_evidence_database_source_;
+    }
+    void set_external_evidence_source(const lect_database::LectExternalEvidenceSource* source) {
+        external_evidence_database_source_.reset();
+        external_evidence_source_ = source;
+    }
     lect_database::LectDatabase& database() { return database_; }
     const lect_database::LectDatabase& database() const { return database_; }
 
@@ -284,7 +310,8 @@ private:
     Robot robot_;
     lect_database::LectDatabase& database_;
     lect_database::OnlineEnvelopeCacheTree* online_cache_ = nullptr;
-    const lect_database::LectDatabase* external_evidence_database_ = nullptr;
+    std::optional<lect_database::LectDatabaseEvidenceSource> external_evidence_database_source_;
+    const lect_database::LectExternalEvidenceSource* external_evidence_source_ = nullptr;
     EndpointSourceConfig endpoint_config_;
     EnvelopeTypeConfig envelope_config_;
     OracleValidationConfig validation_config_;

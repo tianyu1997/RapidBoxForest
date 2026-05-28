@@ -540,7 +540,7 @@ def rbf_only_warm_reuse_table(outputs: Path) -> str:
                 build.get("endpoint_hits"),
             ])
     return table_star(
-        "RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.",
+        "RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 snapshot-backed evidence source and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.",
         "tab:tro_appendix_rbf_only_warm_reuse",
         "llllrrrrrrrr",
         ["Exp.", "Scene", "Mode", "Backfill", "Wall s", "Plan s", "Maint s", "Query ms", "Audit", "Repairs", "Ext reuse", "Active reuse"],

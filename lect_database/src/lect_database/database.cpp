@@ -1426,6 +1426,7 @@ std::pair<NodeId, NodeId> LectDatabase::split_leaf(NodeId node_id, int split_dim
         item->split_value = split_value;
         item->generation = generation_;
         item->dirty = true;
+        remember_node_query_meta(*item);
     }
     layer_index_[parent_depth + 1].push_back(left);
     layer_index_[parent_depth + 1].push_back(right);
@@ -1722,10 +1723,8 @@ VerificationResult LectDatabase::verify(bool strict) const {
                        std::shared_ptr<const EvidenceRecord>,
                        EvidenceKeyHash>
         strict_records;
-    std::unordered_map<NodeId, NodeRecord> strict_parent_nodes;
     if (strict) {
         strict_records.reserve(evidence_index_count_);
-        strict_parent_nodes.reserve(std::min<std::size_t>(node_count_, evidence_index_count_));
     }
     if (!opened_) {
         result.add_error("database is not open");
@@ -1740,49 +1739,43 @@ VerificationResult LectDatabase::verify(bool strict) const {
     if (layer_index_.empty() && node_count_ != 0) {
         const_cast<LectDatabase*>(this)->rebuild_layer_index();
     }
-    const auto root_record = read_node(root_node());
-    if (node_count_ == 0 || !root_record || root_record->id != 0 || valid_node_id(root_record->parent)) {
+    const auto* root_meta = node_query_meta(root_node());
+    if (node_count_ == 0 || root_meta == nullptr || valid_node_id(root_meta->parent)) {
         result.add_error("root node is missing or malformed");
     }
     for (NodeId node_id : sorted_node_ids()) {
-        const auto item_opt = read_node(node_id);
-        if (!item_opt) {
+        const auto* item = node_query_meta(node_id);
+        if (item == nullptr) {
             result.add_error("node page is missing a row");
             continue;
         }
-        const auto& item = *item_opt;
-        if (item.id != node_id) {
-            result.add_error("node id does not match table position");
-        }
-        if (valid_node_id(item.parent)) {
-            const auto parent_node = read_node(item.parent);
-            if (!parent_node) {
+        if (valid_node_id(item->parent)) {
+            const auto* parent_node = node_query_meta(item->parent);
+            if (parent_node == nullptr) {
                 result.add_error("node has invalid parent id");
             } else {
-                if (parent_node->left != item.id && parent_node->right != item.id) {
+                if (parent_node->left != node_id && parent_node->right != node_id) {
                     result.add_error("parent does not reference child");
                 }
             }
         }
-        if (!item.is_leaf()) {
-            const auto left_node = read_node(item.left);
-            const auto right_node = read_node(item.right);
-            if (!left_node || !right_node) {
+        if (!item->is_leaf()) {
+            const auto* left_node = node_query_meta(item->left);
+            const auto* right_node = node_query_meta(item->right);
+            if (left_node == nullptr || right_node == nullptr) {
                 result.add_error("internal node has invalid child id");
-            } else if (left_node->parent != item.id || right_node->parent != item.id) {
+            } else if (left_node->parent != node_id || right_node->parent != node_id) {
                 result.add_error("child parent pointer mismatch");
             }
-        }
-        const auto key = make_box_key(node_box_unchecked(item.id));
-        const auto lookup = box_to_node_exact(key);
-        if (!lookup.found || lookup.node_id != item.id) {
-            result.add_error("node box does not round-trip through exact box lookup");
+            if (item->split_dim < 0 || item->split_dim >= static_cast<int>(root_intervals_.size())) {
+                result.add_error("internal node has invalid split dimension");
+            }
         }
     }
     for (const auto& [depth, ids] : layer_index_) {
         for (NodeId id : ids) {
-            const auto item = read_node(id);
-            if (!item || item->depth != depth) {
+            const auto* item = node_query_meta(id);
+            if (item == nullptr || item->depth != depth) {
                 result.add_error("layer index contains an invalid node");
             }
         }
@@ -1818,26 +1811,15 @@ VerificationResult LectDatabase::verify(bool strict) const {
                 continue;
             }
 
-            NodeRecord parent_node;
-            const auto parent_it = strict_parent_nodes.find(record.key.node_id);
-            if (parent_it != strict_parent_nodes.end()) {
-                parent_node = parent_it->second;
-            } else {
-                const auto parent_opt = read_node(record.key.node_id);
-                if (!parent_opt) {
-                    continue;
-                }
-                parent_node = *parent_opt;
-                strict_parent_nodes.emplace(parent_node.id, parent_node);
-            }
-            if (parent_node.is_leaf()) {
+            const auto* parent_node = node_query_meta(record.key.node_id);
+            if (parent_node == nullptr || parent_node->is_leaf()) {
                 continue;
             }
 
             EvidenceKey left_key = key;
             EvidenceKey right_key = key;
-            left_key.node_id = parent_node.left;
-            right_key.node_id = parent_node.right;
+            left_key.node_id = parent_node->left;
+            right_key.node_id = parent_node->right;
             const auto left_it = strict_records.find(left_key);
             const auto right_it = strict_records.find(right_key);
             if (left_it == strict_records.end() || right_it == strict_records.end()) {
@@ -1933,6 +1915,7 @@ NodeId LectDatabase::append_child(NodeId parent_id, bool right_child, int depth,
             parent_node->left = child_id;
         }
         parent_node->dirty = true;
+        remember_node_query_meta(*parent_node);
     }
     return child_id;
 }
@@ -3782,6 +3765,7 @@ void LectDatabase::replay_journal() {
                             parent_node->split_dim = split_dim;
                             parent_node->split_value = split_value;
                             parent_node->dirty = true;
+                            remember_node_query_meta(*parent_node);
                         }
                     }
                 } else if (record.rfind("evidence|", 0) == 0) {

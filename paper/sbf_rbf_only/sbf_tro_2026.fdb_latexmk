@@ -1,8 +1,8 @@
 # Fdb version 3
-["pdflatex"] 1779877705 "/home/tian/桌面/RBF/RapidBoxForest/paper/sbf_rbf_only/sbf_tro_2026.tex" "sbf_tro_2026.pdf" "sbf_tro_2026" 1779877705
+["pdflatex"] 1779892652 "/home/tian/桌面/RBF/RapidBoxForest/paper/sbf_rbf_only/sbf_tro_2026.tex" "sbf_tro_2026.pdf" "sbf_tro_2026" 1779892652
   "/etc/texmf/web2c/texmf.cnf" 1772207574 475 c0e671620eb5563b2130f56340a5fde8 ""
   "/home/tian/.texlive2021/texmf-var/web2c/pdftex/pdflatex.fmt" 1772207798 1405655 4f1bbc2ad90da6145a002f66bd268004 ""
-  "/home/tian/桌面/RBF/RapidBoxForest/paper/sbf_rbf_only/sbf_tro_2026.tex" 1779877704 78148 d35c2079cd019b8578b204b0cd89842c ""
+  "/home/tian/桌面/RBF/RapidBoxForest/paper/sbf_rbf_only/sbf_tro_2026.tex" 1779892652 77984 0e3fdae8e18d3b15610f0d4a93283dff ""
   "/usr/share/texlive/texmf-dist/fonts/map/fontname/texfonts.map" 1577235249 3524 cb3e574dea2d1052e39280babc910dc8 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/times/ptmb7t.tfm" 1136768653 2172 fd0c924230362ff848a33632ed45dc23 ""
   "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/times/ptmbi7t.tfm" 1136768653 2228 e564491c42a4540b5ebb710a75ff306c ""
@@ -17,8 +17,8 @@
   "/usr/share/texlive/texmf-dist/tex/latex/silence/silence.sty" 1342202217 17540 5aad5dddd881dee43ad1a83adb336af9 ""
   "/usr/share/texlive/texmf-dist/web2c/texmf.cnf" 1644012257 39432 7155514e09a3d69036fac785183a21c2 ""
   "/usr/share/texmf/web2c/texmf.cnf" 1644012257 39432 7155514e09a3d69036fac785183a21c2 ""
-  "sbf_tro_2026.aux" 1779877705 32 3985256e7290058c681f74d7a3565a19 ""
-  "sbf_tro_2026.tex" 1779877704 78148 d35c2079cd019b8578b204b0cd89842c ""
+  "sbf_tro_2026.aux" 1779892652 32 3985256e7290058c681f74d7a3565a19 ""
+  "sbf_tro_2026.tex" 1779892652 77984 0e3fdae8e18d3b15610f0d4a93283dff ""
   (generated)
   "sbf_tro_2026.log"
   "sbf_tro_2026.pdf"

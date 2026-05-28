@@ -100,3 +100,21 @@ After the read snapshot is verified:
 3. Move `checkpoint_after_build` out of the planning critical path.
 4. Add an independent writer tool/process that consumes overlay batches and publishes new snapshots.
 5. Keep legacy conversion as an offline utility, not a planner open path.
+
+## Landed Warm-Reuse Integration
+
+The first downstream integration keeps the active SBF planning cache on the
+existing writable `LectDatabase` path and routes only the read-only external
+warm evidence source through `LectReadSnapshot`.
+
+The public/runtime surface for this lane is:
+
+- `LectExternalEvidenceSource`: small read-only abstraction shared by legacy DB and snapshot readers
+- `DatabaseBoxOracle`: external evidence now probes `endpoint_for_box_exact(intervals, key)` first so snapshot direct-evidence lookup stays on the fast path
+- `LectDatabaseRuntimeConfig.external_evidence_use_snapshot`
+- `LectDatabaseRuntimeConfig.external_evidence_snapshot_path`
+- `LectDatabaseRuntimeConfig.external_evidence_auto_build_snapshot`
+
+This keeps runtime writes and online backfill behavior unchanged while moving
+the warm external-read lane to the mmapped snapshot path that benchmarked best
+on the real Shelf+IIWA cache.

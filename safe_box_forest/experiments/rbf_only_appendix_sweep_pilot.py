@@ -10,6 +10,7 @@ from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,
+    configure_external_evidence_reuse,
     configure_standalone_sbf,
     median,
     query_result_payload,
@@ -111,15 +112,13 @@ def run_case(args: argparse.Namespace,
         warm_source_path = Path(args.rbf_cache_root) / str(args.warm_cache_label)
         if not warm_source_path.exists():
             raise FileNotFoundError(f"warm d18 cache does not exist: {warm_source_path}")
-        cfg.database.external_evidence_path = str(warm_source_path)
-        cfg.validation.external_evidence_materialization = True
-        cfg.validation.external_evidence_scoring = True
-        cfg.validation.external_evidence_backfill_active = False
+        external_reuse = configure_external_evidence_reuse(cfg, warm_source_path, args, backfill_active=False)
         prewarm = {
             "ok": True,
-            "mode": "external_evidence_d18",
+            "mode": f"external_evidence_{external_reuse['mode']}_d18",
             "target_depth": int(args.rbf_prewarm_depth),
             "cache_path": str(warm_source_path),
+            "snapshot_path": external_reuse["snapshot_path"],
             "create_if_missing": True,
         }
 

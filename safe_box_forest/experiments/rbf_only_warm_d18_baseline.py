@@ -10,6 +10,7 @@ from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,
+    configure_external_evidence_reuse,
     configure_standalone_sbf,
     query_result_payload,
     rbf_lifelong_config_metadata,
@@ -97,10 +98,7 @@ def run_row(args: argparse.Namespace, case: dict[str, Any], mode: str, seed: int
             raise FileNotFoundError(f"warm d18 cache does not exist: {warm_source_path}")
         if args.clean_warm_active_cache and cache_path.exists():
             shutil.rmtree(cache_path)
-        cfg.database.external_evidence_path = str(warm_source_path)
-        cfg.validation.external_evidence_materialization = True
-        cfg.validation.external_evidence_scoring = True
-        cfg.validation.external_evidence_backfill_active = False
+        configure_external_evidence_reuse(cfg, warm_source_path, args, backfill_active=False)
     cfg.database.create_if_missing = True
 
     print(f"[e2] start scene={case['scene']} mode={mode} cache={cache_path.name}", flush=True)

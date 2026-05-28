@@ -1126,6 +1126,30 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
     return database_config;
 }
 
+std::filesystem::path resolve_external_evidence_snapshot_path(const LectDatabaseRuntimeConfig& config) {
+    if (!config.external_evidence_snapshot_path.empty()) {
+        return config.external_evidence_snapshot_path;
+    }
+    if (config.external_evidence_path.empty()) {
+        return {};
+    }
+    return lect_database::LectReadSnapshot::default_snapshot_path(config.external_evidence_path);
+}
+
+bool snapshot_exists(const std::filesystem::path& snapshot_path) {
+    return !snapshot_path.empty() && std::filesystem::exists(snapshot_path / "manifest.bin");
+}
+
+std::filesystem::path resolve_database_snapshot_publish_path(const LectDatabaseRuntimeConfig& config) {
+    if (!config.auto_publish_snapshot_path.empty()) {
+        return config.auto_publish_snapshot_path;
+    }
+    if (config.path.empty()) {
+        return {};
+    }
+    return lect_database::LectReadSnapshot::default_snapshot_path(config.path);
+}
+
 }  // namespace
 
 RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
@@ -1138,7 +1162,37 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
     if (!database_->open(make_database_config(robot_, config_), &open_reason)) {
         throw std::runtime_error("failed to open LECTDatabase runtime: " + open_reason);
     }
-    if (!config_.database.external_evidence_path.empty()) {
+    const bool has_external_evidence =
+        !config_.database.external_evidence_path.empty() || !config_.database.external_evidence_snapshot_path.empty();
+    if (has_external_evidence) {
+        if (config_.database.external_evidence_use_snapshot) {
+            const auto snapshot_path = resolve_external_evidence_snapshot_path(config_.database);
+            if (snapshot_path.empty()) {
+                throw std::runtime_error("external evidence snapshot mode requires an external evidence path or snapshot path");
+            }
+            if (!snapshot_exists(snapshot_path)) {
+                if (!config_.database.external_evidence_auto_build_snapshot) {
+                    throw std::runtime_error("external evidence snapshot is missing and auto-build is disabled: " + snapshot_path.string());
+                }
+                if (config_.database.external_evidence_path.empty()) {
+                    throw std::runtime_error("external evidence snapshot auto-build requires external_evidence_path");
+                }
+                std::string snapshot_reason;
+                if (!lect_database::LectReadSnapshot::build_from_legacy(
+                        config_.database.external_evidence_path, snapshot_path, &snapshot_reason)) {
+                    throw std::runtime_error("failed to build external LECT snapshot evidence source: " + snapshot_reason);
+                }
+            }
+            external_evidence_snapshot_ = std::make_unique<lect_database::LectReadSnapshot>();
+            std::string snapshot_reason;
+            if (!external_evidence_snapshot_->open(snapshot_path, &snapshot_reason)) {
+                throw std::runtime_error("failed to open external LECT snapshot evidence source: " + snapshot_reason);
+            }
+            external_evidence_source_ = std::make_unique<lect_database::LectSnapshotEvidenceSource>(*external_evidence_snapshot_);
+        } else {
+            if (config_.database.external_evidence_path.empty()) {
+                throw std::runtime_error("legacy external evidence mode requires external_evidence_path");
+            }
         auto external_config = make_database_config(robot_, config_);
         external_config.path = config_.database.external_evidence_path;
         external_config.open.read_only = true;
@@ -1153,9 +1207,15 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
         if (!external_evidence_database_->open(std::move(external_config), &external_reason)) {
             throw std::runtime_error("failed to open external LECTDatabase evidence source: " + external_reason);
         }
+            external_evidence_source_ = std::make_unique<lect_database::LectDatabaseEvidenceSource>(*external_evidence_database_);
+        }
     }
     online_cache_ = std::make_unique<lect_database::OnlineEnvelopeCacheTree>(*database_, config_.database.online_cache);
     reset_oracle(Scene{});
+}
+
+RBFPlanningForest::~RBFPlanningForest() {
+    stop_snapshot_publish_worker();
 }
 
 BuildProfile RBFPlanningForest::build(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -1298,7 +1358,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     invalidate_query_cache();
 
     if (config_.database.checkpoint_after_build && database_) {
-        database_->checkpoint();
+        checkpoint_database();
     }
     return last_build_;
 }
@@ -2005,9 +2065,127 @@ BuildProfile RBFPlanningForest::build_subtractive(
     invalidate_query_cache();
 
     if (config_.database.checkpoint_after_build && database_) {
-        database_->checkpoint();
+        checkpoint_database();
     }
     return last_build_;
+}
+
+bool RBFPlanningForest::checkpoint_database() {
+    if (!database_) {
+        return false;
+    }
+    const bool checkpoint_ok = database_->checkpoint();
+    if (!checkpoint_ok || !config_.database.auto_publish_snapshot_after_checkpoint) {
+        return checkpoint_ok;
+    }
+    return publish_database_snapshot(false);
+}
+
+std::filesystem::path RBFPlanningForest::database_snapshot_path() const {
+    return resolve_database_snapshot_publish_path(config_.database);
+}
+
+bool RBFPlanningForest::publish_snapshot_now(std::string* reason) {
+    const auto snapshot_path = database_snapshot_path();
+    if (config_.database.path.empty()) {
+        if (reason) *reason = "database path is empty";
+        return false;
+    }
+    if (snapshot_path.empty()) {
+        if (reason) *reason = "snapshot publish path is empty";
+        return false;
+    }
+    return lect_database::LectReadSnapshot::build_from_legacy(config_.database.path, snapshot_path, reason);
+}
+
+void RBFPlanningForest::ensure_snapshot_publish_worker() {
+    if (snapshot_publish_worker_.joinable()) {
+        return;
+    }
+    snapshot_publish_stop_ = false;
+    snapshot_publish_worker_ = std::thread([this]() { snapshot_publish_loop(); });
+}
+
+void RBFPlanningForest::snapshot_publish_loop() {
+    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
+    while (true) {
+        snapshot_publish_cv_.wait(lock, [this]() {
+            return snapshot_publish_stop_ || snapshot_publish_completed_seq_ < snapshot_publish_requested_seq_;
+        });
+        if (snapshot_publish_stop_ && snapshot_publish_completed_seq_ >= snapshot_publish_requested_seq_) {
+            break;
+        }
+
+        const std::uint64_t target_seq = snapshot_publish_requested_seq_;
+        snapshot_publish_running_ = true;
+        lock.unlock();
+
+        std::string reason;
+        const bool ok = publish_snapshot_now(&reason);
+
+        lock.lock();
+        snapshot_publish_last_ok_ = ok;
+        snapshot_publish_last_reason_ = reason;
+        snapshot_publish_completed_seq_ = target_seq;
+        snapshot_publish_running_ = false;
+        snapshot_publish_cv_.notify_all();
+        if (snapshot_publish_stop_ && snapshot_publish_completed_seq_ >= snapshot_publish_requested_seq_) {
+            break;
+        }
+    }
+}
+
+void RBFPlanningForest::stop_snapshot_publish_worker() {
+    {
+        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
+        snapshot_publish_stop_ = true;
+    }
+    snapshot_publish_cv_.notify_all();
+    if (snapshot_publish_worker_.joinable()) {
+        snapshot_publish_worker_.join();
+    }
+}
+
+bool RBFPlanningForest::publish_database_snapshot(bool wait) {
+    if (config_.database.auto_publish_snapshot_async && !wait) {
+        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
+        snapshot_publish_requested_seq_ += 1;
+        ensure_snapshot_publish_worker();
+        snapshot_publish_cv_.notify_all();
+        return true;
+    }
+
+    if (!config_.database.auto_publish_snapshot_async) {
+        std::string reason;
+        const bool ok = publish_snapshot_now(&reason);
+        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
+        snapshot_publish_last_ok_ = ok;
+        snapshot_publish_last_reason_ = reason;
+        snapshot_publish_completed_seq_ = snapshot_publish_requested_seq_;
+        return ok;
+    }
+
+    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
+    snapshot_publish_requested_seq_ += 1;
+    const std::uint64_t target_seq = snapshot_publish_requested_seq_;
+    ensure_snapshot_publish_worker();
+    snapshot_publish_cv_.notify_all();
+    snapshot_publish_cv_.wait(lock, [this, target_seq]() {
+        return !snapshot_publish_running_ && snapshot_publish_completed_seq_ >= target_seq;
+    });
+    return snapshot_publish_last_ok_;
+}
+
+bool RBFPlanningForest::wait_for_snapshot_publish() {
+    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
+    const std::uint64_t target_seq = snapshot_publish_requested_seq_;
+    if (!snapshot_publish_worker_.joinable()) {
+        return snapshot_publish_last_ok_;
+    }
+    snapshot_publish_cv_.wait(lock, [this, target_seq]() {
+        return !snapshot_publish_running_ && snapshot_publish_completed_seq_ >= target_seq;
+    });
+    return snapshot_publish_last_ok_;
 }
 
 QueryResult RBFPlanningForest::query(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -2825,7 +3003,7 @@ void RBFPlanningForest::reset_oracle(Scene scene) {
     online_cache_->clear_payloads();
     oracle_ = std::make_unique<DatabaseBoxOracle>(
         robot_, *online_cache_, std::move(scene), config_.endpoint_source, config_.envelope_type, config_.validation,
-        external_evidence_database_.get());
+        external_evidence_source_.get());
 }
 
 void RBFPlanningForest::reserve_existing_boxes() {

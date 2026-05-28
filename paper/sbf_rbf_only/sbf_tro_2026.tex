@@ -1339,52 +1339,55 @@ pure SupportHull when the tighter directional witness is worth the extra runtime
 
 \subsection{LECT Disk Microbenchmark}\label{sec:exp_lect_microbench}
 
-Experiment~3 applies the same reopen-per-stage disk benchmark template to the
-real Shelf+IIWA persisted cache used by the warm-build study. Each timed stage
-reopens the same current-format d18 cache before executing its workload, so the
-reported cost is for the persisted LECT path rather than for a database object
-left resident by the setup phase. The measured cache stores 524{,}287 nodes and
-524{,}287 endpoint-envelope records in a 334.21~MB namespace with 64~KiB node
-pages and a 256-page resident cap. To keep the real-cache benchmark bounded,
-the read stages sample 2{,}000 persisted operations, checkpoint is measured
-after 2{,}000 sampled evidence updates, and compact is measured after
-tombstoning 20{,}000 sampled node payloads on a copied sibling namespace.
+Experiment~3 reports the real endpoint-only Shelf+IIWA p18 persisted cache used
+by the warm-build study and the immutable read snapshot used by the planner read
+path. The cache is built once by an 8-thread p18 prewarm that materializes only
+the depth-18 leaf endpoint envelopes and then lets the database propagate child
+hulls upward through the remaining 17 levels. The rebuilt mutable namespace
+stores 524{,}287 nodes and 524{,}287 endpoint-envelope records, occupies
+443.07~MB on disk, and touches 262{,}144 depth-18 leaves during the one-time
+prewarm. Publishing the immutable read snapshot adds a 405.45~MB mmap-only
+artifact. Table~III reports the prewarm and snapshot publication costs together
+with the planner read-lane microbenchmark on that snapshot. Strict verification
+remains available as an offline audit, but it is no longer folded into the timed
+open row because it measures full consistency checking rather than planner
+read-path latency.
 
 \begin{table}[t]
-  \caption{Disk-backed LECT microbenchmark on the real Shelf+IIWA d18 persisted
-  cache. Reported values are average per operation using the most readable unit
-  for each row. Checkpoint is measured after 2k sampled evidence updates;
-  compact is measured after 20k sampled node tombstones on a copied cache
-  namespace.}
+  \caption{LECT endpoint-only persisted-cache microbenchmark on the real
+  Shelf+IIWA p18 cache. The prewarm and snapshot-build rows are one-time
+  publication steps; the remaining rows open and query the immutable read
+  snapshot, reporting average per operation using the most readable unit for
+  each row.}
   \label{tab:exp3_lect_disk_microbench}
   \centering
   \begin{tabular}{@{}lrr@{}}
     \toprule
     Operation & Ops & Avg. \\
     \midrule
-    Open read-only & 1 & 3.894 s \\
-    Node box & 2000 & 1.184 ms \\
-    Exact box lookup & 2000 & 637.2 $\mu$s \\
-    Range query & 2000 & 28.071 ms \\
-    Evidence read & 2000 & 3.3 $\mu$s \\
-    Checkpoint (2k dirty updates) & 1 & 1.342 s \\
-    Compact (20k node tombstones) & 1 & 1.351 s \\
+    P18 prewarm (8 threads) & 1 & 72.365 s \\
+    Snapshot build & 1 & 242.606 ms \\
+    Snapshot open read-only & 1 & 0.026 ms \\
+    Node box & 20000 & 0.473 $\mu$s \\
+    Exact box lookup & 20000 & 0.409 $\mu$s \\
+    Exact endpoint lookup & 20000 & 0.707 $\mu$s \\
+    Range query & 20000 & 41.473 $\mu$s \\
+    Evidence read & 20000 & 0.190 $\mu$s \\
     \bottomrule
   \end{tabular}
 \end{table}
 
-\Cref{tab:exp3_lect_disk_microbench} shows that the persisted LECT path is
-dominated by whole-store traversal and maintenance once the cache grows to the
-full Shelf+IIWA d18 artifact. On this 334.21~MB persisted cache, evidence reads
-remain microsecond-scale at 3.3~$\mu$s and exact box lookup stays
-sub-millisecond at 637.2~$\mu$s, but node-box fetch rises to 1.184~ms and the
-expanded intersecting range-query stage rises to 28.071~ms because it now
-traverses a 524k-node disk-backed tree rather than a 511-node synthetic toy.
-Reopening the cache costs 3.894~s, while sampled dirty checkpoint and compact
-both remain near 1.35~s on copied namespaces. This still matches the design
-intent in \cref{sec:lect_storage}: point evidence reuse on reopened persisted
-caches is far cheaper than rebuilding the d18 artifact, while heavier storage
-maintenance remains an occasional batch cost rather than a per-query tax.
+\Cref{tab:exp3_lect_disk_microbench} shows that the endpoint-only persisted
+cache keeps the planner read path lightweight after the one-time p18 prewarm and
+snapshot publication. On the real 524k-node Shelf+IIWA artifact, opening the
+immutable read snapshot costs 0.026~ms, point evidence read is
+0.190~$\mu$s, exact box lookup is 0.409~$\mu$s, and the fused exact-endpoint
+lookup used by the warm external-evidence path is 0.707~$\mu$s. The wider
+intersecting range-query stage remains tens of microseconds at
+41.473~$\mu$s, still far below rebuilding the cache. The heavier offline steps
+are the one-time p18 prewarm at 72.365~s and snapshot publication at
+242.606~ms; both are paid once per published cache generation rather than once
+per planner open.
 
 \section{Conclusion}\label{sec:conclusion}
 

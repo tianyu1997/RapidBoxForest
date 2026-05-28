@@ -109,17 +109,34 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
                                      lect_database::LectDatabase& database,
                                      Scene scene,
                                      EndpointSourceConfig endpoint_config,
-                                     EnvelopeTypeConfig envelope_config,
+                                                                         EnvelopeTypeConfig envelope_config,
                                                                          OracleValidationConfig validation_config,
                                                                          const lect_database::LectDatabase* external_evidence_database)
     : robot_(std::move(robot)),
       database_(database),
-            external_evidence_database_(external_evidence_database),
       endpoint_config_(std::move(endpoint_config)),
       envelope_config_(std::move(envelope_config)),
       validation_config_(std::move(validation_config)),
       scene_(std::move(scene)),
-      checker_(robot_, scene_) {}
+            checker_(robot_, scene_) {
+        set_external_evidence_database(external_evidence_database);
+}
+
+DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
+                                                                         lect_database::LectDatabase& database,
+                                                                         Scene scene,
+                                                                         EndpointSourceConfig endpoint_config,
+                                                                         EnvelopeTypeConfig envelope_config,
+                                                                         OracleValidationConfig validation_config,
+                                                                         const lect_database::LectExternalEvidenceSource* external_evidence_source)
+        : robot_(std::move(robot)),
+            database_(database),
+            external_evidence_source_(external_evidence_source),
+            endpoint_config_(std::move(endpoint_config)),
+            envelope_config_(std::move(envelope_config)),
+            validation_config_(std::move(validation_config)),
+            scene_(std::move(scene)),
+            checker_(robot_, scene_) {}
 
 DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
                                                                          lect_database::OnlineEnvelopeCacheTree& online_cache,
@@ -131,7 +148,25 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
         : robot_(std::move(robot)),
             database_(online_cache.database()),
             online_cache_(&online_cache),
-            external_evidence_database_(external_evidence_database),
+            endpoint_config_(std::move(endpoint_config)),
+            envelope_config_(std::move(envelope_config)),
+            validation_config_(std::move(validation_config)),
+            scene_(std::move(scene)),
+            checker_(robot_, scene_) {
+        set_external_evidence_database(external_evidence_database);
+}
+
+DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
+                                                                         lect_database::OnlineEnvelopeCacheTree& online_cache,
+                                                                         Scene scene,
+                                                                         EndpointSourceConfig endpoint_config,
+                                                                         EnvelopeTypeConfig envelope_config,
+                                                                         OracleValidationConfig validation_config,
+                                                                         const lect_database::LectExternalEvidenceSource* external_evidence_source)
+        : robot_(std::move(robot)),
+            database_(online_cache.database()),
+            online_cache_(&online_cache),
+            external_evidence_source_(external_evidence_source),
             endpoint_config_(std::move(endpoint_config)),
             envelope_config_(std::move(envelope_config)),
             validation_config_(std::move(validation_config)),
@@ -276,8 +311,12 @@ std::optional<std::vector<float>> DatabaseBoxOracle::endpoint_payload_for_node(
         counters_.materialization_reused_endpoint_cache += 1;
         return std::vector<float>(cached->payload.begin(), cached->payload.end());
     }
-    if (validation_config_.external_evidence_materialization && external_evidence_database_ != nullptr) {
-        if (auto cached = external_evidence_database_->evidence(key)) {
+    if (validation_config_.external_evidence_materialization && external_evidence_source_ != nullptr) {
+        auto cached = external_evidence_source_->endpoint_for_box_exact(intervals, key);
+        if (!cached && key.node_path_valid) {
+            cached = external_evidence_source_->evidence(key);
+        }
+        if (cached) {
             counters_.materialization_reused_external_evidence += 1;
             last_validation_detail_.reused_external_evidence = true;
             if (validation_config_.external_evidence_backfill_active) {

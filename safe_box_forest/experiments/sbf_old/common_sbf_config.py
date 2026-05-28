@@ -150,6 +150,18 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
     cfg.database.online_cache.allow_database_backfill = True
     cache_label = str(args.rbf_cache_label or f"{preset}_seed{int(seed)}")
     cfg.database.path = str(Path(args.rbf_cache_root) / cache_label)
+    set_if_available(
+        cfg.database,
+        "auto_publish_snapshot_after_checkpoint",
+        bool(getattr(args, "rbf_auto_publish_snapshot", True)),
+    )
+    set_if_available(
+        cfg.database,
+        "auto_publish_snapshot_async",
+        bool(getattr(args, "rbf_auto_publish_snapshot_async", True)),
+    )
+    if getattr(args, "rbf_snapshot_path", None):
+        set_if_available(cfg.database, "auto_publish_snapshot_path", str(Path(args.rbf_snapshot_path)))
 
     cfg.endpoint_source.source = sbf.EndpointSource.IFK
     set_rbf_envelope(cfg, str(args.rbf_envelope), args)
@@ -165,6 +177,43 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
 
 def set_online_cache_backfill(cfg: Any, allow_database_backfill: bool) -> None:
     cfg.database.online_cache.allow_database_backfill = bool(allow_database_backfill)
+
+
+def default_external_evidence_snapshot_path(source_path: Path) -> Path:
+    return Path(source_path) / "lect_snapshot"
+
+
+def configure_external_evidence_reuse(
+    cfg: Any,
+    source_path: Path,
+    args: Namespace | None = None,
+    *,
+    materialization: bool = True,
+    scoring: bool = True,
+    backfill_active: bool = False,
+) -> dict[str, Any]:
+    external_path = Path(source_path)
+    mode = str(getattr(args, "external_evidence_mode", "snapshot")) if args is not None else "snapshot"
+    use_snapshot = mode == "snapshot"
+    snapshot_path = default_external_evidence_snapshot_path(external_path)
+
+    cfg.database.external_evidence_path = str(external_path)
+    set_if_available(cfg.database, "external_evidence_use_snapshot", use_snapshot)
+    set_if_available(
+        cfg.database,
+        "external_evidence_auto_build_snapshot",
+        bool(getattr(args, "external_evidence_auto_build_snapshot", True)) if args is not None else True,
+    )
+    set_if_available(cfg.database, "external_evidence_snapshot_path", str(snapshot_path) if use_snapshot else "")
+    cfg.validation.external_evidence_materialization = bool(materialization)
+    cfg.validation.external_evidence_scoring = bool(scoring)
+    cfg.validation.external_evidence_backfill_active = bool(backfill_active)
+    return {
+        "mode": mode,
+        "path": str(external_path),
+        "snapshot_path": str(snapshot_path) if use_snapshot else None,
+        "backfill_active": bool(backfill_active),
+    }
 
 
 def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dict[str, Any]:
@@ -186,11 +235,24 @@ def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dic
         "envelope_type_raw": str(cfg.envelope_type.type).split(".")[-1],
         "canonical_mode": bool(cfg.database.canonical_mode),
         "database_path": str(cfg.database.path),
+        "database_snapshot_path": str(
+            getattr(cfg.database, "auto_publish_snapshot_path", "") or (Path(str(cfg.database.path)) / "lect_snapshot")
+        ) if str(getattr(cfg.database, "path", "")) else "",
+        "auto_publish_snapshot_after_checkpoint": bool(
+            getattr(cfg.database, "auto_publish_snapshot_after_checkpoint", False)
+        ),
+        "auto_publish_snapshot_async": bool(getattr(cfg.database, "auto_publish_snapshot_async", True)),
         "external_evidence_path": str(getattr(cfg.database, "external_evidence_path", "")),
+        "external_evidence_snapshot_path": str(getattr(cfg.database, "external_evidence_snapshot_path", "")),
+        "external_evidence_use_snapshot": bool(getattr(cfg.database, "external_evidence_use_snapshot", False)),
+        "external_evidence_auto_build_snapshot": bool(getattr(cfg.database, "external_evidence_auto_build_snapshot", True)),
+        "external_evidence_mode": (
+            "snapshot" if bool(getattr(cfg.database, "external_evidence_use_snapshot", False)) else "legacy"
+        ) if str(getattr(cfg.database, "external_evidence_path", "")) else "off",
         "propagate_parent_hulls": bool(getattr(cfg.database, "propagate_parent_hulls", True)),
         "defer_parent_hull_writes": bool(getattr(cfg.database, "defer_parent_hull_writes", False)),
-            "checkpoint_after_build": bool(getattr(cfg.database, "checkpoint_after_build", False)),
-            "online_cache_allow_database_backfill": bool(getattr(cfg.database.online_cache, "allow_database_backfill", True)),
+        "checkpoint_after_build": bool(getattr(cfg.database, "checkpoint_after_build", False)),
+        "online_cache_allow_database_backfill": bool(getattr(cfg.database.online_cache, "allow_database_backfill", True)),
         "external_evidence_materialization": bool(getattr(cfg.validation, "external_evidence_materialization", True)),
         "external_evidence_backfill_active": bool(getattr(cfg.validation, "external_evidence_backfill_active", True)),
         "prewarm_depth": int(getattr(args, "rbf_prewarm_depth", 18)) if args is not None else 18,
@@ -283,8 +345,13 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--rbf-canonical-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-cache-root", type=Path, default=RBF_ONLY_OUTPUT_ROOT / "cache")
     parser.add_argument("--rbf-cache-label", default="")
+    parser.add_argument("--rbf-snapshot-path", type=Path, default=None)
+    parser.add_argument("--rbf-auto-publish-snapshot", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--rbf-auto-publish-snapshot-async", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-online-cache-max-nodes", type=int, default=200000)
     parser.add_argument("--rbf-online-cache-max-payload-bytes", type=int, default=512 * 1024 * 1024)
+    parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
+    parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
 
 
 def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = None, robot: Any | None = None) -> sbf.SBFConfig:

@@ -699,6 +699,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_property("external_evidence_path",
             [](const rbf::LectDatabaseRuntimeConfig& config) { return config.external_evidence_path.string(); },
             [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.external_evidence_path = path; })
+        .def_property("external_evidence_snapshot_path",
+            [](const rbf::LectDatabaseRuntimeConfig& config) { return config.external_evidence_snapshot_path.string(); },
+            [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.external_evidence_snapshot_path = path; })
+        .def_property("auto_publish_snapshot_path",
+            [](const rbf::LectDatabaseRuntimeConfig& config) { return config.auto_publish_snapshot_path.string(); },
+            [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.auto_publish_snapshot_path = path; })
         .def_readwrite("split_policy", &rbf::LectDatabaseRuntimeConfig::split_policy)
         .def_readwrite("online_cache", &rbf::LectDatabaseRuntimeConfig::online_cache)
         .def_readwrite("read_only", &rbf::LectDatabaseRuntimeConfig::read_only)
@@ -709,6 +715,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("defer_parent_hull_writes", &rbf::LectDatabaseRuntimeConfig::defer_parent_hull_writes)
         .def_readwrite("canonical_mode", &rbf::LectDatabaseRuntimeConfig::canonical_mode)
         .def_readwrite("checkpoint_after_build", &rbf::LectDatabaseRuntimeConfig::checkpoint_after_build)
+        .def_readwrite("auto_publish_snapshot_after_checkpoint", &rbf::LectDatabaseRuntimeConfig::auto_publish_snapshot_after_checkpoint)
+        .def_readwrite("auto_publish_snapshot_async", &rbf::LectDatabaseRuntimeConfig::auto_publish_snapshot_async)
+        .def_readwrite("external_evidence_use_snapshot", &rbf::LectDatabaseRuntimeConfig::external_evidence_use_snapshot)
+        .def_readwrite("external_evidence_auto_build_snapshot", &rbf::LectDatabaseRuntimeConfig::external_evidence_auto_build_snapshot)
         .def_readwrite("symmetry_descriptor", &rbf::LectDatabaseRuntimeConfig::symmetry_descriptor)
         .def_readwrite("page_size_bytes", &rbf::LectDatabaseRuntimeConfig::page_size_bytes)
         .def_readwrite("max_resident_pages", &rbf::LectDatabaseRuntimeConfig::max_resident_pages)
@@ -880,7 +890,16 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             return forest.database().evidence_count();
         })
         .def("database_checkpoint", [](rbf::RBFPlanningForest& forest) {
-            return forest.database().checkpoint();
+            return forest.checkpoint_database();
+        })
+        .def("database_publish_snapshot", [](rbf::RBFPlanningForest& forest, bool wait) {
+            return forest.publish_database_snapshot(wait);
+        }, py::arg("wait") = false)
+        .def("database_wait_for_snapshot_publish", [](rbf::RBFPlanningForest& forest) {
+            return forest.wait_for_snapshot_publish();
+        })
+        .def("database_snapshot_path", [](const rbf::RBFPlanningForest& forest) {
+            return forest.database_snapshot_path().string();
         })
         .def("database_verify", [](const rbf::RBFPlanningForest& forest, bool strict) {
             return forest.database().verify(strict).ok;
@@ -892,8 +911,18 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  if (obstacles.empty()) {
                      throw std::invalid_argument("prewarm_lifelong_cache requires a non-empty obstacle scene so endpoint evidence is materialized");
                  }
+                 struct WorkerSummary {
+                     bool ok = true;
+                     std::size_t nodes_touched = 0;
+                     std::int64_t materializations = 0;
+                     std::int64_t reused_endpoint_cache = 0;
+                 };
                  const auto start = std::chrono::steady_clock::now();
-                 const bool depth_ok = forest.database().ensure_depth(std::max(0, target_depth));
+                 const int materialize_depth = std::max(0, target_depth);
+                 const int requested_threads =
+                     forest.config().runtime.mode == rbf::ExecutionMode::Parallel
+                         ? std::max(1, forest.config().runtime.n_threads)
+                         : 1;
                  rbf::DatabaseBoxOracle oracle(forest.robot(),
                                                forest.online_cache(),
                                                rbf::Scene(obstacles),
@@ -902,20 +931,123 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                                forest.config().validation);
                  std::size_t nodes_touched = 0;
                  const std::size_t evidence_before = forest.database().evidence_count();
-                 const int materialize_depth = std::max(0, target_depth);
-                 for (rbf::lect_database::NodeId node_id : forest.database().layer_nodes(materialize_depth)) {
-                     auto intervals = forest.database().node_box(node_id);
-                     if (!intervals) {
-                         continue;
+                 std::int64_t materializations = 0;
+                 std::int64_t reused_endpoint_cache = 0;
+                 bool materialize_ok = false;
+                 bool parallel_used = false;
+                 int partition_depth = 0;
+                 std::size_t task_count = 0;
+                 int threads_used = 1;
+
+                 const auto serial_prewarm = [&]() {
+                     if (!forest.database().ensure_depth(materialize_depth)) {
+                         return false;
                      }
-                     oracle.validate_node(static_cast<int>(node_id), *intervals, -1);
-                     nodes_touched += 1;
+                     oracle.reset_counters();
+                     for (rbf::lect_database::NodeId node_id : forest.database().layer_nodes(materialize_depth)) {
+                         auto intervals = forest.database().node_box(node_id);
+                         if (!intervals) {
+                             continue;
+                         }
+                         oracle.validate_node(static_cast<int>(node_id), *intervals, -1);
+                         nodes_touched += 1;
+                     }
+                     const auto& counters = oracle.counters();
+                     materializations += counters.materializations;
+                     reused_endpoint_cache += counters.materialization_reused_endpoint_cache;
+                     return true;
+                 };
+
+                 if (requested_threads > 1 && materialize_depth > 0) {
+                     partition_depth = std::min(
+                         materialize_depth,
+                         std::max(1, static_cast<int>(std::ceil(std::log2(static_cast<double>(requested_threads))))));
+                     if (forest.database().ensure_depth(partition_depth)) {
+                         auto subtree_roots = forest.database().layer_nodes(partition_depth);
+                         task_count = subtree_roots.size();
+                         if (!subtree_roots.empty()) {
+                             threads_used = std::min(requested_threads, static_cast<int>(subtree_roots.size()));
+                             rbf::RuntimeConfig runtime = forest.config().runtime;
+                             runtime.mode = threads_used > 1 ? rbf::ExecutionMode::Parallel : rbf::ExecutionMode::Inline;
+                             runtime.n_threads = threads_used;
+                             auto executor = rbf::make_executor(runtime);
+                             std::vector<std::unique_ptr<rbf::BoxOracleSession>> sessions(subtree_roots.size());
+                             bool session_setup_ok = true;
+                             for (std::size_t index = 0; index < subtree_roots.size(); ++index) {
+                                 rbf::OracleSessionConfig session_config;
+                                 session_config.worker_id = static_cast<int>(index);
+                                 session_config.read_only = false;
+                                 session_config.domain_root = static_cast<rbf::OracleNodeId>(subtree_roots[index]);
+                                 sessions[index] = oracle.make_session(session_config);
+                                 if (!sessions[index]) {
+                                     session_setup_ok = false;
+                                     break;
+                                 }
+                             }
+                             if (session_setup_ok && executor->n_threads() > 1) {
+                                 const int worker_target_depth = materialize_depth - partition_depth;
+                                 std::vector<WorkerSummary> worker_summaries(subtree_roots.size());
+                                 executor->parallel_for(0, static_cast<int>(subtree_roots.size()), [&](int index) {
+                                     auto& summary = worker_summaries[static_cast<std::size_t>(index)];
+                                     auto* worker_oracle = dynamic_cast<rbf::DatabaseBoxOracle*>(&sessions[static_cast<std::size_t>(index)]->oracle());
+                                     if (worker_oracle == nullptr) {
+                                         summary.ok = false;
+                                         return;
+                                     }
+                                     if (!worker_oracle->database().ensure_depth(worker_target_depth)) {
+                                         summary.ok = false;
+                                         return;
+                                     }
+                                     for (rbf::lect_database::NodeId worker_node : worker_oracle->database().layer_nodes(worker_target_depth)) {
+                                         auto intervals = worker_oracle->database().node_box(worker_node);
+                                         if (!intervals) {
+                                             continue;
+                                         }
+                                         worker_oracle->validate_node(static_cast<int>(worker_node), *intervals, -1);
+                                         summary.nodes_touched += 1;
+                                     }
+                                     const auto& counters = worker_oracle->counters();
+                                     summary.materializations = counters.materializations;
+                                     summary.reused_endpoint_cache = counters.materialization_reused_endpoint_cache;
+                                 });
+                                 bool workers_ok = true;
+                                 for (const auto& summary : worker_summaries) {
+                                     workers_ok = workers_ok && summary.ok;
+                                 }
+                                 if (workers_ok) {
+                                     for (std::size_t index = 0; index < sessions.size(); ++index) {
+                                         if (!sessions[index]->commit()) {
+                                             workers_ok = false;
+                                             break;
+                                         }
+                                     }
+                                 }
+                                 if (workers_ok) {
+                                     parallel_used = true;
+                                     materialize_ok = true;
+                                     for (const auto& summary : worker_summaries) {
+                                         nodes_touched += summary.nodes_touched;
+                                         materializations += summary.materializations;
+                                         reused_endpoint_cache += summary.reused_endpoint_cache;
+                                     }
+                                 }
+                             }
+                         }
+                     }
                  }
-                 const bool checkpoint_ok = forest.database().checkpoint();
+
+                 if (!parallel_used) {
+                     partition_depth = 0;
+                     task_count = 0;
+                     threads_used = 1;
+                     materialize_ok = serial_prewarm();
+                 }
+
+                 const bool depth_ok = materialize_ok && forest.database().ensure_depth(materialize_depth);
+                 const bool checkpoint_ok = depth_ok && forest.checkpoint_database();
                  const auto end = std::chrono::steady_clock::now();
-                 const auto& counters = oracle.counters();
                  py::dict result;
-                 result["ok"] = depth_ok && checkpoint_ok;
+                 result["ok"] = materialize_ok && depth_ok && checkpoint_ok;
                  result["target_depth"] = materialize_depth;
                  result["depth_ok"] = depth_ok;
                  result["checkpoint_ok"] = checkpoint_ok;
@@ -923,8 +1055,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  result["node_count"] = forest.database().node_count();
                  result["evidence_before"] = evidence_before;
                  result["evidence_after"] = forest.database().evidence_count();
-                 result["materializations"] = counters.materializations;
-                 result["reused_endpoint_cache"] = counters.materialization_reused_endpoint_cache;
+                 result["materializations"] = materializations;
+                 result["reused_endpoint_cache"] = reused_endpoint_cache;
+                 result["parallel"] = parallel_used;
+                 result["threads_requested"] = requested_threads;
+                 result["threads_used"] = threads_used;
+                 result["partition_depth"] = partition_depth;
+                 result["task_count"] = task_count;
                  result["wall_s"] = std::chrono::duration<double>(end - start).count();
                  return result;
              },

@@ -19,6 +19,22 @@ Compatibility wrappers are kept for older commands:
 - `paper_15_query_amortization.py`
 - `paper_generate_tro_tables.py`
 
+## Warm-reuse default
+
+The current warm-d18 experiment runners use a writable active cache plus a
+separate read-only external evidence source. By default that external source is
+opened as a LECT read snapshot, with the snapshot stored under
+`<external_evidence_path>/lect_snapshot` and auto-built on first use.
+
+Common runners that import `sbf_old/common_sbf_config.py` now accept:
+
+- `--external-evidence-mode {legacy,snapshot}`
+- `--external-evidence-auto-build-snapshot` / `--no-external-evidence-auto-build-snapshot`
+
+Use `legacy` only when you need to compare against the old read-only database
+open path. The default `snapshot` mode is the paper-facing best-performance
+configuration for warm external evidence reuse.
+
 ## Supporting paper experiment runners
 
 These scripts still produce detailed artifacts consumed by the main generator or appendix tables:

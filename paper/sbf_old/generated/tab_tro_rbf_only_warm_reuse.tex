@@ -1,21 +1,16 @@
 \begin{table*}[t]
 \centering
-\caption{RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 evidence and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.}
+\caption{RBF-only warm-versus-cold baselines under the reviewer-safe lifelong-cache protocol. Shelf rows read only the prewarmed external d18 snapshot-backed evidence source and disable active-database backfill; random-scene rows may persist newly materialized online evidence to the active database.}
 \label{tab:tro_appendix_rbf_only_warm_reuse}
-\footnotesize
+\small
 \setlength{\tabcolsep}{2.00pt}
-\renewcommand{\arraystretch}{0.95}
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{llllrrrrrrrr}
 \toprule
 Exp. & Scene & Mode & Backfill & Wall s & Plan s & Maint s & Query ms & Audit & Repairs & Ext reuse & Active reuse \\
 \midrule
-E2 & Shelf+IIWA & Cold & no & 2.289 & 2.282 & 0.0075 & 1.776 & 1/1 & 0 & 0 & 5306 \\
-E2 & Shelf+IIWA & Warm d18 & no & 2.304 & 2.296 & 0.0074 & 1.781 & 1/1 & 0 & 0 & 5306 \\
-E2 & Random IIWA (easy) & Cold & yes & 0.1294 & 0.1227 & 0.0067 & 2.312 & 1/1 & 0 & 0 & 3319 \\
-E2 & Random IIWA (easy) & Warm d18 & yes & 0.1316 & 0.1247 & 0.0069 & 2.404 & 1/1 & 0 & 0 & 3319 \\
-E3 & Shelf+IIWA & Cold & no & 2.435 & 2.423 & 0.0123 & 2.740 & 5/5 & 0 & 0 & 11562 \\
-E3 & Shelf+IIWA & Warm d18 & no & 2.501 & 2.489 & 0.0129 & 2.735 & 5/5 & 0 & 0 & 11562 \\
+E3 & Shelf+IIWA & Cold & no & 0.000274 & 0.000102 & 0.000173 & 46.13 & 5/5 & 5 & 0 & 4 \\
+E3 & Shelf+IIWA & Warm d18 & no & 0.000255 & 0.000089 & 0.000166 & 45.93 & 5/5 & 5 & 5 & 0 \\
 \bottomrule
 \end{tabular}
 }
