@@ -658,6 +658,27 @@ OracleNodeId find_leaf_containing(BoxOracle& oracle, const Eigen::Ref<const Eige
     return node;
 }
 
+bool reserved_node_covers_point(BoxOracle& oracle, const Eigen::Ref<const Eigen::VectorXd>& q) {
+    if (q.size() != oracle.n_dims() || !oracle.contains_point(oracle.root_node(), q)) {
+        return false;
+    }
+    OracleNodeId node = oracle.root_node();
+    while (node != kInvalidOracleNodeId) {
+        if (oracle.is_reserved(node)) {
+            return true;
+        }
+        if (oracle.is_leaf(node)) {
+            return false;
+        }
+        const int dim = oracle.split_dim(node);
+        if (dim < 0 || dim >= q.size()) {
+            return false;
+        }
+        node = q[dim] <= oracle.split_value(node) ? oracle.left_child(node) : oracle.right_child(node);
+    }
+    return false;
+}
+
 void write_json_string(std::ostream& out, std::string_view value) {
     out << '"';
     for (char ch : value) {
@@ -1186,6 +1207,12 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     next_box_id_ = 0;
     component_parent_failures_.clear();
     failure_cooling_.clear();
+    {
+        std::lock_guard<std::mutex> lock(frontier_cache_mutex_);
+        covered_frontier_seed_cache_.clear();
+        uncovered_frontier_seed_cache_.clear();
+        uncovered_frontier_seed_cache_box_count_ = std::numeric_limits<std::size_t>::max();
+    }
     if (config_.boundary_epsilon > config_.adjacency_tolerance) {
         context.diagnostics().set_value("grower.invalid_boundary_epsilon", 1.0);
     }
@@ -1985,12 +2012,17 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
                            static_cast<double>(component_graph.connected_cross_root_pairs));
     }
 
+    std::unordered_set<int> component_connect_roots_attempted;
     auto make_request = [&](int source_root_id, int sample_index) {
         TaskRequest request;
         request.source_root_id = source_root_id;
         request.iteration = first_task_id + sample_index;
         if (config_.connect_mode && source_root_id >= 0 && active_groups.roots.size() > 1 &&
             config_.component_connect_prob > 0.0 && u01(rng_) < config_.component_connect_prob) {
+            if (component_connect_roots_attempted.find(source_root_id) != component_connect_roots_attempted.end()) {
+                context.diagnostics().add_counter("grower.component_connect_batch_root_skips");
+            } else {
+                component_connect_roots_attempted.insert(source_root_id);
             if (make_component_connect_seed_for_root(boxes,
                                                      source_root_id,
                                                      request.seed,
@@ -2014,6 +2046,7 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
                 return request;
             }
             context.diagnostics().add_counter("grower.component_connect_target_no_candidate");
+            }
         }
         request.target = sample_target(source_root_id,
                                        sample_index,
@@ -2170,21 +2203,52 @@ bool RrtGrower::seed_covered_by_frontier_cache(const std::vector<BoxNode>& boxes
         return point_covered_by_existing_box(boxes, seed);
     }
     const std::string key = frontier_seed_cache_key(seed);
+    const std::size_t box_count = boxes.size();
     {
         std::lock_guard<std::mutex> lock(frontier_cache_mutex_);
+        if (uncovered_frontier_seed_cache_box_count_ != box_count) {
+            uncovered_frontier_seed_cache_.clear();
+            uncovered_frontier_seed_cache_box_count_ = box_count;
+            if (context != nullptr) {
+                context->diagnostics().add_counter("grower.frontier_uncovered_cache_resets");
+            }
+        }
         if (covered_frontier_seed_cache_.find(key) != covered_frontier_seed_cache_.end()) {
             if (context != nullptr) {
                 context->diagnostics().add_counter("grower.frontier_covered_cache_hits");
             }
             return true;
         }
+        if (uncovered_frontier_seed_cache_.find(key) != uncovered_frontier_seed_cache_.end()) {
+            if (context != nullptr) {
+                context->diagnostics().add_counter("grower.frontier_uncovered_cache_hits");
+            }
+            return false;
+        }
     }
-    const bool covered = point_covered_by_existing_box(boxes, seed);
+
+    bool covered = reserved_node_covers_point(oracle_, seed);
     if (covered) {
-        std::lock_guard<std::mutex> lock(frontier_cache_mutex_);
+        if (context != nullptr) {
+            context->diagnostics().add_counter("grower.frontier_covered_reserved_leaf_hits");
+        }
+    } else {
+        if (context != nullptr) {
+            context->diagnostics().add_counter("grower.frontier_reserved_path_misses");
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(frontier_cache_mutex_);
+    if (covered) {
         covered_frontier_seed_cache_.insert(key);
+        uncovered_frontier_seed_cache_.erase(key);
         if (context != nullptr) {
             context->diagnostics().add_counter("grower.frontier_covered_cache_inserts");
+        }
+    } else if (uncovered_frontier_seed_cache_box_count_ == box_count) {
+        uncovered_frontier_seed_cache_.insert(key);
+        if (context != nullptr) {
+            context->diagnostics().add_counter("grower.frontier_uncovered_cache_inserts");
         }
     }
     return covered;
@@ -2603,9 +2667,11 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
             double staged_distance = 0.0;
             target_point = staged_component_target(parent, target_point, staged, staged_distance);
             double face_score = std::numeric_limits<double>::infinity();
-            if (!best_uncovered_directed_face_score(boxes, parent, target_point, face_score, &context)) {
-                context.diagnostics().add_counter("grower.component_connect_parent_closed_frontier");
-                continue;
+            if (!config_.component_connect_staged_growth) {
+                if (!best_uncovered_directed_face_score(boxes, parent, target_point, face_score, &context)) {
+                    context.diagnostics().add_counter("grower.component_connect_parent_closed_frontier");
+                    continue;
+                }
             }
             int pair_failures = 0;
             int target_root_guess = target_summary.roots.empty() ? -1 : target_summary.roots.front();
@@ -2640,6 +2706,20 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
         context.diagnostics().add_counter("grower.component_connect_no_candidate");
         return false;
     }
+    auto coarse_candidate_less = [&](const Candidate& lhs, const Candidate& rhs) {
+        if (config_.component_connect_neighbor_root_bias) {
+            const bool lhs_neighbor = lhs.root_order_gap <= neighbor_window;
+            const bool rhs_neighbor = rhs.root_order_gap <= neighbor_window;
+            if (lhs_neighbor != rhs_neighbor) return lhs_neighbor;
+            if (lhs_neighbor && lhs.root_order_gap != rhs.root_order_gap) {
+                return lhs.root_order_gap < rhs.root_order_gap;
+            }
+        }
+        if (std::abs(lhs.target_gap_sq - rhs.target_gap_sq) > 1e-18) return lhs.target_gap_sq < rhs.target_gap_sq;
+        if (lhs.parent_failures != rhs.parent_failures) return lhs.parent_failures < rhs.parent_failures;
+        if (lhs.pair_unknown_failures != rhs.pair_unknown_failures) return lhs.pair_unknown_failures > rhs.pair_unknown_failures;
+        return lhs.center_sq < rhs.center_sq;
+    };
     auto candidate_less = [&](const Candidate& lhs, const Candidate& rhs) {
         if (config_.component_connect_neighbor_root_bias) {
             const bool lhs_neighbor = lhs.root_order_gap <= neighbor_window;
@@ -2655,16 +2735,38 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
         if (lhs.pair_unknown_failures != rhs.pair_unknown_failures) return lhs.pair_unknown_failures > rhs.pair_unknown_failures;
         return lhs.center_sq < rhs.center_sq;
     };
-    std::sort(coarse_candidates.begin(), coarse_candidates.end(), candidate_less);
+    std::sort(coarse_candidates.begin(), coarse_candidates.end(), coarse_candidate_less);
 
     std::vector<Candidate> candidates;
     if (config_.component_connect_staged_growth) {
         const int coarse_limit = std::min(static_cast<int>(coarse_candidates.size()),
                                          std::max(4, std::max(1, config_.component_connect_candidate_limit) * 2));
+        const int coarse_scan_limit = std::min(static_cast<int>(coarse_candidates.size()),
+                                               std::max(16, coarse_limit * 4));
         candidates.reserve(static_cast<std::size_t>(coarse_limit));
-        for (int coarse_index = 0; coarse_index < coarse_limit; ++coarse_index) {
-            candidates.push_back(coarse_candidates[static_cast<std::size_t>(coarse_index)]);
+        context.diagnostics().add_counter("grower.component_connect_staged_coarse_scan_limit_sum",
+                                          static_cast<double>(coarse_scan_limit));
+        set_max_diagnostic(context,
+                           "grower.component_connect_staged_coarse_scan_limit_max",
+                           static_cast<double>(coarse_scan_limit));
+        int staged_face_score_calls = 0;
+        for (int coarse_index = 0;
+             coarse_index < coarse_scan_limit && static_cast<int>(candidates.size()) < coarse_limit;
+             ++coarse_index) {
+            Candidate candidate = coarse_candidates[static_cast<std::size_t>(coarse_index)];
+            const auto& parent = boxes[static_cast<std::size_t>(candidate.parent)];
+            double face_score = std::numeric_limits<double>::infinity();
+            staged_face_score_calls += 1;
+            if (!best_uncovered_directed_face_score(boxes, parent, candidate.target_point, face_score, &context)) {
+                context.diagnostics().add_counter("grower.component_connect_parent_closed_frontier");
+                context.diagnostics().add_counter("grower.component_connect_staged_target_no_frontier");
+                continue;
+            }
+            candidate.face_score = face_score;
+            candidates.push_back(std::move(candidate));
         }
+        context.diagnostics().add_counter("grower.component_connect_face_score_calls",
+                                          static_cast<double>(staged_face_score_calls));
         context.diagnostics().add_counter("grower.component_connect_component_target_tasks");
         set_max_diagnostic(context,
                            "grower.component_connect_component_target_limit_max",
@@ -2679,12 +2781,20 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
 
         candidates.reserve(static_cast<std::size_t>(refine_limit));
         int target_boxes_scanned = 0;
+        int refine_face_score_calls = 0;
         for (int coarse_index = 0; coarse_index < refine_limit; ++coarse_index) {
             const Candidate& coarse = coarse_candidates[static_cast<std::size_t>(coarse_index)];
             const auto& parent = boxes[static_cast<std::size_t>(coarse.parent)];
             const Eigen::VectorXd parent_center = parent.center();
             Candidate best = coarse;
             bool found_actual_target = false;
+            double coarse_face_score = std::numeric_limits<double>::infinity();
+            refine_face_score_calls += 1;
+            if (!best_uncovered_directed_face_score(boxes, parent, coarse.target_point, coarse_face_score, &context)) {
+                context.diagnostics().add_counter("grower.component_connect_parent_closed_frontier");
+                continue;
+            }
+            best.face_score = coarse_face_score;
             if (coarse.target_summary >= 0 && coarse.target_summary < static_cast<int>(targets.size())) {
                 const auto& target_summary = targets[static_cast<std::size_t>(coarse.target_summary)];
                 for (int target_box_index : target_summary.indices) {
@@ -2697,6 +2807,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                     double staged_distance = 0.0;
                     target_point = staged_component_target(parent, target_point, staged, staged_distance);
                     double face_score = std::numeric_limits<double>::infinity();
+                    refine_face_score_calls += 1;
                     if (!best_uncovered_directed_face_score(boxes, parent, target_point, face_score, &context)) {
                         continue;
                     }
@@ -2730,9 +2841,15 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
             }
             candidates.push_back(std::move(best));
         }
+        context.diagnostics().add_counter("grower.component_connect_face_score_calls",
+                                          static_cast<double>(refine_face_score_calls));
         set_max_diagnostic(context,
                            "grower.component_connect_actual_target_boxes_scanned_max",
                            static_cast<double>(target_boxes_scanned));
+    }
+    if (candidates.empty()) {
+        context.diagnostics().add_counter("grower.component_connect_no_candidate");
+        return false;
     }
     std::sort(candidates.begin(), candidates.end(), candidate_less);
 

@@ -84,8 +84,8 @@ def build_shelf_sbf_case_command(
     rbf_max_depth: int = 50,
     external_evidence_materialization: bool = True,
     external_evidence_scoring: bool = True,
-    keep_kdop: bool = True,
     clean_active_cache: bool = True,
+    latency_profile: str = "stable",
 ) -> list[str]:
     command = [
         python_executable,
@@ -124,9 +124,10 @@ def build_shelf_sbf_case_command(
         str(warm_cache_label),
         "--external-evidence-mode",
         str(external_evidence_mode),
+        "--latency-profile",
+        str(latency_profile),
     ]
     command.append("--clean-active-cache" if clean_active_cache else "--no-clean-active-cache")
-    command.append("--support-hull-keep-kdop" if keep_kdop else "--no-support-hull-keep-kdop")
     command.append("--use-external-evidence" if use_external_evidence else "--no-use-external-evidence")
     command.append("--external-evidence-materialization" if external_evidence_materialization else "--no-external-evidence-materialization")
     command.append("--external-evidence-scoring" if external_evidence_scoring else "--no-external-evidence-scoring")
@@ -154,7 +155,6 @@ def build_legacy_shelf_sbf_command(
     external_evidence_mode: str,
     external_evidence_auto_build_snapshot: bool,
     audit_resolution: int = 32,
-    keep_kdop: bool = False,
 ) -> list[str]:
     command = [
         python_executable,
@@ -179,8 +179,6 @@ def build_legacy_shelf_sbf_command(
         str(max(1, int(audit_resolution))),
         "--strict-path-audit",
     ]
-    if str(envelope) == "support_hull" and not keep_kdop:
-        command.append("--no-support-hull-keep-kdop")
     if use_external_evidence:
         command.extend([
             "--rbf-cache-root",

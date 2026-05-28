@@ -140,7 +140,6 @@ def make_envelope_config(
     envelope: str | Any = "link_iaabb",
     *,
     n_subdivisions: int = 1,
-    support_hull_keep_kdop: bool | None = None,
 ) -> Any:
     cfg = EnvelopeTypeConfig()
     if isinstance(envelope, str):
@@ -159,8 +158,6 @@ def make_envelope_config(
     else:
         cfg.type = envelope
     cfg.n_subdivisions = max(1, int(n_subdivisions))
-    if support_hull_keep_kdop is not None:
-        cfg.support_hull_config.keep_kdop = bool(support_hull_keep_kdop)
     return cfg
 
 
@@ -299,7 +296,6 @@ def compute_envelope(
     hifk_vol_ratio_thresh: float = 0.0,
     gcpc_cache: Any | None = None,
     include_endpoint_iaabbs: bool = True,
-    support_hull_keep_kdop: bool | None = None,
 ) -> dict[str, Any]:
     robot_obj = load_robot(robot)
     interval_objs = make_intervals(intervals)
@@ -319,7 +315,6 @@ def compute_envelope(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        support_hull_keep_kdop=support_hull_keep_kdop,
     )
     raw = _cpp.compute_envelope_info(
         robot_obj,
@@ -351,7 +346,6 @@ def compute_envelope_batch(
     hifk_vol_ratio_thresh: float = 0.0,
     n_threads: int = 0,
     include_endpoint_iaabbs: bool = True,
-    support_hull_keep_kdop: bool | None = None,
 ) -> list[dict[str, Any]]:
     robot_obj = load_robot(robot)
     endpoint_config = make_endpoint_config(
@@ -366,7 +360,6 @@ def compute_envelope_batch(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        support_hull_keep_kdop=support_hull_keep_kdop,
     )
     interval_objs = [make_intervals(box) for box in interval_boxes]
     interval_pairs = [
@@ -403,7 +396,6 @@ def compute_from_endpoint_iaabbs(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        support_hull_keep_kdop=None,
     )
     raw = _cpp.compute_link_envelope_from_endpoints(
         robot_obj,
@@ -421,7 +413,6 @@ def compute_collision_from_endpoint_iaabbs(
     envelope_type: str | Any = "link_iaabb",
     n_subdivisions: int = 1,
     kdop_directions: str | Any = "dop26",
-    support_hull_keep_kdop: bool | None = None,
     collision_mode: str = "auto",
     count_all_pairs: bool = False,
     safety_epsilon: float = 0.0,
@@ -430,7 +421,6 @@ def compute_collision_from_endpoint_iaabbs(
     envelope_config = make_envelope_config(
         envelope_type,
         n_subdivisions=n_subdivisions,
-        support_hull_keep_kdop=support_hull_keep_kdop,
     )
     if isinstance(kdop_directions, str):
         key = kdop_directions.strip().lower().replace("-", "")
@@ -544,7 +534,6 @@ class IncrementalEnvelopeComputer:
         envelope_config = make_envelope_config(
             envelope_type,
             n_subdivisions=n_subdivisions,
-            support_hull_keep_kdop=None,
         )
         self._context = _cpp.IncrementalEnvelopeContext(
             self.robot,

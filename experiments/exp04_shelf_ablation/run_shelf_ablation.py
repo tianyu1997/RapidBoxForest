@@ -66,7 +66,7 @@ def case_command(
     use_external_evidence: bool,
     external_evidence_materialization: bool = True,
     external_evidence_scoring: bool = True,
-    keep_kdop: bool = True,
+    latency_profile: str = "stable",
 ) -> list[str]:
     return build_shelf_sbf_case_command(
         python_executable=sys.executable,
@@ -86,7 +86,7 @@ def case_command(
         external_evidence_auto_build_snapshot=bool(args.external_evidence_auto_build_snapshot),
         external_evidence_materialization=external_evidence_materialization,
         external_evidence_scoring=external_evidence_scoring,
-        keep_kdop=keep_kdop,
+        latency_profile=latency_profile,
         clean_active_cache=True,
     )
 
@@ -108,7 +108,30 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 use_external_evidence=True,
                 external_evidence_materialization=True,
                 external_evidence_scoring=True,
-                keep_kdop=True,
+            ),
+        },
+        {
+            "name": "balanced_low_latency",
+            "factor": "latency_profile",
+            "description": "warm LECT cache + AAFK + SupportHull with a staged low-box incumbent protocol adapted from the old shelf anytime settings",
+            "changes_from_baseline": [
+                "latency_profile=balanced_low_latency",
+                "task_batch_size<=2",
+                "component_connect_candidate_limit=1",
+                "staged low-box schedule with incumbent retention",
+                "quality/max_boxes staged as 2/16 -> 64/96 -> 128/160 -> 192/224 -> 256/320",
+            ],
+            "command": case_command(
+                args,
+                name="balanced_low_latency",
+                endpoint_source="aafk",
+                lect_split_policy="aafk_volume_min",
+                envelope="support_hull",
+                threads=int(args.threads),
+                use_external_evidence=True,
+                external_evidence_materialization=True,
+                external_evidence_scoring=True,
+                latency_profile="balanced_low_latency",
             ),
         },
         {
@@ -124,7 +147,6 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 envelope="support_hull",
                 threads=int(args.threads),
                 use_external_evidence=False,
-                keep_kdop=True,
             ),
         },
         {
@@ -142,7 +164,6 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 use_external_evidence=True,
                 external_evidence_materialization=True,
                 external_evidence_scoring=True,
-                keep_kdop=True,
             ),
         },
         {
@@ -160,25 +181,6 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 use_external_evidence=True,
                 external_evidence_materialization=True,
                 external_evidence_scoring=True,
-                keep_kdop=True,
-            ),
-        },
-        {
-            "name": "aabb_to_support_hull_chain",
-            "factor": "envelope_collision",
-            "description": "use the AABB broadphase -> SupportHull narrow-phase chain without retaining KDOP payloads",
-            "changes_from_baseline": ["support_hull_keep_kdop=false"],
-            "command": case_command(
-                args,
-                name="aabb_to_support_hull_chain",
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
-                keep_kdop=False,
             ),
         },
         {
@@ -196,7 +198,6 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 use_external_evidence=True,
                 external_evidence_materialization=True,
                 external_evidence_scoring=True,
-                keep_kdop=True,
             ),
         },
         {
@@ -214,7 +215,6 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
                 use_external_evidence=True,
                 external_evidence_materialization=True,
                 external_evidence_scoring=True,
-                keep_kdop=True,
             ),
         },
     ]

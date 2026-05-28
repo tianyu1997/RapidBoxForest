@@ -282,6 +282,9 @@ public:
     const EndpointSourceConfig& endpoint_config() const { return endpoint_config_; }
     const EnvelopeTypeConfig& envelope_config() const { return envelope_config_; }
     const OracleValidationConfig& validation_config() const { return validation_config_; }
+    const lect_database::LectExternalEvidenceSource* external_evidence_source() const {
+        return external_evidence_source_;
+    }
     void set_external_evidence_database(const lect_database::LectDatabase* database) {
         if (database == nullptr) {
             external_evidence_database_source_.reset();

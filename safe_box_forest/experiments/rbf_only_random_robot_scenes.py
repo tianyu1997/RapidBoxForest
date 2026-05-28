@@ -69,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-seeds", type=int, default=5)
     parser.add_argument("--scene-profile", choices=["balanced", "legacy"], default="balanced")
     parser.add_argument("--modes", default="warm_d18")
-    parser.add_argument("--iiwa-warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--iiwa-warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
     parser.add_argument("--clean-prewarm-cache", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--clean-cold-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clean-warm-active-cache", action=argparse.BooleanOptionalAction, default=True)

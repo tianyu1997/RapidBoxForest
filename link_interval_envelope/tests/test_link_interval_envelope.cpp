@@ -65,7 +65,6 @@ int main() {
 
     envelope_config.type = rbf::EnvelopeType::SupportHull;
     envelope_config.n_subdivisions = 1;
-    envelope_config.support_hull_config.keep_kdop = false;
     const auto shape_envelope = rbf::compute_link_envelope(
         endpoint.endpoint_iaabbs.data(),
         endpoint.n_active_links,
@@ -75,16 +74,6 @@ int main() {
     assert(shape_envelope.kdop_intervals.empty());
     assert(!shape_envelope.support_hulls.empty());
 
-    envelope_config.support_hull_config.keep_kdop = true;
-    const auto shape_envelope_with_kdop = rbf::compute_link_envelope(
-        endpoint.endpoint_iaabbs.data(),
-        endpoint.n_active_links,
-        robot.active_link_radii(),
-        envelope_config);
-    assert(shape_envelope_with_kdop.kdop_n_axes > 0);
-    assert(!shape_envelope_with_kdop.kdop_intervals.empty());
-    assert(!shape_envelope_with_kdop.support_hulls.empty());
-
     std::vector<float> synthetic_endpoint_iaabbs = {
         0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
         1.0f, 1.0f, 0.0f, 2.0f, 2.0f, 1.0f,
@@ -92,7 +81,6 @@ int main() {
     rbf::EnvelopeTypeConfig synthetic_shape_config;
     synthetic_shape_config.type = rbf::EnvelopeType::SupportHull;
     synthetic_shape_config.n_subdivisions = 1;
-    synthetic_shape_config.support_hull_config.keep_kdop = true;
     const auto synthetic_shape_envelope = rbf::compute_link_envelope(
         synthetic_endpoint_iaabbs.data(),
         1,
@@ -100,14 +88,12 @@ int main() {
         synthetic_shape_config);
     assert(synthetic_shape_envelope.support_hulls.size() ==
         static_cast<std::size_t>(rbf::kSupportHullRecordSize));
+    assert(synthetic_shape_envelope.kdop_n_axes == 0);
+    assert(synthetic_shape_envelope.kdop_intervals.empty());
     for (int i = 0; i < 12; ++i) {
         assert(std::abs(synthetic_shape_envelope.support_hulls[static_cast<std::size_t>(i)] -
             synthetic_endpoint_iaabbs[static_cast<std::size_t>(i)]) < 1e-6f);
     }
-    const float expected_diag_bound = 1.0f / std::sqrt(2.0f);
-    const std::size_t diag_axis_offset = 8;
-    assert(std::abs(synthetic_shape_envelope.kdop_intervals[diag_axis_offset] + expected_diag_bound) < 1e-6f);
-    assert(std::abs(synthetic_shape_envelope.kdop_intervals[diag_axis_offset + 1] - expected_diag_bound) < 1e-6f);
 
     const rbf::Obstacle diagonal_gap_obstacle(0.0f, 1.6f, 0.0f, 0.4f, 1.9f, 1.0f);
     rbf::EnvelopeTypeConfig synthetic_aabb_config;
@@ -136,6 +122,10 @@ int main() {
         1,
         nullptr,
         synthetic_kdop_config);
+    const float expected_diag_bound = 1.0f / std::sqrt(2.0f);
+    const std::size_t diag_axis_offset = 8;
+    assert(std::abs(synthetic_kdop_envelope.kdop_intervals[diag_axis_offset] + expected_diag_bound) < 1e-6f);
+    assert(std::abs(synthetic_kdop_envelope.kdop_intervals[diag_axis_offset + 1] - expected_diag_bound) < 1e-6f);
     rbf::EnvelopeCollisionOptions kdop_options;
     kdop_options.mode = rbf::EnvelopeCollisionMode::KDOP;
     rbf::EnvelopeCollisionStats kdop_stats;
@@ -150,20 +140,19 @@ int main() {
     assert(kdop_stats.kdop_rejects == 1);
     assert(kdop_stats.maybe_pairs == 0);
 
-    rbf::EnvelopeTypeConfig synthetic_support_only_config;
-    synthetic_support_only_config.type = rbf::EnvelopeType::SupportHull;
-    synthetic_support_only_config.n_subdivisions = 1;
-    synthetic_support_only_config.support_hull_config.keep_kdop = false;
-    const auto synthetic_support_only_envelope = rbf::compute_link_envelope(
+    rbf::EnvelopeTypeConfig synthetic_support_config;
+    synthetic_support_config.type = rbf::EnvelopeType::SupportHull;
+    synthetic_support_config.n_subdivisions = 1;
+    const auto synthetic_support_envelope = rbf::compute_link_envelope(
         synthetic_endpoint_iaabbs.data(),
         1,
         nullptr,
-        synthetic_support_only_config);
+        synthetic_support_config);
     rbf::EnvelopeCollisionOptions support_options;
     support_options.mode = rbf::EnvelopeCollisionMode::GJK;
     rbf::EnvelopeCollisionStats support_stats;
     const auto support_kind = rbf::collide_envelope_aabbs(
-        synthetic_support_only_envelope,
+        synthetic_support_envelope,
         &diagonal_gap_obstacle,
         1,
         support_options,

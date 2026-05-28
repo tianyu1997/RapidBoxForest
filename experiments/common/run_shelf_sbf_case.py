@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import shutil
 import sys
 import time
@@ -14,6 +15,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import environment_metadata, namespace_dict, proc_status, run_id, write_json  # noqa: E402
+from experiments.common.shelf_iiwa_cache import DEFAULT_P18_CACHE_LABEL  # noqa: E402
 from safe_box_forest.experiments.sbf_old import common_sbf_config as sbf_config  # noqa: E402
 from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
     add_common_sbf_args,
@@ -34,10 +36,116 @@ ENDPOINT_CRITSAMPLE = "critsample"
 LECT_SPLIT_AAFK_VOLUME_MIN = "aafk_volume_min"
 LECT_SPLIT_ROUND_ROBIN = "round_robin"
 DEFAULT_AAFK_SCHEDULE_DEPTH = 50
+LATENCY_PROFILE_STABLE = "stable"
+LATENCY_PROFILE_BALANCED_LOW_LATENCY = "balanced_low_latency"
+LATENCY_STAGE_SELECTION_AUTO = "auto"
+LATENCY_STAGE_SELECTION_ZERO_REPAIR = "zero_repair"
+LATENCY_STAGE_SELECTION_ACCEPT_REPAIR = "accept_repair"
+
+BALANCED_LOW_LATENCY_STAGE_SEQUENCE: tuple[dict[str, Any], ...] = (
+    {
+        "stage_id": "seed",
+        "quality_min_connected_boxes": 2,
+        "post_connect_extra_boxes": 0,
+        "post_connect_time_budget_ms": 0.0,
+        "max_boxes": 16,
+    },
+    {
+        "stage_id": "fast",
+        "quality_min_connected_boxes": 64,
+        "post_connect_extra_boxes": 0,
+        "post_connect_time_budget_ms": 0.0,
+        "max_boxes": 96,
+    },
+    {
+        "stage_id": "balanced",
+        "quality_min_connected_boxes": 128,
+        "post_connect_extra_boxes": 16,
+        "post_connect_time_budget_ms": 150.0,
+        "max_boxes": 160,
+    },
+    {
+        "stage_id": "quality",
+        "quality_min_connected_boxes": 192,
+        "post_connect_extra_boxes": 32,
+        "post_connect_time_budget_ms": 300.0,
+        "max_boxes": 224,
+    },
+    {
+        "stage_id": "fallback",
+        "quality_min_connected_boxes": 256,
+        "post_connect_extra_boxes": 64,
+        "post_connect_time_budget_ms": 450.0,
+        "max_boxes": 320,
+    },
+)
+
+BALANCED_LOW_LATENCY_STAGE_IDS: tuple[str, ...] = tuple(
+    str(stage["stage_id"]) for stage in BALANCED_LOW_LATENCY_STAGE_SEQUENCE
+)
 
 
 def parse_csv_ints(text: str) -> list[int]:
     return [int(item.strip()) for item in str(text).split(",") if item.strip()]
+
+
+def parse_csv_floats(text: str) -> list[float]:
+    return [float(item.strip()) for item in str(text).split(",") if item.strip()]
+
+
+def parse_stage_override(name: str, values: list[Any], cast: Any) -> tuple[Any, ...]:
+    expected = len(BALANCED_LOW_LATENCY_STAGE_SEQUENCE)
+    if not values:
+        return tuple(cast(stage[name]) for stage in BALANCED_LOW_LATENCY_STAGE_SEQUENCE)
+    if len(values) != expected:
+        raise ValueError(
+            f"{name} override expects {expected} entries for stages {BALANCED_LOW_LATENCY_STAGE_IDS}, got {len(values)}"
+        )
+    return tuple(cast(value) for value in values)
+
+
+def balanced_low_latency_stage_sequence(args: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+    quality_values = parse_stage_override(
+        "quality_min_connected_boxes",
+        list(getattr(args, "latency_stage_quality_min_connected_boxes", []) or []),
+        int,
+    )
+    extra_values = parse_stage_override(
+        "post_connect_extra_boxes",
+        list(getattr(args, "latency_stage_post_connect_extra_boxes", []) or []),
+        int,
+    )
+    budget_values = parse_stage_override(
+        "post_connect_time_budget_ms",
+        list(getattr(args, "latency_stage_post_connect_time_budget_ms", []) or []),
+        float,
+    )
+    max_box_values = parse_stage_override(
+        "max_boxes",
+        list(getattr(args, "latency_stage_max_boxes", []) or []),
+        int,
+    )
+    stages: list[dict[str, Any]] = []
+    for index, base_stage in enumerate(BALANCED_LOW_LATENCY_STAGE_SEQUENCE):
+        stages.append({
+            "stage_id": str(base_stage["stage_id"]),
+            "quality_min_connected_boxes": int(quality_values[index]),
+            "post_connect_extra_boxes": int(extra_values[index]),
+            "post_connect_time_budget_ms": float(budget_values[index]),
+            "max_boxes": int(max_box_values[index]),
+        })
+    return tuple(stages)
+
+
+def latency_stage_selection_policy(args: argparse.Namespace) -> str:
+    raw_policy = str(getattr(args, "latency_stage_selection_policy", LATENCY_STAGE_SELECTION_AUTO))
+    if raw_policy == LATENCY_STAGE_SELECTION_AUTO:
+        if bool(getattr(args, "require_no_repair", False)):
+            return LATENCY_STAGE_SELECTION_ZERO_REPAIR
+        return LATENCY_STAGE_SELECTION_ACCEPT_REPAIR
+    if raw_policy not in {LATENCY_STAGE_SELECTION_ZERO_REPAIR, LATENCY_STAGE_SELECTION_ACCEPT_REPAIR}:
+        raise ValueError(f"unsupported latency stage selection policy {raw_policy!r}")
+    return raw_policy
 
 
 def parse_args() -> argparse.Namespace:
@@ -68,7 +176,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-scoring", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--warm-cache-label", default="iiwa_shelf_endpoint_only_p18")
+    parser.add_argument("--warm-cache-label", default=DEFAULT_P18_CACHE_LABEL)
     parser.add_argument("--clean-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=True)
@@ -79,8 +187,75 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-passes", type=int, default=2)
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
+    parser.add_argument("--post-audit-segment-step", type=float, default=0.04)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--latency-profile",
+        choices=[LATENCY_PROFILE_STABLE, LATENCY_PROFILE_BALANCED_LOW_LATENCY],
+        default=LATENCY_PROFILE_STABLE,
+    )
+    parser.add_argument(
+        "--latency-stage-selection-policy",
+        choices=[LATENCY_STAGE_SELECTION_AUTO, LATENCY_STAGE_SELECTION_ZERO_REPAIR, LATENCY_STAGE_SELECTION_ACCEPT_REPAIR],
+        default=LATENCY_STAGE_SELECTION_ZERO_REPAIR,
+    )
+    parser.add_argument("--latency-stage-early-stop", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--latency-stage-quality-min-connected-boxes",
+        type=parse_csv_ints,
+        default=[],
+        help="Optional comma-separated overrides for seed,fast,balanced,quality,fallback quality_min_connected_boxes.",
+    )
+    parser.add_argument(
+        "--latency-stage-post-connect-extra-boxes",
+        type=parse_csv_ints,
+        default=[],
+        help="Optional comma-separated overrides for seed,fast,balanced,quality,fallback post_connect_extra_boxes.",
+    )
+    parser.add_argument(
+        "--latency-stage-post-connect-time-budget-ms",
+        type=parse_csv_floats,
+        default=[],
+        help="Optional comma-separated overrides for seed,fast,balanced,quality,fallback post_connect_time_budget_ms.",
+    )
+    parser.add_argument(
+        "--latency-stage-max-boxes",
+        type=parse_csv_ints,
+        default=[],
+        help="Optional comma-separated overrides for seed,fast,balanced,quality,fallback max_boxes.",
+    )
     return parser.parse_args()
+
+
+def apply_latency_profile(local_args: argparse.Namespace) -> None:
+    profile = str(getattr(local_args, "latency_profile", LATENCY_PROFILE_STABLE))
+    if profile == LATENCY_PROFILE_STABLE:
+        return
+    if profile != LATENCY_PROFILE_BALANCED_LOW_LATENCY:
+        raise ValueError(f"unsupported latency profile {profile!r}")
+
+    local_args.max_boxes = min(int(local_args.max_boxes), 2500)
+    local_args.component_connect_candidate_limit = min(int(local_args.component_connect_candidate_limit), 1)
+    local_args.connector_max_pairs_per_gap = min(int(local_args.connector_max_pairs_per_gap), 4)
+    local_args.connector_pair_timeout_ms = min(float(local_args.connector_pair_timeout_ms), 80.0)
+    local_args.quality_min_connected_boxes = min(int(local_args.quality_min_connected_boxes), 16)
+    local_args.post_connect_extra_boxes = 0
+    local_args.post_connect_time_budget_ms = min(float(local_args.post_connect_time_budget_ms), 0.0)
+    local_args.corridor_refine_budget_ms = min(float(local_args.corridor_refine_budget_ms), 80.0)
+    local_args.corridor_refine_max_boxes = min(int(local_args.corridor_refine_max_boxes), 16)
+    local_args.corridor_refine_boxes_per_query = min(int(local_args.corridor_refine_boxes_per_query), 8)
+    local_args.corridor_refine_passes = min(int(local_args.corridor_refine_passes), 1)
+
+
+def effective_case_args(args: argparse.Namespace) -> argparse.Namespace:
+    local_args = argparse.Namespace(**vars(args))
+    local_args.task_batch_size = max(1, int(local_args.task_batch_size))
+    apply_latency_profile(local_args)
+    return local_args
+
+
+def uses_balanced_low_latency_stages(args: argparse.Namespace) -> bool:
+    return str(getattr(args, "latency_profile", LATENCY_PROFILE_STABLE)) == LATENCY_PROFILE_BALANCED_LOW_LATENCY
 
 
 def directory_size(path: Path) -> int:
@@ -121,10 +296,9 @@ def effective_lect_schedule_depth(args: argparse.Namespace) -> int:
 
 
 def case_config(args: argparse.Namespace, robot: Any, seed: int) -> Any:
-    local_args = argparse.Namespace(**vars(args))
+    local_args = effective_case_args(args)
     local_args.rbf_cache_root = Path(args.database_path).parent
     local_args.rbf_cache_label = Path(args.database_path).name
-    local_args.task_batch_size = max(1, int(args.task_batch_size))
     cfg = configure_standalone_sbf(local_args, seed=seed, preset=str(args.preset), robot=robot)
     set_rbf_envelope(cfg, str(args.rbf_envelope), local_args)
     configure_endpoint(cfg, str(args.endpoint_source))
@@ -148,6 +322,37 @@ def box_count_with_status(boxes: Iterable[Any], status: Any) -> int:
 
 def to_float_list(values: Iterable[Any]) -> list[float]:
     return [float(value) for value in values]
+
+
+def post_collision_audit(robot: Any, obstacles: list[Any], path: list[list[float]], step: float) -> dict[str, Any]:
+    if len(path) < 2:
+        return {"passed": False, "failed_segment_index": -1, "checked_samples": 0}
+    checked = 0
+    segment_step = max(float(step), 1e-6)
+    for index in range(len(path) - 1):
+        start = [float(value) for value in path[index]]
+        goal = [float(value) for value in path[index + 1]]
+        distance = math.sqrt(sum((goal[dim] - start[dim]) ** 2 for dim in range(len(start))))
+        samples = max(2, int(math.ceil(distance / segment_step)))
+        for sample in range(samples + 1):
+            alpha = sample / samples
+            point = [
+                (1.0 - alpha) * start[dim] + alpha * goal[dim]
+                for dim in range(len(start))
+            ]
+            checked += 1
+            if sbf.check_config_collision(robot, obstacles, point):
+                return {
+                    "passed": False,
+                    "failed_segment_index": int(index),
+                    "checked_samples": int(checked),
+                    "failed_alpha": float(alpha),
+                    "failed_point": point,
+                    "failed_segment_start": start,
+                    "failed_segment_goal": goal,
+                    "failed_segment_length": float(distance),
+                }
+    return {"passed": True, "failed_segment_index": -1, "checked_samples": int(checked)}
 
 
 def query_payload(query: Any, result: Any, wall_s: float) -> dict[str, Any]:
@@ -212,14 +417,23 @@ def refine_corridors(forest: Any, queries: list[Any], args: argparse.Namespace) 
     return time.perf_counter() - t0, added_total, attempts
 
 
-def run_query(forest: Any, query: Any, args: argparse.Namespace) -> dict[str, Any]:
+def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: argparse.Namespace) -> dict[str, Any]:
     query_t0 = time.perf_counter()
     result = forest.query(list(query.start), list(query.goal))
     query_s = time.perf_counter() - query_t0
     row = query_payload(query, result, query_s)
+    initial_post_audit = post_collision_audit(
+        robot,
+        obstacles,
+        row["waypoints"],
+        float(args.post_audit_segment_step),
+    )
+    row["initial_post_audit"] = initial_post_audit
+    row["initial_post_audit_passed"] = bool(initial_post_audit.get("passed"))
     row["pre_bridge_ok"] = bool(result.success)
     row["bridge_progress"] = 0
     row["bridge_time_s"] = 0.0
+    row["post_audit_source"] = "direct_query"
     should_bridge = (not result.success and args.bridge_failed_queries) or (
         bool(args.bridge_repaired_queries)
         and result.success
@@ -237,14 +451,27 @@ def run_query(forest: Any, query: Any, args: argparse.Namespace) -> dict[str, An
         retry = forest.query(list(query.start), list(query.goal))
         retry_s = time.perf_counter() - retry_t0
         row = query_payload(query, retry, query_s + bridge_s + retry_s)
+        row["initial_post_audit"] = initial_post_audit
+        row["initial_post_audit_passed"] = bool(initial_post_audit.get("passed"))
         row["pre_bridge_ok"] = bool(result.success)
         row["bridge_progress"] = int(bridge_progress)
         row["bridge_time_s"] = float(bridge_s)
+        row["post_audit_source"] = "retry_after_bridge"
+    final_post_audit = post_collision_audit(
+        robot,
+        obstacles,
+        row["waypoints"],
+        float(args.post_audit_segment_step),
+    )
+    row["post_audit"] = final_post_audit
+    row["post_audit_passed"] = bool(final_post_audit.get("passed"))
+    row["post_audit_mismatch"] = bool(row["audit_passed"]) and not bool(row["post_audit_passed"])
     return row
 
 
 def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
     split_policy = cfg.database.split_policy
+    stage_sequence = balanced_low_latency_stage_sequence(args) if uses_balanced_low_latency_stages(args) else ()
     return {
         "case_name": str(args.case_name),
         "preset": str(args.preset),
@@ -266,6 +493,7 @@ def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
         "external_evidence_scoring": bool(getattr(cfg.validation, "external_evidence_scoring", True)),
         "external_evidence_backfill_active": bool(getattr(cfg.validation, "external_evidence_backfill_active", False)),
         "canonical_mode": bool(getattr(cfg.database, "canonical_mode", False)),
+        "symmetry_descriptor": str(getattr(cfg.database, "symmetry_descriptor", "")),
         "checkpoint_after_build": bool(getattr(cfg.database, "checkpoint_after_build", False)),
         "online_cache_allow_database_backfill": bool(getattr(cfg.database.online_cache, "allow_database_backfill", True)),
         "max_depth": int(args.rbf_max_depth),
@@ -273,56 +501,81 @@ def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
         "ffb_depth": int(args.ffb_depth),
         "threads": int(args.threads),
         "task_batch_size": int(args.task_batch_size),
+        "latency_profile": str(args.latency_profile),
+        "latency_stage_selection_policy": latency_stage_selection_policy(args),
+        "latency_stage_early_stop": bool(getattr(args, "latency_stage_early_stop", True)),
+        "latency_stage_sequence": list(stage_sequence),
+        "latency_stage_protocol": str(getattr(args, "latency_stage_protocol", "")),
+        "latency_stage_id": str(getattr(args, "latency_stage_id", "")),
+        "latency_stage_index": int(getattr(args, "latency_stage_index", -1)),
+        "ffb_start_depth": int(getattr(args, "rbf_ffb_start_depth", 0)),
+        "strict_path_audit": bool(getattr(args, "strict_path_audit", True)),
+        "audit_resolution": int(getattr(args, "audit_resolution", 0)),
+        "audit_segment_step": float(getattr(args, "audit_segment_step", 0.01)),
+        "repair_on_audit_failure": bool(getattr(args, "repair_on_audit_failure", True)),
+        "collision_shortcut": bool(getattr(args, "collision_shortcut", True)),
+        "collision_shortcut_resolution": int(getattr(args, "collision_shortcut_resolution", 0)),
+        "post_audit_segment_step": float(getattr(args, "post_audit_segment_step", 0.04)),
     }
 
 
-def run_seed(args: argparse.Namespace, robot: Any, obstacles: list[Any], coverage_seeds: list[list[float]], queries: list[Any], seed: int) -> dict[str, Any]:
-    cfg = case_config(args, robot, seed)
+def run_single_seed_attempt(args: argparse.Namespace,
+                            robot: Any,
+                            obstacles: list[Any],
+                            coverage_seeds: list[list[float]],
+                            queries: list[Any],
+                            seed: int) -> dict[str, Any]:
+    effective_args = effective_case_args(args)
+    cfg = case_config(effective_args, robot, seed)
     database_path = Path(cfg.database.path)
-    if bool(args.clean_active_cache) and database_path.exists():
+    if bool(effective_args.clean_active_cache) and database_path.exists():
         shutil.rmtree(database_path)
-    if bool(args.use_external_evidence):
-        warm_path = Path(args.rbf_cache_root) / str(args.warm_cache_label)
+    if bool(effective_args.use_external_evidence):
+        warm_path = Path(effective_args.rbf_cache_root) / str(effective_args.warm_cache_label)
         if not warm_path.exists():
             raise FileNotFoundError(f"warm LECT cache does not exist: {warm_path}")
         configure_external_evidence_reuse(
             cfg,
             warm_path,
-            args,
-            materialization=bool(args.external_evidence_materialization),
-            scoring=bool(args.external_evidence_scoring),
+            effective_args,
+            materialization=bool(effective_args.external_evidence_materialization),
+            scoring=bool(effective_args.external_evidence_scoring),
             backfill_active=False,
         )
     cfg.database.create_if_missing = True
 
     print(
-        f"[shelf-sbf-case] start case={args.case_name} seed={seed} endpoint={args.endpoint_source} "
-        f"split={args.lect_split_policy} external={bool(args.use_external_evidence)}",
+        f"[shelf-sbf-case] start case={effective_args.case_name} seed={seed} endpoint={effective_args.endpoint_source} "
+        f"split={effective_args.lect_split_policy} external={bool(effective_args.use_external_evidence)}",
         flush=True,
     )
     forest = sbf.SafeBoxForest(robot, cfg)
     build_t0 = time.perf_counter()
     profile = forest.build_coverage(obstacles, coverage_seeds)
-    refine_s, refine_added, refine_attempts = refine_corridors(forest, queries, args)
+    refine_s, refine_added, refine_attempts = refine_corridors(forest, queries, effective_args)
     build_wall_s = time.perf_counter() - build_t0
     boxes = list(forest.boxes())
-    query_rows = [run_query(forest, query, args) for query in queries]
+    query_rows = [run_query(forest, robot, obstacles, query, effective_args) for query in queries]
     diagnostics = {str(key): float(value) for key, value in dict(profile.diagnostics).items()}
-    audit_ok = all(bool(query["audit_passed"]) for query in query_rows)
+    engine_audit_ok = all(bool(query["audit_passed"]) for query in query_rows)
+    post_audit_ok = all(bool(query.get("post_audit_passed", False)) for query in query_rows)
+    audit_ok = bool(engine_audit_ok and post_audit_ok)
     no_repair = all(int(query.get("repair_count", 0)) == 0 for query in query_rows)
     unique_box_count = int(len(boxes))
     has_boxes = unique_box_count > 0
     repair_only_zero_box = (not has_boxes) and any(int(query.get("repair_count", 0)) > 0 for query in query_rows)
-    effective_ok = bool(audit_ok and has_boxes and (no_repair or not bool(args.require_no_repair)))
+    effective_ok = bool(audit_ok and has_boxes and (no_repair or not bool(effective_args.require_no_repair)))
     row = {
         "ok": effective_ok,
         "audit_ok": bool(audit_ok),
+        "engine_audit_ok": bool(engine_audit_ok),
+        "post_audit_ok": bool(post_audit_ok),
         "no_repair": bool(no_repair),
         "has_boxes": bool(has_boxes),
         "repair_only_zero_box": bool(repair_only_zero_box),
         "seed": int(seed),
         "scene": "shelf_iiwa_marcucci_combined",
-        "metadata": metadata_payload(cfg, args),
+        "metadata": metadata_payload(cfg, effective_args),
         "cache_path": str(database_path),
         "cache_bytes": directory_size(database_path),
         "build": {
@@ -345,19 +598,134 @@ def run_seed(args: argparse.Namespace, robot: Any, obstacles: list[Any], coverag
             "prebridge_time_s": float(refine_s),
             "prebridge_added_boxes": int(refine_added),
             "prebridge_attempts": int(refine_attempts),
+            "latency_stage_id": str(getattr(effective_args, "latency_stage_id", "")),
+            "latency_stage_index": int(getattr(effective_args, "latency_stage_index", -1)),
             "diagnostics": diagnostics,
         },
         "queries": query_rows,
     }
     print(
         f"[shelf-sbf-case] done case={args.case_name} seed={seed} ok={row['ok']} "
-        f"boxes={row['build']['unique_box_count']} passed={sum(1 for query in query_rows if query['audit_passed'])}/{len(query_rows)} "
+        f"boxes={row['build']['unique_box_count']} passed={sum(1 for query in query_rows if query['audit_passed'] and query.get('post_audit_passed', False))}/{len(query_rows)} "
         f"repairs={sum(int(query.get('repair_count', 0)) for query in query_rows)} "
         f"external_hits={diagnostics.get('oracle.materialization_reused_external_evidence', 0.0):.0f}",
         flush=True,
     )
     del forest
     return row
+
+
+def stage_args(base_args: argparse.Namespace, stage: dict[str, Any]) -> argparse.Namespace:
+    local_args = argparse.Namespace(**vars(base_args))
+    base_database_path = Path(base_args.database_path)
+    stage_id = str(stage["stage_id"])
+    local_args.case_name = f"{base_args.case_name}_{stage_id}"
+    local_args.database_path = base_database_path.parent / f"{base_database_path.name}__{stage_id}"
+    local_args.max_boxes = int(stage["max_boxes"])
+    local_args.quality_min_connected_boxes = int(stage["quality_min_connected_boxes"])
+    local_args.post_connect_extra_boxes = int(stage["post_connect_extra_boxes"])
+    local_args.post_connect_time_budget_ms = float(stage["post_connect_time_budget_ms"])
+    local_args.latency_stage_protocol = "legacy_low_box_progressive"
+    local_args.latency_stage_id = stage_id
+    local_args.latency_stage_index = int(stage.get("stage_index", -1))
+    return local_args
+
+
+def stage_record(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stage_id": str(row["build"].get("latency_stage_id", "")),
+        "stage_index": int(row["build"].get("latency_stage_index", -1)),
+        "ok": bool(row.get("ok")),
+        "audit_ok": bool(row.get("audit_ok")),
+        "no_repair": bool(row.get("no_repair")),
+        "boxes": int(row["build"].get("unique_box_count", 0)),
+        "planning_s": float(row["build"].get("planning_s", 0.0)),
+        "wall_s": float(row["build"].get("wall_s", 0.0)),
+        "path_total": float(sum(float(query.get("length", 0.0)) for query in row.get("queries", []))),
+        "repair_total": int(sum(int(query.get("repair_count", 0)) for query in row.get("queries", []))),
+    }
+
+
+def stage_success(row: dict[str, Any], selection_policy: str) -> bool:
+    if not bool(row.get("audit_ok")) or not bool(row.get("has_boxes")):
+        return False
+    if selection_policy == LATENCY_STAGE_SELECTION_ACCEPT_REPAIR:
+        return True
+    return bool(row.get("no_repair"))
+
+
+def stage_should_early_stop(args: argparse.Namespace, stage: dict[str, Any], row: dict[str, Any]) -> bool:
+    if not bool(getattr(args, "latency_stage_early_stop", True)):
+        return False
+    selection_policy = latency_stage_selection_policy(args)
+    if not stage_success(row, selection_policy):
+        return False
+    if selection_policy == LATENCY_STAGE_SELECTION_ACCEPT_REPAIR:
+        return True
+    return str(stage.get("stage_id", "")) in {"quality", "fallback"}
+
+
+def stage_path_total(row: dict[str, Any]) -> float:
+    return float(sum(float(query.get("length", 0.0)) for query in row.get("queries", [])))
+
+
+def finalize_staged_row(rows: list[dict[str, Any]], selected_index: int) -> dict[str, Any]:
+    row = rows[selected_index]
+    attempted_rows = rows
+    staged_records = [stage_record(item) for item in attempted_rows]
+    build = row["build"]
+    build["wall_s"] = float(sum(float(item["build"].get("wall_s", 0.0)) for item in attempted_rows))
+    build["planning_s"] = float(sum(float(item["build"].get("planning_s", 0.0)) for item in attempted_rows))
+    build["maintenance_s"] = float(sum(float(item["build"].get("maintenance_s", 0.0)) for item in attempted_rows))
+    build["total_ms"] = float(sum(float(item["build"].get("total_ms", 0.0)) for item in attempted_rows))
+    build["grow_ms"] = float(sum(float(item["build"].get("grow_ms", 0.0)) for item in attempted_rows))
+    build["merge_ms"] = float(sum(float(item["build"].get("merge_ms", 0.0)) for item in attempted_rows))
+    build["connector_ms"] = float(sum(float(item["build"].get("connector_ms", 0.0)) for item in attempted_rows))
+    build["adjacency_ms"] = float(sum(float(item["build"].get("adjacency_ms", 0.0)) for item in attempted_rows))
+    build["prebridge_time_s"] = float(sum(float(item["build"].get("prebridge_time_s", 0.0)) for item in attempted_rows))
+    build["prebridge_added_boxes"] = int(sum(int(item["build"].get("prebridge_added_boxes", 0)) for item in attempted_rows))
+    build["prebridge_attempts"] = int(sum(int(item["build"].get("prebridge_attempts", 0)) for item in attempted_rows))
+    build["staged_attempt_count"] = int(len(attempted_rows))
+    build["staged_selected_stage_id"] = str(build.get("latency_stage_id", ""))
+    build["staged_records"] = staged_records
+    row["metadata"]["latency_stage_protocol"] = "legacy_low_box_progressive"
+    row["metadata"]["latency_stage_selected_id"] = str(build.get("latency_stage_id", ""))
+    row["metadata"]["latency_stage_attempt_count"] = int(len(attempted_rows))
+    return row
+
+
+def run_seed(args: argparse.Namespace, robot: Any, obstacles: list[Any], coverage_seeds: list[list[float]], queries: list[Any], seed: int) -> dict[str, Any]:
+    if not uses_balanced_low_latency_stages(args):
+        return run_single_seed_attempt(args, robot, obstacles, coverage_seeds, queries, seed)
+
+    stage_rows: list[dict[str, Any]] = []
+    selection_policy = latency_stage_selection_policy(args)
+    for stage_index, stage in enumerate(balanced_low_latency_stage_sequence(args)):
+        stage_row = run_single_seed_attempt(
+            stage_args(args, {**stage, "stage_index": stage_index}),
+            robot,
+            obstacles,
+            coverage_seeds,
+            queries,
+            seed,
+        )
+        stage_rows.append(stage_row)
+        if stage_should_early_stop(args, stage, stage_row):
+            break
+
+    successful_indices = [index for index, row in enumerate(stage_rows) if stage_success(row, selection_policy)]
+    if successful_indices:
+        best_index = min(
+            successful_indices,
+            key=lambda index: (
+                stage_path_total(stage_rows[index]),
+                int(stage_rows[index]["build"].get("unique_box_count", 0)),
+                float(stage_rows[index]["build"].get("planning_s", 0.0)),
+            ),
+        )
+        return finalize_staged_row(stage_rows, best_index)
+
+    return finalize_staged_row(stage_rows, len(stage_rows) - 1)
 
 
 def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
@@ -394,8 +762,9 @@ def main() -> int:
     obstacles = sbf.make_combined_obstacles()
     coverage_seeds = [list(seed) for seed in sbf.make_coverage_seeds(include_extra_anchors=False)]
     queries = sbf.make_combined_queries()
+    seed_values = parse_csv_ints(args.seeds_list)
     before = proc_status()
-    rows = [run_seed(args, robot, obstacles, coverage_seeds, queries, seed) for seed in parse_csv_ints(args.seeds_list)]
+    rows = [run_seed(args, robot, obstacles, coverage_seeds, queries, seed) for seed in seed_values]
     payload = {
         "experiment": "shelf_sbf_case",
         "run_id": run_id("shelf_sbf_case"),

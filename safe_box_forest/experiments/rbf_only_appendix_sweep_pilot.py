@@ -58,7 +58,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-label-prefix", default="e1_appendix_pilot")
     parser.add_argument("--skip-prewarm", action="store_true", default=False)
     parser.add_argument("--reuse-cache", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
     parser.add_argument("--clean-warm-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out-json", type=Path, default=RBF_ONLY_OUTPUT_ROOT / "e1_appendix_config_sweep.json")

@@ -120,7 +120,6 @@ def set_rbf_envelope(cfg: Any, envelope: str, args: Namespace) -> None:
         cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
         cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
         cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-        cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
         cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
     else:
         raise ValueError(f"unknown RBF envelope {envelope!r}")
@@ -137,6 +136,8 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
     split_policy = make_aafk_volume_min_split_policy(robot, max_depth)
     cfg.database.split_policy = split_policy
     cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
+    if bool(cfg.database.canonical_mode):
+        set_if_available(cfg.database, "symmetry_descriptor", "joint_symmetry_native_v1")
     cfg.database.create_if_missing = True
     cfg.database.read_only = False
     cfg.database.verify_identity = True
@@ -170,8 +171,10 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
     cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
     cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
     cfg.grower.find_free_box.max_depth = max_depth
+    cfg.grower.find_free_box.start_depth = skip_depth
     cfg.grower.find_free_box.skip_to_depth = skip_depth
     cfg.connector.pave.find_free_box.max_depth = max_depth
+    cfg.connector.pave.find_free_box.start_depth = skip_depth
     cfg.connector.pave.find_free_box.skip_to_depth = skip_depth
 
 
@@ -277,7 +280,6 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--grid-delta", type=float, default=0.04)
     parser.add_argument("--envelope-subdivisions", type=int, default=4)
     parser.add_argument("--kdop-safety-epsilon", type=float, default=1e-9)
-    parser.add_argument("--support-hull-keep-kdop", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--support-hull-safety-epsilon", type=float, default=1e-9)
     parser.add_argument("--split-policy", choices=["widest-first", "best-tighten"], default="best-tighten")
     parser.add_argument("--best-tighten-depth-synchronous", action=argparse.BooleanOptionalAction, default=True)
@@ -309,6 +311,7 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--strict-path-audit", action="store_true", default=True)
     parser.add_argument("--no-strict-path-audit", dest="strict_path_audit", action="store_false")
     parser.add_argument("--audit-resolution", type=int, default=32)
+    parser.add_argument("--audit-segment-step", type=float, default=0.01)
     parser.add_argument("--repair-on-audit-failure", action="store_true", default=True)
     parser.add_argument("--no-repair-on-audit-failure", dest="repair_on_audit_failure", action="store_false")
     parser.add_argument("--repair-max-attempts", type=int, default=6)
@@ -357,6 +360,9 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
 def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = None, robot: Any | None = None) -> sbf.SBFConfig:
     chosen = preset or args.preset
     cfg = sbf.SBFConfig()
+    cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
+    if bool(cfg.database.canonical_mode):
+        set_if_available(cfg.database, "symmetry_descriptor", "joint_symmetry_native_v1")
     bridge_segment_resolution = segment_resolution_from_step(
         float(args.connector_rrt_step_size),
         float(getattr(args, "sbf_bridge_segment_step", 0.01) or 0.0),
@@ -390,7 +396,6 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
             cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
             cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
             cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-            cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
             cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
         else:
             cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
@@ -403,7 +408,6 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
         cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
         cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
         cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-        cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
         cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
         cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
         cfg.validation.accept_unsafe_free = True
@@ -435,6 +439,8 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.grower.parallel_threshold = 1
     cfg.grower.worker_local_ffb = bool(args.worker_local_ffb) and args.threads > 1
     cfg.grower.find_free_box.max_depth = int(args.ffb_depth)
+    cfg.grower.find_free_box.start_depth = int(args.rbf_ffb_start_depth)
+    cfg.grower.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
     cfg.grower.find_free_box.split_reserved_leaf = True
     cfg.grower.find_free_box.split_unknown_leaf = True
     cfg.grower.find_free_box.reject_seed_collision = False
@@ -468,6 +474,7 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.query.collision_shortcut_resolution = int(args.collision_shortcut_resolution)
     cfg.query.strict_path_audit = bool(args.strict_path_audit)
     cfg.query.audit_resolution = max(int(args.audit_resolution), bridge_segment_resolution)
+    cfg.query.audit_segment_step = float(args.audit_segment_step)
     cfg.query.repair_on_audit_failure = bool(args.repair_on_audit_failure)
     cfg.query.repair_max_attempts = int(args.repair_max_attempts)
     cfg.query.repair_rrt_max_iters = int(args.repair_rrt_max_iters)
@@ -493,6 +500,8 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.connector.pave.max_chain = int(args.connector_pave_max_chain)
     set_if_available(cfg.connector.pave, "max_steps_per_waypoint", int(args.connector_pave_steps))
     cfg.connector.pave.find_free_box.max_depth = int(args.connector_pave_depth)
+    cfg.connector.pave.find_free_box.start_depth = int(args.rbf_ffb_start_depth)
+    cfg.connector.pave.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True
     cfg.connector.pave.find_free_box.reject_seed_collision = False

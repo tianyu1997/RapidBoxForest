@@ -331,7 +331,6 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
 
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
-        .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
         .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
 
     py::class_<rbf::EnvelopeTypeConfig>(module, "EnvelopeTypeConfig")

@@ -33,9 +33,9 @@
 1. Baseline 预期最稳。
 2. No LECT cache 增加在线 materialization 成本。
 3. CritSample 可能更紧，但认证和 audit failure 需要单独解释。
-4. AABB 快但过滤弱；AABB->SH chain 预期在平均 collision 成本上低于 pure SH，同时保留更强过滤。
+4. AABB 快但过滤弱；SupportHull 现在统一走纯 GJK 窄相位，不再保留单独的 AABB->SH chain 配置。
 5. Single thread 拖慢 build/prewarm；round-robin 增加 tree/refine 成本。
 
 ## 初始脚本
 
-`exp04_shelf_ablation/run_shelf_ablation.py` 先生成完整消融矩阵，并执行旧 runner 能表达的配置；其中 `AABB->SH chain` 直接映射到 legacy `support_hull` 路径并强制 `--no-support-hull-keep-kdop`，因为底层共享碰撞实现本身已经是 `AABB broadphase -> SupportHull narrow phase`。no-cache、true round-robin 和完整 warm AAFKVolumeMin cache hook 仍标记为后续 native hook。
+`exp04_shelf_ablation/run_shelf_ablation.py` 先生成完整消融矩阵，并执行当前 runner 的 SupportHull 纯 GJK 基线。删除 keep_kdop 后，原先的 `AABB->SH chain` 行已经并入默认 `support_hull` 路径；no-cache、true round-robin 和完整 warm AAFKVolumeMin cache hook 仍标记为后续 native hook。

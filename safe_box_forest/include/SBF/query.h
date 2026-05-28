@@ -13,6 +13,7 @@ struct QueryConfig {
 	bool collision_shortcut = true;
 	bool strict_path_audit = false;
 	int audit_resolution = 16;
+	double audit_segment_step = 0.01;
 	bool repair_on_audit_failure = false;
 	double repair_timeout_ms = 0.0;
 	int repair_rrt_max_iters = 50000;

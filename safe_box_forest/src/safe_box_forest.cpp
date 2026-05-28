@@ -7,6 +7,7 @@
 #include <limits>
 #include <queue>
 #include <sstream>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -16,13 +17,41 @@ namespace rbf {
 
 namespace {
 
+double sanitize_segment_step(double segment_step) {
+    return segment_step > 0.0 ? segment_step : 0.0;
+}
+
+int segment_resolution_for_absolute_step(const Eigen::Ref<const Eigen::VectorXd>& start,
+                                         const Eigen::Ref<const Eigen::VectorXd>& goal,
+                                         double segment_step,
+                                         int minimum_resolution = 1) {
+    if (segment_step <= 0.0) {
+        return std::max(1, minimum_resolution);
+    }
+    const double distance = (goal - start).norm();
+    const double safe_step = std::max(segment_step, 1e-9);
+    const int step_resolution = static_cast<int>(std::ceil(distance / safe_step));
+    return std::max({1, minimum_resolution, step_resolution});
+}
+
+int audit_segment_resolution(const QueryConfig& config,
+                             const Eigen::Ref<const Eigen::VectorXd>& start,
+                             const Eigen::Ref<const Eigen::VectorXd>& goal,
+                             int minimum_resolution = 1) {
+    const double segment_step = sanitize_segment_step(config.audit_segment_step);
+    if (segment_step > 0.0) {
+        return segment_resolution_for_absolute_step(start, goal, segment_step, minimum_resolution);
+    }
+    return std::max({1, minimum_resolution, config.audit_resolution});
+}
+
 std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::VectorXd>& path,
                                                      const CollisionChecker& checker,
-                                                     int segment_resolution) {
+                                                     const QueryConfig& config) {
     if (path.size() <= 2) {
         return path;
     }
-    const int safe_resolution = std::max(1, segment_resolution);
+    const int safe_resolution = std::max(1, config.collision_shortcut_resolution);
     const std::size_t n = path.size();
     std::vector<double> dist(n, std::numeric_limits<double>::infinity());
     std::vector<int> parent(n, -1);
@@ -40,7 +69,12 @@ std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::Ve
             break;
         }
         for (std::size_t j = static_cast<std::size_t>(i) + 1; j < n; ++j) {
-            if (checker.check_segment(path[static_cast<std::size_t>(i)], path[j], safe_resolution)) {
+            const int edge_resolution = std::max(
+                safe_resolution,
+                audit_segment_resolution(config,
+                                         path[static_cast<std::size_t>(i)],
+                                         path[j]));
+            if (checker.check_segment(path[static_cast<std::size_t>(i)], path[j], edge_resolution)) {
                 continue;
             }
             const double edge = (path[j] - path[static_cast<std::size_t>(i)]).norm();
@@ -71,12 +105,36 @@ std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::Ve
     return reversed;
 }
 
-int collision_shortcut_resolution(const QueryConfig& config) {
-    int resolution = std::max(1, config.collision_shortcut_resolution);
-    if (config.strict_path_audit) {
-        resolution = std::max(resolution, config.audit_resolution);
+Eigen::VectorXd canonicalize_configuration(const Robot& robot,
+                                           const LectDatabaseRuntimeConfig& database_config,
+                                           const Eigen::Ref<const Eigen::VectorXd>& configuration) {
+    Eigen::VectorXd canonical = configuration;
+    if (canonical.size() <= 0) {
+        return canonical;
     }
-    return resolution;
+    lect_database::canonicalize_configuration_for_robot(
+        robot,
+        database_config.canonical_mode,
+        database_config.symmetry_descriptor,
+        std::span<double>(canonical.data(), static_cast<std::size_t>(canonical.size())));
+    return canonical;
+}
+
+std::vector<Eigen::VectorXd> canonicalize_configurations(const Robot& robot,
+                                                         const LectDatabaseRuntimeConfig& database_config,
+                                                         const std::vector<Eigen::VectorXd>& configurations) {
+    std::vector<Eigen::VectorXd> canonical = configurations;
+    for (auto& configuration : canonical) {
+        if (configuration.size() <= 0) {
+            continue;
+        }
+        lect_database::canonicalize_configuration_for_robot(
+            robot,
+            database_config.canonical_mode,
+            database_config.symmetry_descriptor,
+            std::span<double>(configuration.data(), static_cast<std::size_t>(configuration.size())));
+    }
+    return canonical;
 }
 
 }  // namespace
@@ -87,7 +145,6 @@ RBFPlanningConfig::RBFPlanningConfig() {
     envelope_type.n_subdivisions = 4;
     envelope_type.kdop_config.direction_set = KdopDirectionSet::DOP26;
     envelope_type.kdop_config.safety_epsilon = 1e-9;
-    envelope_type.support_hull_config.keep_kdop = true;
     envelope_type.support_hull_config.safety_epsilon = 1e-9;
 
     validation.mode = OracleValidationMode::CoverageHeuristic;
@@ -161,13 +218,13 @@ struct PathAuditCheck {
 
 PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
                                    const CollisionChecker& checker,
-                                   int resolution) {
+                                   const QueryConfig& config,
+                                   int minimum_segment_resolution = 1) {
     PathAuditCheck audit;
     if (path.empty()) {
         audit.failed_segment_index = 0;
         return audit;
     }
-    const int safe_resolution = std::max(1, resolution);
     for (std::size_t index = 0; index < path.size(); ++index) {
         if (checker.check_config(path[index])) {
             audit.failed_segment_index = index == 0 ? 0 : static_cast<int>(index - 1);
@@ -175,7 +232,12 @@ PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
         }
     }
     for (std::size_t index = 0; index + 1 < path.size(); ++index) {
-        if (checker.check_segment(path[index], path[index + 1], safe_resolution)) {
+        const int resolution = audit_segment_resolution(
+            config,
+            path[index],
+            path[index + 1],
+            minimum_segment_resolution);
+        if (checker.check_segment(path[index], path[index + 1], resolution)) {
             audit.failed_segment_index = static_cast<int>(index);
             return audit;
         }
@@ -876,12 +938,11 @@ std::vector<DirtySeedCandidate> make_insertion_regrow_seeds(const std::vector<Bo
 
 bool segment_edge_survives_scene(const SegmentEdge& edge,
                                  const CollisionChecker& checker,
-                                 int audit_resolution) {
+                                 const QueryConfig& query_config) {
     if (edge.waypoints.size() < 2) {
         return false;
     }
-    const int resolution = std::max({1, audit_resolution, edge.segment_resolution});
-    return audit_waypoint_path(edge.waypoints, checker, resolution).passed;
+    return audit_waypoint_path(edge.waypoints, checker, query_config, std::max(1, edge.segment_resolution)).passed;
 }
 
 std::vector<int> spatial_dirty_box_indices(const Robot& robot,
@@ -996,7 +1057,11 @@ bool try_local_birrt_repair(QueryResult& result,
     if (!collision_bracket(result.path[static_cast<std::size_t>(audit.failed_segment_index)],
                            result.path[static_cast<std::size_t>(audit.failed_segment_index + 1)],
                            checker,
-                           query_config.audit_resolution,
+                           audit_segment_resolution(
+                               query_config,
+                               result.path[static_cast<std::size_t>(audit.failed_segment_index)],
+                               result.path[static_cast<std::size_t>(audit.failed_segment_index + 1)],
+                               4),
                            repair_start,
                            repair_goal)) {
         return false;
@@ -1040,13 +1105,13 @@ bool try_local_birrt_repair(QueryResult& result,
         for (std::size_t index = static_cast<std::size_t>(audit.failed_segment_index + 1); index < result.path.size(); ++index) {
             append_waypoint_unique(repaired, result.path[index]);
         }
-        if (audit_waypoint_path(repaired, checker, query_config.audit_resolution).passed) {
+        if (audit_waypoint_path(repaired, checker, query_config).passed) {
             if (query_config.collision_shortcut && repaired.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repaired,
                     checker,
-                    collision_shortcut_resolution(query_config));
-                if (audit_waypoint_path(shortened, checker, query_config.audit_resolution).passed &&
+                    query_config);
+                if (audit_waypoint_path(shortened, checker, query_config).passed &&
                     path_length(shortened) <= path_length(repaired) + 1e-12) {
                     repaired = std::move(shortened);
                 }
@@ -1091,7 +1156,6 @@ std::string envelope_descriptor_for(const EnvelopeTypeConfig& config) {
         << "|n_subdivisions=" << config.n_subdivisions
         << "|kdop_direction_set=" << static_cast<int>(config.kdop_config.direction_set)
         << "|kdop_safety_epsilon=" << config.kdop_config.safety_epsilon
-        << "|support_keep_kdop=" << (config.support_hull_config.keep_kdop ? 1 : 0)
         << "|support_safety_epsilon=" << config.support_hull_config.safety_epsilon;
     return out.str();
 }
@@ -1102,7 +1166,10 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
     database_config.path = config.database.path.empty()
         ? default_database_path(robot)
         : config.database.path;
-    database_config.root_intervals = robot.joint_limits().limits;
+    database_config.root_intervals = lect_database::canonical_root_intervals_for_robot(
+        robot,
+        config.database.canonical_mode,
+        config.database.symmetry_descriptor);
     database_config.split_policy = config.database.split_policy;
     database_config.open.read_only = config.database.read_only;
     database_config.open.create_if_missing = config.database.create_if_missing;
@@ -1244,7 +1311,8 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     using Clock = std::chrono::steady_clock;
     ScopedStageTimer function_timer(context.diagnostics(), "forest.build_coverage");
     const auto t0 = Clock::now();
-    last_build_seeds_ = seeds;
+    const auto canonical_seeds = canonicalize_configurations(robot_, config_.database, seeds);
+    last_build_seeds_ = canonical_seeds;
     scene_.set_obstacles(obstacles);
     reset_oracle(scene_);
     boxes_.clear();
@@ -1255,7 +1323,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
 
     const auto grow_t0 = Clock::now();
     auto grower = make_grower(*oracle_, config_.grower);
-    auto grow = grower->grow(seeds, context);
+    auto grow = grower->grow(canonical_seeds, context);
     context.diagnostics().record_timing(
         "forest.grow_stage",
         std::chrono::duration<double, std::milli>(Clock::now() - grow_t0).count());
@@ -1422,7 +1490,10 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
     const double domain_tol = 1e-12;
     const int tree_max_depth = std::max(0, oracle_->max_tree_depth() - 1);
     const int effective_max_depth = std::clamp(options.max_depth, 0, tree_max_depth);
-    const int effective_start_depth = std::clamp(options.start_depth, 0, effective_max_depth);
+    const int requested_start_depth = (options.start_depth > 0 || options.skip_to_depth <= 0)
+        ? options.start_depth
+        : options.skip_to_depth;
+    const int effective_start_depth = std::clamp(requested_start_depth, 0, effective_max_depth);
     auto should_stop_search = [&](FindFreeBoxResult& current_result) {
         const bool deadline_limit_hit = options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms;
         if (!context.should_stop() && !deadline_limit_hit) {
@@ -1863,7 +1934,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 removed_box_ids.find(edge.target_box_id) != removed_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, carving_checker, config_.query.audit_resolution);
+            return !segment_edge_survives_scene(edge, carving_checker, config_.query);
         }), segment_edges_.end());
 
         const auto local_adj_t0 = Clock::now();
@@ -2018,7 +2089,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, validation_checker, config_.query.audit_resolution);
+            return !segment_edge_survives_scene(edge, validation_checker, config_.query);
         }), segment_edges_.end());
         scene_.set_obstacles(std::move(final_obstacles));
         reset_oracle(scene_);
@@ -2200,18 +2271,20 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
                                               const Eigen::Ref<const Eigen::VectorXd>& goal,
                                               bool allow_collision_shortcut) const {
     using Clock = std::chrono::steady_clock;
+    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
+    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
     QueryConfig query_config = config_.query;
     if (!allow_collision_shortcut) {
         query_config.collision_shortcut = false;
     }
     const bool do_collision_shortcut = query_config.collision_shortcut;
     CorridorQuery query_engine(query_config);
-    QueryResult result = query_engine.run(query_cache(), start, goal);
+    QueryResult result = query_engine.run(query_cache(), canonical_start, canonical_goal);
     if (result.success && do_collision_shortcut && !query_config.strict_path_audit && result.path.size() > 2) {
         CollisionChecker checker(robot_, scene_);
         result.path = collision_shortcut_path(result.path,
                                              checker,
-                                             collision_shortcut_resolution(query_config));
+                                             query_config);
         result.path_length = path_length(result.path);
     }
     summarize_query_path(result, boxes_, segment_edges_);
@@ -2224,15 +2297,15 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             repair_config.timeout_ms = query_config.repair_timeout_ms;
         }
         repair_config.segment_resolution = std::max(repair_config.segment_resolution, query_config.audit_resolution);
-        std::vector<Eigen::VectorXd> repair_path = rrt_connect(start, goal, checker, robot_, repair_config, 20260511);
+        std::vector<Eigen::VectorXd> repair_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, repair_config, 20260511);
         if (!repair_path.empty()) {
-            PathAuditCheck repair_audit = audit_waypoint_path(repair_path, checker, query_config.audit_resolution);
+            PathAuditCheck repair_audit = audit_waypoint_path(repair_path, checker, query_config);
             if (repair_audit.passed && do_collision_shortcut && repair_path.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repair_path,
                     checker,
-                    collision_shortcut_resolution(query_config));
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                    query_config);
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
                 if (shortened_audit.passed && path_length(shortened) <= path_length(repair_path) + 1e-12) {
                     repair_path = std::move(shortened);
                     repair_audit = shortened_audit;
@@ -2254,15 +2327,15 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     if (result.success && query_config.strict_path_audit) {
         CollisionChecker checker(robot_, scene_);
         const auto audit_t0 = Clock::now();
-        PathAuditCheck audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
+        PathAuditCheck audit = audit_waypoint_path(result.path, checker, query_config);
         result.failed_segment_index = audit.failed_segment_index;
         if (audit.passed) {
             if (do_collision_shortcut && result.path.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     result.path,
                     checker,
-                    collision_shortcut_resolution(query_config));
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                    query_config);
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
                 if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                     result.path = std::move(shortened);
                     result.path_length = path_length(result.path);
@@ -2278,13 +2351,13 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             const bool repaired = try_local_birrt_repair(result, audit, checker, robot_, query_config, config_.connector.rrt);
             result.repair_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - repair_t0).count();
             if (repaired) {
-                PathAuditCheck repaired_audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
+                PathAuditCheck repaired_audit = audit_waypoint_path(result.path, checker, query_config);
                 if (repaired_audit.passed && do_collision_shortcut && result.path.size() > 2) {
                     std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                         result.path,
                         checker,
-                        collision_shortcut_resolution(query_config));
-                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                        query_config);
+                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
                     if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                         result.path = std::move(shortened);
                         result.path_length = path_length(result.path);
@@ -2334,11 +2407,13 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     if (boxes_.empty() || !oracle_) {
         return 0;
     }
-    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
+    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
+    const int start_box_id = locate_containing_box(query_cache(), canonical_start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         return 0;
     }
-    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    const int goal_box_id = locate_containing_box(query_cache(), canonical_goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0 || goal_box_id == start_box_id) {
         return 0;
     }
@@ -2346,11 +2421,11 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     CollisionChecker checker(robot_, scene_);
     RRTConnectConfig bridge_rrt = config_.connector.rrt;
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
-    auto waypoint_path = rrt_connect(start, goal, checker, robot_, context, bridge_rrt, 20260503);
+    auto waypoint_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, context, bridge_rrt, 20260503);
     if (waypoint_path.empty()) {
         return 0;
     }
-    if (!audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
+    if (!audit_waypoint_path(waypoint_path, checker, config_.query).passed) {
         return 0;
     }
     int direct_segment_edges_added = 0;
@@ -2394,8 +2469,10 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     if (boxes_.empty() || !oracle_ || max_boxes_to_add <= 0) {
         return 0;
     }
+    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
+    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
     CollisionChecker checker(robot_, scene_);
-    QueryResult probe = run_query_internal(start, goal, false);
+    QueryResult probe = run_query_internal(canonical_start, canonical_goal, false);
     if (probe.success && probe.repair_count == 0 && probe.segment_edges_used == 0) {
         return 0;
     }
@@ -2407,7 +2484,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         StageContext rrt_context = StageContext::serial();
         RRTConnectConfig refine_rrt = config_.connector.rrt;
         refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-        waypoint_path = rrt_connect(start, goal, checker, robot_, rrt_context, refine_rrt, 20260505);
+        waypoint_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, rrt_context, refine_rrt, 20260505);
     }
     if (waypoint_path.empty()) {
         return 0;
@@ -2434,7 +2511,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         pave_config);
     if (added > 0) {
         rebuild_adjacency();
-        if (audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
+        if (audit_waypoint_path(waypoint_path, checker, config_.query).passed) {
             const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
             const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
             if (source_box_id >= 0 && target_box_id >= 0) {
@@ -2523,7 +2600,7 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
             live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
             return true;
         }
-        return !segment_edge_survives_scene(edge, updated_checker, config_.query.audit_resolution);
+        return !segment_edge_survives_scene(edge, updated_checker, config_.query);
     }), segment_edges_.end());
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 

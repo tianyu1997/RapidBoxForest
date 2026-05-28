@@ -55,6 +55,7 @@ add_library(lect_database_core STATIC
     src/lect_database/types.cpp
     src/lect_database/split_policy.cpp
     src/lect_database/identity.cpp
+    src/lect_database/canonicalization.cpp
     src/lect_database/database.cpp
     src/lect_database/read_snapshot.cpp
 )

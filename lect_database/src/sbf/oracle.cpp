@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -565,7 +566,8 @@ DatabaseBoxOracleSession::DatabaseBoxOracleSession(DatabaseBoxOracle& master,
                                                          master_.scene(),
                                                          master_.endpoint_config(),
                                                          master_.envelope_config(),
-                                                         master_.validation_config());
+                                                         master_.validation_config(),
+                                                         master_.external_evidence_source());
     node_remap_.emplace(worker_oracle_->root_node(), master_domain_root_);
 }
 
@@ -653,8 +655,9 @@ bool DatabaseBoxOracleSession::copy_worker_leaf_evidence() {
 }
 
 std::filesystem::path DatabaseBoxOracleSession::make_temp_dir() {
+    const auto now = std::chrono::system_clock::now().time_since_epoch().count();
     return std::filesystem::temp_directory_path() /
-        ("lectdb_sbf_session_" + std::to_string(next_session_id()));
+        ("lectdb_sbf_session_" + std::to_string(now) + "_" + std::to_string(next_session_id()));
 }
 
 std::unique_ptr<BoxOracleSession> DatabaseBoxOracleFactory::make_session(const OracleSessionConfig& config) {

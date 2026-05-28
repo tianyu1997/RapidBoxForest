@@ -25,7 +25,7 @@ from safe_box_forest.experiments.sbf_old.common_sbf_config import (
 import sbf
 
 
-DEFAULT_P18_CACHE_LABEL = "iiwa_shelf_endpoint_only_p18"
+DEFAULT_P18_CACHE_LABEL = "iiwa_shelf_endpoint_only_p18_canonical_dim0q4"
 DEFAULT_PREWARM_THREADS = 8
 DEFAULT_SNAPSHOT_DIRNAME = "lect_snapshot"
 DEFAULT_AAFK_SCHEDULE_DEPTH = 50

@@ -34,8 +34,11 @@ SearchDepthRange normalize_search_depth_range(const FindFreeBoxOptions& options,
                                               const BoxOracle& oracle) {
     const int tree_max_depth = std::max(0, oracle.max_tree_depth() - 1);
     const int max_depth = std::clamp(options.max_depth, 0, tree_max_depth);
+    const int requested_start_depth = (options.start_depth > 0 || options.skip_to_depth <= 0)
+        ? options.start_depth
+        : options.skip_to_depth;
     return {
-        .start_depth = std::clamp(options.start_depth, 0, max_depth),
+        .start_depth = std::clamp(requested_start_depth, 0, max_depth),
         .max_depth = max_depth,
     };
 }

@@ -417,7 +417,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
 
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
-        .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
         .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
 
     py::class_<rbf::EndpointSourceConfig>(module, "EndpointSourceConfig")
@@ -732,6 +731,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("collision_shortcut_resolution", &rbf::QueryConfig::collision_shortcut_resolution)
         .def_readwrite("strict_path_audit", &rbf::QueryConfig::strict_path_audit)
         .def_readwrite("audit_resolution", &rbf::QueryConfig::audit_resolution)
+        .def_readwrite("audit_segment_step", &rbf::QueryConfig::audit_segment_step)
         .def_readwrite("repair_on_audit_failure", &rbf::QueryConfig::repair_on_audit_failure)
         .def_readwrite("repair_max_attempts", &rbf::QueryConfig::repair_max_attempts)
         .def_readwrite("repair_rrt_max_iters", &rbf::QueryConfig::repair_rrt_max_iters)

@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
         post_connect_extra_boxes=0,
     )
     parser.add_argument("--out-json", type=Path, default=RBF_ONLY_OUTPUT_ROOT / "e3_shelf_iiwa_main.json")
-    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
     parser.add_argument("--seeds-list", default="0")
     parser.add_argument("--modes", default="cold,warm_d18")
     parser.add_argument("--run-profile", choices=[E3_PILOT_PROFILE, EXP04_BASELINE_PROFILE], default=E3_PILOT_PROFILE)
@@ -118,6 +118,8 @@ def cache_label_for_run(args: argparse.Namespace, mode: str, seed: int) -> str:
 
 def apply_database_runtime_defaults(cfg: Any, args: argparse.Namespace, cache_label: str) -> None:
     cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
+    if bool(cfg.database.canonical_mode):
+        set_if_available(cfg.database, "symmetry_descriptor", "joint_symmetry_native_v1")
     cfg.database.create_if_missing = True
     cfg.database.read_only = False
     cfg.database.verify_identity = True

@@ -106,7 +106,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "endpoint_source": "critsample",
             "envelope_type": "link_iaabb",
             "n_subdivisions": n_sub,
-            "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
             "diagnostic": False,
         }
@@ -118,7 +117,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "endpoint_source": "critsample",
             "envelope_type": "kdop26",
             "n_subdivisions": n_sub,
-            "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
             "diagnostic": False,
         }
@@ -131,7 +129,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "endpoint_source": "critsample",
             "envelope_type": "support_hull",
             "n_subdivisions": n_sub,
-            "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
             "diagnostic": False,
         }
@@ -142,7 +139,6 @@ def parse_variant(text: str) -> dict[str, Any]:
             "endpoint_source": "ifk",
             "envelope_type": "link_iaabb",
             "n_subdivisions": 4,
-            "support_hull_keep_kdop": False,
             "volume_reference_variant": None,
             "diagnostic": True,
         }
@@ -590,7 +586,6 @@ def summarize_results(
         "endpoint_source": variant["endpoint_source"],
         "envelope_type": variant["envelope_type"],
         "n_subdivisions": int(variant["n_subdivisions"]),
-        "support_hull_keep_kdop": bool(variant.get("support_hull_keep_kdop", False)),
         "volume_reference_variant": variant.get("volume_reference_variant"),
         "diagnostic": bool(variant["diagnostic"]),
         "n_boxes": len(results),
@@ -675,7 +670,6 @@ def summarize_chain_results(
         "endpoint_source": "critsample",
         "envelope_type": "chain",
         "n_subdivisions": 4,
-        "support_hull_keep_kdop": False,
         "volume_reference_variant": None,
         "diagnostic": False,
         "chain": True,
@@ -715,7 +709,7 @@ def collision_mode_for_variant(variant: dict[str, Any]) -> str:
     if envelope_type == "kdop26":
         return "kdop_only"
     if envelope_type == "support_hull":
-        return "kdop_then_support_hull" if bool(variant.get("support_hull_keep_kdop", False)) else "support_hull_only"
+        return "support_hull_only"
     return "auto"
 
 
@@ -738,7 +732,6 @@ def summarize_collision_results(
                 envelope_type=variant["envelope_type"],
                 n_subdivisions=int(variant["n_subdivisions"]),
                 kdop_directions="dop26",
-                support_hull_keep_kdop=bool(variant.get("support_hull_keep_kdop", False)),
                 collision_mode=collision_mode_for_variant(variant),
                 count_all_pairs=True,
             )
@@ -818,7 +811,6 @@ def main() -> int:
             endpoint_threads=int(args.endpoint_threads),
             parallel_min_combos=int(args.parallel_min_combos),
             n_threads=int(args.batch_threads),
-            support_hull_keep_kdop=bool(variant.get("support_hull_keep_kdop", False)),
             include_endpoint_iaabbs=bool(args.include_collision_benchmark),
         )
         wall_s = time.perf_counter() - t0

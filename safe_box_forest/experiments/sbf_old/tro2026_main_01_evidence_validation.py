@@ -46,16 +46,7 @@ PROFILE_SPECS: dict[str, dict[str, Any]] = {
         "preset": "ifk_strict",
         "cli_envelope": "support_hull",
         "evidence": "strict",
-        "extra_args": ["--no-support-hull-keep-kdop"],
-    },
-    "ifk_sh": {
-        "label": "IFK+SH",
-        "source": "IFK",
-        "envelope": "SH",
-        "preset": "ifk_strict",
-        "cli_envelope": "support_hull",
-        "evidence": "strict",
-        "extra_args": ["--support-hull-keep-kdop"],
+        "extra_args": [],
     },
     "crit_linkiaabb": {
         "label": "Crit+LinkIAABB",
@@ -82,24 +73,16 @@ PROFILE_SPECS: dict[str, dict[str, Any]] = {
         "preset": "crit_link_coverage",
         "cli_envelope": "support_hull",
         "evidence": "provisional",
-        "extra_args": ["--no-support-hull-keep-kdop"],
-    },
-    "crit_sh": {
-        "label": "Crit+SH",
-        "source": "Crit",
-        "envelope": "SH",
-        "preset": "crit_link_coverage",
-        "cli_envelope": "support_hull",
-        "evidence": "provisional",
-        "extra_args": ["--support-hull-keep-kdop"],
+        "extra_args": [],
     },
 }
 
 PROFILE_ALIASES = {
     "ifk_strict": "ifk_linkiaabb",
+    "ifk_sh": "ifk_support_hull",
     "crit_link_coverage": "crit_linkiaabb",
+    "crit_sh": "crit_support_hull",
     "kdop26_coverage": "crit_kdop26",
-    "support_hull_keep_kdop": "crit_sh",
     "support_hull_no_kdop": "crit_support_hull",
 }
 

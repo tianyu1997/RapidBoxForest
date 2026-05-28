@@ -72,8 +72,7 @@ void populate_shape_payloads(
     const float* endpoint_iaabbs,
     const EnvelopeTypeConfig& config)
 {
-    const bool wants_kdop = config.type == EnvelopeType::KDOP ||
-        (config.type == EnvelopeType::SupportHull && config.support_hull_config.keep_kdop);
+    const bool wants_kdop = config.type == EnvelopeType::KDOP;
     const bool wants_support_hull = config.type == EnvelopeType::SupportHull;
     result.kdop_direction_set = config.kdop_config.direction_set;
     result.kdop_n_axes = wants_kdop ? kdop_axis_count(config.kdop_config.direction_set) : 0;

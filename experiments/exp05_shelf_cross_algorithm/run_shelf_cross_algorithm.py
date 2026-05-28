@@ -77,7 +77,6 @@ def sbf_command(args: argparse.Namespace) -> list[str]:
         external_evidence_auto_build_snapshot=bool(args.external_evidence_auto_build_snapshot),
         external_evidence_materialization=True,
         external_evidence_scoring=True,
-        keep_kdop=True,
         clean_active_cache=True,
     )
 

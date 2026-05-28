@@ -159,7 +159,6 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
             cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
             cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
             cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-            cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
             cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
         else:
             cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB
@@ -172,7 +171,6 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
         cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
         cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
         cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-        cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
         cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
         cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
         cfg.validation.accept_unsafe_free = True
@@ -190,7 +188,6 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
             cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
             cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
             cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
-            cfg.envelope_type.support_hull_config.keep_kdop = bool(args.support_hull_keep_kdop)
             cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
 
     cfg.envelope_type.n_subdivisions = int(args.envelope_subdivisions)
@@ -429,7 +426,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grid-delta", type=float, default=0.04)
     parser.add_argument("--envelope-subdivisions", type=int, default=4)
     parser.add_argument("--kdop-safety-epsilon", type=float, default=1e-9)
-    parser.add_argument("--support-hull-keep-kdop", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--support-hull-safety-epsilon", type=float, default=1e-9)
     parser.add_argument("--split-policy", choices=["widest-first", "best-tighten"], default="best-tighten")
     parser.add_argument("--best-tighten-depth-synchronous", action=argparse.BooleanOptionalAction, default=True)
@@ -471,7 +467,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validation-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--validation-cache-max-entries", type=int, default=200000)
     parser.add_argument("--rbf-cache-root", type=Path, default=ROOT / "outputs" / "paper" / "rbf_only" / "cache")
-    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
     parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
@@ -635,7 +631,6 @@ def main() -> int:
             "ffb_depth": args.ffb_depth,
             "envelope_subdivisions": args.envelope_subdivisions,
             "kdop_safety_epsilon": args.kdop_safety_epsilon,
-            "support_hull_keep_kdop": args.support_hull_keep_kdop,
             "support_hull_safety_epsilon": args.support_hull_safety_epsilon,
             "threads": args.threads,
             "split_policy": args.split_policy,

@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
         post_connect_extra_boxes=0,
     )
     parser.add_argument("--out-json", type=Path, default=RBF_ONLY_OUTPUT_ROOT / "e2_warm_d18_baseline.json")
-    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
+    parser.add_argument("--warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
     parser.add_argument("--random-difficulty", default="easy")
     parser.add_argument("--random-seed", type=int, default=0)
     parser.add_argument("--clean-cold-cache", action=argparse.BooleanOptionalAction, default=True)
@@ -88,6 +88,8 @@ def make_config(args: argparse.Namespace, robot: Any, cache_label: str, seed: in
 def run_row(args: argparse.Namespace, case: dict[str, Any], mode: str, seed: int) -> dict[str, Any]:
     cache_label = f"e2_{mode}_{case['scene']}_seed{seed}"
     cfg = make_config(args, case["robot"], cache_label, seed)
+    coverage_seeds = case["coverage_seeds"]
+    queries = case["queries"]
     set_online_cache_backfill(cfg, allow_database_backfill=not str(case["scene"]).startswith("shelf_"))
     cache_path = Path(cfg.database.path)
     if mode == "cold" and args.clean_cold_cache and cache_path.exists():
@@ -104,11 +106,11 @@ def run_row(args: argparse.Namespace, case: dict[str, Any], mode: str, seed: int
     print(f"[e2] start scene={case['scene']} mode={mode} cache={cache_path.name}", flush=True)
     forest = sbf.SafeBoxForest(case["robot"], cfg)
     build_t0 = time.perf_counter()
-    profile = forest.build_coverage(case["obstacles"], case["coverage_seeds"])
+    profile = forest.build_coverage(case["obstacles"], coverage_seeds)
     build_wall_s = time.perf_counter() - build_t0
     planning_s = float(profile.total_ms) / 1000.0
     query_rows: list[dict[str, Any]] = []
-    for query in case["queries"]:
+    for query in queries:
         query_t0 = time.perf_counter()
         result = forest.query(list(query.start), list(query.goal))
         query_rows.append(query_result_payload(query.label, result, time.perf_counter() - query_t0))

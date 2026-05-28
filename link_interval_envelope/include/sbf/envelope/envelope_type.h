@@ -45,7 +45,6 @@ struct KdopConfig {
 };
 
 struct SupportHullConfig {
-    bool keep_kdop = true;
     double safety_epsilon = 0.0;
 };
 

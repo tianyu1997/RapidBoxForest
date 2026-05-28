@@ -287,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     sbf_path = args.sbf_json or first_existing([
         PAPER_OUT / "tro2026_exp04_marcucci_full.json",
         PAPER_OUT / "marcucci_combined_standalone.json",
-        PAPER_OUT / "exp14_validation_profiles" / "support_hull_keep_kdop.json",
+        PAPER_OUT / "exp14_validation_profiles" / "crit_support_hull.json",
         PAPER_OUT / "exp14_validation_profiles" / "support_hull_coverage.json",
     ])
     methods: list[dict[str, Any]] = []
