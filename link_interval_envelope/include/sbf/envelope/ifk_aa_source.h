@@ -4,6 +4,7 @@
 
 #include <sbf/core/types.h>
 #include <sbf/core/robot.h>
+#include <sbf/core/aa_fk.h>
 #include <sbf/envelope/endpoint_source.h>
 
 #include <vector>
@@ -13,6 +14,16 @@ namespace rbf {
 EndpointIAABBResult compute_endpoint_iaabb_ifk_aa(
     const Robot& robot,
     const std::vector<Interval>& intervals);
+
+/// IFK (single AA-FK pass) endpoint source with incremental reuse. The result
+/// is bit-identical to compute_endpoint_iaabb_ifk_aa; @p state caches the
+/// kinematic-chain prefix so a subsequent single-dimension change recomputes
+/// only the affected suffix. Intended for sequential parent->child descents on
+/// a single thread (one @p state per descending oracle).
+EndpointIAABBResult compute_endpoint_iaabb_ifk_aa_stateful(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    AaFkPrefixState& state);
 
 EndpointIAABBResult compute_endpoint_iaabb_hifk_aa(
     const Robot& robot,

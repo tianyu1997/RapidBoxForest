@@ -139,27 +139,8 @@ private:
         std::uint64_t last_access = 0;
     };
 
-    struct NodeQueryMeta {
-        NodeId parent = kInvalidNodeId;
-        NodeId left = kInvalidNodeId;
-        NodeId right = kInvalidNodeId;
-        int depth = 0;
-        int split_dim = -1;
-        double split_value = 0.0;
-        bool present = false;
-
-        bool is_leaf() const noexcept {
-            return left == kInvalidNodeId && right == kInvalidNodeId;
-        }
-    };
-
     NodeId append_child(NodeId parent_id, bool right_child, int depth, PathCode path);
     bool has_node(NodeId node_id) const noexcept;
-    void clear_node_query_meta() noexcept;
-    void ensure_node_query_meta_capacity(NodeId node_id);
-    void remember_node_query_meta(const NodeRecord& record);
-    const NodeQueryMeta* node_query_meta(NodeId node_id) const noexcept;
-    std::optional<PathCode> node_path_from_meta(NodeId node_id) const;
     std::size_t rows_per_node_page() const noexcept;
     std::uint64_t page_id_for_node(NodeId node_id) const noexcept;
     NodeId first_node_id_for_page(std::uint64_t page_id) const noexcept;
@@ -190,11 +171,8 @@ private:
     bool save_manifest() const;
     bool load_nodes(std::string* reason);
     bool save_nodes() const;
-    bool load_node_index_sidecar(std::string* reason);
-    bool save_node_index_sidecar() const;
     bool load_evidence(std::string* reason);
     bool save_evidence() const;
-    bool compact_evidence_store();
     bool load_evidence_index_sidecar(std::uint64_t evidence_file_size);
     bool save_evidence_index_sidecar(std::uint64_t evidence_file_size) const;
     void clear_evidence_index() noexcept;
@@ -212,7 +190,6 @@ private:
     void prefetch_indexed_evidence_ranges() const;
     void remember_evidence_metadata(const EvidenceRecord& record);
     bool append_evidence_record_to_store(const EvidenceRecord& record);
-    std::optional<EvidenceRecordView> load_indexed_evidence_view(const EvidenceKey& key) const;
     std::shared_ptr<const EvidenceRecord> load_indexed_evidence(const EvidenceKey& key) const;
     bool ensure_all_evidence_loaded() const;
     bool ensure_evidence_append_stream() const;
@@ -236,19 +213,15 @@ private:
                                                               const EvidenceKey& key_template) const;
     std::optional<EvidenceRecord> build_parent_hull(NodeId parent_id, const EvidenceKey& key_template) const;
     bool normalize_evidence_key(EvidenceKey* key) const;
-    bool canonicalize_evidence_lookup_key(EvidenceKey* key) const;
     EvidenceKey evidence_key_for_node(NodeId node_id, const EvidenceKey* key_template = nullptr) const;
     bool remember_node_record(const NodeRecord& record);
     NodeId allocate_node_id();
     bool remember_node_id(NodeId node_id);
-    std::optional<NodeId> node_id_from_path(const PathCode& path) const;
     std::vector<NodeId> sorted_node_ids() const;
 
     struct EvidenceIndexEntry {
         std::uint64_t offset = 0;
         std::uint32_t size = 0;
-        std::uint32_t payload_offset = 0;
-        std::uint32_t payload_count = 0;
         bool child_hull = false;
         bool unavailable = false;
         std::uint64_t generation = 0;
@@ -274,7 +247,6 @@ private:
     NodeId next_node_id_ = 0;
     std::unordered_set<NodeId> node_ids_;
     std::unordered_map<PathCode, NodeId, PathCodeHash> node_path_index_;
-    std::vector<NodeQueryMeta> node_query_meta_;
     mutable std::unordered_map<std::uint64_t, NodePage> node_pages_;
     mutable std::uint64_t node_page_clock_ = 0;
     std::unordered_map<int, std::vector<NodeId>> layer_index_;

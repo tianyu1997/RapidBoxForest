@@ -51,6 +51,10 @@ std::filesystem::path legacy_node_index_path(const std::filesystem::path& root) 
     return root / "nodes.index";
 }
 
+std::filesystem::path legacy_nodes_pages_path(const std::filesystem::path& root) {
+    return root / "nodes.pages";
+}
+
 std::filesystem::path legacy_evidence_index_path(const std::filesystem::path& root) {
     return root / "evidence.index";
 }
@@ -158,6 +162,16 @@ double get_double(const std::unordered_map<std::string, std::string>& values,
     return end == it->second.c_str() ? fallback : value;
 }
 
+std::vector<std::string> split_text(const std::string& line, char delimiter) {
+    std::vector<std::string> parts;
+    std::stringstream stream(line);
+    std::string item;
+    while (std::getline(stream, item, delimiter)) {
+        parts.push_back(item);
+    }
+    return parts;
+}
+
 std::vector<Interval> parse_root_intervals(const std::unordered_map<std::string, std::string>& values) {
     const int dims = std::max(0, get_int(values, "root_dims"));
     std::vector<Interval> root;
@@ -224,6 +238,53 @@ static_assert(sizeof(LegacyNodeIndexSidecarHeader) == 48);
 static_assert(sizeof(LegacyNodeIndexSidecarEntry) == 48);
 static_assert(sizeof(LegacyEvidenceIndexSidecarHeader) == 40);
 static_assert(sizeof(LegacyEvidenceIndexSidecarEntry) == 72);
+
+struct SnapshotBoxIndexKey {
+    std::uint64_t primary = 0;
+    std::uint64_t secondary = 0;
+
+    bool operator==(const SnapshotBoxIndexKey& other) const noexcept {
+        return primary == other.primary && secondary == other.secondary;
+    }
+};
+
+struct SnapshotBoxIndexKeyHash {
+    std::size_t operator()(const SnapshotBoxIndexKey& key) const noexcept {
+        return static_cast<std::size_t>(key.primary ^ (key.secondary + 0x9e3779b97f4a7c15ull + (key.primary << 6u) + (key.primary >> 2u)));
+    }
+};
+
+SnapshotBoxIndexKey make_snapshot_box_index_key(const std::vector<Interval>& intervals) {
+    SnapshotBoxIndexKey key;
+    key.primary = fingerprint_intervals(intervals);
+    std::uint64_t secondary = 1099511628211ull;
+    for (const auto& interval : intervals) {
+        secondary = stable_hash_append(secondary, &interval.hi, sizeof(interval.hi));
+        secondary = stable_hash_append(secondary, &interval.lo, sizeof(interval.lo));
+    }
+    key.secondary = secondary;
+    return key;
+}
+
+std::optional<LegacyNodeIndexSidecarEntry> parse_legacy_node_pages_record(const std::string& line) {
+    const auto parts = split_text(line, '|');
+    if (parts.size() < 7) {
+        return std::nullopt;
+    }
+    LegacyNodeIndexSidecarEntry entry;
+    try {
+        entry.node_id = static_cast<std::uint64_t>(std::stoull(parts[0]));
+        entry.parent = static_cast<std::uint64_t>(std::stoull(parts[1]));
+        entry.left = static_cast<std::uint64_t>(std::stoull(parts[2]));
+        entry.right = static_cast<std::uint64_t>(std::stoull(parts[3]));
+        entry.depth = static_cast<std::int32_t>(std::stoi(parts[4]));
+        entry.split_dim = static_cast<std::int32_t>(std::stoi(parts[5]));
+        entry.split_value = std::stod(parts[6]);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    return entry;
+}
 
 struct SnapshotManifestHeader {
     std::uint64_t magic = kSnapshotManifestMagic;
@@ -487,6 +548,7 @@ struct LectReadSnapshot::Impl {
     std::span<const SnapshotNodeRow> nodes;
     std::span<const SnapshotDirectEvidenceEntry> direct_evidence;
     std::span<const SnapshotEvidenceSlot> evidence_slots;
+    std::unordered_map<SnapshotBoxIndexKey, NodeId, SnapshotBoxIndexKeyHash> exact_box_index;
 
     bool has_node(NodeId node_id) const noexcept {
         const auto index = static_cast<std::size_t>(node_id);
@@ -496,6 +558,50 @@ struct LectReadSnapshot::Impl {
 
     const SnapshotNodeRow* node(NodeId node_id) const noexcept {
         return has_node(node_id) ? &nodes[static_cast<std::size_t>(node_id)] : nullptr;
+    }
+
+    bool build_exact_box_index(std::string* reason) {
+        exact_box_index.clear();
+        if (!has_node(0)) {
+            return true;
+        }
+        exact_box_index.reserve(static_cast<std::size_t>(manifest.node_count) * 2u);
+        struct StackItem {
+            NodeId node_id = kInvalidNodeId;
+            std::vector<Interval> intervals;
+        };
+        std::vector<StackItem> stack;
+        stack.push_back({0, root});
+        while (!stack.empty()) {
+            auto item = std::move(stack.back());
+            stack.pop_back();
+            const auto key = make_snapshot_box_index_key(item.intervals);
+            auto [it, inserted] = exact_box_index.emplace(key, item.node_id);
+            if (!inserted && it->second != item.node_id) {
+                it->second = kInvalidNodeId;
+            }
+            const auto* row = node(item.node_id);
+            if (row == nullptr || row->split_dim < 0 ||
+                row->split_dim >= static_cast<int>(item.intervals.size())) {
+                continue;
+            }
+            const auto dim = static_cast<std::size_t>(row->split_dim);
+            if (has_node(row->right)) {
+                auto right = item.intervals;
+                right[dim].lo = row->split_value;
+                stack.push_back({row->right, std::move(right)});
+            }
+            if (has_node(row->left)) {
+                auto left = std::move(item.intervals);
+                left[dim].hi = row->split_value;
+                stack.push_back({row->left, std::move(left)});
+            }
+        }
+        if (exact_box_index.empty()) {
+            if (reason) *reason = "snapshot exact box index is empty";
+            return false;
+        }
+        return true;
     }
 };
 
@@ -527,7 +633,7 @@ std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotD
     view.unavailable = (direct.flags & kSnapshotEvidenceUnavailable) != 0;
     view.generation = direct.generation;
     view.checksum = direct.checksum;
-    view.storage = std::static_pointer_cast<const void>(payload_file);
+    view.storage_owner = std::static_pointer_cast<const void>(payload_file);
     view.payload = std::span<const float>(
         reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(direct.payload_offset)),
         direct.payload_count);
@@ -550,7 +656,7 @@ std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot&
     view.unavailable = (slot.flags & kSnapshotEvidenceUnavailable) != 0;
     view.generation = slot.generation;
     view.checksum = slot.checksum;
-    view.storage = std::static_pointer_cast<const void>(payload_file);
+    view.storage_owner = std::static_pointer_cast<const void>(payload_file);
     view.payload = std::span<const float>(
         reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(slot.payload_offset)),
         slot.payload_count);
@@ -596,7 +702,8 @@ std::optional<EvidenceRecordView> lookup_endpoint_exact_uncached(std::span<const
                                                                  std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
                                                                  std::span<const SnapshotEvidenceSlot> evidence_slots,
                                                                  const std::shared_ptr<MappedFile>& payload_file,
-                                                                 const BoxKey& box,
+                                                                 const std::vector<Interval>& box_intervals,
+                                                                 double tolerance,
                                                                  EvidenceKey key_template) {
     auto has_node = [&](NodeId node_id) {
         const auto index = static_cast<std::size_t>(node_id);
@@ -610,7 +717,7 @@ std::optional<EvidenceRecordView> lookup_endpoint_exact_uncached(std::span<const
     NodeId cursor = 0;
     auto intervals = root;
     while (has_node(cursor)) {
-        if (intervals_equal(intervals, box.intervals, box.tolerance)) {
+        if (intervals_equal(intervals, box_intervals, tolerance)) {
             key_template.node_id = cursor;
             key_template.node_path = {};
             key_template.node_path_valid = false;
@@ -622,10 +729,10 @@ std::optional<EvidenceRecordView> lookup_endpoint_exact_uncached(std::span<const
             break;
         }
         const auto dim = static_cast<std::size_t>(row->split_dim);
-        if (box.intervals[dim].hi <= row->split_value + box.tolerance && has_node(row->left)) {
+        if (box_intervals[dim].hi <= row->split_value + tolerance && has_node(row->left)) {
             intervals[dim].hi = row->split_value;
             cursor = row->left;
-        } else if (box.intervals[dim].lo + box.tolerance >= row->split_value && has_node(row->right)) {
+        } else if (box_intervals[dim].lo + tolerance >= row->split_value && has_node(row->right)) {
             intervals[dim].lo = row->split_value;
             cursor = row->right;
         } else {
@@ -670,34 +777,18 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
         return false;
     }
 
-    std::ifstream node_input(legacy_node_index_path(legacy_root), std::ios::binary);
-    if (!node_input) {
-        if (reason) *reason = "legacy nodes.index is missing";
-        return false;
-    }
-    LegacyNodeIndexSidecarHeader legacy_node_header;
-    node_input.read(reinterpret_cast<char*>(&legacy_node_header), static_cast<std::streamsize>(sizeof(legacy_node_header)));
-    if (!node_input || legacy_node_header.magic != kLegacyNodeIndexSidecarMagic ||
-        legacy_node_header.header_size != sizeof(LegacyNodeIndexSidecarHeader) ||
-        legacy_node_header.generation != generation || legacy_node_header.node_count != node_count ||
-        legacy_node_header.max_node_id != max_node_id) {
-        if (reason) *reason = "legacy nodes.index header is incompatible";
-        return false;
-    }
-
     std::vector<SnapshotNodeRow> node_rows(static_cast<std::size_t>(max_node_id) + 1u);
     std::vector<SnapshotDirectEvidenceEntry> direct_evidence_rows(static_cast<std::size_t>(max_node_id) + 1u);
     std::size_t loaded_nodes = 0;
-    for (std::uint64_t index = 0; index < legacy_node_header.entry_count; ++index) {
-        LegacyNodeIndexSidecarEntry entry;
-        node_input.read(reinterpret_cast<char*>(&entry), static_cast<std::streamsize>(sizeof(entry)));
-        if (!node_input || !valid_node_id(entry.node_id) || entry.node_id > max_node_id) {
-            if (reason) *reason = "legacy nodes.index contains an invalid node";
+
+    const auto ingest_node_entry = [&](const LegacyNodeIndexSidecarEntry& entry) -> bool {
+        if (!valid_node_id(entry.node_id) || entry.node_id > max_node_id) {
+            if (reason) *reason = "legacy node table contains an invalid node";
             return false;
         }
         auto& row = node_rows[static_cast<std::size_t>(entry.node_id)];
         if ((row.flags & kSnapshotNodePresent) != 0) {
-            if (reason) *reason = "legacy nodes.index contains duplicate nodes";
+            if (reason) *reason = "legacy node table contains duplicate nodes";
             return false;
         }
         row.parent = entry.parent;
@@ -709,9 +800,47 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
         row.generation = generation;
         row.flags = kSnapshotNodePresent;
         ++loaded_nodes;
+        return true;
+    };
+
+    std::ifstream node_input(legacy_node_index_path(legacy_root), std::ios::binary);
+    if (node_input) {
+        LegacyNodeIndexSidecarHeader legacy_node_header;
+        node_input.read(reinterpret_cast<char*>(&legacy_node_header), static_cast<std::streamsize>(sizeof(legacy_node_header)));
+        if (!node_input || legacy_node_header.magic != kLegacyNodeIndexSidecarMagic ||
+            legacy_node_header.header_size != sizeof(LegacyNodeIndexSidecarHeader) ||
+            legacy_node_header.generation != generation || legacy_node_header.node_count != node_count ||
+            legacy_node_header.max_node_id != max_node_id) {
+            if (reason) *reason = "legacy nodes.index header is incompatible";
+            return false;
+        }
+        for (std::uint64_t index = 0; index < legacy_node_header.entry_count; ++index) {
+            LegacyNodeIndexSidecarEntry entry;
+            node_input.read(reinterpret_cast<char*>(&entry), static_cast<std::streamsize>(sizeof(entry)));
+            if (!node_input || !ingest_node_entry(entry)) {
+                return false;
+            }
+        }
+    } else {
+        std::ifstream pages_input(legacy_nodes_pages_path(legacy_root));
+        if (!pages_input) {
+            if (reason) *reason = "legacy node table is missing: expected nodes.index or nodes.pages";
+            return false;
+        }
+        std::string line;
+        while (std::getline(pages_input, line)) {
+            if (line.empty()) {
+                continue;
+            }
+            const auto entry = parse_legacy_node_pages_record(line);
+            if (!entry || !ingest_node_entry(*entry)) {
+                if (reason && reason->empty()) *reason = "legacy nodes.pages contains an invalid node";
+                return false;
+            }
+        }
     }
     if (loaded_nodes != node_count) {
-        if (reason) *reason = "legacy nodes.index count does not match manifest";
+        if (reason) *reason = "legacy node table count does not match manifest";
         return false;
     }
 
@@ -968,6 +1097,10 @@ bool LectReadSnapshot::open(const std::filesystem::path& snapshot_path, std::str
         close();
         return false;
     }
+    if (!impl_->build_exact_box_index(reason)) {
+        close();
+        return false;
+    }
 
     if (!impl_->direct_evidence_file->open_read_only(snapshot_direct_evidence_path(snapshot_path))) {
         if (reason) *reason = "failed to mmap snapshot direct evidence";
@@ -1047,6 +1180,7 @@ void LectReadSnapshot::close() {
     impl_->nodes = {};
     impl_->direct_evidence = {};
     impl_->evidence_slots = {};
+    impl_->exact_box_index.clear();
     impl_->root.clear();
     impl_->manifest = SnapshotManifestHeader{};
     impl_->manifest_file.reset();
@@ -1253,12 +1387,33 @@ std::optional<EvidenceRecordView> LectReadSnapshot::endpoint_for_box_exact(const
         box.intervals.size() != impl_->root.size()) {
         return std::nullopt;
     }
+    return endpoint_for_box_exact(box.intervals, key_template, box.tolerance);
+}
+
+std::optional<EvidenceRecordView> LectReadSnapshot::endpoint_for_box_exact(const std::vector<Interval>& intervals,
+                                                                             EvidenceKey key_template,
+                                                                             double tolerance) const {
+    if (intervals.size() != impl_->root.size()) {
+        return std::nullopt;
+    }
+    const auto box_index_key = make_snapshot_box_index_key(intervals);
+    const auto direct_node = impl_->exact_box_index.find(box_index_key);
+    if (direct_node != impl_->exact_box_index.end() && valid_node_id(direct_node->second)) {
+        key_template.node_id = direct_node->second;
+        key_template.node_path = {};
+        key_template.node_path_valid = false;
+        return lookup_evidence_uncached(impl_->direct_evidence,
+                                        impl_->evidence_slots,
+                                        key_template,
+                                        impl_->payload_file);
+    }
     return lookup_endpoint_exact_uncached(impl_->nodes,
                                           impl_->root,
                                           impl_->direct_evidence,
                                           impl_->evidence_slots,
                                           impl_->payload_file,
-                                          box,
+                                          intervals,
+                                          tolerance,
                                           key_template);
 }
 

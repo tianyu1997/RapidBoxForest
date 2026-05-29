@@ -192,9 +192,6 @@ def normalize_result(
     active_radii = [float(v) for v in raw.get("active_link_radii", [])]
     link_flat = [float(v) for v in raw.get("link_iaabbs", [])]
     inflated_flat = [float(v) for v in raw.get("inflated_link_iaabbs", [])]
-    kdop_n_axes = int(raw.get("kdop_n_axes", 0))
-    kdop_flat = [float(v) for v in raw.get("kdop_intervals", [])]
-    support_hulls_flat = [float(v) for v in raw.get("support_hulls", [])]
 
     links = []
     for ci in range(n_active):
@@ -263,11 +260,6 @@ def normalize_result(
             "active_link_radii": active_radii,
             "link_iaabbs_flat": link_flat,
             "inflated_link_iaabbs_flat": inflated_flat,
-            "kdop": {
-                "n_axes": kdop_n_axes,
-                "intervals_flat": kdop_flat,
-            },
-            "support_hulls_flat": support_hulls_flat,
             "links": links,
         },
         "timing_us": {
@@ -405,87 +397,6 @@ def compute_from_endpoint_iaabbs(
     return normalize_result(raw, robot_path=str(robot) if isinstance(robot, (str, Path)) else None)
 
 
-def compute_collision_from_endpoint_iaabbs(
-    robot: str | Path | Mapping[str, Any] | Any,
-    endpoint_iaabbs: Sequence[float],
-    obstacle_bounds: Sequence[Sequence[float]],
-    *,
-    envelope_type: str | Any = "link_iaabb",
-    n_subdivisions: int = 1,
-    kdop_directions: str | Any = "dop26",
-    collision_mode: str = "auto",
-    count_all_pairs: bool = False,
-    safety_epsilon: float = 0.0,
-) -> dict[str, Any]:
-    robot_obj = load_robot(robot)
-    envelope_config = make_envelope_config(
-        envelope_type,
-        n_subdivisions=n_subdivisions,
-    )
-    if isinstance(kdop_directions, str):
-        key = kdop_directions.strip().lower().replace("-", "")
-        direction_mapping = {
-            "dop6": _cpp.KdopDirectionSet.DOP6,
-            "dop18": _cpp.KdopDirectionSet.DOP18,
-            "dop26": _cpp.KdopDirectionSet.DOP26,
-        }
-        if key not in direction_mapping:
-            raise ValueError(f"unknown kdop_directions: {kdop_directions!r}")
-        envelope_config.kdop_config.direction_set = direction_mapping[key]
-    elif kdop_directions is not None:
-        envelope_config.kdop_config.direction_set = kdop_directions
-
-    obstacles = []
-    for bounds in obstacle_bounds:
-        flat = [float(value) for value in bounds]
-        if len(flat) != 6:
-            raise ValueError("each obstacle must have 6 bounds [lx, ly, lz, hx, hy, hz]")
-        obstacles.append(flat)
-
-    raw = _cpp.compute_collision_from_endpoint_iaabbs(
-        robot_obj,
-        _flatten_numbers(endpoint_iaabbs),
-        obstacles,
-        envelope_config,
-        str(collision_mode),
-        bool(count_all_pairs),
-        float(safety_epsilon),
-    )
-    return {
-        "schema": "link_interval_envelope.collision.v1",
-        "robot": {
-            "name": str(raw.get("robot_name", "")),
-            "source_path": str(robot) if isinstance(robot, (str, Path)) else None,
-            "n_active_links": int(raw.get("n_active_links", 0)),
-        },
-        "envelope": {
-            "type": str(raw.get("envelope_type", "")),
-            "n_subdivisions": int(raw.get("n_subdivisions", n_subdivisions)),
-        },
-        "collision": {
-            "mode": str(raw.get("collision_mode", collision_mode)),
-            "is_definitely_free": bool(raw.get("is_definitely_free", False)),
-            "maybe_pairs": int(raw.get("maybe_pairs", 0)),
-            "envelope_aabb_tests": int(raw.get("envelope_aabb_tests", 0)),
-            "envelope_aabb_rejects": int(raw.get("envelope_aabb_rejects", 0)),
-            "link_union_aabb_tests": int(raw.get("link_union_aabb_tests", 0)),
-            "link_union_aabb_rejects": int(raw.get("link_union_aabb_rejects", 0)),
-            "link_aabb_tests": int(raw.get("link_aabb_tests", 0)),
-            "link_aabb_rejects": int(raw.get("link_aabb_rejects", 0)),
-            "kdop_tests": int(raw.get("kdop_tests", 0)),
-            "kdop_rejects": int(raw.get("kdop_rejects", 0)),
-            "kdop_axes_tested": int(raw.get("kdop_axes_tested", 0)),
-            "gjk_tests": int(raw.get("gjk_tests", 0)),
-            "gjk_rejects": int(raw.get("gjk_rejects", 0)),
-            "gjk_iterations": int(raw.get("gjk_iterations", 0)),
-        },
-        "timing_us": {
-            "collision": float(raw.get("collision_time_us", 0.0)),
-            "total": float(raw.get("total_time_us", raw.get("collision_time_us", 0.0))),
-        },
-    }
-
-
 class IncrementalEnvelopeComputer:
     """Stateful envelope computer for nearby interval boxes.
 
@@ -597,7 +508,6 @@ __all__ = [
     "compute_endpoint_iaabb_info",
     "compute_envelope",
     "compute_envelope_batch",
-    "compute_collision_from_endpoint_iaabbs",
     "compute_from_endpoint_iaabbs",
     "load_robot",
     "make_intervals",

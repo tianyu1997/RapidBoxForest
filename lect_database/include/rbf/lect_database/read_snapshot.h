@@ -42,6 +42,9 @@ public:
                                     RangeQueryMode mode,
                                     LectDatabaseStats* stats = nullptr) const;
     std::optional<EvidenceRecordView> evidence(const EvidenceKey& key) const;
+    std::optional<EvidenceRecordView> endpoint_for_box_exact(const std::vector<Interval>& intervals,
+                                                             EvidenceKey key_template,
+                                                             double tolerance = 1e-12) const;
     std::optional<EvidenceRecordView> endpoint_for_box_exact(const BoxKey& box,
                                                              EvidenceKey key_template) const;
 

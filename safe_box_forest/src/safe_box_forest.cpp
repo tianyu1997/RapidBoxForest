@@ -7,7 +7,6 @@
 #include <limits>
 #include <queue>
 #include <sstream>
-#include <span>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -17,41 +16,13 @@ namespace rbf {
 
 namespace {
 
-double sanitize_segment_step(double segment_step) {
-    return segment_step > 0.0 ? segment_step : 0.0;
-}
-
-int segment_resolution_for_absolute_step(const Eigen::Ref<const Eigen::VectorXd>& start,
-                                         const Eigen::Ref<const Eigen::VectorXd>& goal,
-                                         double segment_step,
-                                         int minimum_resolution = 1) {
-    if (segment_step <= 0.0) {
-        return std::max(1, minimum_resolution);
-    }
-    const double distance = (goal - start).norm();
-    const double safe_step = std::max(segment_step, 1e-9);
-    const int step_resolution = static_cast<int>(std::ceil(distance / safe_step));
-    return std::max({1, minimum_resolution, step_resolution});
-}
-
-int audit_segment_resolution(const QueryConfig& config,
-                             const Eigen::Ref<const Eigen::VectorXd>& start,
-                             const Eigen::Ref<const Eigen::VectorXd>& goal,
-                             int minimum_resolution = 1) {
-    const double segment_step = sanitize_segment_step(config.audit_segment_step);
-    if (segment_step > 0.0) {
-        return segment_resolution_for_absolute_step(start, goal, segment_step, minimum_resolution);
-    }
-    return std::max({1, minimum_resolution, config.audit_resolution});
-}
-
 std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::VectorXd>& path,
                                                      const CollisionChecker& checker,
-                                                     const QueryConfig& config) {
+                                                     int segment_resolution) {
     if (path.size() <= 2) {
         return path;
     }
-    const int safe_resolution = std::max(1, config.collision_shortcut_resolution);
+    const int safe_resolution = std::max(1, segment_resolution);
     const std::size_t n = path.size();
     std::vector<double> dist(n, std::numeric_limits<double>::infinity());
     std::vector<int> parent(n, -1);
@@ -69,12 +40,7 @@ std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::Ve
             break;
         }
         for (std::size_t j = static_cast<std::size_t>(i) + 1; j < n; ++j) {
-            const int edge_resolution = std::max(
-                safe_resolution,
-                audit_segment_resolution(config,
-                                         path[static_cast<std::size_t>(i)],
-                                         path[j]));
-            if (checker.check_segment(path[static_cast<std::size_t>(i)], path[j], edge_resolution)) {
+            if (checker.check_segment(path[static_cast<std::size_t>(i)], path[j], safe_resolution)) {
                 continue;
             }
             const double edge = (path[j] - path[static_cast<std::size_t>(i)]).norm();
@@ -105,36 +71,21 @@ std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::Ve
     return reversed;
 }
 
-Eigen::VectorXd canonicalize_configuration(const Robot& robot,
-                                           const LectDatabaseRuntimeConfig& database_config,
-                                           const Eigen::Ref<const Eigen::VectorXd>& configuration) {
-    Eigen::VectorXd canonical = configuration;
-    if (canonical.size() <= 0) {
-        return canonical;
+int collision_shortcut_resolution(const QueryConfig& config) {
+    int resolution = std::max(1, config.collision_shortcut_resolution);
+    if (config.strict_path_audit) {
+        resolution = std::max(resolution, config.audit_resolution);
     }
-    lect_database::canonicalize_configuration_for_robot(
-        robot,
-        database_config.canonical_mode,
-        database_config.symmetry_descriptor,
-        std::span<double>(canonical.data(), static_cast<std::size_t>(canonical.size())));
-    return canonical;
+    return resolution;
 }
 
-std::vector<Eigen::VectorXd> canonicalize_configurations(const Robot& robot,
-                                                         const LectDatabaseRuntimeConfig& database_config,
-                                                         const std::vector<Eigen::VectorXd>& configurations) {
-    std::vector<Eigen::VectorXd> canonical = configurations;
-    for (auto& configuration : canonical) {
-        if (configuration.size() <= 0) {
-            continue;
-        }
-        lect_database::canonicalize_configuration_for_robot(
-            robot,
-            database_config.canonical_mode,
-            database_config.symmetry_descriptor,
-            std::span<double>(configuration.data(), static_cast<std::size_t>(configuration.size())));
+std::string effective_symmetry_descriptor(const RBFPlanningConfig& config) {
+    if (!config.database.canonical_mode) {
+        return {};
     }
-    return canonical;
+    return config.database.symmetry_descriptor.empty()
+        ? std::string(lect_database::kJointSymmetryNativeV1)
+        : config.database.symmetry_descriptor;
 }
 
 }  // namespace
@@ -218,13 +169,13 @@ struct PathAuditCheck {
 
 PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
                                    const CollisionChecker& checker,
-                                   const QueryConfig& config,
-                                   int minimum_segment_resolution = 1) {
+                                   int resolution) {
     PathAuditCheck audit;
     if (path.empty()) {
         audit.failed_segment_index = 0;
         return audit;
     }
+    const int safe_resolution = std::max(1, resolution);
     for (std::size_t index = 0; index < path.size(); ++index) {
         if (checker.check_config(path[index])) {
             audit.failed_segment_index = index == 0 ? 0 : static_cast<int>(index - 1);
@@ -232,12 +183,7 @@ PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
         }
     }
     for (std::size_t index = 0; index + 1 < path.size(); ++index) {
-        const int resolution = audit_segment_resolution(
-            config,
-            path[index],
-            path[index + 1],
-            minimum_segment_resolution);
-        if (checker.check_segment(path[index], path[index + 1], resolution)) {
+        if (checker.check_segment(path[index], path[index + 1], safe_resolution)) {
             audit.failed_segment_index = static_cast<int>(index);
             return audit;
         }
@@ -938,11 +884,12 @@ std::vector<DirtySeedCandidate> make_insertion_regrow_seeds(const std::vector<Bo
 
 bool segment_edge_survives_scene(const SegmentEdge& edge,
                                  const CollisionChecker& checker,
-                                 const QueryConfig& query_config) {
+                                 int audit_resolution) {
     if (edge.waypoints.size() < 2) {
         return false;
     }
-    return audit_waypoint_path(edge.waypoints, checker, query_config, std::max(1, edge.segment_resolution)).passed;
+    const int resolution = std::max({1, audit_resolution, edge.segment_resolution});
+    return audit_waypoint_path(edge.waypoints, checker, resolution).passed;
 }
 
 std::vector<int> spatial_dirty_box_indices(const Robot& robot,
@@ -1057,11 +1004,7 @@ bool try_local_birrt_repair(QueryResult& result,
     if (!collision_bracket(result.path[static_cast<std::size_t>(audit.failed_segment_index)],
                            result.path[static_cast<std::size_t>(audit.failed_segment_index + 1)],
                            checker,
-                           audit_segment_resolution(
-                               query_config,
-                               result.path[static_cast<std::size_t>(audit.failed_segment_index)],
-                               result.path[static_cast<std::size_t>(audit.failed_segment_index + 1)],
-                               4),
+                           query_config.audit_resolution,
                            repair_start,
                            repair_goal)) {
         return false;
@@ -1105,13 +1048,13 @@ bool try_local_birrt_repair(QueryResult& result,
         for (std::size_t index = static_cast<std::size_t>(audit.failed_segment_index + 1); index < result.path.size(); ++index) {
             append_waypoint_unique(repaired, result.path[index]);
         }
-        if (audit_waypoint_path(repaired, checker, query_config).passed) {
+        if (audit_waypoint_path(repaired, checker, query_config.audit_resolution).passed) {
             if (query_config.collision_shortcut && repaired.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repaired,
                     checker,
-                    query_config);
-                if (audit_waypoint_path(shortened, checker, query_config).passed &&
+                    collision_shortcut_resolution(query_config));
+                if (audit_waypoint_path(shortened, checker, query_config.audit_resolution).passed &&
                     path_length(shortened) <= path_length(repaired) + 1e-12) {
                     repaired = std::move(shortened);
                 }
@@ -1138,9 +1081,15 @@ std::filesystem::path default_database_path(const Robot& robot) {
         std::to_string(robot.fingerprint());
 }
 
+const char* endpoint_cache_channel_name(EndpointSource source) {
+    return source_channel(source) == 0 ? "safe" : "rapid";
+}
+
 std::string endpoint_descriptor_for(const EndpointSourceConfig& config) {
     std::ostringstream out;
-    out << "source=" << static_cast<int>(config.source)
+    out << "channel=" << endpoint_cache_channel_name(config.source)
+        << "|source=" << endpoint_source_name(config.source)
+        << "|source_id=" << static_cast<int>(config.source)
         << "|n_samples_crit=" << config.n_samples_crit
         << "|max_phase_analytical=" << config.max_phase_analytical
         << "|bypass_narrow_skip=" << (config.bypass_narrow_skip ? 1 : 0)
@@ -1163,13 +1112,15 @@ std::string envelope_descriptor_for(const EnvelopeTypeConfig& config) {
 lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
                                                        const RBFPlanningConfig& config) {
     lect_database::LectDatabaseConfig database_config;
+    const bool canonical_mode = config.database.canonical_mode;
+    const std::string symmetry_descriptor = effective_symmetry_descriptor(config);
     database_config.path = config.database.path.empty()
         ? default_database_path(robot)
         : config.database.path;
     database_config.root_intervals = lect_database::canonical_root_intervals_for_robot(
         robot,
-        config.database.canonical_mode,
-        config.database.symmetry_descriptor);
+        canonical_mode,
+        symmetry_descriptor);
     database_config.split_policy = config.database.split_policy;
     database_config.open.read_only = config.database.read_only;
     database_config.open.create_if_missing = config.database.create_if_missing;
@@ -1184,37 +1135,13 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
         robot,
         database_config.root_intervals,
         database_config.split_policy,
-        config.database.canonical_mode,
-        config.database.symmetry_descriptor,
+        canonical_mode,
+        symmetry_descriptor,
         endpoint_descriptor_for(config.endpoint_source),
         envelope_descriptor_for(config.envelope_type),
         "endpoint_envelope_v1",
         "sbf_online_cache_v1");
     return database_config;
-}
-
-std::filesystem::path resolve_external_evidence_snapshot_path(const LectDatabaseRuntimeConfig& config) {
-    if (!config.external_evidence_snapshot_path.empty()) {
-        return config.external_evidence_snapshot_path;
-    }
-    if (config.external_evidence_path.empty()) {
-        return {};
-    }
-    return lect_database::LectReadSnapshot::default_snapshot_path(config.external_evidence_path);
-}
-
-bool snapshot_exists(const std::filesystem::path& snapshot_path) {
-    return !snapshot_path.empty() && std::filesystem::exists(snapshot_path / "manifest.bin");
-}
-
-std::filesystem::path resolve_database_snapshot_publish_path(const LectDatabaseRuntimeConfig& config) {
-    if (!config.auto_publish_snapshot_path.empty()) {
-        return config.auto_publish_snapshot_path;
-    }
-    if (config.path.empty()) {
-        return {};
-    }
-    return lect_database::LectReadSnapshot::default_snapshot_path(config.path);
 }
 
 }  // namespace
@@ -1229,37 +1156,7 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
     if (!database_->open(make_database_config(robot_, config_), &open_reason)) {
         throw std::runtime_error("failed to open LECTDatabase runtime: " + open_reason);
     }
-    const bool has_external_evidence =
-        !config_.database.external_evidence_path.empty() || !config_.database.external_evidence_snapshot_path.empty();
-    if (has_external_evidence) {
-        if (config_.database.external_evidence_use_snapshot) {
-            const auto snapshot_path = resolve_external_evidence_snapshot_path(config_.database);
-            if (snapshot_path.empty()) {
-                throw std::runtime_error("external evidence snapshot mode requires an external evidence path or snapshot path");
-            }
-            if (!snapshot_exists(snapshot_path)) {
-                if (!config_.database.external_evidence_auto_build_snapshot) {
-                    throw std::runtime_error("external evidence snapshot is missing and auto-build is disabled: " + snapshot_path.string());
-                }
-                if (config_.database.external_evidence_path.empty()) {
-                    throw std::runtime_error("external evidence snapshot auto-build requires external_evidence_path");
-                }
-                std::string snapshot_reason;
-                if (!lect_database::LectReadSnapshot::build_from_legacy(
-                        config_.database.external_evidence_path, snapshot_path, &snapshot_reason)) {
-                    throw std::runtime_error("failed to build external LECT snapshot evidence source: " + snapshot_reason);
-                }
-            }
-            external_evidence_snapshot_ = std::make_unique<lect_database::LectReadSnapshot>();
-            std::string snapshot_reason;
-            if (!external_evidence_snapshot_->open(snapshot_path, &snapshot_reason)) {
-                throw std::runtime_error("failed to open external LECT snapshot evidence source: " + snapshot_reason);
-            }
-            external_evidence_source_ = std::make_unique<lect_database::LectSnapshotEvidenceSource>(*external_evidence_snapshot_);
-        } else {
-            if (config_.database.external_evidence_path.empty()) {
-                throw std::runtime_error("legacy external evidence mode requires external_evidence_path");
-            }
+    if (!config_.database.external_evidence_path.empty()) {
         auto external_config = make_database_config(robot_, config_);
         external_config.path = config_.database.external_evidence_path;
         external_config.open.read_only = true;
@@ -1269,20 +1166,37 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
         // External evidence reuse only consumes endpoint materialization, so
         // envelope families may differ from the active planning config.
         external_config.identity.envelope_descriptor.clear();
-        external_evidence_database_ = std::make_unique<lect_database::LectDatabase>();
-        std::string external_reason;
-        if (!external_evidence_database_->open(std::move(external_config), &external_reason)) {
-            throw std::runtime_error("failed to open external LECTDatabase evidence source: " + external_reason);
-        }
-            external_evidence_source_ = std::make_unique<lect_database::LectDatabaseEvidenceSource>(*external_evidence_database_);
+        if (config_.database.external_evidence_use_snapshot) {
+            lect_database::LectDatabase verifier;
+            std::string verify_reason;
+            if (!verifier.open(external_config, &verify_reason)) {
+                throw std::runtime_error("failed to verify external LECTDatabase evidence source: " + verify_reason);
+            }
+            const auto snapshot_path = config_.database.external_evidence_snapshot_path.empty()
+                ? lect_database::LectReadSnapshot::default_snapshot_path(config_.database.external_evidence_path)
+                : config_.database.external_evidence_snapshot_path;
+            if (config_.database.external_evidence_auto_build_snapshot && !std::filesystem::exists(snapshot_path)) {
+                std::string build_reason;
+                if (!lect_database::LectReadSnapshot::build_from_legacy(config_.database.external_evidence_path,
+                                                                        snapshot_path,
+                                                                        &build_reason)) {
+                    throw std::runtime_error("failed to build external LECT snapshot: " + build_reason);
+                }
+            }
+            external_evidence_snapshot_ = std::make_unique<lect_database::LectReadSnapshot>();
+            std::string snapshot_reason;
+            if (!external_evidence_snapshot_->open(snapshot_path, &snapshot_reason)) {
+                throw std::runtime_error("failed to open external LECT snapshot evidence source: " + snapshot_reason);
+            }
+            external_evidence_snapshot_source_ = std::make_unique<lect_database::LectSnapshotEvidenceSource>(*external_evidence_snapshot_);
+            external_evidence_source_ = external_evidence_snapshot_source_.get();
+        } else {
+            throw std::runtime_error(
+                "legacy mutable external LECTDatabase evidence reuse is disabled; use snapshot external evidence");
         }
     }
     online_cache_ = std::make_unique<lect_database::OnlineEnvelopeCacheTree>(*database_, config_.database.online_cache);
     reset_oracle(Scene{});
-}
-
-RBFPlanningForest::~RBFPlanningForest() {
-    stop_snapshot_publish_worker();
 }
 
 BuildProfile RBFPlanningForest::build(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -1311,8 +1225,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     using Clock = std::chrono::steady_clock;
     ScopedStageTimer function_timer(context.diagnostics(), "forest.build_coverage");
     const auto t0 = Clock::now();
-    const auto canonical_seeds = canonicalize_configurations(robot_, config_.database, seeds);
-    last_build_seeds_ = canonical_seeds;
+    last_build_seeds_ = seeds;
     scene_.set_obstacles(obstacles);
     reset_oracle(scene_);
     boxes_.clear();
@@ -1323,7 +1236,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
 
     const auto grow_t0 = Clock::now();
     auto grower = make_grower(*oracle_, config_.grower);
-    auto grow = grower->grow(canonical_seeds, context);
+    auto grow = grower->grow(seeds, context);
     context.diagnostics().record_timing(
         "forest.grow_stage",
         std::chrono::duration<double, std::milli>(Clock::now() - grow_t0).count());
@@ -1385,8 +1298,28 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().set_value("oracle.materialization_reused_fk", static_cast<double>(oracle_counters.materialization_reused_fk));
     context.diagnostics().set_value("oracle.materialization_reused_endpoint_cache", static_cast<double>(oracle_counters.materialization_reused_endpoint_cache));
     context.diagnostics().set_value("oracle.materialization_reused_external_evidence", static_cast<double>(oracle_counters.materialization_reused_external_evidence));
+    context.diagnostics().set_value("oracle.materialization_reused_shared_endpoint_cache", static_cast<double>(oracle_counters.materialization_reused_shared_endpoint_cache));
+    context.diagnostics().set_value("oracle.materialization_stored_shared_endpoint_cache", static_cast<double>(oracle_counters.materialization_stored_shared_endpoint_cache));
+    if (const auto* shared_cache = oracle_->shared_endpoint_cache_peek()) {
+        context.diagnostics().set_value("oracle.shared_endpoint_cache_size", static_cast<double>(shared_cache->size()));
+        context.diagnostics().set_value("oracle.shared_endpoint_cache_bytes", static_cast<double>(shared_cache->bytes()));
+        context.diagnostics().set_value("oracle.shared_endpoint_cache_evictions", static_cast<double>(shared_cache->evictions()));
+    }
     context.diagnostics().set_value("oracle.materialization_endpoint_time_us", oracle_counters.materialization_endpoint_time_us);
+    context.diagnostics().set_value("oracle.materialization_endpoint_wall_time_us", oracle_counters.materialization_endpoint_wall_time_us);
+    context.diagnostics().set_value("oracle.validate_node_total_time_us", oracle_counters.validate_node_total_time_us);
+    context.diagnostics().set_value("oracle.validate_node_preamble_time_us", oracle_counters.validate_node_preamble_time_us);
+    context.diagnostics().set_value("oracle.validate_node_endpoint_path_time_us", oracle_counters.validate_node_endpoint_path_time_us);
+    context.diagnostics().set_value("oracle.validate_node_classify_time_us", oracle_counters.validate_node_classify_time_us);
+    context.diagnostics().set_value("oracle.validate_node_overhead_time_us", oracle_counters.validate_node_overhead_time_us);
     context.diagnostics().set_value("oracle.materialization_envelope_time_us", oracle_counters.materialization_envelope_time_us);
+    context.diagnostics().set_value("oracle.materialization_cache_lookup_time_us", oracle_counters.materialization_cache_lookup_time_us);
+    context.diagnostics().set_value("oracle.materialization_cache_read_time_us", oracle_counters.materialization_cache_read_time_us);
+    context.diagnostics().set_value("oracle.materialization_external_lookup_time_us", oracle_counters.materialization_external_lookup_time_us);
+    context.diagnostics().set_value("oracle.materialization_external_read_time_us", oracle_counters.materialization_external_read_time_us);
+    context.diagnostics().set_value("oracle.materialization_envelope_compute_time_us", oracle_counters.materialization_envelope_compute_time_us);
+    context.diagnostics().set_value("oracle.materialization_envelope_read_time_us", oracle_counters.materialization_envelope_read_time_us);
+    context.diagnostics().set_value("oracle.materialization_envelope_collision_time_us", oracle_counters.materialization_envelope_collision_time_us);
     context.diagnostics().set_value("oracle.materialization_candidate_dirty_count", static_cast<double>(oracle_counters.materialization_candidate_dirty_count));
     context.diagnostics().set_value("oracle.materialization_predh_rebuild_count", static_cast<double>(oracle_counters.materialization_predh_rebuild_count));
     context.diagnostics().set_value("oracle.scoring_evaluations", static_cast<double>(oracle_counters.scoring_evaluations));
@@ -1426,7 +1359,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     invalidate_query_cache();
 
     if (config_.database.checkpoint_after_build && database_) {
-        checkpoint_database();
+        database_->checkpoint();
     }
     return last_build_;
 }
@@ -1487,234 +1420,13 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         return split_dim >= 0;
     };
 
-    const double domain_tol = 1e-12;
-    const int tree_max_depth = std::max(0, oracle_->max_tree_depth() - 1);
-    const int effective_max_depth = std::clamp(options.max_depth, 0, tree_max_depth);
-    const int requested_start_depth = (options.start_depth > 0 || options.skip_to_depth <= 0)
-        ? options.start_depth
-        : options.skip_to_depth;
-    const int effective_start_depth = std::clamp(requested_start_depth, 0, effective_max_depth);
-    auto should_stop_search = [&](FindFreeBoxResult& current_result) {
-        const bool deadline_limit_hit = options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms;
-        if (!context.should_stop() && !deadline_limit_hit) {
-            return false;
-        }
-        current_result.deadline_reached = context.deadline().expired() || deadline_limit_hit;
-        current_result.fail_code = 4;
-        return true;
-    };
-    auto descend_to_seed_child = [&](OracleNodeId& current_node, int& current_changed_dim) {
-        current_changed_dim = oracle_->split_dim(current_node);
-        if (current_changed_dim < 0 || current_changed_dim >= seed.size()) {
-            return false;
-        }
-        const OracleNodeId child = (seed[current_changed_dim] <= oracle_->split_value(current_node))
-            ? oracle_->left_child(current_node)
-            : oracle_->right_child(current_node);
-        if (child == kInvalidOracleNodeId) {
-            return false;
-        }
-        current_node = child;
-        return true;
-    };
-
-    if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth) {
-        enum class DepthProbeOutcome : std::uint8_t {
-            Free = 0,
-            NonFree = 1,
-            Fatal = 2,
-        };
-        struct DepthProbeResult {
-            DepthProbeOutcome outcome = DepthProbeOutcome::Fatal;
-            FindFreeBoxResult result;
-        };
-
-        auto probe_target_depth = [&](int target_depth) {
-            FindFreeBoxResult probe_result;
-            OracleNodeId node = oracle_->root_node();
-            int changed_dim = -1;
-            while (true) {
-                if (should_stop_search(probe_result)) {
-                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                }
-
-                auto intervals = oracle_->node_intervals(node);
-                const int node_depth = oracle_->depth(node);
-                if (!intervals_overlap_local(intervals, domain, 0.0)) {
-                    probe_result.node = node;
-                    probe_result.intervals = std::move(intervals);
-                    probe_result.fail_code = 5;
-                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                }
-
-                if (node_depth >= target_depth) {
-                    if (!intervals_subset_local(intervals, domain, domain_tol)) {
-                        probe_result.hit_unknown_depth_cap = true;
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 2;
-                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
-                    }
-                    if (oracle_->is_reserved(node)) {
-                        probe_result.hit_reserved_depth_cap = true;
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 2;
-                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
-                    }
-
-                    const auto validation = oracle_->validate_node(node, intervals, changed_dim);
-                    probe_result.validation_detail = oracle_->last_validation_detail();
-                    probe_result.decisions += 1;
-                    if (validation == BoxValidation::Free) {
-                        probe_result.found = true;
-                        probe_result.node = node;
-                        probe_result.changed_dim = changed_dim;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 0;
-                        return DepthProbeResult{DepthProbeOutcome::Free, std::move(probe_result)};
-                    }
-                    probe_result.node = node;
-                    probe_result.intervals = std::move(intervals);
-                    if (validation == BoxValidation::Occupied) {
-                        probe_result.fail_code = 3;
-                    } else {
-                        probe_result.hit_unknown_depth_cap = true;
-                        probe_result.fail_code = 2;
-                    }
-                    return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
-                }
-
-                if (!oracle_->is_leaf(node)) {
-                    descend_to_seed_child(node, changed_dim);
-                    continue;
-                }
-
-                if (!intervals_subset_local(intervals, domain, domain_tol)) {
-                    int split_dim = -1;
-                    double split_value = 0.0;
-                    if (!choose_domain_boundary_split(intervals, split_dim, split_value)) {
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 6;
-                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                    }
-                    const auto split = oracle_->split_node_at(node, split_dim, split_value);
-                    if (!split.split) {
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 6;
-                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                    }
-                    probe_result.splits += 1;
-                    changed_dim = split_dim;
-                    if (split_dim < 0 || split_dim >= seed.size() ||
-                        split.left == kInvalidOracleNodeId || split.right == kInvalidOracleNodeId) {
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 6;
-                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                    }
-                    node = (seed[split_dim] <= split_value) ? split.left : split.right;
-                    continue;
-                }
-
-                if (oracle_->is_reserved(node)) {
-                    if (!options.split_reserved_leaf) {
-                        probe_result.hit_reserved_depth_cap = true;
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 2;
-                        return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
-                    }
-                    const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
-                    if (!split.split) {
-                        probe_result.fail_code = 6;
-                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                    }
-                    probe_result.splits += 1;
-                    if (!descend_to_seed_child(node, changed_dim)) {
-                        probe_result.node = node;
-                        probe_result.intervals = std::move(intervals);
-                        probe_result.fail_code = 6;
-                        return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                    }
-                    continue;
-                }
-
-                if (!options.split_unknown_leaf) {
-                    probe_result.hit_unknown_depth_cap = true;
-                    probe_result.node = node;
-                    probe_result.intervals = std::move(intervals);
-                    probe_result.fail_code = 2;
-                    return DepthProbeResult{DepthProbeOutcome::NonFree, std::move(probe_result)};
-                }
-                const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
-                if (!split.split) {
-                    probe_result.fail_code = 6;
-                    return DepthProbeResult{DepthProbeOutcome::Fatal, std::move(probe_result)};
-                }
-                probe_result.splits += 1;
-                descend_to_seed_child(node, changed_dim);
-            }
-        };
-
-        int total_decisions = 0;
-        int total_splits = 0;
-        auto absorb_probe = [&](const FindFreeBoxResult& probe_result) {
-            total_decisions += probe_result.decisions;
-            total_splits += probe_result.splits;
-        };
-        auto finalize = [&](FindFreeBoxResult probe_result) {
-            probe_result.decisions = total_decisions;
-            probe_result.splits = total_splits;
-            return probe_result;
-        };
-
-        auto lower_probe = probe_target_depth(effective_start_depth);
-        absorb_probe(lower_probe.result);
-        if (lower_probe.outcome != DepthProbeOutcome::NonFree || effective_start_depth >= effective_max_depth) {
-            result = finalize(std::move(lower_probe.result));
-            result.total_ms = elapsed_ms();
-            return result;
-        }
-
-        auto upper_probe = probe_target_depth(effective_max_depth);
-        absorb_probe(upper_probe.result);
-        if (upper_probe.outcome != DepthProbeOutcome::Free) {
-            result = finalize(std::move(upper_probe.result));
-            result.total_ms = elapsed_ms();
-            return result;
-        }
-
-        int nonfree_depth = effective_start_depth;
-        int free_depth = effective_max_depth;
-        FindFreeBoxResult best_free = std::move(upper_probe.result);
-        while (free_depth - nonfree_depth > 1) {
-            const int mid_depth = nonfree_depth + (free_depth - nonfree_depth) / 2;
-            auto mid_probe = probe_target_depth(mid_depth);
-            absorb_probe(mid_probe.result);
-            if (mid_probe.outcome == DepthProbeOutcome::Fatal) {
-                result = finalize(std::move(mid_probe.result));
-                result.total_ms = elapsed_ms();
-                return result;
-            }
-            if (mid_probe.outcome == DepthProbeOutcome::Free) {
-                free_depth = mid_depth;
-                best_free = std::move(mid_probe.result);
-                continue;
-            }
-            nonfree_depth = mid_depth;
-        }
-        result = finalize(std::move(best_free));
-        result.total_ms = elapsed_ms();
-        return result;
-    }
-
+    const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_->max_tree_depth() - 1));
     OracleNodeId node = oracle_->root_node();
     int changed_dim = -1;
     while (true) {
-        if (should_stop_search(result)) {
+        if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
+            result.deadline_reached = context.deadline().expired() || options.deadline_ms > 0.0;
+            result.fail_code = 4;
             break;
         }
 
@@ -1726,11 +1438,14 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
         if (!oracle_->is_leaf(node)) {
-            descend_to_seed_child(node, changed_dim);
+            changed_dim = oracle_->split_dim(node);
+            node = (seed[changed_dim] <= oracle_->split_value(node))
+                ? oracle_->left_child(node)
+                : oracle_->right_child(node);
             continue;
         }
 
-        if (!intervals_subset_local(intervals, domain, domain_tol)) {
+        if (!intervals_subset_local(intervals, domain, 1e-12)) {
             if (oracle_->depth(node) >= effective_max_depth) {
                 result.hit_unknown_depth_cap = true;
                 result.node = node;
@@ -1755,13 +1470,6 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             }
             result.splits += 1;
             changed_dim = split_dim;
-            if (split_dim < 0 || split_dim >= seed.size() ||
-                split.left == kInvalidOracleNodeId || split.right == kInvalidOracleNodeId) {
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 6;
-                break;
-            }
             node = (seed[split_dim] <= split_value) ? split.left : split.right;
             continue;
         }
@@ -1780,12 +1488,10 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 break;
             }
             result.splits += 1;
-            if (!descend_to_seed_child(node, changed_dim)) {
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 6;
-                break;
-            }
+            changed_dim = oracle_->split_dim(node);
+            node = (seed[changed_dim] <= oracle_->split_value(node))
+                ? oracle_->left_child(node)
+                : oracle_->right_child(node);
             continue;
         }
 
@@ -1819,7 +1525,10 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
         result.splits += 1;
-        descend_to_seed_child(node, changed_dim);
+        changed_dim = oracle_->split_dim(node);
+        node = (seed[changed_dim] <= oracle_->split_value(node))
+            ? oracle_->left_child(node)
+            : oracle_->right_child(node);
     }
     result.total_ms = elapsed_ms();
     return result;
@@ -1934,7 +1643,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 removed_box_ids.find(edge.target_box_id) != removed_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, carving_checker, config_.query);
+            return !segment_edge_survives_scene(edge, carving_checker, config_.query.audit_resolution);
         }), segment_edges_.end());
 
         const auto local_adj_t0 = Clock::now();
@@ -2089,7 +1798,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, validation_checker, config_.query);
+            return !segment_edge_survives_scene(edge, validation_checker, config_.query.audit_resolution);
         }), segment_edges_.end());
         scene_.set_obstacles(std::move(final_obstacles));
         reset_oracle(scene_);
@@ -2136,130 +1845,9 @@ BuildProfile RBFPlanningForest::build_subtractive(
     invalidate_query_cache();
 
     if (config_.database.checkpoint_after_build && database_) {
-        checkpoint_database();
+        database_->checkpoint();
     }
     return last_build_;
-}
-
-bool RBFPlanningForest::checkpoint_database() {
-    if (!database_) {
-        return false;
-    }
-    if (online_cache_ && !online_cache_->flush_payloads_to_database()) {
-        return false;
-    }
-    const bool checkpoint_ok = database_->checkpoint();
-    if (!checkpoint_ok || !config_.database.auto_publish_snapshot_after_checkpoint) {
-        return checkpoint_ok;
-    }
-    return publish_database_snapshot(false);
-}
-
-std::filesystem::path RBFPlanningForest::database_snapshot_path() const {
-    return resolve_database_snapshot_publish_path(config_.database);
-}
-
-bool RBFPlanningForest::publish_snapshot_now(std::string* reason) {
-    const auto snapshot_path = database_snapshot_path();
-    if (config_.database.path.empty()) {
-        if (reason) *reason = "database path is empty";
-        return false;
-    }
-    if (snapshot_path.empty()) {
-        if (reason) *reason = "snapshot publish path is empty";
-        return false;
-    }
-    return lect_database::LectReadSnapshot::build_from_legacy(config_.database.path, snapshot_path, reason);
-}
-
-void RBFPlanningForest::ensure_snapshot_publish_worker() {
-    if (snapshot_publish_worker_.joinable()) {
-        return;
-    }
-    snapshot_publish_stop_ = false;
-    snapshot_publish_worker_ = std::thread([this]() { snapshot_publish_loop(); });
-}
-
-void RBFPlanningForest::snapshot_publish_loop() {
-    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
-    while (true) {
-        snapshot_publish_cv_.wait(lock, [this]() {
-            return snapshot_publish_stop_ || snapshot_publish_completed_seq_ < snapshot_publish_requested_seq_;
-        });
-        if (snapshot_publish_stop_ && snapshot_publish_completed_seq_ >= snapshot_publish_requested_seq_) {
-            break;
-        }
-
-        const std::uint64_t target_seq = snapshot_publish_requested_seq_;
-        snapshot_publish_running_ = true;
-        lock.unlock();
-
-        std::string reason;
-        const bool ok = publish_snapshot_now(&reason);
-
-        lock.lock();
-        snapshot_publish_last_ok_ = ok;
-        snapshot_publish_last_reason_ = reason;
-        snapshot_publish_completed_seq_ = target_seq;
-        snapshot_publish_running_ = false;
-        snapshot_publish_cv_.notify_all();
-        if (snapshot_publish_stop_ && snapshot_publish_completed_seq_ >= snapshot_publish_requested_seq_) {
-            break;
-        }
-    }
-}
-
-void RBFPlanningForest::stop_snapshot_publish_worker() {
-    {
-        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
-        snapshot_publish_stop_ = true;
-    }
-    snapshot_publish_cv_.notify_all();
-    if (snapshot_publish_worker_.joinable()) {
-        snapshot_publish_worker_.join();
-    }
-}
-
-bool RBFPlanningForest::publish_database_snapshot(bool wait) {
-    if (config_.database.auto_publish_snapshot_async && !wait) {
-        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
-        snapshot_publish_requested_seq_ += 1;
-        ensure_snapshot_publish_worker();
-        snapshot_publish_cv_.notify_all();
-        return true;
-    }
-
-    if (!config_.database.auto_publish_snapshot_async) {
-        std::string reason;
-        const bool ok = publish_snapshot_now(&reason);
-        std::lock_guard<std::mutex> lock(snapshot_publish_mutex_);
-        snapshot_publish_last_ok_ = ok;
-        snapshot_publish_last_reason_ = reason;
-        snapshot_publish_completed_seq_ = snapshot_publish_requested_seq_;
-        return ok;
-    }
-
-    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
-    snapshot_publish_requested_seq_ += 1;
-    const std::uint64_t target_seq = snapshot_publish_requested_seq_;
-    ensure_snapshot_publish_worker();
-    snapshot_publish_cv_.notify_all();
-    snapshot_publish_cv_.wait(lock, [this, target_seq]() {
-        return !snapshot_publish_running_ && snapshot_publish_completed_seq_ >= target_seq;
-    });
-    return snapshot_publish_last_ok_;
-}
-
-bool RBFPlanningForest::wait_for_snapshot_publish() {
-    std::unique_lock<std::mutex> lock(snapshot_publish_mutex_);
-    const std::uint64_t target_seq = snapshot_publish_requested_seq_;
-    if (!snapshot_publish_worker_.joinable()) {
-        return snapshot_publish_last_ok_;
-    }
-    snapshot_publish_cv_.wait(lock, [this, target_seq]() {
-        return !snapshot_publish_running_ && snapshot_publish_completed_seq_ >= target_seq;
-    });
-    return snapshot_publish_last_ok_;
 }
 
 QueryResult RBFPlanningForest::query(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -2271,20 +1859,18 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
                                               const Eigen::Ref<const Eigen::VectorXd>& goal,
                                               bool allow_collision_shortcut) const {
     using Clock = std::chrono::steady_clock;
-    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
-    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
     QueryConfig query_config = config_.query;
     if (!allow_collision_shortcut) {
         query_config.collision_shortcut = false;
     }
     const bool do_collision_shortcut = query_config.collision_shortcut;
     CorridorQuery query_engine(query_config);
-    QueryResult result = query_engine.run(query_cache(), canonical_start, canonical_goal);
+    QueryResult result = query_engine.run(query_cache(), start, goal);
     if (result.success && do_collision_shortcut && !query_config.strict_path_audit && result.path.size() > 2) {
         CollisionChecker checker(robot_, scene_);
         result.path = collision_shortcut_path(result.path,
                                              checker,
-                                             query_config);
+                                             collision_shortcut_resolution(query_config));
         result.path_length = path_length(result.path);
     }
     summarize_query_path(result, boxes_, segment_edges_);
@@ -2297,15 +1883,15 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             repair_config.timeout_ms = query_config.repair_timeout_ms;
         }
         repair_config.segment_resolution = std::max(repair_config.segment_resolution, query_config.audit_resolution);
-        std::vector<Eigen::VectorXd> repair_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, repair_config, 20260511);
+        std::vector<Eigen::VectorXd> repair_path = rrt_connect(start, goal, checker, robot_, repair_config, 20260511);
         if (!repair_path.empty()) {
-            PathAuditCheck repair_audit = audit_waypoint_path(repair_path, checker, query_config);
+            PathAuditCheck repair_audit = audit_waypoint_path(repair_path, checker, query_config.audit_resolution);
             if (repair_audit.passed && do_collision_shortcut && repair_path.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repair_path,
                     checker,
-                    query_config);
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
+                    collision_shortcut_resolution(query_config));
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
                 if (shortened_audit.passed && path_length(shortened) <= path_length(repair_path) + 1e-12) {
                     repair_path = std::move(shortened);
                     repair_audit = shortened_audit;
@@ -2327,15 +1913,15 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     if (result.success && query_config.strict_path_audit) {
         CollisionChecker checker(robot_, scene_);
         const auto audit_t0 = Clock::now();
-        PathAuditCheck audit = audit_waypoint_path(result.path, checker, query_config);
+        PathAuditCheck audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
         result.failed_segment_index = audit.failed_segment_index;
         if (audit.passed) {
             if (do_collision_shortcut && result.path.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     result.path,
                     checker,
-                    query_config);
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
+                    collision_shortcut_resolution(query_config));
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
                 if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                     result.path = std::move(shortened);
                     result.path_length = path_length(result.path);
@@ -2351,13 +1937,13 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             const bool repaired = try_local_birrt_repair(result, audit, checker, robot_, query_config, config_.connector.rrt);
             result.repair_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - repair_t0).count();
             if (repaired) {
-                PathAuditCheck repaired_audit = audit_waypoint_path(result.path, checker, query_config);
+                PathAuditCheck repaired_audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
                 if (repaired_audit.passed && do_collision_shortcut && result.path.size() > 2) {
                     std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                         result.path,
                         checker,
-                        query_config);
-                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config);
+                        collision_shortcut_resolution(query_config));
+                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
                     if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                         result.path = std::move(shortened);
                         result.path_length = path_length(result.path);
@@ -2407,13 +1993,11 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     if (boxes_.empty() || !oracle_) {
         return 0;
     }
-    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
-    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
-    const int start_box_id = locate_containing_box(query_cache(), canonical_start, config_.query.nearest_if_outside);
+    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         return 0;
     }
-    const int goal_box_id = locate_containing_box(query_cache(), canonical_goal, config_.query.nearest_if_outside);
+    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0 || goal_box_id == start_box_id) {
         return 0;
     }
@@ -2421,11 +2005,11 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     CollisionChecker checker(robot_, scene_);
     RRTConnectConfig bridge_rrt = config_.connector.rrt;
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
-    auto waypoint_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, context, bridge_rrt, 20260503);
+    auto waypoint_path = rrt_connect(start, goal, checker, robot_, context, bridge_rrt, 20260503);
     if (waypoint_path.empty()) {
         return 0;
     }
-    if (!audit_waypoint_path(waypoint_path, checker, config_.query).passed) {
+    if (!audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
         return 0;
     }
     int direct_segment_edges_added = 0;
@@ -2469,10 +2053,8 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     if (boxes_.empty() || !oracle_ || max_boxes_to_add <= 0) {
         return 0;
     }
-    const Eigen::VectorXd canonical_start = canonicalize_configuration(robot_, config_.database, start);
-    const Eigen::VectorXd canonical_goal = canonicalize_configuration(robot_, config_.database, goal);
     CollisionChecker checker(robot_, scene_);
-    QueryResult probe = run_query_internal(canonical_start, canonical_goal, false);
+    QueryResult probe = run_query_internal(start, goal, false);
     if (probe.success && probe.repair_count == 0 && probe.segment_edges_used == 0) {
         return 0;
     }
@@ -2484,7 +2066,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         StageContext rrt_context = StageContext::serial();
         RRTConnectConfig refine_rrt = config_.connector.rrt;
         refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-        waypoint_path = rrt_connect(canonical_start, canonical_goal, checker, robot_, rrt_context, refine_rrt, 20260505);
+        waypoint_path = rrt_connect(start, goal, checker, robot_, rrt_context, refine_rrt, 20260505);
     }
     if (waypoint_path.empty()) {
         return 0;
@@ -2511,7 +2093,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         pave_config);
     if (added > 0) {
         rebuild_adjacency();
-        if (audit_waypoint_path(waypoint_path, checker, config_.query).passed) {
+        if (audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
             const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
             const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
             if (source_box_id >= 0 && target_box_id >= 0) {
@@ -2600,7 +2182,7 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
             live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
             return true;
         }
-        return !segment_edge_survives_scene(edge, updated_checker, config_.query);
+        return !segment_edge_survives_scene(edge, updated_checker, config_.query.audit_resolution);
     }), segment_edges_.end());
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 
@@ -3083,7 +2665,15 @@ void RBFPlanningForest::reset_oracle(Scene scene) {
     online_cache_->clear_payloads();
     oracle_ = std::make_unique<DatabaseBoxOracle>(
         robot_, *online_cache_, std::move(scene), config_.endpoint_source, config_.envelope_type, config_.validation,
-        external_evidence_source_.get());
+        external_evidence_source_, direct_external_evidence_database_);
+    // Preserve the interval-keyed endpoint cache across oracle resets so it
+    // persists across queries (endpoints are scene-independent). The cache is
+    // memory-bounded by the validation config (OOM guard).
+    if (shared_endpoint_cache_) {
+        oracle_->set_shared_endpoint_cache(shared_endpoint_cache_);
+    } else {
+        shared_endpoint_cache_ = oracle_->shared_endpoint_cache();
+    }
 }
 
 void RBFPlanningForest::reserve_existing_boxes() {

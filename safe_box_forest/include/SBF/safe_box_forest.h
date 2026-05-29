@@ -12,12 +12,8 @@
 #include <rbf/lect_database.h>
 
 #include <filesystem>
-#include <condition_variable>
-#include <cstdint>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -55,20 +51,17 @@ struct LectDatabaseRuntimeConfig {
 	std::filesystem::path external_evidence_snapshot_path;
 	lect_database::SplitPolicyDescriptor split_policy;
 	lect_database::OnlineEnvelopeCacheConfig online_cache;
+	bool external_evidence_use_snapshot = true;
+	bool external_evidence_auto_build_snapshot = true;
 	bool read_only = false;
 	bool create_if_missing = true;
 	bool verify_identity = true;
 	bool replay_journal = true;
 	bool propagate_parent_hulls = true;
 	bool defer_parent_hull_writes = false;
-	bool canonical_mode = false;
+	bool canonical_mode = true;
 	bool checkpoint_after_build = true;
-	std::filesystem::path auto_publish_snapshot_path;
-	bool auto_publish_snapshot_after_checkpoint = false;
-	bool auto_publish_snapshot_async = true;
-	bool external_evidence_use_snapshot = false;
-	bool external_evidence_auto_build_snapshot = true;
-	std::string symmetry_descriptor;
+	std::string symmetry_descriptor = "joint_symmetry_native_v1";
 	std::uint32_t page_size_bytes = 64u * 1024u;
 	std::uint32_t max_resident_pages = 256u;
 	int max_tree_depth = 64;
@@ -153,7 +146,6 @@ struct PureFfbProfile {
 class RBFPlanningForest {
 public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
-	~RBFPlanningForest();
 
 	BuildProfile build(const Eigen::Ref<const Eigen::VectorXd>& start,
 					   const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -205,10 +197,6 @@ public:
 	const BuildProfile& last_build_profile() const { return last_build_; }
 	lect_database::LectDatabase& database() { return *database_; }
 	const lect_database::LectDatabase& database() const { return *database_; }
-	bool checkpoint_database();
-	bool publish_database_snapshot(bool wait = false);
-	bool wait_for_snapshot_publish();
-	std::filesystem::path database_snapshot_path() const;
 	lect_database::OnlineEnvelopeCacheTree& online_cache() { return *online_cache_; }
 	const lect_database::OnlineEnvelopeCacheTree& online_cache() const { return *online_cache_; }
 
@@ -226,20 +214,23 @@ private:
 	void invalidate_query_cache() const;
 	const QueryGraphCache& query_cache() const;
 	int next_box_id() const;
-	bool publish_snapshot_now(std::string* reason);
-	void ensure_snapshot_publish_worker();
-	void snapshot_publish_loop();
-	void stop_snapshot_publish_worker();
 
 	Robot robot_;
 	RBFPlanningConfig config_;
 	Scene scene_;
 	std::unique_ptr<lect_database::LectDatabase> database_;
 	std::unique_ptr<lect_database::LectDatabase> external_evidence_database_;
+	std::unique_ptr<lect_database::LectDatabaseEvidenceSource> external_evidence_database_source_;
 	std::unique_ptr<lect_database::LectReadSnapshot> external_evidence_snapshot_;
-	std::unique_ptr<lect_database::LectExternalEvidenceSource> external_evidence_source_;
+	std::unique_ptr<lect_database::LectSnapshotEvidenceSource> external_evidence_snapshot_source_;
+	const lect_database::LectExternalEvidenceSource* external_evidence_source_ = nullptr;
+	const lect_database::LectDatabase* direct_external_evidence_database_ = nullptr;
 	std::unique_ptr<lect_database::OnlineEnvelopeCacheTree> online_cache_;
 	std::unique_ptr<DatabaseBoxOracle> oracle_;
+	// Persists endpoint evidence across oracle resets / queries (endpoints are
+	// scene-independent robot-link envelopes). Bounded by the oracle validation
+	// config to guard against unbounded growth (OOM).
+	std::shared_ptr<lect_database::SharedEndpointEvidenceCache> shared_endpoint_cache_;
 	std::vector<BoxNode> boxes_;
 	std::vector<BoxNode> raw_boxes_;
 	AdjacencyGraph adjacency_;
@@ -248,15 +239,6 @@ private:
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;
 	mutable bool query_cache_dirty_ = true;
-	std::mutex snapshot_publish_mutex_;
-	std::condition_variable snapshot_publish_cv_;
-	std::thread snapshot_publish_worker_;
-	bool snapshot_publish_stop_ = false;
-	bool snapshot_publish_running_ = false;
-	bool snapshot_publish_last_ok_ = true;
-	std::string snapshot_publish_last_reason_;
-	std::uint64_t snapshot_publish_requested_seq_ = 0;
-	std::uint64_t snapshot_publish_completed_seq_ = 0;
 };
 
 }  // namespace rbf

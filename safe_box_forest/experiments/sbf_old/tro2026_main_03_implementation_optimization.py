@@ -38,7 +38,7 @@ OPTIMIZATION_ROWS: list[dict[str, Any]] = [
         "id": "LECT-02",
         "priority": "P1",
         "target": "Hash index for evidence/grid lookup and remap",
-        "source_files": ["LECT/src/grid_store.cpp", "LECT/src/evidence_store.cpp"],
+        "source_files": ["LECT/src/grid_store.cpp", "lect_database/src/lect_database/evidence_store.cpp"],
         "artifact": "tro2026_lect_evidence_index.json",
         "primary_metric": "evidence lookup time, grid lookup time, cache hit rate",
         "validation_gate": "indexed lookup returns the same payloads as linear lookup",

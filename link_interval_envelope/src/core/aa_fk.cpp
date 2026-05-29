@@ -335,4 +335,68 @@ void aa_fk_extract_from_prefix(
     affine_extract_endpoint_iaabbs(prefix, active_link_map, n_active_links, n_joints, out);
 }
 
+void aa_fk_endpoint_full(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    float* out,
+    AaFkPrefixState& state)
+{
+    const int n_joints = robot.n_joints();
+    affine_identity(state.prefix[0], n_joints);
+    aa_fk_update_prefix_from(state.prefix, robot, intervals, 0, n_joints);
+    aa_fk_extract_from_prefix(
+        state.prefix, robot.active_link_map(), robot.n_active_links(), n_joints, out);
+    state.intervals = intervals;
+    state.n_joints = n_joints;
+    state.valid = true;
+}
+
+bool aa_fk_endpoint_incremental(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    float* out,
+    AaFkPrefixState& state)
+{
+    const int n_joints = robot.n_joints();
+    if (!state.valid || state.n_joints != n_joints) {
+        return false;
+    }
+    if (state.intervals.size() != intervals.size()) {
+        return false;
+    }
+
+    // Detect the changed dimension via a bit-exact comparison of the actual
+    // AA-FK inputs. This is independent of any frame/symmetry transform applied
+    // upstream, so the incremental result is always provably identical to a
+    // full pass whenever it is applied.
+    int changed = -1;
+    for (int j = 0; j < static_cast<int>(intervals.size()); ++j) {
+        if (state.intervals[j].lo != intervals[j].lo ||
+            state.intervals[j].hi != intervals[j].hi) {
+            if (changed != -1) {
+                return false;  // more than one dimension changed
+            }
+            changed = j;
+        }
+    }
+
+    if (changed < 0) {
+        // Identical box: re-extract from the cached prefix (still exact).
+        aa_fk_extract_from_prefix(
+            state.prefix, robot.active_link_map(), robot.n_active_links(), n_joints, out);
+        return true;
+    }
+    if (changed >= n_joints) {
+        return false;  // changed dimension is not a kinematic joint
+    }
+
+    // prefix[0..changed] depend only on intervals[0..changed-1] (unchanged), so
+    // they remain valid; recompute the suffix from `changed` onward.
+    aa_fk_update_prefix_from(state.prefix, robot, intervals, changed, n_joints);
+    aa_fk_extract_from_prefix(
+        state.prefix, robot.active_link_map(), robot.n_active_links(), n_joints, out);
+    state.intervals = intervals;
+    return true;
+}
+
 }  // namespace rbf

@@ -171,10 +171,8 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
     cfg.grower.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
     cfg.connector.pave.commit_policy = sbf.BoxCommitPolicy.CommitCertifiedOnly
     cfg.grower.find_free_box.max_depth = max_depth
-    cfg.grower.find_free_box.start_depth = skip_depth
     cfg.grower.find_free_box.skip_to_depth = skip_depth
     cfg.connector.pave.find_free_box.max_depth = max_depth
-    cfg.connector.pave.find_free_box.start_depth = skip_depth
     cfg.connector.pave.find_free_box.skip_to_depth = skip_depth
 
 
@@ -197,6 +195,8 @@ def configure_external_evidence_reuse(
 ) -> dict[str, Any]:
     external_path = Path(source_path)
     mode = str(getattr(args, "external_evidence_mode", "snapshot")) if args is not None else "snapshot"
+    if mode != "snapshot":
+        raise ValueError("legacy external evidence reuse is disabled; use --external-evidence-mode snapshot")
     use_snapshot = mode == "snapshot"
     snapshot_path = default_external_evidence_snapshot_path(external_path)
 
@@ -223,10 +223,14 @@ def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dic
     split_policy = cfg.database.split_policy
     depth_dimensions = list(split_policy.depth_dimensions)
     rbf_envelope_arg = str(getattr(args, "rbf_envelope", "support_hull")) if args is not None else None
+    endpoint_source_raw = str(cfg.endpoint_source.source).split(".")[-1]
+    endpoint_channel = "safe" if endpoint_source_raw in {"IFK", "HIFK"} else "rapid"
+    split_policy_name = str(getattr(args, "lect_split_policy", "aafk_volume_min")) if args is not None else "configured"
     return {
         "preset": RBF_LIFELONG_PRESET,
-        "endpoint_source": "IFK_AA-backed EndpointSource.IFK",
-        "split_policy": "AAFKVolumeMin",
+        "endpoint_source": endpoint_source_raw,
+        "endpoint_channel": endpoint_channel,
+        "split_policy": split_policy_name,
         "split_policy_descriptor": sbf.split_policy_descriptor(split_policy),
         "split_policy_hash": int(sbf.split_policy_hash(split_policy)),
         "dimension_schedule_hash": str(split_policy.dimension_schedule_hash),
@@ -237,6 +241,7 @@ def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dic
         "envelope": rbf_envelope_arg,
         "envelope_type_raw": str(cfg.envelope_type.type).split(".")[-1],
         "canonical_mode": bool(cfg.database.canonical_mode),
+        "symmetry_descriptor": str(getattr(cfg.database, "symmetry_descriptor", "")),
         "database_path": str(cfg.database.path),
         "database_snapshot_path": str(
             getattr(cfg.database, "auto_publish_snapshot_path", "") or (Path(str(cfg.database.path)) / "lect_snapshot")
@@ -322,6 +327,8 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--validation-cache", action="store_true", default=True)
     parser.add_argument("--no-validation-cache", dest="validation_cache", action="store_false")
     parser.add_argument("--validation-cache-max-entries", type=int, default=200000)
+    parser.add_argument("--endpoint-evidence-cache", action="store_true", default=True)
+    parser.add_argument("--no-endpoint-evidence-cache", dest="endpoint_evidence_cache", action="store_false")
     parser.add_argument("--collision-shortcut", action="store_true", default=True)
     parser.add_argument("--no-collision-shortcut", dest="collision_shortcut", action="store_false")
     parser.add_argument("--collision-shortcut-resolution", type=int, default=24)
@@ -353,7 +360,7 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--rbf-auto-publish-snapshot-async", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-online-cache-max-nodes", type=int, default=200000)
     parser.add_argument("--rbf-online-cache-max-payload-bytes", type=int, default=512 * 1024 * 1024)
-    parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
+    parser.add_argument("--external-evidence-mode", choices=["snapshot"], default="snapshot")
     parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
 
 
@@ -363,6 +370,8 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
     if bool(cfg.database.canonical_mode):
         set_if_available(cfg.database, "symmetry_descriptor", "joint_symmetry_native_v1")
+    else:
+        set_if_available(cfg.database, "symmetry_descriptor", "")
     bridge_segment_resolution = segment_resolution_from_step(
         float(args.connector_rrt_step_size),
         float(getattr(args, "sbf_bridge_segment_step", 0.01) or 0.0),
@@ -427,6 +436,7 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
         set_path_if_available(cfg, f"{prefix}.split.best_tighten.min_candidate_width", float(args.ffb_min_split_width))
     cfg.validation.enable_validation_cache = bool(args.validation_cache)
     cfg.validation.validation_cache_max_entries = int(args.validation_cache_max_entries)
+    set_if_available(cfg.validation, "enable_endpoint_evidence_cache", bool(args.endpoint_evidence_cache))
     set_if_available(cfg.validation, "endpoint_cache_min_effective_width", float(args.endpoint_cache_min_effective_width))
 
     cfg.grower.mode = sbf.GrowerMode.RRT
@@ -439,7 +449,6 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.grower.parallel_threshold = 1
     cfg.grower.worker_local_ffb = bool(args.worker_local_ffb) and args.threads > 1
     cfg.grower.find_free_box.max_depth = int(args.ffb_depth)
-    cfg.grower.find_free_box.start_depth = int(args.rbf_ffb_start_depth)
     cfg.grower.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
     cfg.grower.find_free_box.split_reserved_leaf = True
     cfg.grower.find_free_box.split_unknown_leaf = True
@@ -500,7 +509,6 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.connector.pave.max_chain = int(args.connector_pave_max_chain)
     set_if_available(cfg.connector.pave, "max_steps_per_waypoint", int(args.connector_pave_steps))
     cfg.connector.pave.find_free_box.max_depth = int(args.connector_pave_depth)
-    cfg.connector.pave.find_free_box.start_depth = int(args.rbf_ffb_start_depth)
     cfg.connector.pave.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True

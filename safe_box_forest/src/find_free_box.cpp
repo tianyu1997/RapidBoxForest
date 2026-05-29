@@ -11,121 +11,12 @@ namespace rbf {
 
 namespace {
 
-using SteadyClock = std::chrono::steady_clock;
-using SteadyTimePoint = SteadyClock::time_point;
-
-struct SearchDepthRange {
-    int start_depth = 0;
-    int max_depth = 0;
-};
-
-enum class DepthProbeOutcome : std::uint8_t {
-    Free = 0,
-    NonFree = 1,
-    Fatal = 2,
-};
-
-struct DepthProbeResult {
-    DepthProbeOutcome outcome = DepthProbeOutcome::Fatal;
-    FindFreeBoxResult result;
-};
-
-SearchDepthRange normalize_search_depth_range(const FindFreeBoxOptions& options,
-                                              const BoxOracle& oracle) {
-    const int tree_max_depth = std::max(0, oracle.max_tree_depth() - 1);
-    const int max_depth = std::clamp(options.max_depth, 0, tree_max_depth);
-    const int requested_start_depth = (options.start_depth > 0 || options.skip_to_depth <= 0)
-        ? options.start_depth
-        : options.skip_to_depth;
-    return {
-        .start_depth = std::clamp(requested_start_depth, 0, max_depth),
-        .max_depth = max_depth,
-    };
-}
-
-double elapsed_ms_since(SteadyTimePoint start) {
-    return std::chrono::duration<double, std::milli>(SteadyClock::now() - start).count();
-}
-
-bool should_stop_search(StageContext& context,
-                        const FindFreeBoxOptions& options,
-                        SteadyTimePoint start,
-                        FindFreeBoxResult& result) {
-    const bool deadline_limit_hit = options.deadline_ms > 0.0 && elapsed_ms_since(start) > options.deadline_ms;
-    if (!context.should_stop() && !deadline_limit_hit) {
-        return false;
-    }
-    result.deadline_reached = context.deadline().expired() || deadline_limit_hit;
-    result.fail_code = 4;
-    return true;
-}
-
-bool descend_to_seed_child(BoxOracle& oracle,
-                           const Eigen::Ref<const Eigen::VectorXd>& seed,
-                           OracleNodeId& node,
-                           int& changed_dim) {
-    changed_dim = oracle.split_dim(node);
-    if (changed_dim < 0 || changed_dim >= seed.size()) {
-        return false;
-    }
-    const OracleNodeId child = (seed[changed_dim] <= oracle.split_value(node))
-        ? oracle.left_child(node)
-        : oracle.right_child(node);
-    if (child == kInvalidOracleNodeId) {
-        return false;
-    }
-    node = child;
-    return true;
-}
-
-void record_elapsed(StageContext& context,
-              const std::string& key,
-              SteadyTimePoint start);
-
-DepthProbeOutcome apply_terminal_validation(FindFreeBoxResult& result,
-                                            OracleNodeId node,
-                                            int changed_dim,
-                                            std::vector<Interval> intervals,
-                                            BoxValidation validation) {
-    if (validation == BoxValidation::Free) {
-        result.found = true;
-        result.node = node;
-        result.changed_dim = changed_dim;
-        result.intervals = std::move(intervals);
-        result.fail_code = 0;
-        return DepthProbeOutcome::Free;
-    }
-    result.node = node;
-    result.intervals = std::move(intervals);
-    if (validation == BoxValidation::Occupied) {
-        result.fail_code = 3;
-    } else {
-        result.hit_unknown_depth_cap = true;
-        result.fail_code = 2;
-    }
-    return DepthProbeOutcome::NonFree;
-}
-
-DepthProbeOutcome validate_target_node(BoxOracle& oracle,
-                                       StageContext& context,
-                                       OracleNodeId node,
-                                       int changed_dim,
-                                       const std::vector<Interval>& intervals,
-                                       FindFreeBoxResult& result) {
-    const auto validation_start = SteadyClock::now();
-    const auto validation = oracle.validate_node(node, intervals, changed_dim);
-    result.validation_detail = oracle.last_validation_detail();
-    record_elapsed(context, "oracle.validate_node", validation_start);
-    result.decisions += 1;
-    return apply_terminal_validation(result, node, changed_dim, intervals, validation);
-}
-
 void record_elapsed(StageContext& context,
                     const std::string& key,
-                    SteadyTimePoint start) {
+                    std::chrono::steady_clock::time_point start) {
     context.diagnostics().record_timing(
         key,
-        std::chrono::duration<double, std::milli>(SteadyClock::now() - start).count());
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 }
 
 void set_max_diagnostic(StageContext& context, const std::string& key, double value) {
@@ -161,242 +52,6 @@ void record_split_diagnostics(StageContext& context,
     }
 }
 
-DepthProbeResult probe_binary_target_depth(BoxOracle& oracle,
-                                           const Eigen::Ref<const Eigen::VectorXd>& seed,
-                                           StageContext& context,
-                                           const FindFreeBoxOptions& options,
-                                           int target_depth,
-                                           SteadyTimePoint start) {
-    FindFreeBoxResult result;
-    OracleNodeId node = oracle.root_node();
-    int changed_dim = -1;
-    while (true) {
-        if (should_stop_search(context, options, start, result)) {
-            return {DepthProbeOutcome::Fatal, std::move(result)};
-        }
-
-        const auto intervals_start = SteadyClock::now();
-        auto intervals = oracle.node_intervals(node);
-        record_elapsed(context, "oracle.node_intervals", intervals_start);
-        const int node_depth = oracle.depth(node);
-
-        if (node_depth >= target_depth) {
-            if (oracle.is_reserved(node)) {
-                result.hit_reserved_depth_cap = true;
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 2;
-                return {DepthProbeOutcome::NonFree, std::move(result)};
-            }
-
-            const auto outcome = validate_target_node(
-                oracle,
-                context,
-                node,
-                changed_dim,
-                std::move(intervals),
-                result);
-            return {outcome, std::move(result)};
-        }
-
-        if (oracle.is_reserved(node)) {
-            if (!options.split_reserved_leaf) {
-                result.hit_reserved_depth_cap = true;
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 2;
-                return {DepthProbeOutcome::NonFree, std::move(result)};
-            }
-            if (oracle.is_leaf(node)) {
-                const auto split_start = SteadyClock::now();
-                const int split_depth = node_depth;
-                const auto split = oracle.split_node(node, intervals, changed_dim, options.split);
-                record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, intervals, split_depth);
-                if (!split.split) {
-                    result.fail_code = 6;
-                    return {DepthProbeOutcome::Fatal, std::move(result)};
-                }
-                result.splits += 1;
-            }
-            if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
-                result.fail_code = 6;
-                return {DepthProbeOutcome::Fatal, std::move(result)};
-            }
-            continue;
-        }
-
-        if (oracle.is_leaf(node)) {
-            if (!options.split_unknown_leaf) {
-                result.hit_unknown_depth_cap = true;
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 2;
-                return {DepthProbeOutcome::NonFree, std::move(result)};
-            }
-            const auto split_start = SteadyClock::now();
-            const int split_depth = node_depth;
-            const auto split = oracle.split_node(node, intervals, changed_dim, options.split);
-            record_elapsed(context, "oracle.split_node", split_start);
-            record_split_diagnostics(context, split, intervals, split_depth);
-            if (!split.split) {
-                result.fail_code = 6;
-                return {DepthProbeOutcome::Fatal, std::move(result)};
-            }
-            result.splits += 1;
-        }
-        if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
-            result.fail_code = 6;
-            return {DepthProbeOutcome::Fatal, std::move(result)};
-        }
-    }
-}
-
-FindFreeBoxResult run_linear_search(BoxOracle& oracle,
-                                    const Eigen::Ref<const Eigen::VectorXd>& seed,
-                                    StageContext& context,
-                                    const FindFreeBoxOptions& options,
-                                    int effective_max_depth,
-                                    SteadyTimePoint start) {
-    FindFreeBoxResult result;
-    OracleNodeId node = oracle.root_node();
-    int changed_dim = -1;
-    while (true) {
-        if (should_stop_search(context, options, start, result)) {
-            break;
-        }
-
-        const auto intervals_start = SteadyClock::now();
-        auto intervals = oracle.node_intervals(node);
-        record_elapsed(context, "oracle.node_intervals", intervals_start);
-        if (oracle.is_reserved(node)) {
-            if (oracle.depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
-                result.hit_reserved_depth_cap = true;
-                result.node = node;
-                result.intervals = std::move(intervals);
-                result.fail_code = 2;
-                break;
-            }
-            if (oracle.is_leaf(node)) {
-                const auto split_start = SteadyClock::now();
-                const int split_depth = oracle.depth(node);
-                const auto split = oracle.split_node(node, intervals, changed_dim, options.split);
-                record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, intervals, split_depth);
-                if (!split.split) {
-                    result.fail_code = 6;
-                    break;
-                }
-                result.splits += 1;
-            }
-            if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
-                result.fail_code = 6;
-                break;
-            }
-            continue;
-        }
-
-        const auto outcome = validate_target_node(
-            oracle,
-            context,
-            node,
-            changed_dim,
-            std::move(intervals),
-            result);
-        if (outcome == DepthProbeOutcome::Free || result.fail_code == 3) {
-            break;
-        }
-        if (oracle.depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
-            break;
-        }
-        if (oracle.is_leaf(node)) {
-            const auto split_start = SteadyClock::now();
-            const int split_depth = oracle.depth(node);
-            const auto split = oracle.split_node(node, intervals, changed_dim, options.split);
-            record_elapsed(context, "oracle.split_node", split_start);
-            record_split_diagnostics(context, split, intervals, split_depth);
-            if (!split.split) {
-                result.fail_code = 6;
-                break;
-            }
-            result.splits += 1;
-        }
-        if (!descend_to_seed_child(oracle, seed, node, changed_dim)) {
-            result.fail_code = 6;
-            break;
-        }
-    }
-    return result;
-}
-
-FindFreeBoxResult run_binary_depth_search(BoxOracle& oracle,
-                                          const Eigen::Ref<const Eigen::VectorXd>& seed,
-                                          StageContext& context,
-                                          const FindFreeBoxOptions& options,
-                                          const SearchDepthRange& depth_range,
-                                          SteadyTimePoint start) {
-    int total_decisions = 0;
-    int total_splits = 0;
-    auto absorb_probe = [&](const FindFreeBoxResult& probe_result) {
-        total_decisions += probe_result.decisions;
-        total_splits += probe_result.splits;
-    };
-    auto finalize = [&](FindFreeBoxResult probe_result) {
-        probe_result.decisions = total_decisions;
-        probe_result.splits = total_splits;
-        return probe_result;
-    };
-
-    auto lower_probe = probe_binary_target_depth(
-        oracle,
-        seed,
-        context,
-        options,
-        depth_range.start_depth,
-        start);
-    absorb_probe(lower_probe.result);
-    if (lower_probe.outcome != DepthProbeOutcome::NonFree || depth_range.start_depth >= depth_range.max_depth) {
-        return finalize(std::move(lower_probe.result));
-    }
-
-    auto upper_probe = probe_binary_target_depth(
-        oracle,
-        seed,
-        context,
-        options,
-        depth_range.max_depth,
-        start);
-    absorb_probe(upper_probe.result);
-    if (upper_probe.outcome != DepthProbeOutcome::Free) {
-        return finalize(std::move(upper_probe.result));
-    }
-
-    int nonfree_depth = depth_range.start_depth;
-    int free_depth = depth_range.max_depth;
-    FindFreeBoxResult best_free = std::move(upper_probe.result);
-    while (free_depth - nonfree_depth > 1) {
-        const int mid_depth = nonfree_depth + (free_depth - nonfree_depth) / 2;
-        auto mid_probe = probe_binary_target_depth(
-            oracle,
-            seed,
-            context,
-            options,
-            mid_depth,
-            start);
-        absorb_probe(mid_probe.result);
-        if (mid_probe.outcome == DepthProbeOutcome::Fatal) {
-            return finalize(std::move(mid_probe.result));
-        }
-        if (mid_probe.outcome == DepthProbeOutcome::Free) {
-            free_depth = mid_depth;
-            best_free = std::move(mid_probe.result);
-            continue;
-        }
-        nonfree_depth = mid_depth;
-    }
-    return finalize(std::move(best_free));
-}
-
 }  // namespace
 
 FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorXd>& seed,
@@ -408,26 +63,30 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
 FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorXd>& seed,
                                            StageContext& context,
                                            const FindFreeBoxOptions& options) {
+    using Clock = std::chrono::steady_clock;
     ScopedStageTimer function_timer(context.diagnostics(), "ffb.find");
-    const auto start = SteadyClock::now();
+    const auto start = Clock::now();
     FindFreeBoxResult result;
     if (context.should_stop()) {
         result.deadline_reached = context.deadline().expired();
         result.fail_code = 4;
         return result;
     }
+    const Eigen::VectorXd tree_seed = seed.size() == oracle_.n_dims()
+        ? oracle_.tree_configuration_for_query(seed)
+        : Eigen::VectorXd(seed);
     bool seed_in_domain = false;
-    if (seed.size() == oracle_.n_dims()) {
-        const auto contains_start = SteadyClock::now();
-        seed_in_domain = oracle_.contains_point(oracle_.root_node(), seed);
+    if (tree_seed.size() == oracle_.n_dims()) {
+        const auto contains_start = Clock::now();
+        seed_in_domain = oracle_.contains_point(oracle_.root_node(), tree_seed);
         record_elapsed(context, "oracle.contains_point", contains_start);
     }
-    if (seed.size() != oracle_.n_dims() || !seed_in_domain) {
+    if (tree_seed.size() != oracle_.n_dims() || !seed_in_domain) {
         result.fail_code = 5;
         return result;
     }
     if (options.reject_seed_collision) {
-        const auto collision_start = SteadyClock::now();
+        const auto collision_start = Clock::now();
         const bool seed_collision = oracle_.point_in_collision(seed);
         record_elapsed(context, "oracle.point_in_collision", collision_start);
         if (seed_collision) {
@@ -437,17 +96,95 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         }
     }
 
-    const auto depth_range = normalize_search_depth_range(options, oracle_);
-    switch (options.search_mode) {
-    case FindFreeBoxSearchMode::BinaryDepth:
-        result = run_binary_depth_search(oracle_, seed, context, options, depth_range, start);
-        break;
-    case FindFreeBoxSearchMode::Linear:
-    default:
-        result = run_linear_search(oracle_, seed, context, options, depth_range.max_depth, start);
-        break;
+    auto elapsed_ms = [&]() {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    };
+
+    const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
+    OracleNodeId node = oracle_.root_node();
+    int changed_dim = -1;
+    while (true) {
+        if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
+            result.deadline_reached = context.deadline().expired() || options.deadline_ms > 0.0;
+            result.fail_code = 4;
+            break;
+        }
+
+        const auto intervals_start = Clock::now();
+        auto tree_intervals = oracle_.node_intervals(node);
+        auto query_intervals = oracle_.query_intervals_for_node(node, tree_intervals, seed);
+        record_elapsed(context, "oracle.node_intervals", intervals_start);
+        if (oracle_.is_reserved(node)) {
+            if (oracle_.depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
+                result.hit_reserved_depth_cap = true;
+                result.node = node;
+                result.intervals = std::move(query_intervals);
+                result.fail_code = 2;
+                break;
+            }
+            if (oracle_.is_leaf(node)) {
+                const auto split_start = Clock::now();
+                const int split_depth = oracle_.depth(node);
+                const auto split = oracle_.split_node(node, tree_intervals, changed_dim, options.split);
+                record_elapsed(context, "oracle.split_node", split_start);
+                record_split_diagnostics(context, split, tree_intervals, split_depth);
+                if (!split.split) {
+                    result.fail_code = 6;
+                    break;
+                }
+                result.splits += 1;
+            }
+            changed_dim = oracle_.split_dim(node);
+            node = (tree_seed[changed_dim] <= oracle_.split_value(node))
+                ? oracle_.left_child(node)
+                : oracle_.right_child(node);
+            continue;
+        }
+
+        const auto validation_start = Clock::now();
+        const auto validation = oracle_.validate_node(node, query_intervals, changed_dim);
+        result.validation_detail = oracle_.last_validation_detail();
+        record_elapsed(context, "oracle.validate_node", validation_start);
+        result.decisions += 1;
+        if (validation == BoxValidation::Free) {
+            result.found = true;
+            result.node = node;
+            result.changed_dim = changed_dim;
+            result.intervals = std::move(query_intervals);
+            result.fail_code = 0;
+            break;
+        }
+        if (validation == BoxValidation::Occupied) {
+            result.node = node;
+            result.intervals = std::move(query_intervals);
+            result.fail_code = 3;
+            break;
+        }
+        if (oracle_.depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
+            result.hit_unknown_depth_cap = true;
+            result.node = node;
+            result.intervals = std::move(query_intervals);
+            result.fail_code = 2;
+            break;
+        }
+        if (oracle_.is_leaf(node)) {
+            const auto split_start = Clock::now();
+            const int split_depth = oracle_.depth(node);
+            const auto split = oracle_.split_node(node, tree_intervals, changed_dim, options.split);
+            record_elapsed(context, "oracle.split_node", split_start);
+            record_split_diagnostics(context, split, tree_intervals, split_depth);
+            if (!split.split) {
+                result.fail_code = 6;
+                break;
+            }
+            result.splits += 1;
+        }
+        changed_dim = oracle_.split_dim(node);
+        node = (tree_seed[changed_dim] <= oracle_.split_value(node))
+            ? oracle_.left_child(node)
+            : oracle_.right_child(node);
     }
-    result.total_ms = elapsed_ms_since(start);
+    result.total_ms = elapsed_ms();
     return result;
 }
 

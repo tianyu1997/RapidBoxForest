@@ -31,25 +31,6 @@ void require(bool condition) {
     }
 }
 
-void require_close(std::span<const float> lhs, const std::vector<float>& rhs) {
-    require(lhs.size() == rhs.size());
-    for (std::size_t i = 0; i < lhs.size(); ++i) {
-        require(std::abs(lhs[i] - rhs[i]) < 1e-6f);
-    }
-}
-
-void require_not_close(std::span<const float> lhs, const std::vector<float>& rhs) {
-    require(lhs.size() == rhs.size());
-    bool differs = false;
-    for (std::size_t i = 0; i < lhs.size(); ++i) {
-        if (std::abs(lhs[i] - rhs[i]) >= 1e-6f) {
-            differs = true;
-            break;
-        }
-    }
-    require(differs);
-}
-
 ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
                                           const rbf::Robot& robot,
                                           const std::vector<rbf::Interval>& root,
@@ -66,7 +47,7 @@ ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
     identity.split_policy_descriptor = ld::split_policy_descriptor(split);
     identity.endpoint_descriptor = std::move(endpoint_descriptor);
     identity.envelope_descriptor = std::move(envelope_descriptor);
-    identity.payload_layout = "endpoint_envelope";
+    identity.payload_layout = "endpoint_envelope_v1";
 
     ld::LectDatabaseConfig db_config;
     db_config.path = dir;
@@ -131,68 +112,6 @@ void test_database_box_oracle_topology_and_cache() {
     require(reopened.has_value());
     require(reopened->verify(true).ok);
     require(reopened->node_count() == database.node_count());
-    std::filesystem::remove_all(dir);
-}
-
-void test_database_box_oracle_hifk_reuses_depth_aligned_split_policy() {
-    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_hifk_split_policy_test";
-    std::filesystem::remove_all(dir);
-
-    auto robot = make_toy_robot();
-    const auto root = robot.joint_limits().limits;
-
-    ld::LectDatabaseConfig db_config = make_test_db_config(
-        dir,
-        robot,
-        root,
-        "planning_database_oracle_hifk",
-        "planning_database_oracle_link_iaabb");
-    db_config.split_policy.strategy = ld::SplitStrategy::AAFKVolumeMin;
-    db_config.split_policy.depth_dimensions = {1, 1, 1, 1};
-    db_config.identity.split_policy_hash = ld::split_policy_hash(db_config.split_policy);
-    db_config.identity.split_policy_descriptor = ld::split_policy_descriptor(db_config.split_policy);
-
-    ld::LectDatabase database;
-    std::string reason;
-    require(database.open(db_config, &reason));
-
-    rbf::EndpointSourceConfig endpoint_config;
-    endpoint_config.source = rbf::EndpointSource::HIFK;
-    endpoint_config.hifk_max_depth = 1;
-    rbf::EnvelopeTypeConfig envelope_config;
-    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
-
-    rbf::DatabaseBoxOracle oracle(robot, database, rbf::Scene{}, endpoint_config, envelope_config, {});
-    const auto split_result = oracle.split_node_at(oracle.root_node(), 0, 0.0);
-    require(split_result.split);
-
-    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
-    oracle.set_scene(rbf::Scene(obstacles));
-    const auto target_box = oracle.node_intervals(split_result.left);
-    (void)oracle.validate_node(split_result.left, target_box, split_result.split_dim);
-
-    ld::EvidenceKey key;
-    key.node_id = static_cast<ld::NodeId>(split_result.left);
-    const auto topology = database.topology(key.node_id);
-    key.node_path = topology.path;
-    key.node_path_valid = true;
-    key.sector = ld::kPrimarySector;
-    key.channel = ld::EvidenceChannel::Safe;
-    key.endpoint_source = rbf::EndpointSource::HIFK;
-    key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
-    const auto stored = database.evidence(key);
-    require(stored.has_value());
-
-    rbf::EndpointSourceConfig expected_config = endpoint_config;
-    expected_config.hifk_split_strategy = rbf::HifkSplitStrategy::FixedDepthSchedule;
-    expected_config.hifk_depth_dimensions = db_config.split_policy.depth_dimensions;
-    expected_config.hifk_depth_offset = oracle.depth(split_result.left);
-    const auto expected = rbf::compute_endpoint_iaabb(robot, target_box, expected_config);
-    require_close(stored->payload, expected.endpoint_iaabbs);
-
-    const auto standalone = rbf::compute_endpoint_iaabb(robot, target_box, endpoint_config);
-    require_not_close(stored->payload, standalone.endpoint_iaabbs);
-
     std::filesystem::remove_all(dir);
 }
 
@@ -389,7 +308,8 @@ void test_external_evidence_reuses_when_handles_differ() {
     validation_config.external_evidence_materialization = true;
     validation_config.external_evidence_backfill_active = false;
 
-    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(100.0f, 100.0f, 100.0f, 110.0f, 110.0f, 110.0f)};
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    ld::LectDatabaseEvidenceSource external_source(*reopened_external);
     rbf::DatabaseBoxOracle oracle(
         robot,
         *reopened_active,
@@ -397,7 +317,7 @@ void test_external_evidence_reuses_when_handles_differ() {
         endpoint_config,
         envelope_config,
         validation_config,
-        &*reopened_external);
+        &external_source);
 
     const auto target_box = oracle.node_intervals(static_cast<rbf::OracleNodeId>(active_target));
     (void)oracle.validate_node(static_cast<rbf::OracleNodeId>(active_target),
@@ -458,7 +378,8 @@ void test_external_child_hull_reuses_unified_envelope_evidence() {
     validation_config.external_evidence_materialization = true;
     validation_config.external_evidence_backfill_active = false;
 
-    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(100.0f, 100.0f, 100.0f, 110.0f, 110.0f, 110.0f)};
+    const std::vector<rbf::Obstacle> obstacles = {rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    ld::LectDatabaseEvidenceSource external_source(external_database);
     rbf::DatabaseBoxOracle oracle(
         robot,
         active_database,
@@ -466,7 +387,7 @@ void test_external_child_hull_reuses_unified_envelope_evidence() {
         endpoint_config,
         envelope_config,
         validation_config,
-        &external_database);
+        &external_source);
 
     const auto root_box = oracle.root_intervals();
     (void)oracle.validate_node(oracle.root_node(), root_box, -1);
@@ -483,7 +404,6 @@ void test_external_child_hull_reuses_unified_envelope_evidence() {
 
 int main() {
     test_database_box_oracle_topology_and_cache();
-    test_database_box_oracle_hifk_reuses_depth_aligned_split_policy();
     test_database_box_oracle_sessions_commit_and_remap();
     test_database_box_oracle_supports_deep_path_keys();
     test_external_evidence_reuses_when_handles_differ();

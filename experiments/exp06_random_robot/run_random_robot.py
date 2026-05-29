@@ -21,20 +21,26 @@ from experiments.common.experiment_io import (  # noqa: E402
     run_id,
     write_json,
 )
+from experiments.common.cache_maintenance import prune_directory_children  # noqa: E402
+from experiments.common.anytime_defaults import UNIFIED_SBF_ANYTIME_STAGE_IDS  # noqa: E402
 from experiments.common.lect_db_dispatch import (  # noqa: E402
-    RANDOM_IRIS,
-    RANDOM_OMPL,
-    RANDOM_RRTCONNECT,
-    build_random_sbf_command,
-    ensure_shelf_cache,
-    shelf_cache_payload,
+    build_random_anytime_command,
+    build_random_iris_anytime_command,
 )
-from experiments.common.shelf_iiwa_cache import DEFAULT_P18_CACHE_LABEL, load_json  # noqa: E402
+from experiments.common.random_robot_cache import (  # noqa: E402
+    DEFAULT_RANDOM_CACHE_RUN_ID,
+    DEFAULT_RANDOM_P18_ENVELOPE,
+    DEFAULT_RANDOM_P18_MAX_DEPTH,
+    DEFAULT_RANDOM_P18_PREWARM_DEPTH,
+    DEFAULT_RANDOM_P18_THREADS,
+    ensure_random_robot_p18_cache,
+    seed_scene_stage_eval_caches_from_p18,
+)
 
 
 def parse_args() -> argparse.Namespace:
     output_dir = DEFAULT_OUTPUT_ROOT / "exp06_random_robot"
-    parser = argparse.ArgumentParser(description="Run Experiment 6 from the random robot plan.")
+    parser = argparse.ArgumentParser(description="Run Experiment 6 as a random-scene anytime trade-off dispatcher.")
     parser.add_argument("--out-dir", type=Path, default=output_dir)
     parser.add_argument("--out-json", type=Path, default=None)
     parser.add_argument("--robots", default="iiwa,ur5,panda")
@@ -44,146 +50,136 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--scene-profile", choices=["balanced", "legacy"], default="balanced")
-    parser.add_argument("--prewarm-json", type=Path, default=output_dir / "p18_prewarm.json")
-    parser.add_argument("--prewarm-depth", type=int, default=18)
-    parser.add_argument("--prewarm-threads", type=int, default=8)
-    parser.add_argument("--prewarm-envelope", choices=["link", "support_hull"], default="support_hull")
-    parser.add_argument("--rbf-envelope", choices=["link", "support_hull"], default="support_hull")
     parser.add_argument("--rbf-cache-root", type=Path, default=output_dir / "cache")
-    parser.add_argument("--iiwa-warm-cache-label", default=DEFAULT_P18_CACHE_LABEL)
-    parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
-    parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cache-run-id", default=DEFAULT_RANDOM_CACHE_RUN_ID)
+    parser.add_argument("--prewarm-depth", type=int, default=DEFAULT_RANDOM_P18_PREWARM_DEPTH)
+    parser.add_argument("--prewarm-threads", type=int, default=DEFAULT_RANDOM_P18_THREADS)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def scene_args(args: argparse.Namespace) -> list[str]:
-    return [
-        "--robots",
-        str(args.robots),
-        "--difficulties",
-        str(args.difficulties),
-        "--scene-seeds",
-        str(max(1, int(args.scene_seeds))),
-        "--scene-profile",
-        str(args.scene_profile),
-    ]
-
-
 def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     methods = set(csv_list(args.methods))
     rows: list[dict[str, Any]] = []
-    if "sbf" in methods:
+    anytime_baselines = [method for method in ("prm", "bitstar", "rrtconnect") if method in methods]
+    anytime_sbf_methods = "support_hull_coverage" if "sbf" in methods else ""
+    if "sbf" in methods or anytime_baselines:
         rows.append({
-            "name": "sbf_sh_warm_aafk_random_robot",
-            "methods": ["sbf"],
-            "kind": "sbf_baseline",
-            "description": "SBF-SH baseline: warm + AAFK + SupportHull + 8 threads + AAFKVolumeMin",
-            "command": build_random_sbf_command(
+            "name": "random_anytime_tradeoff",
+            "methods": (["sbf"] if "sbf" in methods else []) + anytime_baselines,
+            "kind": "random_anytime",
+            "description": "Random-scene anytime trade-off artifact for SBF, PRM, BIT*, and/or RRTConnect under the unified d40 SBF schedule.",
+            "command": build_random_anytime_command(
                 python_executable=sys.executable,
-                out_json=args.out_dir / "sbf_sh_warm_aafk_random_robot.json",
+                out_json=args.out_dir / "random_anytime_tradeoff.json",
                 robots=str(args.robots),
                 difficulties=str(args.difficulties),
                 scene_seeds=int(args.scene_seeds),
                 scene_profile=str(args.scene_profile),
-                rbf_cache_root=args.rbf_cache_root,
-                iiwa_warm_cache_label=str(args.iiwa_warm_cache_label),
-                external_evidence_mode=str(args.external_evidence_mode),
-                external_evidence_auto_build_snapshot=bool(args.external_evidence_auto_build_snapshot),
                 threads=int(args.threads),
-                prewarm_depth=int(args.prewarm_depth),
-                rbf_envelope=str(args.rbf_envelope),
+                trials=int(args.trials),
+                methods=anytime_sbf_methods,
+                baseline_methods=",".join("rrt" if method == "rrtconnect" else method for method in anytime_baselines),
+                cache_root=args.rbf_cache_root,
+                cache_run_id=str(args.cache_run_id),
+                clear_cache=False,
             ),
-        })
-    if "rrtconnect" in methods:
-        rows.append({
-            "name": "rrtconnect_random_robot",
-            "methods": ["rrtconnect"],
-            "kind": "legacy_rrtconnect",
-            "description": "RRTConnect with final audit and 0.01 joint-space segment step",
-            "command": [
-                sys.executable,
-                str(RANDOM_RRTCONNECT),
-                *scene_args(args),
-                "--trials",
-                str(max(1, int(args.trials))),
-                "--segment-step",
-                "0.01",
-                "--out-json",
-                str(args.out_dir / "rrtconnect_random_robot.json"),
-            ],
-        })
-    ompl_methods = [method for method in ("prm", "bitstar") if method in methods]
-    if ompl_methods:
-        rows.append({
-            "name": "ompl_prm_bitstar_random_robot",
-            "methods": ompl_methods,
-            "kind": "legacy_ompl",
-            "description": "PRM and BIT* random-scene baselines with 0.01 joint-space segment step",
-            "command": [
-                sys.executable,
-                str(RANDOM_OMPL),
-                *scene_args(args),
-                "--methods",
-                ",".join(ompl_methods),
-                "--trials",
-                str(max(1, int(args.trials))),
-                "--segment-step",
-                "0.01",
-                "--out-json",
-                str(args.out_dir / "ompl_prm_bitstar_random_robot.json"),
-            ],
         })
     if "iris_np" in methods:
         rows.append({
-            "name": "iris_np_gcs_random_robot",
+            "name": "iris_np_gcs_random_anytime",
             "methods": ["iris_np"],
-            "kind": "legacy_iris_np_gcs",
-            "description": "IRIS-NP+GCS random-scene baseline with final audit",
-            "command": [
-                sys.executable,
-                str(RANDOM_IRIS),
-                *scene_args(args),
-                "--trials",
-                "1",
-                "--segment-step",
-                "0.01",
-                "--out-json",
-                str(args.out_dir / "iris_np_gcs_random_robot.json"),
-            ],
+            "kind": "random_iris_anytime",
+            "description": "IRIS-NP+GCS random-scene prefix anytime artifact.",
+            "command": build_random_iris_anytime_command(
+                python_executable=sys.executable,
+                out_json=args.out_dir / "iris_np_gcs_random_anytime.json",
+                robots=str(args.robots),
+                difficulties=str(args.difficulties),
+                scene_seeds=int(args.scene_seeds),
+                scene_profile=str(args.scene_profile),
+                threads=int(args.threads),
+                trials=int(args.trials),
+            ),
         })
     return rows
+
+
+def prepare_random_sbf_caches(args: argparse.Namespace) -> dict[str, Any]:
+    methods = set(csv_list(args.methods))
+    if "sbf" not in methods:
+        return {
+            "enabled": False,
+            "root": str(args.rbf_cache_root),
+            "p18": [],
+            "prune": {
+                "path": str(args.rbf_cache_root),
+                "kept": [],
+                "removed": [],
+                "removed_count": 0,
+                "dry_run": bool(args.dry_run or not args.execute),
+            },
+            "seed_eval": {"dry_run": bool(args.dry_run or not args.execute), "seeded_namespace_count": 0, "seeded_namespaces": []},
+        }
+    robot_names = csv_list(args.robots)
+    difficulty_names = csv_list(args.difficulties)
+    p18_rows = [
+        ensure_random_robot_p18_cache(
+            cache_root=args.rbf_cache_root,
+            robot_name=robot_name,
+            prewarm_depth=int(args.prewarm_depth),
+            envelope=DEFAULT_RANDOM_P18_ENVELOPE,
+            prewarm_threads=int(args.prewarm_threads),
+            max_depth=DEFAULT_RANDOM_P18_MAX_DEPTH,
+            dry_run=bool(args.dry_run or not args.execute),
+        )
+        for robot_name in robot_names
+    ]
+    keep_names = [str(row["cache_label"]) for row in p18_rows]
+    prune_summary: dict[str, Any] = {
+        "path": str(args.rbf_cache_root),
+        "kept": keep_names,
+        "removed": [],
+        "removed_count": 0,
+        "dry_run": bool(args.dry_run or not args.execute),
+    }
+    if args.execute and not args.dry_run:
+        prune_summary = prune_directory_children(args.rbf_cache_root, keep_names)
+    seed_eval = seed_scene_stage_eval_caches_from_p18(
+        cache_root=args.rbf_cache_root,
+        cache_run_id=str(args.cache_run_id),
+        robot_names=robot_names,
+        method_names=["support_hull_coverage"],
+        stage_ids=UNIFIED_SBF_ANYTIME_STAGE_IDS,
+        difficulties=difficulty_names,
+        scene_seeds=int(args.scene_seeds),
+        p18_cache_labels={str(row["robot"]): str(row["cache_label"]) for row in p18_rows},
+        dry_run=bool(args.dry_run or not args.execute),
+    )
+    return {
+        "enabled": True,
+        "root": str(args.rbf_cache_root),
+        "cache_run_id": str(args.cache_run_id),
+        "p18": p18_rows,
+        "prune": prune_summary,
+        "seed_eval": seed_eval,
+    }
 
 
 def main() -> int:
     args = parse_args()
     out_json = args.out_json or (args.out_dir / "random_robot_manifest.json")
+    cache_info = prepare_random_sbf_caches(args)
     rows = command_rows(args)
-    cache_path = args.rbf_cache_root / str(args.iiwa_warm_cache_label)
-    needs_prewarm = any(row.get("kind") == "sbf_baseline" for row in rows)
-    if args.execute and needs_prewarm:
-        prewarm_summary = ensure_shelf_cache(
-            prewarm_json=args.prewarm_json,
-            cache_path=cache_path,
-            prewarm_depth=int(args.prewarm_depth),
-            envelope=str(args.prewarm_envelope),
-            prewarm_threads=int(args.prewarm_threads),
-            clean_cache=bool(args.clean_cache),
-            dry_run=bool(args.dry_run),
-        )
-    else:
-        prewarm_summary = load_json(args.prewarm_json)
-
     run_records = []
     extra_env = default_sbf_subprocess_env()
     if args.execute:
         for row in rows:
-            measurement_env = extra_env if row.get("kind") == "sbf_baseline" else None
             run_records.append({
                 "name": row["name"],
-                "measurement": run_command(row["command"], dry_run=bool(args.dry_run), extra_env=measurement_env),
+                "measurement": run_command(row["command"], dry_run=bool(args.dry_run), extra_env=extra_env),
             })
 
     payload = {
@@ -193,13 +189,14 @@ def main() -> int:
         "status": "executed" if args.execute and not args.dry_run else "dry_run",
         "params": namespace_dict(args),
         "environment": environment_metadata(),
-        "cache": shelf_cache_payload(cache_path, args.prewarm_json, prewarm_summary),
+        "cache": cache_info,
         "commands": rows,
         "runs": run_records,
         "notes": [
-            "This is the fresh /experiments Exp.6 dispatcher; it keeps the random-scene backend as a reusable execution engine.",
-            "The IIWA SBF row reuses the Exp.3-style p18 LECT DB cache; UR5 and Panda warm caches are built by the random backend because no shelf Exp.3 cache exists for those robots.",
-            "The SBF command shape is warm_d18 + AAFK + SupportHull + 8 threads + AAFKVolumeMin through the random SBF backend defaults.",
+            "Experiment 6 now dispatches random-scene anytime artifacts instead of separate one-shot baseline scripts.",
+            "The random anytime backend uses the unified d40 SBF schedule for its SBF method and keeps PRM/BIT*/RRTConnect in the same anytime artifact when requested.",
+            "IRIS-NP+GCS remains a separate random prefix-anytime artifact because it uses a different backend and accounting model.",
+            "Random SBF runs seed every scene-stage namespace from a canonical native p18 cache per robot, then write subsequent warm updates into the evaluation cache namespaces.",
         ],
     }
     write_json(out_json, payload)

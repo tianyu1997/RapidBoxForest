@@ -1505,9 +1505,7 @@ protocol, the Shelf+IIWA warm row builds in \TroRbfOnlyShelfWarmBuild~s with
 random-scene warm rows span \TroRbfOnlyEFourWarmBuildMin--\TroRbfOnlyEFourWarmBuildMax~s
 build and \TroRbfOnlyEFourWarmQueryMinMs--\TroRbfOnlyEFourWarmQueryMaxMs~ms
 query with at least \TroRbfOnlyEFourWarmAuditMin\% audit success
-(\cref{tab:tro_appendix_rbf_only_warm_reuse}). In the Shelf+IIWA warm row, the
-external evidence source is reopened through the LECT read snapshot rather than
-through the mutable cache database. Rechecking the earlier UR5
+(\cref{tab:tro_appendix_rbf_only_warm_reuse}). Rechecking the earlier UR5
 audit failures showed that they came from an under-budgeted random-scene RBF
 runner rather than from center-to-center stitching or shortcut drift;
 restoring the original random-scene growth and parallelism budget removed that

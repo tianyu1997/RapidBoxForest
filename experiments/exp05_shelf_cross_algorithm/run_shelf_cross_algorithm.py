@@ -21,26 +21,29 @@ from experiments.common.experiment_io import (  # noqa: E402
     run_id,
     write_json,
 )
+from experiments.common.cache_maintenance import prune_directory_children  # noqa: E402
+from experiments.common.anytime_defaults import UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH  # noqa: E402
 from experiments.common.lect_db_dispatch import (  # noqa: E402
-    SHELF_BASELINES,
-    SHELF_RRTCONNECT,
-    build_shelf_sbf_case_command,
+    build_current_shelf_sbf_anytime_command,
+    build_legacy_shelf_anytime_command,
+    build_shelf_iris_anytime_command,
     ensure_shelf_cache,
     shelf_cache_payload,
 )
 from experiments.common.shelf_iiwa_cache import DEFAULT_P18_CACHE_LABEL, load_json  # noqa: E402
 
 
-SBF_METHOD_NAME = "sbf_warm_aafk_support_hull"
+SBF_METHOD_NAME = "sbf_current_anytime_d40_r4"
 
 
 def parse_args() -> argparse.Namespace:
     output_dir = DEFAULT_OUTPUT_ROOT / "exp05_shelf_cross_algorithm"
-    parser = argparse.ArgumentParser(description="Run Experiment 5 from the shelf cross-algorithm plan.")
+    parser = argparse.ArgumentParser(description="Run Experiment 5 as a shelf cross-algorithm anytime trade-off dispatcher.")
     parser.add_argument("--out-dir", type=Path, default=output_dir)
     parser.add_argument("--out-json", type=Path, default=None)
     parser.add_argument("--prewarm-json", type=Path, default=output_dir / "p18_prewarm.json")
     parser.add_argument("--prewarm-depth", type=int, default=18)
+    parser.add_argument("--prewarm-max-depth", type=int, default=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH)
     parser.add_argument("--prewarm-threads", type=int, default=8)
     parser.add_argument("--prewarm-envelope", choices=["link", "support_hull"], default="support_hull")
     parser.add_argument("--methods", default="sbf,iris_np,prm,rrtconnect,bitstar")
@@ -59,34 +62,30 @@ def parse_args() -> argparse.Namespace:
 
 
 def sbf_command(args: argparse.Namespace) -> list[str]:
-    return build_shelf_sbf_case_command(
+    return build_current_shelf_sbf_anytime_command(
         python_executable=sys.executable,
         out_json=args.out_dir / f"{SBF_METHOD_NAME}.json",
         database_path=args.rbf_cache_root / SBF_METHOD_NAME,
         case_name=SBF_METHOD_NAME,
-        endpoint_source="aafk",
-        lect_split_policy="aafk_volume_min",
-        envelope="support_hull",
         threads=int(args.threads),
         seeds=int(args.seeds),
         timeout_ms=float(args.timeout_ms),
-        use_external_evidence=True,
         rbf_cache_root=args.rbf_cache_root,
         warm_cache_label=str(args.warm_cache_label),
         external_evidence_mode=str(args.external_evidence_mode),
         external_evidence_auto_build_snapshot=bool(args.external_evidence_auto_build_snapshot),
-        external_evidence_materialization=True,
-        external_evidence_scoring=True,
         clean_active_cache=True,
     )
 
 
-def baseline_methods_arg(methods: set[str]) -> str:
+def legacy_ompl_methods_arg(methods: set[str]) -> str:
     requested = []
-    if "iris_np" in methods:
-        requested.append("iris_np")
-    if "prm" in methods or "bitstar" in methods:
-        requested.append("ompl")
+    if "prm" in methods:
+        requested.append("prm")
+    if "bitstar" in methods:
+        requested.append("bitstar")
+    if "rrtconnect" in methods:
+        requested.append("rrt")
     return ",".join(requested)
 
 
@@ -97,53 +96,34 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         rows.append({
             "name": SBF_METHOD_NAME,
             "methods": ["sbf"],
-            "kind": "sbf_baseline",
+            "kind": "sbf_anytime_current",
             "command": sbf_command(args),
         })
-    baseline_methods = baseline_methods_arg(methods)
+    baseline_methods = legacy_ompl_methods_arg(methods)
     if baseline_methods:
-        command = [
-            sys.executable,
-            str(SHELF_BASELINES),
-            "--quick",
-            "--source",
-            "live",
-            "--methods",
-            baseline_methods,
-            "--out-dir",
-            str(args.out_dir / "baselines"),
-            "--seeds",
-            str(max(1, int(args.seeds))),
-            "--timeout",
-            str(int(float(args.timeout_ms) / 1000.0)),
-            "--logical-threads",
-            str(max(1, int(args.threads))),
-        ]
-        if args.dry_run:
-            command.append("--dry-run")
         rows.append({
-            "name": "iris_prm_bitstar_baselines",
-            "methods": [method for method in ["iris_np", "prm", "bitstar"] if method in methods],
-            "kind": "legacy_shelf_baselines",
-            "command": command,
+            "name": "legacy_ompl_anytime_tradeoff",
+            "methods": [method for method in ["prm", "bitstar", "rrtconnect"] if method in methods],
+            "kind": "legacy_shelf_anytime",
+            "command": build_legacy_shelf_anytime_command(
+                python_executable=sys.executable,
+                out_json=args.out_dir / "legacy_ompl_anytime_tradeoff.json",
+                methods=baseline_methods,
+                threads=int(args.threads),
+                seeds=int(args.seeds),
+            ),
         })
-    if "rrtconnect" in methods:
+    if "iris_np" in methods:
         rows.append({
-            "name": "rrtconnect",
-            "methods": ["rrtconnect"],
-            "kind": "legacy_rrtconnect",
-            "command": [
-                sys.executable,
-                str(SHELF_RRTCONNECT),
-                "--trials",
-                str(max(1, int(args.rrt_trials))),
-                "--timeout-ms",
-                str(float(args.timeout_ms)),
-                "--segment-step",
-                "0.01",
-                "--out-json",
-                str(args.out_dir / "rrtconnect.json"),
-            ],
+            "name": "iris_np_gcs_anytime",
+            "methods": ["iris_np"],
+            "kind": "shelf_iris_anytime",
+            "command": build_shelf_iris_anytime_command(
+                python_executable=sys.executable,
+                out_json=args.out_dir / "iris_np_gcs_anytime.json",
+                seeds=int(args.seeds),
+                threads=int(args.threads),
+            ),
         })
     return rows
 
@@ -153,7 +133,16 @@ def main() -> int:
     out_json = args.out_json or (args.out_dir / "shelf_cross_algorithm_manifest.json")
     rows = command_rows(args)
     cache_path = args.rbf_cache_root / str(args.warm_cache_label)
-    needs_prewarm = any(row.get("kind") == "sbf_baseline" for row in rows)
+    prune_summary: dict[str, Any] = {
+        "path": str(args.rbf_cache_root),
+        "kept": [str(args.warm_cache_label)],
+        "removed": [],
+        "removed_count": 0,
+        "dry_run": bool(args.dry_run or not args.execute),
+    }
+    if args.execute and not args.dry_run:
+        prune_summary = prune_directory_children(args.rbf_cache_root, [str(args.warm_cache_label)])
+    needs_prewarm = any(row.get("kind") == "sbf_anytime_current" for row in rows)
     if args.execute and needs_prewarm:
         prewarm_summary = ensure_shelf_cache(
             prewarm_json=args.prewarm_json,
@@ -161,6 +150,7 @@ def main() -> int:
             prewarm_depth=int(args.prewarm_depth),
             envelope=str(args.prewarm_envelope),
             prewarm_threads=int(args.prewarm_threads),
+            max_depth=int(args.prewarm_max_depth),
             clean_cache=bool(args.clean_cache),
             dry_run=bool(args.dry_run),
         )
@@ -171,7 +161,7 @@ def main() -> int:
     extra_env = default_sbf_subprocess_env()
     if args.execute:
         for row in rows:
-            measurement_env = extra_env if row.get("kind") == "sbf_baseline" else None
+            measurement_env = extra_env
             run_records.append({
                 "name": row["name"],
                 "measurement": run_command(row["command"], dry_run=bool(args.dry_run), extra_env=measurement_env),
@@ -184,13 +174,17 @@ def main() -> int:
         "status": "executed" if args.execute and not args.dry_run else "dry_run",
         "params": namespace_dict(args),
         "environment": environment_metadata(),
-        "cache": shelf_cache_payload(cache_path, args.prewarm_json, prewarm_summary),
+        "cache": {
+            **shelf_cache_payload(cache_path, args.prewarm_json, prewarm_summary),
+            "prune": prune_summary,
+        },
         "commands": rows,
         "runs": run_records,
         "notes": [
-            "The SBF row is exactly the Exp.4 baseline command shape and shares the Exp.3 p18 LECT DB cache path.",
-            "IRIS-NP+GCS, PRM, BIT*, and RRTConnect are dispatched through the existing shelf baseline backends.",
-            "OMPL segment-step is fixed to 0.01 for RRTConnect; PRM/BIT* use the legacy OMPL dispatcher defaults recorded in their outputs.",
+            "Experiment 5 is now a pure anytime dispatcher: current shelf SBF anytime, legacy OMPL shelf anytime, and IRIS-NP+GCS prefix anytime are emitted as separate artifacts.",
+            "The SBF row uses the refined unified d40 schedule through experiments/common/run_shelf_sbf_anytime.py and the Exp.3 p18 warm cache.",
+            "PRM, BIT*, and RRTConnect remain on the legacy shelf anytime backend; IRIS-NP+GCS remains on its dedicated prefix anytime backend.",
+            "Shelf cache preparation keeps only the canonical native p18 cache under the cache root, and the shelf SBF backend runs without checkpointing online cache writes back into LECT.",
         ],
     }
     write_json(out_json, payload)

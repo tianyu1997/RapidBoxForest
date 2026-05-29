@@ -15,7 +15,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import environment_metadata, namespace_dict, proc_status, run_id, write_json  # noqa: E402
-from experiments.common.shelf_iiwa_cache import DEFAULT_P18_CACHE_LABEL  # noqa: E402
+from experiments.common.marcucci_anchor_guard import validate_marcucci_query_artifact  # noqa: E402
+from experiments.common.shelf_iiwa_cache import (  # noqa: E402
+    DEFAULT_P18_CACHE_LABEL,
+    ENDPOINT_AAFK,
+    ENDPOINT_ANALYTICAL,
+    ENDPOINT_CRITSAMPLE,
+    ENDPOINT_HIFK,
+    ENDPOINT_MC,
+    LECT_SPLIT_AAFK_VOLUME_MIN,
+    LECT_SPLIT_ROUND_ROBIN,
+    SUPPORTED_ENDPOINT_SOURCES,
+    endpoint_enum,
+    normalize_endpoint_source,
+)
 from safe_box_forest.experiments.sbf_old import common_sbf_config as sbf_config  # noqa: E402
 from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
     add_common_sbf_args,
@@ -31,10 +44,6 @@ from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E40
 sbf = sbf_config.sbf
 
 
-ENDPOINT_AAFK = "aafk"
-ENDPOINT_CRITSAMPLE = "critsample"
-LECT_SPLIT_AAFK_VOLUME_MIN = "aafk_volume_min"
-LECT_SPLIT_ROUND_ROBIN = "round_robin"
 DEFAULT_AAFK_SCHEDULE_DEPTH = 50
 LATENCY_PROFILE_STABLE = "stable"
 LATENCY_PROFILE_BALANCED_LOW_LATENCY = "balanced_low_latency"
@@ -171,7 +180,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--database-path", type=Path, required=True)
     parser.add_argument("--seeds-list", default="0")
-    parser.add_argument("--endpoint-source", choices=[ENDPOINT_AAFK, ENDPOINT_CRITSAMPLE], default=ENDPOINT_AAFK)
+    parser.add_argument("--endpoint-source", choices=list(SUPPORTED_ENDPOINT_SOURCES), default=ENDPOINT_AAFK)
     parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True)
@@ -265,12 +274,7 @@ def directory_size(path: Path) -> int:
 
 
 def configure_endpoint(cfg: Any, endpoint_source: str) -> None:
-    if endpoint_source == ENDPOINT_AAFK:
-        cfg.endpoint_source.source = sbf.EndpointSource.IFK
-    elif endpoint_source == ENDPOINT_CRITSAMPLE:
-        cfg.endpoint_source.source = sbf.EndpointSource.CritSample
-    else:
-        raise ValueError(f"unsupported endpoint source {endpoint_source!r}")
+    cfg.endpoint_source.source = endpoint_enum(endpoint_source)
 
 
 def configure_lect_split(cfg: Any, robot: Any, policy: str, max_depth: int) -> None:
@@ -297,6 +301,7 @@ def effective_lect_schedule_depth(args: argparse.Namespace) -> int:
 
 def case_config(args: argparse.Namespace, robot: Any, seed: int) -> Any:
     local_args = effective_case_args(args)
+    local_args.endpoint_source = normalize_endpoint_source(local_args.endpoint_source)
     local_args.rbf_cache_root = Path(args.database_path).parent
     local_args.rbf_cache_label = Path(args.database_path).name
     cfg = configure_standalone_sbf(local_args, seed=seed, preset=str(args.preset), robot=robot)
@@ -308,7 +313,7 @@ def case_config(args: argparse.Namespace, robot: Any, seed: int) -> Any:
     cfg.database.read_only = False
     cfg.database.verify_identity = True
     cfg.database.replay_journal = True
-    cfg.database.checkpoint_after_build = True
+    cfg.database.checkpoint_after_build = False
     cfg.database.max_tree_depth = int(args.rbf_max_tree_depth)
     cfg.database.online_cache.max_nodes = int(args.rbf_online_cache_max_nodes)
     cfg.database.online_cache.max_payload_bytes = int(args.rbf_online_cache_max_payload_bytes)
@@ -784,6 +789,7 @@ def main() -> int:
             "A zero-box build is never considered ok, even if query repair later returns audit-passed paths.",
         ],
     }
+    payload["anchor_validation"] = validate_marcucci_query_artifact(payload, artifact_path=args.out_json)
     write_json(args.out_json, payload)
     print(f"wrote {args.out_json} ok={payload['ok']}")
     return 0 if payload["ok"] else 1

@@ -1242,6 +1242,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                                                    StageContext& context) {
     IslandConnectorResult result;
     auto islands = find_islands(graph);
+    context.diagnostics().add_counter("connector.islands_initial", static_cast<double>(islands.size()));
     if (islands.size() <= 1) {
         result.connected = true;
         return result;
@@ -1290,12 +1291,29 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             return lhs.size() > rhs.size();
         });
         const auto& main_island = islands.front();
-        const auto& target_island = islands.back();
-        std::vector<BridgePairTask> candidates = broadphase_bridge_pairs(map,
-                                                                         main_island,
-                                                                         target_island,
-                                                                         std::max(1, config_.max_pairs_per_gap),
-                                                                         std::max(4, config_.max_pairs_per_gap));
+        // E5: gather candidates between the main island and every other island in
+        // a single round so the parallel_for fills all worker threads (the gaps are
+        // independent). Commit is still serial + deterministic (see union-find below).
+        // box_id -> island index, used at commit time to merge distinct components.
+        std::unordered_map<int, int> island_of;
+        for (std::size_t isl = 0; isl < islands.size(); ++isl) {
+            for (int box_id : islands[isl]) {
+                island_of[box_id] = static_cast<int>(isl);
+            }
+        }
+        std::vector<BridgePairTask> candidates;
+        const int per_gap_limit = std::max(1, config_.max_pairs_per_gap);
+        for (std::size_t isl = 1; isl < islands.size(); ++isl) {
+            std::vector<BridgePairTask> gap_candidates = broadphase_bridge_pairs(map,
+                                                                                 main_island,
+                                                                                 islands[isl],
+                                                                                 per_gap_limit,
+                                                                                 std::max(4, config_.max_pairs_per_gap));
+            for (auto& task : gap_candidates) {
+                task.task_id = static_cast<int>(candidates.size());
+                candidates.push_back(std::move(task));
+            }
+        }
         context.diagnostics().add_counter("connector.bridge_broadphase_pairs", static_cast<double>(candidates.size()));
         bool progressed = false;
         std::vector<BridgePairResult> successful_pairs;
@@ -1346,6 +1364,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     }
                     return;
                 }
+                context.diagnostics().add_counter("connector.birrt_invocations");
                 auto outcome = birrt_connect_impl(
                     source_center,
                     target_center,
@@ -1411,6 +1430,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     }
                     continue;
                 }
+                context.diagnostics().add_counter("connector.birrt_invocations");
                 path = rrt_connect(
                     source_center,
                     target_center,
@@ -1433,7 +1453,40 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             }
         }
 
+        // E5 deterministic commit: process successful pairs in a stable order (by
+        // task_id) and commit every bridge whose two islands are still in distinct
+        // components, tracked by a union-find over island indices. This merges
+        // multiple independent gaps per round while keeping commit fully serial and
+        // order-independent of thread completion. Adjacency is recomputed once after
+        // all commits.
+        std::sort(successful_pairs.begin(), successful_pairs.end(),
+                  [](const BridgePairResult& lhs, const BridgePairResult& rhs) {
+                      return lhs.task_id < rhs.task_id;
+                  });
+        std::vector<int> uf(islands.size());
+        for (std::size_t i = 0; i < uf.size(); ++i) {
+            uf[i] = static_cast<int>(i);
+        }
+        auto uf_find = [&](int x) {
+            while (uf[x] != x) {
+                uf[x] = uf[uf[x]];
+                x = uf[x];
+            }
+            return x;
+        };
+        bool boxes_added_this_round = false;
         for (const auto& chosen : successful_pairs) {
+            const auto src_isl_it = island_of.find(chosen.source_box_id);
+            const auto tgt_isl_it = island_of.find(chosen.target_box_id);
+            if (src_isl_it == island_of.end() || tgt_isl_it == island_of.end()) {
+                continue;
+            }
+            const int src_root = uf_find(src_isl_it->second);
+            const int tgt_root = uf_find(tgt_isl_it->second);
+            if (src_root == tgt_root) {
+                // These two islands were already bridged earlier this round.
+                continue;
+            }
             bool added_segment_edge = false;
             if (config_.segment_edges_enabled && config_.rrt_segment_edges) {
                 const int edge_id = add_segment_edge(segment_edges,
@@ -1469,17 +1522,20 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             if (added > 0) {
                 context.diagnostics().add_counter("connector.chain_pave_successes");
                 result.bridge_boxes_added += added;
-                graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
-                apply_segment_edges_to_adjacency(segment_edges, graph);
+                boxes_added_this_round = true;
+                uf[src_root] = tgt_root;
                 progressed = true;
-                break;
             } else if (added_segment_edge) {
+                uf[src_root] = tgt_root;
                 progressed = true;
-                break;
             } else {
                 context.diagnostics().add_counter("connector.chain_pave_zero_added");
             }
         }
+        if (boxes_added_this_round) {
+            graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+        }
+        apply_segment_edges_to_adjacency(segment_edges, graph);
         if (!progressed) {
             break;
         }

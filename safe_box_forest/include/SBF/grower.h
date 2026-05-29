@@ -362,8 +362,6 @@ private:
 	mutable std::uint64_t trace_event_count_ = 0;
 	mutable std::mutex frontier_cache_mutex_;
 	mutable std::unordered_set<std::string> covered_frontier_seed_cache_;
-	mutable std::unordered_set<std::string> uncovered_frontier_seed_cache_;
-	mutable std::size_t uncovered_frontier_seed_cache_box_count_ = std::numeric_limits<std::size_t>::max();
 	std::unordered_map<std::uint64_t, int> component_pair_unknown_failures_;
 	std::unordered_map<int, int> component_parent_failures_;
 	std::unordered_map<OracleNodeId, FailureCoolingEntry> failure_cooling_;

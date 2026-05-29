@@ -10,7 +10,6 @@ from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import
     RBF_LIFELONG_PRESET,
     RBF_ONLY_OUTPUT_ROOT,
     add_common_sbf_args,
-    configure_external_evidence_reuse,
     configure_standalone_sbf,
     mean,
     median,
@@ -69,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-seeds", type=int, default=5)
     parser.add_argument("--scene-profile", choices=["balanced", "legacy"], default="balanced")
     parser.add_argument("--modes", default="warm_d18")
-    parser.add_argument("--iiwa-warm-cache-label", default="e5_lifelong_cache_link_d18_canonical_dim0q4")
+    parser.add_argument("--iiwa-warm-cache-label", default="e5_lifelong_cache_link_d18_smoke")
     parser.add_argument("--clean-prewarm-cache", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--clean-cold-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clean-warm-active-cache", action=argparse.BooleanOptionalAction, default=True)
@@ -173,7 +172,10 @@ def run_case(args: argparse.Namespace,
             raise FileNotFoundError(f"warm d18 cache does not exist: {warm_path}")
         if args.clean_warm_active_cache and cache_path.exists():
             shutil.rmtree(cache_path)
-        configure_external_evidence_reuse(cfg, warm_path, args, backfill_active=False)
+        cfg.database.external_evidence_path = str(warm_path)
+        cfg.validation.external_evidence_materialization = True
+        cfg.validation.external_evidence_scoring = True
+        cfg.validation.external_evidence_backfill_active = False
     cfg.database.create_if_missing = True
 
     forest = sbf.SafeBoxForest(robot, cfg)

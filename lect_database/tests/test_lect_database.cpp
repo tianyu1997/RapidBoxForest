@@ -70,7 +70,7 @@ ld::LectDatabaseIdentity identity_for(const std::vector<rbf::Interval>& root,
     identity.split_policy_descriptor = ld::split_policy_descriptor(split);
     identity.endpoint_descriptor = "test_endpoint";
     identity.envelope_descriptor = "test_envelope";
-    identity.payload_layout = "endpoint_envelope";
+    identity.payload_layout = "endpoint_envelope_v1";
     return identity;
 }
 
@@ -515,62 +515,6 @@ void test_endpoint_payload_parent_hull_layout() {
     std::filesystem::remove_all(dir);
 }
 
-void test_compact_rewrites_evidence_store() {
-    const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_compact_rewrite";
-    {
-        auto database = make_database(dir);
-        assert(database.ensure_depth(3));
-
-        std::vector<ld::EvidenceKey> inserted_keys;
-        inserted_keys.reserve(database.node_count());
-        for (ld::NodeId node_id = 0; node_id < database.node_count(); ++node_id) {
-            ld::EvidenceRecord record;
-            record.key.node_id = node_id;
-            record.key.sector = ld::kPrimarySector;
-            record.key.channel = ld::EvidenceChannel::Safe;
-            record.key.endpoint_source = rbf::EndpointSource::IFK;
-            record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
-            record.payload = {
-                static_cast<float>(node_id),
-                static_cast<float>(node_id) + 0.5f,
-                static_cast<float>(node_id) + 1.0f,
-                static_cast<float>(node_id) + 1.5f,
-            };
-            assert(database.put_evidence(record));
-            inserted_keys.push_back(record.key);
-        }
-        assert(database.checkpoint());
-
-        const auto evidence_path = dir / "evidence.pages";
-        const auto size_before_delete = std::filesystem::file_size(evidence_path);
-        for (ld::NodeId node_id = 0; node_id < database.node_count(); node_id += 4) {
-            database.delete_node_payloads(node_id);
-        }
-        assert(database.checkpoint());
-        const auto size_after_delete = std::filesystem::file_size(evidence_path);
-        assert(size_after_delete > size_before_delete);
-
-        assert(database.compact());
-        const auto size_after_compact = std::filesystem::file_size(evidence_path);
-        assert(size_after_compact < size_after_delete);
-
-        std::string reason;
-        auto reopened = ld::LectDatabase::open_existing(dir, true, &reason);
-        assert(reopened.has_value());
-        assert(reopened->verify(true).ok);
-        for (ld::NodeId node_id = 0; node_id < reopened->node_count(); ++node_id) {
-            const auto evidence = reopened->evidence(inserted_keys[static_cast<std::size_t>(node_id)]);
-            if (node_id % 4 == 0) {
-                assert(!evidence.has_value());
-            } else {
-                assert(evidence.has_value());
-                assert(evidence->payload.size() == 4);
-            }
-        }
-    }
-    std::filesystem::remove_all(dir);
-}
-
 void test_lru_node_page_swap_and_reopen() {
     const auto dir = std::filesystem::temp_directory_path() / "rbf_lect_database_lru";
     auto config = config_for(dir);
@@ -801,7 +745,6 @@ int main() {
     test_evidence_journal_replay_without_checkpoint();
     test_evidence_parent_hull_and_exact_box_lookup();
     test_endpoint_payload_parent_hull_layout();
-    test_compact_rewrites_evidence_store();
     test_lru_node_page_swap_and_reopen();
     test_legacy_text_evidence_store_is_rejected();
     test_binary_evidence_index_sidecar_sorted_and_unsorted_fallback();

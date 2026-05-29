@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,12 +22,19 @@ from experiments.common.experiment_io import (  # noqa: E402
     run_id,
     write_json,
 )
+from experiments.common.cache_maintenance import prune_directory_children  # noqa: E402
+from experiments.common.anytime_defaults import UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH  # noqa: E402
 from experiments.common.lect_db_dispatch import (  # noqa: E402
-    build_shelf_sbf_case_command,
+    build_current_shelf_sbf_anytime_command,
     ensure_shelf_cache,
     shelf_cache_payload,
 )
-from experiments.common.shelf_iiwa_cache import DEFAULT_P18_CACHE_LABEL, load_json  # noqa: E402
+from experiments.common.shelf_iiwa_cache import (  # noqa: E402
+    DEFAULT_P18_CACHE_LABEL,
+    DEFAULT_P18_NATIVE_CACHE_LABEL,
+    channel_cache_label,
+    load_json,
+)
 
 
 BASELINE_NAME = "baseline_warm_aafk_support_hull_8t_aafk_volume_min"
@@ -34,187 +42,173 @@ BASELINE_NAME = "baseline_warm_aafk_support_hull_8t_aafk_volume_min"
 
 def parse_args() -> argparse.Namespace:
     output_dir = DEFAULT_OUTPUT_ROOT / "exp04_shelf_ablation"
-    parser = argparse.ArgumentParser(description="Run Experiment 4 from the current ablation plan.")
+    parser = argparse.ArgumentParser(description="Run Experiment 4 as the full current shelf ablation matrix on the anytime backend.")
     parser.add_argument("--out-dir", type=Path, default=output_dir)
     parser.add_argument("--out-json", type=Path, default=None)
-    parser.add_argument("--prewarm-json", type=Path, default=output_dir / "p18_prewarm.json")
+    parser.add_argument("--prewarm-json", type=Path, default=None)
     parser.add_argument("--prewarm-depth", type=int, default=18)
+    parser.add_argument("--rbf-max-depth", type=int, default=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH)
+    parser.add_argument("--prewarm-max-depth", type=int, default=None)
     parser.add_argument("--prewarm-threads", type=int, default=8)
     parser.add_argument("--prewarm-envelope", choices=["link", "support_hull"], default="support_hull")
-    parser.add_argument("--only", default="all", help="Comma-separated row names or all.")
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--timeout-ms", type=float, default=60000.0)
-    parser.add_argument("--rbf-cache-root", type=Path, default=output_dir / "cache")
-    parser.add_argument("--warm-cache-label", default=DEFAULT_P18_CACHE_LABEL)
+    parser.add_argument("--rbf-cache-root", type=Path, default=None)
+    parser.add_argument("--warm-cache-label", default=None)
+    parser.add_argument("--warm-cache-canonical", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--external-evidence-mode", choices=["legacy", "snapshot"], default="snapshot")
+    parser.add_argument("--only", default="all", help="Comma-separated row names or all.")
+    parser.add_argument("--external-evidence-mode", choices=["snapshot"], default="snapshot")
     parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
-def case_command(
+def ablation_command(
     args: argparse.Namespace,
     *,
     name: str,
-    endpoint_source: str,
-    lect_split_policy: str,
-    envelope: str,
-    threads: int,
-    use_external_evidence: bool,
-    external_evidence_materialization: bool = True,
-    external_evidence_scoring: bool = True,
-    latency_profile: str = "stable",
+    endpoint_source: str = "aafk",
+    lect_split_policy: str = "aafk_volume_min",
+    envelope: str = "support_hull",
+    threads: int | None = None,
+    use_external_evidence: bool = True,
+    endpoint_evidence_cache: bool = True,
+    rbf_max_depth: int | None = None,
+    warm_cache_label: str | None = None,
 ) -> list[str]:
-    return build_shelf_sbf_case_command(
+    return build_current_shelf_sbf_anytime_command(
         python_executable=sys.executable,
         out_json=args.out_dir / f"{name}.json",
-        database_path=args.rbf_cache_root / name,
+        database_path=args.out_dir / "active_cache" / name,
         case_name=name,
-        endpoint_source=endpoint_source,
-        lect_split_policy=lect_split_policy,
-        envelope=envelope,
-        threads=threads,
+        endpoint_source=str(endpoint_source),
+        lect_split_policy=str(lect_split_policy),
+        envelope=str(envelope),
+        threads=int(threads if threads is not None else args.threads),
         seeds=int(args.seeds),
         timeout_ms=float(args.timeout_ms),
-        use_external_evidence=use_external_evidence,
+        use_external_evidence=bool(use_external_evidence),
+        endpoint_evidence_cache=bool(endpoint_evidence_cache),
         rbf_cache_root=args.rbf_cache_root,
-        warm_cache_label=str(args.warm_cache_label),
+        warm_cache_label=str(warm_cache_label or args.warm_cache_label),
         external_evidence_mode=str(args.external_evidence_mode),
         external_evidence_auto_build_snapshot=bool(args.external_evidence_auto_build_snapshot),
-        external_evidence_materialization=external_evidence_materialization,
-        external_evidence_scoring=external_evidence_scoring,
-        latency_profile=latency_profile,
+        external_evidence_materialization=True,
+        external_evidence_scoring=True,
         clean_active_cache=True,
+        rbf_max_depth=int(rbf_max_depth if rbf_max_depth is not None else args.rbf_max_depth),
+        canonical_cache=bool(args.warm_cache_canonical),
+        require_no_repair=bool(args.require_no_repair),
     )
 
 
-def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
+def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
+    baseline_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min")
+    critsample_cache_label = channel_cache_label(str(args.warm_cache_label), "critsample", "aafk_volume_min")
+    round_robin_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "round_robin")
     rows = [
         {
             "name": BASELINE_NAME,
+            "kind": "sbf_anytime_current",
             "factor": "baseline",
-            "description": "warm LECT cache + AAFK endpoint + SupportHull + 8 threads + AAFKVolumeMin split policy",
+            "description": "Warm native-root cache + AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy.",
             "changes_from_baseline": [],
-            "command": case_command(
-                args,
-                name=BASELINE_NAME,
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
-            ),
-        },
-        {
-            "name": "balanced_low_latency",
-            "factor": "latency_profile",
-            "description": "warm LECT cache + AAFK + SupportHull with a staged low-box incumbent protocol adapted from the old shelf anytime settings",
-            "changes_from_baseline": [
-                "latency_profile=balanced_low_latency",
-                "task_batch_size<=2",
-                "component_connect_candidate_limit=1",
-                "staged low-box schedule with incumbent retention",
-                "quality/max_boxes staged as 2/16 -> 64/96 -> 128/160 -> 192/224 -> 256/320",
-            ],
-            "command": case_command(
-                args,
-                name="balanced_low_latency",
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
-                latency_profile="balanced_low_latency",
-            ),
+            "uses_external_evidence": True,
+            "warm_cache_label": baseline_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "aafk_volume_min",
+            "active_cache_path": str(args.out_dir / "active_cache" / BASELINE_NAME),
+            "command": ablation_command(args, name=BASELINE_NAME, warm_cache_label=baseline_cache_label),
         },
         {
             "name": "no_lect_cache_online_envelopes",
+            "kind": "sbf_anytime_current",
             "factor": "cache",
-            "description": "same as baseline, but do not reuse the Exp.3 LECT DB cache as external evidence",
-            "changes_from_baseline": ["use_external_evidence=false"],
-            "command": case_command(
+            "description": "Disable external reuse and disable active endpoint evidence reuse so payloads stay fully online.",
+            "changes_from_baseline": ["use_external_evidence=false", "endpoint_evidence_cache=false"],
+            "uses_external_evidence": False,
+            "active_cache_path": str(args.out_dir / "active_cache" / "no_lect_cache_online_envelopes"),
+            "command": ablation_command(
                 args,
                 name="no_lect_cache_online_envelopes",
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
-                threads=int(args.threads),
                 use_external_evidence=False,
+                endpoint_evidence_cache=False,
             ),
         },
         {
             "name": "critsample_endpoint_support_hull",
+            "kind": "sbf_anytime_current",
             "factor": "endpoint_source",
-            "description": "replace the AAFK endpoint channel with CritSample while keeping SupportHull and AAFKVolumeMin splitting",
-            "changes_from_baseline": ["endpoint_source=critsample"],
-            "command": case_command(
+            "description": "Replace AAFK with CritSample and reuse a CritSample-specific warm LECT cache.",
+            "changes_from_baseline": ["endpoint_source=critsample", "warm_cache=critsample"],
+            "uses_external_evidence": True,
+            "warm_cache_label": critsample_cache_label,
+            "warm_cache_endpoint_source": "critsample",
+            "warm_cache_lect_split_policy": "aafk_volume_min",
+            "active_cache_path": str(args.out_dir / "active_cache" / "critsample_endpoint_support_hull"),
+            "command": ablation_command(
                 args,
                 name="critsample_endpoint_support_hull",
                 endpoint_source="critsample",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
+                warm_cache_label=critsample_cache_label,
             ),
         },
         {
             "name": "aabb_envelope_only",
+            "kind": "sbf_anytime_current",
             "factor": "envelope_collision",
-            "description": "replace SupportHull envelope checks with the legacy link/AABB envelope mode",
+            "description": "Replace SupportHull with link/AABB envelopes under the same staged protocol.",
             "changes_from_baseline": ["rbf_envelope=link"],
-            "command": case_command(
+            "uses_external_evidence": True,
+            "warm_cache_label": baseline_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "aafk_volume_min",
+            "active_cache_path": str(args.out_dir / "active_cache" / "aabb_envelope_only"),
+            "command": ablation_command(
                 args,
                 name="aabb_envelope_only",
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
                 envelope="link",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
+                warm_cache_label=baseline_cache_label,
             ),
         },
         {
             "name": "single_thread",
+            "kind": "sbf_anytime_current",
             "factor": "threads",
-            "description": "same as baseline with one worker thread",
+            "description": "Same as baseline with one worker thread.",
             "changes_from_baseline": ["threads=1"],
-            "command": case_command(
+            "uses_external_evidence": True,
+            "warm_cache_label": baseline_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "aafk_volume_min",
+            "active_cache_path": str(args.out_dir / "active_cache" / "single_thread"),
+            "command": ablation_command(
                 args,
                 name="single_thread",
-                endpoint_source="aafk",
-                lect_split_policy="aafk_volume_min",
-                envelope="support_hull",
                 threads=1,
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
+                warm_cache_label=baseline_cache_label,
             ),
         },
         {
             "name": "round_robin_split_policy",
+            "kind": "sbf_anytime_current",
             "factor": "lect_split_policy",
-            "description": "same as baseline, but replace AAFKVolumeMin LECT splitting with deterministic round-robin splitting",
-            "changes_from_baseline": ["lect_split_policy=round_robin"],
-            "command": case_command(
+            "description": "Same as baseline but replace AAFKVolumeMin with deterministic round-robin splitting and reuse a round-robin warm LECT cache.",
+            "changes_from_baseline": ["lect_split_policy=round_robin", "warm_cache=round_robin"],
+            "uses_external_evidence": True,
+            "warm_cache_label": round_robin_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "round_robin",
+            "active_cache_path": str(args.out_dir / "active_cache" / "round_robin_split_policy"),
+            "command": ablation_command(
                 args,
                 name="round_robin_split_policy",
-                endpoint_source="aafk",
                 lect_split_policy="round_robin",
-                envelope="support_hull",
-                threads=int(args.threads),
-                use_external_evidence=True,
-                external_evidence_materialization=True,
-                external_evidence_scoring=True,
+                warm_cache_label=round_robin_cache_label,
             ),
         },
     ]
@@ -224,32 +218,98 @@ def full_matrix(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows
 
 
+def omitted_rows() -> list[dict[str, Any]]:
+    return [{
+        "name": "aabb_to_support_hull_chain",
+        "kind": "merged_configuration",
+        "executed": False,
+        "reason": "SupportHull now uses the unified pure-GJK narrow phase; the historical AABB->SH chain path is no longer a distinct executable configuration.",
+    }]
+
+
 def main() -> int:
     args = parse_args()
+    if args.warm_cache_label is None:
+        args.warm_cache_label = DEFAULT_P18_CACHE_LABEL if bool(args.warm_cache_canonical) else DEFAULT_P18_NATIVE_CACHE_LABEL
+    prewarm_max_depth = int(args.prewarm_max_depth if args.prewarm_max_depth is not None else args.rbf_max_depth)
+    args.prewarm_json = args.prewarm_json or (args.out_dir / "p18_prewarm.json")
+    args.rbf_cache_root = args.rbf_cache_root or (args.out_dir / "cache")
     out_json = args.out_json or (args.out_dir / "shelf_ablation_manifest.json")
-    rows = full_matrix(args)
-    cache_path = args.rbf_cache_root / str(args.warm_cache_label)
-    needs_prewarm = any("--use-external-evidence" in row["command"] for row in rows)
-    prewarm_summary: dict[str, Any]
-    if args.execute and needs_prewarm:
-        prewarm_summary = ensure_shelf_cache(
-            prewarm_json=args.prewarm_json,
-            cache_path=cache_path,
-            prewarm_depth=int(args.prewarm_depth),
-            envelope=str(args.prewarm_envelope),
-            prewarm_threads=int(args.prewarm_threads),
-            clean_cache=bool(args.clean_cache),
-            dry_run=bool(args.dry_run),
-        )
-    else:
-        prewarm_summary = load_json(args.prewarm_json)
+    args.out_json = out_json
+    rows = command_rows(args)
+    cache_specs: dict[str, dict[str, str]] = {}
+    for row in rows:
+        if not bool(row.get("uses_external_evidence")):
+            continue
+        label = str(row.get("warm_cache_label") or args.warm_cache_label)
+        cache_specs[label] = {
+            "endpoint_source": str(row.get("warm_cache_endpoint_source", "aafk")),
+            "lect_split_policy": str(row.get("warm_cache_lect_split_policy", "aafk_volume_min")),
+            "envelope": str(args.prewarm_envelope),
+            "canonical_mode": bool(args.warm_cache_canonical),
+        }
+    keep_cache_labels = sorted(cache_specs) or [str(args.warm_cache_label)]
+    prune_summary: dict[str, Any] = {
+        "path": str(args.rbf_cache_root),
+        "kept": keep_cache_labels,
+        "removed": [],
+        "removed_count": 0,
+        "dry_run": bool(args.dry_run or not args.execute),
+    }
+    if args.execute and not args.dry_run:
+        prune_summary = prune_directory_children(args.rbf_cache_root, keep_cache_labels)
+    prewarm_jsons: dict[str, Path] = {}
+    prewarm_summaries: dict[str, dict[str, Any]] = {}
+    for label, spec in cache_specs.items():
+        prewarm_json = args.prewarm_json if label == str(args.warm_cache_label) else args.out_dir / f"p18_prewarm_{label}.json"
+        prewarm_jsons[label] = prewarm_json
+        if args.execute:
+            prewarm_summaries[label] = ensure_shelf_cache(
+                prewarm_json=prewarm_json,
+                cache_path=args.rbf_cache_root / label,
+                prewarm_depth=int(args.prewarm_depth),
+                envelope=str(spec["envelope"]),
+                prewarm_threads=int(args.prewarm_threads),
+                max_depth=prewarm_max_depth,
+                endpoint_source=str(spec["endpoint_source"]),
+                lect_split_policy=str(spec["lect_split_policy"]),
+                canonical_mode=bool(spec["canonical_mode"]),
+                clean_cache=bool(args.clean_cache),
+                dry_run=bool(args.dry_run),
+            )
+        else:
+            prewarm_summaries[label] = load_json(prewarm_json)
 
     run_records = []
     extra_env = default_sbf_subprocess_env()
+    active_cache_root = args.out_dir / "active_cache"
+    if args.execute and not args.dry_run and active_cache_root.exists():
+        shutil.rmtree(active_cache_root)
     if args.execute:
         for row in rows:
             measurement = run_command(row["command"], dry_run=bool(args.dry_run), extra_env=extra_env)
             run_records.append({"name": row["name"], "measurement": measurement})
+            if not args.dry_run:
+                row_prefix = f"{row['name']}"
+                for candidate in active_cache_root.glob(f"{row_prefix}*"):
+                    if candidate.is_dir():
+                        shutil.rmtree(candidate)
+                    elif candidate.exists():
+                        candidate.unlink()
+    if active_cache_root.exists() and not any(active_cache_root.iterdir()):
+        active_cache_root.rmdir()
+    active_cache_cleanup = {
+        "path": str(active_cache_root),
+        "exists_after_run": active_cache_root.exists(),
+    }
+    primary_cache_label = next(iter(cache_specs), str(args.warm_cache_label))
+    primary_cache_path = args.rbf_cache_root / primary_cache_label
+    primary_prewarm_json = prewarm_jsons.get(primary_cache_label, args.prewarm_json)
+    primary_prewarm_summary = prewarm_summaries.get(primary_cache_label, load_json(primary_prewarm_json))
+    warm_cache_payloads = {
+        label: shelf_cache_payload(args.rbf_cache_root / label, prewarm_jsons[label], prewarm_summaries[label])
+        for label in sorted(prewarm_summaries)
+    }
 
     payload = {
         "experiment": "exp04_shelf_ablation",
@@ -258,13 +318,20 @@ def main() -> int:
         "status": "executed" if args.execute and not args.dry_run else "dry_run",
         "params": namespace_dict(args),
         "environment": environment_metadata(),
-        "cache": shelf_cache_payload(cache_path, args.prewarm_json, prewarm_summary),
-        "matrix": rows,
+        "cache": {
+            **shelf_cache_payload(primary_cache_path, primary_prewarm_json, primary_prewarm_summary),
+            "prune": prune_summary,
+            "active_cache_cleanup": active_cache_cleanup,
+            "warm_caches": warm_cache_payloads,
+        },
+        "commands": rows,
+        "omitted_rows": omitted_rows(),
         "runs": run_records,
         "notes": [
-            "This wrapper is a fresh plan-driven Exp.4 entrypoint under /experiments.",
-            "All SBF rows use experiments/common/run_shelf_sbf_case.py instead of the transitional shelf runner.",
-            "The Exp.3 p18 LECT DB cache is prepared once and passed to warm rows as snapshot-backed external evidence.",
+            "Experiment 4 now emits the full current ablation matrix on top of the shared shelf anytime backend.",
+            "All executable rows keep the same staged d40_r4 protocol unless the ablation factor itself changes endpoint source, envelope, thread count, split policy, or external cache reuse.",
+            "Shelf runs preserve only the endpoint/split-compatible p18 warm caches required by selected rows; per-row active caches are created under the output directory and removed after execution, and the shelf backend does not checkpoint online warm-cache results back into LECT.",
+            "The historical AABB->SH chain row is recorded as omitted because SupportHull already subsumes that path in the current pure-GJK implementation.",
         ],
     }
     write_json(out_json, payload)

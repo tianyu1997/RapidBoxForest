@@ -4,7 +4,9 @@
 #include <LECTDatabase/sbf/scene.h>
 
 #include <rbf/lect_database.h>
+#include <rbf/lect_database/evidence_source.h>
 
+#include <sbf/core/aa_fk.h>
 #include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/envelope_type.h>
 
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -57,11 +60,22 @@ struct OracleValidationConfig {
     bool accept_unsafe_free = false;
     bool enable_validation_cache = true;
     int validation_cache_max_entries = 4096;
+    bool enable_endpoint_evidence_cache = true;
+    bool store_endpoint_evidence_cache = true;
     double endpoint_cache_min_effective_width = 0.0;
     bool external_evidence_materialization = true;
     bool external_evidence_scoring = true;
     bool external_evidence_backfill_active = true;
     bool stateless_materialization_context = false;
+    // When true, worker oracles share a thread-safe, interval-keyed endpoint
+    // cache spawned from the master so concurrent build tasks reuse endpoints
+    // computed by sibling tasks (mirroring single-thread cross-query reuse).
+    bool enable_worker_shared_endpoint_cache = true;
+    // Memory bounds for the shared endpoint cache. 0 means unbounded for the
+    // corresponding dimension. Defaults cap the cache so multi-query / deep
+    // builds cannot grow it without limit (OOM guard).
+    std::size_t shared_endpoint_cache_max_entries = 200000;
+    std::size_t shared_endpoint_cache_max_bytes = 512ull * 1024ull * 1024ull;
 };
 
 struct OracleValidationDetail {
@@ -102,16 +116,27 @@ struct OracleCounters {
     int materialization_stored_endpoint = 0;
     int materialization_skipped_endpoint_cache = 0;
     double materialization_endpoint_time_us = 0.0;
+    double materialization_endpoint_wall_time_us = 0.0;
     double materialization_envelope_time_us = 0.0;
+    double validate_node_total_time_us = 0.0;
+    double validate_node_preamble_time_us = 0.0;
+    double validate_node_endpoint_path_time_us = 0.0;
+    double validate_node_classify_time_us = 0.0;
+    double validate_node_overhead_time_us = 0.0;
     double materialization_cache_lookup_time_us = 0.0;
     double materialization_cache_read_time_us = 0.0;
+    double materialization_external_lookup_time_us = 0.0;
+    double materialization_external_read_time_us = 0.0;
     double materialization_envelope_compute_time_us = 0.0;
     double materialization_envelope_read_time_us = 0.0;
+    double materialization_envelope_collision_time_us = 0.0;
     int materialization_incremental_fk = 0;
     int materialization_source_incremental_state = 0;
     int materialization_reused_fk = 0;
     int materialization_reused_endpoint_cache = 0;
     int materialization_reused_external_evidence = 0;
+    int materialization_reused_shared_endpoint_cache = 0;
+    int materialization_stored_shared_endpoint_cache = 0;
     int materialization_reused_cached_envelope = 0;
     int materialization_candidate_dirty_count = 0;
     int materialization_predh_rebuild_count = 0;
@@ -160,6 +185,16 @@ public:
     virtual int max_tree_depth() const { return 64; }
     virtual const std::vector<Interval>& root_intervals() const = 0;
     virtual std::vector<Interval> node_intervals(OracleNodeId node) const = 0;
+    virtual Eigen::VectorXd tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const {
+        return q;
+    }
+    virtual std::vector<Interval> query_intervals_for_node(OracleNodeId node,
+                                                           const std::vector<Interval>& tree_intervals,
+                                                           const Eigen::Ref<const Eigen::VectorXd>& q) const {
+        (void)node;
+        (void)q;
+        return tree_intervals;
+    }
     virtual bool contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const = 0;
     virtual bool is_leaf(OracleNodeId node) const = 0;
     virtual int depth(OracleNodeId node) const = 0;
@@ -220,34 +255,26 @@ public:
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
                       OracleValidationConfig validation_config = {},
-                      const lect_database::LectDatabase* external_evidence_database = nullptr);
-    DatabaseBoxOracle(Robot robot,
-                      lect_database::LectDatabase& database,
-                      Scene scene,
-                      EndpointSourceConfig endpoint_config,
-                      EnvelopeTypeConfig envelope_config,
-                      OracleValidationConfig validation_config,
-                      const lect_database::LectExternalEvidenceSource* external_evidence_source);
+                      const lect_database::LectExternalEvidenceSource* external_evidence_source = nullptr,
+                      const lect_database::LectDatabase* direct_external_evidence_database = nullptr);
     DatabaseBoxOracle(Robot robot,
                       lect_database::OnlineEnvelopeCacheTree& online_cache,
                       Scene scene = {},
                       EndpointSourceConfig endpoint_config = {},
                       EnvelopeTypeConfig envelope_config = {},
                       OracleValidationConfig validation_config = {},
-                      const lect_database::LectDatabase* external_evidence_database = nullptr);
-    DatabaseBoxOracle(Robot robot,
-                      lect_database::OnlineEnvelopeCacheTree& online_cache,
-                      Scene scene,
-                      EndpointSourceConfig endpoint_config,
-                      EnvelopeTypeConfig envelope_config,
-                      OracleValidationConfig validation_config,
-                      const lect_database::LectExternalEvidenceSource* external_evidence_source);
+                      const lect_database::LectExternalEvidenceSource* external_evidence_source = nullptr,
+                      const lect_database::LectDatabase* direct_external_evidence_database = nullptr);
 
     int n_dims() const override;
     OracleNodeId root_node() const override { return 0; }
     int max_tree_depth() const override;
     const std::vector<Interval>& root_intervals() const override;
     std::vector<Interval> node_intervals(OracleNodeId node) const override;
+    Eigen::VectorXd tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const override;
+    std::vector<Interval> query_intervals_for_node(OracleNodeId node,
+                                                   const std::vector<Interval>& tree_intervals,
+                                                   const Eigen::Ref<const Eigen::VectorXd>& q) const override;
     bool contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const override;
     bool is_leaf(OracleNodeId node) const override;
     int depth(OracleNodeId node) const override;
@@ -282,42 +309,45 @@ public:
     const EndpointSourceConfig& endpoint_config() const { return endpoint_config_; }
     const EnvelopeTypeConfig& envelope_config() const { return envelope_config_; }
     const OracleValidationConfig& validation_config() const { return validation_config_; }
-    const lect_database::LectExternalEvidenceSource* external_evidence_source() const {
-        return external_evidence_source_;
-    }
-    void set_external_evidence_database(const lect_database::LectDatabase* database) {
-        if (database == nullptr) {
-            external_evidence_database_source_.reset();
-            external_evidence_source_ = nullptr;
-            return;
-        }
-        external_evidence_database_source_.emplace(*database);
-        external_evidence_source_ = &*external_evidence_database_source_;
-    }
-    void set_external_evidence_source(const lect_database::LectExternalEvidenceSource* source) {
-        external_evidence_database_source_.reset();
-        external_evidence_source_ = source;
-    }
+    const lect_database::LectExternalEvidenceSource* external_evidence_source() const { return external_evidence_source_; }
+    const lect_database::LectDatabase* direct_external_evidence_database() const { return direct_external_evidence_database_; }
     lect_database::LectDatabase& database() { return database_; }
     const lect_database::LectDatabase& database() const { return database_; }
 
+    // Lazily create and return the master-owned shared endpoint cache used to
+    // share endpoints across worker tasks. Returns the same instance on every
+    // call so all workers spawned from this master read/write one cache.
+    std::shared_ptr<lect_database::SharedEndpointEvidenceCache> shared_endpoint_cache();
+
+    // Non-allocating peek for diagnostics; null when no cache has been created.
+    const lect_database::SharedEndpointEvidenceCache* shared_endpoint_cache_peek() const {
+        return shared_endpoint_cache_.get();
+    }
+    void set_shared_endpoint_cache(std::shared_ptr<lect_database::SharedEndpointEvidenceCache> cache) {
+        shared_endpoint_cache_ = std::move(cache);
+    }
+
 private:
+    struct EndpointPayload {
+        std::vector<float> owned_payload;
+        std::shared_ptr<const lect_database::EvidenceRecord> record_storage;
+        std::shared_ptr<const void> storage_owner;
+        std::span<const float> payload;
+    };
+
     lect_database::EvidenceKey endpoint_key(OracleNodeId node) const;
-    std::optional<std::vector<float>> materialize_endpoint_payload_for_node(OracleNodeId node,
-                                                                            const std::vector<Interval>& intervals,
-                                                                            int changed_dim);
-    std::optional<std::vector<float>> endpoint_payload_for_node(OracleNodeId node,
-                                                                const std::vector<Interval>& intervals,
-                                                                int changed_dim);
+    std::optional<EndpointPayload> endpoint_payload_for_node(OracleNodeId node,
+                                                             const std::vector<Interval>& intervals,
+                                                             int changed_dim);
     BoxValidation classify_payload(OracleNodeId node,
                                    const std::vector<Interval>& intervals,
-                                   const std::vector<float>& endpoint_payload);
+                                   std::span<const float> endpoint_payload);
 
     Robot robot_;
     lect_database::LectDatabase& database_;
     lect_database::OnlineEnvelopeCacheTree* online_cache_ = nullptr;
-    std::optional<lect_database::LectDatabaseEvidenceSource> external_evidence_database_source_;
     const lect_database::LectExternalEvidenceSource* external_evidence_source_ = nullptr;
+    const lect_database::LectDatabase* direct_external_evidence_database_ = nullptr;
     EndpointSourceConfig endpoint_config_;
     EnvelopeTypeConfig envelope_config_;
     OracleValidationConfig validation_config_;
@@ -327,6 +357,14 @@ private:
     OracleValidationDetail last_validation_detail_;
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;
+    // Incremental AA-FK chain prefix reused along a single-threaded parent->child
+    // descent. Bit-exact with a full pass; only IFK single-pass materialization
+    // uses it. Not shared across threads (each worker owns its own oracle).
+    AaFkPrefixState aa_fk_prefix_state_;
+    // Thread-safe interval-keyed endpoint cache shared across worker tasks. The
+    // master lazily owns it via shared_endpoint_cache(); workers receive the same
+    // instance via set_shared_endpoint_cache().
+    std::shared_ptr<lect_database::SharedEndpointEvidenceCache> shared_endpoint_cache_;
 };
 
 class DatabaseBoxOracleSession final : public BoxOracleSession {

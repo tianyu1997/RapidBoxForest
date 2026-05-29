@@ -18,6 +18,17 @@ EvidenceKey canonicalize_evidence_key(const LectDatabase& database, EvidenceKey 
     return key;
 }
 
+EvidenceRecord clone_evidence_record(const EvidenceRecordView& view) {
+    EvidenceRecord record;
+    record.key = view.key;
+    record.child_hull = view.child_hull;
+    record.unavailable = view.unavailable;
+    record.generation = view.generation;
+    record.checksum = view.checksum;
+    record.payload.assign(view.payload.begin(), view.payload.end());
+    return record;
+}
+
 }  // namespace
 
 OnlineEnvelopeCacheTree::OnlineEnvelopeCacheTree(LectDatabase& database,
@@ -73,11 +84,10 @@ std::pair<NodeId, NodeId> OnlineEnvelopeCacheTree::split_leaf(NodeId node_id) {
     return children;
 }
 
-std::optional<EvidenceRecord> OnlineEnvelopeCacheTree::evidence(
-    EvidenceKey key,
-    const std::vector<Interval>* exact_intervals,
-    const LectExternalEvidenceSource* external_evidence_source,
-    bool* reused_external_evidence) {
+std::optional<EvidenceRecord> OnlineEnvelopeCacheTree::evidence(EvidenceKey key,
+                                                                const std::vector<Interval>* exact_intervals,
+                                                                const LectExternalEvidenceSource* external_evidence_source,
+                                                                bool* reused_external_evidence) {
     if (reused_external_evidence != nullptr) {
         *reused_external_evidence = false;
     }
@@ -91,42 +101,19 @@ std::optional<EvidenceRecord> OnlineEnvelopeCacheTree::evidence(
 
     stats_.cache_misses += 1;
     auto stored = database_.evidence(key);
-    if (!stored) {
-        if (external_evidence_source == nullptr) {
-            return std::nullopt;
-        }
-        std::optional<EvidenceRecordView> external_record;
-        if (exact_intervals != nullptr) {
-            external_record = external_evidence_source->endpoint_for_box_exact(*exact_intervals, key);
-        }
-        if (!external_record && key.node_path_valid) {
-            external_record = external_evidence_source->evidence(key);
-        }
-        if (!external_record) {
-            return std::nullopt;
-        }
-
-        EvidenceRecord record;
-        record.key = key;
-        record.child_hull = external_record->child_hull;
-        record.unavailable = external_record->unavailable;
-        record.generation = external_record->generation;
-        record.checksum = external_record->checksum;
-        record.payload.assign(external_record->payload.begin(), external_record->payload.end());
-        insert_cache_record(record);
-        if (reused_external_evidence != nullptr) {
+    if (!stored && external_evidence_source != nullptr) {
+        stored = exact_intervals != nullptr
+            ? external_evidence_source->endpoint_for_box_exact(*exact_intervals, key)
+            : external_evidence_source->evidence(key);
+        if (stored && reused_external_evidence != nullptr) {
             *reused_external_evidence = true;
         }
-        return record;
+    }
+    if (!stored) {
+        return std::nullopt;
     }
 
-    EvidenceRecord record;
-    record.key = stored->key;
-    record.child_hull = stored->child_hull;
-    record.unavailable = stored->unavailable;
-    record.generation = stored->generation;
-    record.checksum = stored->checksum;
-    record.payload.assign(stored->payload.begin(), stored->payload.end());
+    EvidenceRecord record = clone_evidence_record(*stored);
     stats_.database_loads += 1;
     insert_cache_record(record);
     return record;
@@ -155,14 +142,15 @@ bool OnlineEnvelopeCacheTree::flush_payloads_to_database() {
     if (database_.read_only()) {
         return false;
     }
-    for (const auto& [key, entry] : payload_cache_) {
-        (void)key;
-        if (!database_.put_evidence(entry.record)) {
-            return false;
+    bool ok = true;
+    for (const auto& item : payload_cache_) {
+        if (database_.put_evidence(item.second.record)) {
+            stats_.database_writes += 1;
+        } else {
+            ok = false;
         }
-        stats_.database_writes += 1;
     }
-    return true;
+    return ok;
 }
 
 void OnlineEnvelopeCacheTree::clear_payloads() {

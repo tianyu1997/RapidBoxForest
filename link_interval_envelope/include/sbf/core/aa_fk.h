@@ -61,4 +61,35 @@ void aa_fk_extract_from_prefix(
     int n_joints,
     float* out);
 
+/// Stateful AA-FK chain prefix enabling incremental endpoint recomputation
+/// along a parent->child descent. When exactly one joint interval changes
+/// between two consecutive calls, only the affected suffix of the kinematic
+/// chain is recomputed; the produced endpoint iAABBs are bit-identical to a
+/// full AA-FK pass.
+struct AaFkPrefixState {
+    AffineMatrix4 prefix[MAX_TF];
+    std::vector<Interval> intervals;
+    int n_joints = 0;
+    bool valid = false;
+};
+
+/// Full AA-FK endpoint pass that also records the chain prefix in @p state so a
+/// subsequent single-dimension change can be served incrementally.
+void aa_fk_endpoint_full(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    float* out,
+    AaFkPrefixState& state);
+
+/// Incremental AA-FK endpoint pass. When @p state is valid and @p intervals
+/// differ from the cached intervals in exactly one dimension (bit-exact on all
+/// others), only the affected suffix of the chain is recomputed and @p out is
+/// filled with a result bit-identical to a full pass; returns true. Otherwise
+/// @p out is left untouched and the function returns false.
+bool aa_fk_endpoint_incremental(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    float* out,
+    AaFkPrefixState& state);
+
 }  // namespace rbf

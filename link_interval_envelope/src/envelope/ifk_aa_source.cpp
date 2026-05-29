@@ -26,6 +26,29 @@ EndpointIAABBResult compute_endpoint_iaabb_ifk_aa(
     return result;
 }
 
+EndpointIAABBResult compute_endpoint_iaabb_ifk_aa_stateful(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    AaFkPrefixState& state)
+{
+    EndpointIAABBResult result;
+    result.source = EndpointSource::IFK;
+    result.is_safe = true;
+    result.safety_level = EndpointSafetyLevel::Certified;
+    result.n_active_links = robot.n_active_links();
+    result.endpoint_iaabbs.resize(result.endpoint_iaabb_len());
+
+    if (robot.n_joints() <= 0) {
+        state.valid = false;
+        return result;
+    }
+
+    if (!aa_fk_endpoint_incremental(robot, intervals, result.endpoint_iaabbs.data(), state)) {
+        aa_fk_endpoint_full(robot, intervals, result.endpoint_iaabbs.data(), state);
+    }
+    return result;
+}
+
 namespace {
 
 constexpr double kPlanarExtentEpsilon = 1e-12;
