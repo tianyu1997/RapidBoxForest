@@ -21,6 +21,12 @@ struct LectDbOpenOptions {
     bool create_if_missing = true;
     bool verify_identity = true;
     bool replay_journal = true;
+    // When true, open() loads only the manifest and (optionally) verifies the
+    // requested identity, then returns without loading node pages, evidence, or
+    // rebuilding indices. Intended for cheap existence/identity probes where the
+    // database handle is discarded immediately (e.g. external-evidence snapshot
+    // verification). A metadata-only handle must not be used for queries.
+    bool metadata_only = false;
 };
 
 struct LectDatabaseConfig {

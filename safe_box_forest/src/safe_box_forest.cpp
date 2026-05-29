@@ -1169,6 +1169,12 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
         if (config_.database.external_evidence_use_snapshot) {
             lect_database::LectDatabase verifier;
             std::string verify_reason;
+            // The verifier only confirms the legacy external-evidence database
+            // exists and its identity matches; the actual evidence is served by
+            // the read-only mmap snapshot opened below. Use a metadata-only open
+            // so we skip loading all node pages / evidence / indices (which can
+            // dominate forest construction for large warm caches).
+            external_config.open.metadata_only = true;
             if (!verifier.open(external_config, &verify_reason)) {
                 throw std::runtime_error("failed to verify external LECTDatabase evidence source: " + verify_reason);
             }

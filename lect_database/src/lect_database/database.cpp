@@ -980,6 +980,13 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
                 return false;
             }
         }
+        if (config_.open.metadata_only) {
+            // Manifest loaded and identity verified; skip the expensive node /
+            // evidence / index materialization. The handle is intended to be
+            // discarded after this probe and must not service queries.
+            opened_ = true;
+            return true;
+        }
         if (!load_nodes(reason)) {
             return false;
         }

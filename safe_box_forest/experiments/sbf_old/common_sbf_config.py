@@ -93,6 +93,48 @@ def serialize_depth_dimensions(depth_dimensions: Iterable[int]) -> str:
     return ",".join(str(int(dim)) for dim in depth_dimensions)
 
 
+def aafk_volume_min_dim6_schedule(robot: Any, max_depth: int) -> list[int]:
+    """Volume-min greedy schedule with guaranteed coverage of starved DOFs.
+
+    The pure AAFKVolumeMin greedy heuristic never splits joints that barely change
+    the end-effector AAFK volume (notably the wrist roll, dim_6), starving them and
+    leaving LECT leaf boxes full-width along those axes. This hybrid keeps the
+    volume-min picks but reserves every ``n_joints``-th slot to round-robin the
+    dimensions that are entirely absent from the greedy schedule, so every DOF
+    receives coverage (like round-robin) while preserving volume-min priority for
+    the remaining 6/7 of the splits.
+    """
+    base = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth)))
+    n_joints = int(robot.n_joints())
+    present = set(int(d) for d in base)
+    missing = [d for d in range(n_joints) if d not in present]
+    if not missing:
+        return [int(d) for d in base]
+    schedule = [int(d) for d in base]
+    cursor = 0
+    for i in range(len(schedule)):
+        if (i + 1) % n_joints == 0:
+            schedule[i] = missing[cursor % len(missing)]
+            cursor += 1
+    return schedule
+
+
+def make_aafk_volume_min_dim6_split_policy(robot: Any, max_depth: int) -> Any:
+    schedule = aafk_volume_min_dim6_schedule(robot, int(max_depth))
+    if len(schedule) < int(max_depth):
+        raise RuntimeError(
+            f"AAFKVolumeMinDim6 schedule has {len(schedule)} entries, expected at least {int(max_depth)}"
+        )
+    descriptor = sbf.SplitPolicyDescriptor()
+    descriptor.strategy = sbf.SplitStrategy.AAFKVolumeMin
+    descriptor.min_width = 0.0
+    descriptor.midpoint = True
+    descriptor.deterministic_tie_break = True
+    descriptor.depth_dimensions = schedule
+    descriptor.dimension_schedule_hash = str(sbf.stable_hash(serialize_depth_dimensions(schedule)))
+    return descriptor
+
+
 def make_aafk_volume_min_split_policy(robot: Any, max_depth: int) -> Any:
     schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth)))
     if len(schedule) < int(max_depth):

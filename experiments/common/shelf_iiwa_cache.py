@@ -18,6 +18,7 @@ from safe_box_forest.experiments.sbf_old.common_sbf_config import (
     RBF_LIFELONG_PRESET,
     add_common_sbf_args,
     configure_standalone_sbf,
+    make_aafk_volume_min_dim6_split_policy,
     make_aafk_volume_min_split_policy,
     rbf_lifelong_config_metadata,
     set_online_cache_backfill,
@@ -74,6 +75,7 @@ ENDPOINT_CPP_NAMES = {
     ENDPOINT_MC: "MC",
 }
 LECT_SPLIT_AAFK_VOLUME_MIN = "aafk_volume_min"
+LECT_SPLIT_AAFK_VOLUME_MIN_DIM6 = "aafk_volume_min_dim6"
 LECT_SPLIT_ROUND_ROBIN = "round_robin"
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
@@ -146,6 +148,8 @@ def configure_cache_endpoint(cfg: Any, endpoint_source: str) -> None:
 def configure_cache_split_policy(cfg: Any, robot: Any, lect_split_policy: str, max_depth: int) -> None:
     if lect_split_policy == LECT_SPLIT_AAFK_VOLUME_MIN:
         cfg.database.split_policy = make_aafk_volume_min_split_policy(robot, int(max_depth))
+    elif lect_split_policy == LECT_SPLIT_AAFK_VOLUME_MIN_DIM6:
+        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(robot, int(max_depth))
     elif lect_split_policy == LECT_SPLIT_ROUND_ROBIN:
         descriptor = sbf.SplitPolicyDescriptor()
         descriptor.strategy = sbf.SplitStrategy.RoundRobin
@@ -182,7 +186,11 @@ def canonical_manifest_matches(manifest: dict[str, str], robot: Any, canonical_m
 
 
 def split_manifest_matches(manifest: dict[str, str], lect_split_policy: str) -> bool:
-    expected_strategy = {LECT_SPLIT_ROUND_ROBIN: 0, LECT_SPLIT_AAFK_VOLUME_MIN: 2}.get(str(lect_split_policy))
+    expected_strategy = {
+        LECT_SPLIT_ROUND_ROBIN: 0,
+        LECT_SPLIT_AAFK_VOLUME_MIN: 2,
+        LECT_SPLIT_AAFK_VOLUME_MIN_DIM6: 2,
+    }.get(str(lect_split_policy))
     if expected_strategy is None:
         return False
     try:

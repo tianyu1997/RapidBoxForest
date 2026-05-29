@@ -42,3 +42,4 @@ compile_commands.json
 **/outputs/
 .sbf_lect_database/
 **/.sbf_lect_database/
+_*

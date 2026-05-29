@@ -24,6 +24,7 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
     ENDPOINT_HIFK,
     ENDPOINT_MC,
     LECT_SPLIT_AAFK_VOLUME_MIN,
+    LECT_SPLIT_AAFK_VOLUME_MIN_DIM6,
     LECT_SPLIT_ROUND_ROBIN,
     SUPPORTED_ENDPOINT_SOURCES,
     endpoint_enum,
@@ -34,6 +35,7 @@ from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E40
     add_common_sbf_args,
     configure_external_evidence_reuse,
     configure_standalone_sbf,
+    make_aafk_volume_min_dim6_split_policy,
     make_aafk_volume_min_split_policy,
     mean,
     median,
@@ -181,7 +183,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database-path", type=Path, required=True)
     parser.add_argument("--seeds-list", default="0")
     parser.add_argument("--endpoint-source", choices=list(SUPPORTED_ENDPOINT_SOURCES), default=ENDPOINT_AAFK)
-    parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
+    parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-scoring", action=argparse.BooleanOptionalAction, default=True)
@@ -280,6 +282,8 @@ def configure_endpoint(cfg: Any, endpoint_source: str) -> None:
 def configure_lect_split(cfg: Any, robot: Any, policy: str, max_depth: int) -> None:
     if policy == LECT_SPLIT_AAFK_VOLUME_MIN:
         cfg.database.split_policy = make_aafk_volume_min_split_policy(robot, int(max_depth))
+    elif policy == LECT_SPLIT_AAFK_VOLUME_MIN_DIM6:
+        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(robot, int(max_depth))
     elif policy == LECT_SPLIT_ROUND_ROBIN:
         descriptor = sbf.SplitPolicyDescriptor()
         descriptor.strategy = sbf.SplitStrategy.RoundRobin

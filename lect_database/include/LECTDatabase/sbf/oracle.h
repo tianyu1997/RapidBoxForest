@@ -333,6 +333,8 @@ private:
         std::shared_ptr<const lect_database::EvidenceRecord> record_storage;
         std::shared_ptr<const void> storage_owner;
         std::span<const float> payload;
+        std::uint64_t envelope_cache_key = 0;
+        bool envelope_cacheable = false;
     };
 
     lect_database::EvidenceKey endpoint_key(OracleNodeId node) const;
@@ -341,7 +343,7 @@ private:
                                                              int changed_dim);
     BoxValidation classify_payload(OracleNodeId node,
                                    const std::vector<Interval>& intervals,
-                                   std::span<const float> endpoint_payload);
+                                   const EndpointPayload& endpoint_payload);
 
     Robot robot_;
     lect_database::LectDatabase& database_;
@@ -361,6 +363,7 @@ private:
     // descent. Bit-exact with a full pass; only IFK single-pass materialization
     // uses it. Not shared across threads (each worker owns its own oracle).
     AaFkPrefixState aa_fk_prefix_state_;
+    std::unordered_map<std::uint64_t, LinkEnvelope> envelope_cache_;
     // Thread-safe interval-keyed endpoint cache shared across worker tasks. The
     // master lazily owns it via shared_endpoint_cache(); workers receive the same
     // instance via set_shared_endpoint_cache().

@@ -33,18 +33,11 @@ from experiments.common.anytime_defaults import (  # noqa: E402
 )
 
 
-SHELF_SBF_COMBINED = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_04_marcucci_combined.py"
 SHELF_SBF_CASE = REPO_ROOT / "experiments" / "common" / "run_shelf_sbf_case.py"
 SHELF_SBF_ANYTIME_CURRENT = REPO_ROOT / "experiments" / "common" / "run_shelf_sbf_anytime.py"
 SHELF_ANYTIME = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_14_shelf_anytime_tradeoff.py"
 SHELF_IRIS_ANYTIME = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_16_shelf_iris_np_gcs_anytime.py"
-SHELF_BASELINES = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_04_baselines_marcucci.py"
-SHELF_RRTCONNECT = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_04_rrt_connect_baseline.py"
-RANDOM_SBF = REPO_ROOT / "safe_box_forest" / "experiments" / "rbf_only_random_robot_scenes.py"
 RANDOM_ANYTIME = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_15_random_anytime_tradeoff.py"
-RANDOM_RRTCONNECT = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_12_random_scene_rrt_baseline.py"
-RANDOM_OMPL = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_12_random_scene_ompl_baselines.py"
-RANDOM_IRIS = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_12_random_scene_iris_np_gcs_baseline.py"
 RANDOM_IRIS_ANYTIME = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_16_random_iris_np_gcs_anytime.py"
 
 
@@ -315,124 +308,6 @@ def build_shelf_iris_anytime_command(
         "--out-json",
         str(out_json),
     ]
-
-
-def build_legacy_shelf_sbf_command(
-    *,
-    python_executable: str,
-    out_json: Path,
-    database_path: Path,
-    preset: str,
-    envelope: str,
-    threads: int,
-    seeds: int,
-    timeout_ms: float,
-    split_policy: str,
-    use_external_evidence: bool,
-    rbf_cache_root: Path,
-    warm_cache_label: str,
-    external_evidence_mode: str,
-    external_evidence_auto_build_snapshot: bool,
-    audit_resolution: int = 32,
-) -> list[str]:
-    command = [
-        python_executable,
-        str(SHELF_SBF_COMBINED),
-        "--out-json",
-        str(out_json),
-        "--database-path",
-        str(database_path),
-        "--preset",
-        str(preset),
-        "--envelope",
-        str(envelope),
-        "--threads",
-        str(int(threads)),
-        "--seeds",
-        str(max(1, int(seeds))),
-        "--timeout-ms",
-        str(float(timeout_ms)),
-        "--split-policy",
-        str(split_policy),
-        "--audit-resolution",
-        str(max(1, int(audit_resolution))),
-        "--strict-path-audit",
-    ]
-    if use_external_evidence:
-        command.extend([
-            "--rbf-cache-root",
-            str(rbf_cache_root),
-            "--warm-cache-label",
-            str(warm_cache_label),
-            "--use-external-evidence",
-            "--external-evidence-mode",
-            str(external_evidence_mode),
-        ])
-        if external_evidence_auto_build_snapshot:
-            command.append("--external-evidence-auto-build-snapshot")
-        else:
-            command.append("--no-external-evidence-auto-build-snapshot")
-    return command
-
-
-def build_random_sbf_command(
-    *,
-    python_executable: str,
-    out_json: Path,
-    robots: str,
-    difficulties: str,
-    scene_seeds: int,
-    scene_profile: str,
-    rbf_cache_root: Path,
-    iiwa_warm_cache_label: str,
-    external_evidence_mode: str,
-    external_evidence_auto_build_snapshot: bool,
-    threads: int,
-    prewarm_depth: int,
-    rbf_envelope: str,
-    rbf_max_depth: int = 160,
-) -> list[str]:
-    command = [
-        python_executable,
-        str(RANDOM_SBF),
-        "--robots",
-        str(robots),
-        "--difficulties",
-        str(difficulties),
-        "--scene-seeds",
-        str(max(1, int(scene_seeds))),
-        "--scene-profile",
-        str(scene_profile),
-        "--modes",
-        "warm_d18",
-        "--threads",
-        str(max(1, int(threads))),
-        "--task-batch-size",
-        str(max(1, int(threads))),
-        "--rbf-prewarm-depth",
-        str(max(1, int(prewarm_depth))),
-        "--rbf-max-depth",
-        str(max(1, int(rbf_max_depth))),
-        "--ffb-depth",
-        str(max(1, int(rbf_max_depth))),
-        "--connector-pave-depth",
-        str(max(1, int(rbf_max_depth))),
-        "--rbf-envelope",
-        str(rbf_envelope),
-        "--rbf-cache-root",
-        str(rbf_cache_root),
-        "--iiwa-warm-cache-label",
-        str(iiwa_warm_cache_label),
-        "--external-evidence-mode",
-        str(external_evidence_mode),
-        "--out-json",
-        str(out_json),
-    ]
-    if external_evidence_auto_build_snapshot:
-        command.append("--external-evidence-auto-build-snapshot")
-    else:
-        command.append("--no-external-evidence-auto-build-snapshot")
-    return command
 
 
 def build_random_anytime_command(

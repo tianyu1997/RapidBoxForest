@@ -57,6 +57,16 @@ GROUP_SPECS = {
         "label": "Round-robin d48",
         "root": "depth48",
     },
+    "hybrid_d40": {
+        "path_name": "hybrid_dim6_split_policy.json",
+        "label": "Hybrid dim6 d40",
+        "root": "e4",
+    },
+    "hybrid_d48": {
+        "path_name": "hybrid_dim6_split_policy.json",
+        "label": "Hybrid dim6 d48",
+        "root": "depth48",
+    },
 }
 
 

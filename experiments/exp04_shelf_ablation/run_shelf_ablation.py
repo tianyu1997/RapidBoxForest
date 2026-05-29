@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-ms", type=float, default=60000.0)
     parser.add_argument("--rbf-cache-root", type=Path, default=None)
     parser.add_argument("--warm-cache-label", default=None)
-    parser.add_argument("--warm-cache-canonical", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--warm-cache-canonical", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--only", default="all", help="Comma-separated row names or all.")
@@ -110,6 +110,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     baseline_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min")
     critsample_cache_label = channel_cache_label(str(args.warm_cache_label), "critsample", "aafk_volume_min")
     round_robin_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "round_robin")
+    hybrid_dim6_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min_dim6")
     rows = [
         {
             "name": BASELINE_NAME,
@@ -209,6 +210,24 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 name="round_robin_split_policy",
                 lect_split_policy="round_robin",
                 warm_cache_label=round_robin_cache_label,
+            ),
+        },
+        {
+            "name": "hybrid_dim6_split_policy",
+            "kind": "sbf_anytime_current",
+            "factor": "lect_split_policy",
+            "description": "Same as baseline but use the AAFKVolumeMin+dim6 hybrid schedule that guarantees coverage of starved DOFs (e.g. the wrist roll) and reuse a hybrid-specific warm LECT cache.",
+            "changes_from_baseline": ["lect_split_policy=aafk_volume_min_dim6", "warm_cache=aafk_volume_min_dim6"],
+            "uses_external_evidence": True,
+            "warm_cache_label": hybrid_dim6_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "aafk_volume_min_dim6",
+            "active_cache_path": str(args.out_dir / "active_cache" / "hybrid_dim6_split_policy"),
+            "command": ablation_command(
+                args,
+                name="hybrid_dim6_split_policy",
+                lect_split_policy="aafk_volume_min_dim6",
+                warm_cache_label=hybrid_dim6_cache_label,
             ),
         },
     ]

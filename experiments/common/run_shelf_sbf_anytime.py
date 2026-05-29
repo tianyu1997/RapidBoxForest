@@ -92,7 +92,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-source", choices=list(shelf.SUPPORTED_ENDPOINT_SOURCES), default=shelf.ENDPOINT_AAFK)
     parser.add_argument(
         "--lect-split-policy",
-        choices=[shelf.LECT_SPLIT_AAFK_VOLUME_MIN, shelf.LECT_SPLIT_ROUND_ROBIN],
+        choices=[shelf.LECT_SPLIT_AAFK_VOLUME_MIN, shelf.LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, shelf.LECT_SPLIT_ROUND_ROBIN],
         default=shelf.LECT_SPLIT_AAFK_VOLUME_MIN,
     )
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)

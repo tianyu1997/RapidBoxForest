@@ -1923,6 +1923,21 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         std::vector<GrowTraceFace> face_candidates;
     };
 
+    struct CachedComponentConnectSeed {
+        bool resolved = false;
+        bool found = false;
+        Eigen::VectorXd seed;
+        Eigen::VectorXd target;
+        int parent_box_id = -1;
+        int root_id = -1;
+        int target_root_id = -1;
+        int pair_unknown_failures = 0;
+        bool staged_target = false;
+        double component_gap_sq = std::numeric_limits<double>::infinity();
+        GrowTraceFace selected_face;
+        std::vector<GrowTraceFace> face_candidates;
+    };
+
     std::uniform_real_distribution<double> u01(0.0, 1.0);
     std::vector<TaskRequest> requests;
     const std::size_t roots_per_sample = config_.expand_all_roots_per_sample
@@ -2003,26 +2018,78 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
                            static_cast<double>(component_graph.connected_cross_root_pairs));
     }
 
+    const bool use_component_connect_seed_cache =
+        config_.expand_all_roots_per_sample &&
+        config_.component_connect_candidate_limit <= 1 &&
+        config_.connect_mode &&
+        active_groups.roots.size() > 1 &&
+        config_.component_connect_prob > 0.0;
+    std::unordered_map<int, CachedComponentConnectSeed> component_connect_seed_cache;
+    if (use_component_connect_seed_cache) {
+        component_connect_seed_cache.reserve(active_groups.roots.size());
+    }
+
     auto make_request = [&](int source_root_id, int sample_index) {
         TaskRequest request;
         request.source_root_id = source_root_id;
         request.iteration = first_task_id + sample_index;
         if (config_.connect_mode && source_root_id >= 0 && active_groups.roots.size() > 1 &&
             config_.component_connect_prob > 0.0 && u01(rng_) < config_.component_connect_prob) {
-            if (make_component_connect_seed_for_root(boxes,
-                                                     source_root_id,
-                                                     request.seed,
-                                                     request.target,
-                                                     request.parent_box_id,
-                                                     request.root_id,
-                                                     request.target_root_id,
-                                                     request.component_pair_unknown_failures,
-                                                     request.component_connect_staged_target,
-                                                     request.component_connect_gap_sq,
-                                                     &request.selected_face,
-                                                     &request.face_candidates,
-                                                     context,
-                                                     component_graph_ptr)) {
+            bool found_component_connect_seed = false;
+            if (use_component_connect_seed_cache) {
+                auto [cache_it, inserted] = component_connect_seed_cache.try_emplace(source_root_id);
+                (void)inserted;
+                CachedComponentConnectSeed& cached = cache_it->second;
+                if (!cached.resolved) {
+                    cached.found = make_component_connect_seed_for_root(boxes,
+                                                                        source_root_id,
+                                                                        cached.seed,
+                                                                        cached.target,
+                                                                        cached.parent_box_id,
+                                                                        cached.root_id,
+                                                                        cached.target_root_id,
+                                                                        cached.pair_unknown_failures,
+                                                                        cached.staged_target,
+                                                                        cached.component_gap_sq,
+                                                                        &cached.selected_face,
+                                                                        &cached.face_candidates,
+                                                                        context,
+                                                                        component_graph_ptr);
+                    cached.resolved = true;
+                    context.diagnostics().add_counter("grower.component_connect_seed_cache_misses");
+                } else {
+                    context.diagnostics().add_counter("grower.component_connect_seed_cache_hits");
+                }
+                if (cached.found) {
+                    request.seed = cached.seed;
+                    request.target = cached.target;
+                    request.parent_box_id = cached.parent_box_id;
+                    request.root_id = cached.root_id;
+                    request.target_root_id = cached.target_root_id;
+                    request.component_pair_unknown_failures = cached.pair_unknown_failures;
+                    request.component_connect_staged_target = cached.staged_target;
+                    request.component_connect_gap_sq = cached.component_gap_sq;
+                    request.selected_face = cached.selected_face;
+                    request.face_candidates = cached.face_candidates;
+                    found_component_connect_seed = true;
+                }
+            } else {
+                found_component_connect_seed = make_component_connect_seed_for_root(boxes,
+                                                                                   source_root_id,
+                                                                                   request.seed,
+                                                                                   request.target,
+                                                                                   request.parent_box_id,
+                                                                                   request.root_id,
+                                                                                   request.target_root_id,
+                                                                                   request.component_pair_unknown_failures,
+                                                                                   request.component_connect_staged_target,
+                                                                                   request.component_connect_gap_sq,
+                                                                                   &request.selected_face,
+                                                                                   &request.face_candidates,
+                                                                                   context,
+                                                                                   component_graph_ptr);
+            }
+            if (found_component_connect_seed) {
                 request.has_seed = true;
                 request.intertree = true;
                 request.component_connect = true;

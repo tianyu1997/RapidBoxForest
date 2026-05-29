@@ -23,6 +23,13 @@ double elapsed_us(Clock::time_point start) {
     return std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 }
 
+std::uint64_t make_envelope_cache_key(lect_database::NodeId node_id, int sector) {
+    std::uint64_t key = static_cast<std::uint64_t>(node_id);
+    const std::uint64_t sector_bits = static_cast<std::uint64_t>(static_cast<std::uint32_t>(sector));
+    key ^= sector_bits + 0x9e3779b97f4a7c15ull + (key << 6) + (key >> 2);
+    return key;
+}
+
 std::uint64_t next_session_id() {
     static std::atomic<std::uint64_t> counter{0};
     return counter.fetch_add(1, std::memory_order_relaxed);
@@ -445,6 +452,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     int changed_dim) {
     const auto key = endpoint_key(node);
     const auto evidence_frame = canonical_evidence_frame_for_intervals(robot_, database_, intervals);
+    const int normalized_sector = normalize_sector(evidence_frame.sector);
+    const std::uint64_t envelope_cache_key = make_envelope_cache_key(key.node_id, normalized_sector);
     if (evidence_frame.symmetry &&
         intervals_straddle_sector_boundary(*evidence_frame.symmetry, intervals)) {
         // The query box spans a sector boundary; a single canonical sector cannot
@@ -464,7 +473,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         payload.payload = payload.owned_payload;
         return payload;
     }
-    auto reflect_payload = [&](EndpointPayload payload) -> EndpointPayload {        if (!evidence_frame.symmetry || normalize_sector(evidence_frame.sector) == 0 || payload.payload.empty()) {
+    auto reflect_payload = [&](EndpointPayload payload) -> EndpointPayload {
+        if (!evidence_frame.symmetry || normalize_sector(evidence_frame.sector) == 0 || payload.payload.empty()) {
             return payload;
         }
         const int n_endpoint_boxes = static_cast<int>(payload.payload.size() / 6u);
@@ -479,6 +489,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             normalize_sector(evidence_frame.sector),
             reflected.owned_payload.data());
         reflected.payload = reflected.owned_payload;
+        reflected.envelope_cache_key = payload.envelope_cache_key;
+        reflected.envelope_cacheable = payload.envelope_cacheable;
         return reflected;
     };
     const bool use_endpoint_evidence_cache = validation_config_.enable_endpoint_evidence_cache;
@@ -525,6 +537,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         payload.record_storage = cached->storage;
         payload.storage_owner = cached->storage_owner;
         payload.payload = cached->payload;
+        payload.envelope_cache_key = envelope_cache_key;
+        payload.envelope_cacheable = true;
         counters_.materialization_external_read_time_us += elapsed_us(read_start);
         return reflect_payload(std::move(payload));
     };
@@ -546,6 +560,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
                 EndpointPayload payload;
                 payload.owned_payload = std::move(cached->payload);
                 payload.payload = payload.owned_payload;
+                payload.envelope_cache_key = envelope_cache_key;
+                payload.envelope_cacheable = true;
                 counters_.materialization_cache_read_time_us += elapsed_us(read_start);
                 counters_.materialization_reused_endpoint_cache += 1;
                 return reflect_payload(std::move(payload));
@@ -560,6 +576,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             payload.record_storage = local_cached->storage;
             payload.storage_owner = local_cached->storage_owner;
             payload.payload = local_cached->payload;
+            payload.envelope_cache_key = envelope_cache_key;
+            payload.envelope_cacheable = true;
             counters_.materialization_cache_read_time_us += elapsed_us(read_start);
             counters_.materialization_reused_endpoint_cache += 1;
             return reflect_payload(std::move(payload));
@@ -593,6 +611,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             payload.record_storage = shared_cached->storage;
             payload.storage_owner = shared_cached->storage_owner;
             payload.payload = shared_cached->payload;
+            payload.envelope_cache_key = envelope_cache_key;
+            payload.envelope_cacheable = true;
             return reflect_payload(std::move(payload));
         }
     }
@@ -610,6 +630,8 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     EndpointPayload payload;
     payload.owned_payload = std::move(endpoint.endpoint_iaabbs);
     payload.payload = payload.owned_payload;
+    payload.envelope_cache_key = envelope_cache_key;
+    payload.envelope_cacheable = true;
     lect_database::EvidenceRecord record;
     record.key = key;
     record.payload = payload.owned_payload;
@@ -637,18 +659,45 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
 
 BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
                                                   const std::vector<Interval>& intervals,
-                                                  std::span<const float> endpoint_payload) {
+                                                  const EndpointPayload& endpoint_payload) {
     (void)intervals;
-    const auto envelope_start = Clock::now();
-    LinkEnvelope envelope = compute_link_envelope(endpoint_payload.data(),
+    const auto envelope_read_start = Clock::now();
+    const LinkEnvelope* envelope = nullptr;
+    if (endpoint_payload.envelope_cacheable) {
+        const auto cache_it = envelope_cache_.find(endpoint_payload.envelope_cache_key);
+        counters_.materialization_envelope_read_time_us += elapsed_us(envelope_read_start);
+        if (cache_it != envelope_cache_.end()) {
+            counters_.materialization_reused_cached_envelope += 1;
+            envelope = &cache_it->second;
+        }
+    } else {
+        counters_.materialization_envelope_read_time_us += elapsed_us(envelope_read_start);
+    }
+
+    LinkEnvelope computed_envelope;
+    double envelope_compute_us = 0.0;
+    if (envelope == nullptr) {
+        const auto envelope_start = Clock::now();
+        computed_envelope = compute_link_envelope(endpoint_payload.payload.data(),
                                                   robot_.n_active_links(),
                                                   robot_.active_link_radii(),
                                                   envelope_config_);
-    const double envelope_compute_us = elapsed_us(envelope_start);
-    counters_.materialization_envelope_compute_time_us += envelope_compute_us;
+        envelope_compute_us = elapsed_us(envelope_start);
+        counters_.materialization_envelope_compute_time_us += envelope_compute_us;
+        if (endpoint_payload.envelope_cacheable) {
+            auto [cache_it, inserted] = envelope_cache_.try_emplace(endpoint_payload.envelope_cache_key,
+                                                                    std::move(computed_envelope));
+            if (!inserted) {
+                cache_it->second = std::move(computed_envelope);
+            }
+            envelope = &cache_it->second;
+        } else {
+            envelope = &computed_envelope;
+        }
+    }
     EnvelopeCollisionStats collision_stats;
     const auto collision_start = Clock::now();
-    const CollisionResultKind collision = collide_envelope_aabbs(envelope,
+    const CollisionResultKind collision = collide_envelope_aabbs(*envelope,
                                                                  scene_.obstacles().data(),
                                                                  scene_.n_obstacles(),
                                                                  {},
@@ -718,7 +767,7 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
         return BoxValidation::Unknown;
     }
     const auto classify_start = Clock::now();
-    const BoxValidation result = classify_payload(node, intervals, payload->payload);
+    const BoxValidation result = classify_payload(node, intervals, *payload);
     const double classify_us = elapsed_us(classify_start);
     counters_.validate_node_classify_time_us += classify_us;
     const double total_us = elapsed_us(total_start);
