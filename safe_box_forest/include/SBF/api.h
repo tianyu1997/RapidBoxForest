@@ -58,6 +58,8 @@ struct BuildProfile {
     int raw_boxes = 0;
     int final_boxes = 0;
     int segment_edges = 0;
+    int grow_adjacency_islands = 0;
+    int grow_largest_island = 0;
     int adjacency_islands = 0;
     int bridge_boxes_added = 0;
     int segment_edges_added = 0;

@@ -49,6 +49,7 @@ struct LectDatabaseRuntimeConfig {
 	std::filesystem::path path;
 	std::filesystem::path external_evidence_path;
 	std::filesystem::path external_evidence_snapshot_path;
+	std::vector<Interval> root_intervals_override;
 	lect_database::SplitPolicyDescriptor split_policy;
 	lect_database::OnlineEnvelopeCacheConfig online_cache;
 	bool external_evidence_use_snapshot = true;
@@ -143,6 +144,24 @@ struct PureFfbProfile {
 	std::unordered_map<std::string, double> diagnostics;
 };
 
+/// Result of the isolated chain_pave debug entry. Captures the BiRRT bridge
+/// polyline and the boxes chain_pave committed along it, so callers can measure
+/// how completely the committed boxes tile the connector segment.
+struct DebugChainPaveResult {
+	std::vector<Eigen::VectorXd> waypoints;             ///< BiRRT bridge polyline.
+	std::vector<std::vector<Interval>> committed_boxes; ///< Intervals of boxes chain_pave added.
+	std::vector<std::vector<Interval>> all_boxes;       ///< Intervals of EVERY forest box after gap-fill (committed + reused).
+	std::vector<Interval> start_box;                    ///< Anchor box intervals.
+	std::vector<Interval> goal_box;                     ///< Goal-containing box intervals.
+	int start_box_id = -1;
+	int goal_box_id = -1;
+	int added = 0;
+	int fast_gap_fill_ffb_calls = 0;
+	double fast_gap_fill_ms = 0.0;
+	bool bridge_found = false;
+	bool audit_passed = false;
+};
+
 class RBFPlanningForest {
 public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
@@ -179,6 +198,13 @@ public:
 					 const Eigen::Ref<const Eigen::VectorXd>& goal);
 	int bridge_query_known_needed(const Eigen::Ref<const Eigen::VectorXd>& start,
 								  const Eigen::Ref<const Eigen::VectorXd>& goal);
+	/// Isolated chain_pave debug entry: build the BiRRT bridge between the boxes
+	/// containing @p start and @p goal, then run chain_pave_along_path() with the
+	/// supplied @p pave config (the IslandConnector gap step is skipped) so the
+	/// committed boxes reflect chain_pave alone. Mutates the forest box set.
+	DebugChainPaveResult debug_chain_pave(const Eigen::Ref<const Eigen::VectorXd>& start,
+										  const Eigen::Ref<const Eigen::VectorXd>& goal,
+										  const ChainPaveConfig& pave);
 	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
 							  const Eigen::Ref<const Eigen::VectorXd>& goal,
 							  int max_boxes_to_add);

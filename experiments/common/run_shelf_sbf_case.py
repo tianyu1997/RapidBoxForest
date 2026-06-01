@@ -25,6 +25,7 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
     ENDPOINT_MC,
     LECT_SPLIT_AAFK_VOLUME_MIN,
     LECT_SPLIT_AAFK_VOLUME_MIN_DIM6,
+    LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN,
     LECT_SPLIT_ROUND_ROBIN,
     SUPPORTED_ENDPOINT_SOURCES,
     endpoint_enum,
@@ -33,15 +34,19 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
 from safe_box_forest.experiments.sbf_old import common_sbf_config as sbf_config  # noqa: E402
 from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
     add_common_sbf_args,
+    apply_dim_mask,
+    compute_inert_dim_mask,
     configure_external_evidence_reuse,
     configure_standalone_sbf,
     make_aafk_volume_min_dim6_split_policy,
     make_aafk_volume_min_split_policy,
+    make_support_hull_volume_min_split_policy,
     mean,
     median,
     set_online_cache_backfill,
     set_rbf_envelope,
 )
+from safe_box_forest.experiments.sbf_old.common_anytime_tradeoff import final_ompl_simplify_path  # noqa: E402
 
 sbf = sbf_config.sbf
 
@@ -94,6 +99,7 @@ BALANCED_LOW_LATENCY_STAGE_SEQUENCE: tuple[dict[str, Any], ...] = (
 BALANCED_LOW_LATENCY_STAGE_IDS: tuple[str, ...] = tuple(
     str(stage["stage_id"]) for stage in BALANCED_LOW_LATENCY_STAGE_SEQUENCE
 )
+IIWA_JOINT_NAMES: tuple[str, ...] = tuple(f"iiwa_joint_{index}" for index in range(1, 8))
 
 
 def parse_csv_ints(text: str) -> list[int]:
@@ -104,42 +110,122 @@ def parse_csv_floats(text: str) -> list[float]:
     return [float(item.strip()) for item in str(text).split(",") if item.strip()]
 
 
-def parse_stage_override(name: str, values: list[Any], cast: Any) -> tuple[Any, ...]:
-    expected = len(BALANCED_LOW_LATENCY_STAGE_SEQUENCE)
+def parse_interval_pairs(text: str) -> list[tuple[float, float]]:
+    values = [item.strip() for item in str(text).split(";") if item.strip()]
+    out: list[tuple[float, float]] = []
+    for index, value in enumerate(values):
+        lo_text, sep, hi_text = value.partition(":")
+        if not sep:
+            raise ValueError(f"interval pair #{index + 1} must use lo:hi format, got {value!r}")
+        lo = float(lo_text)
+        hi = float(hi_text)
+        if lo > hi:
+            raise ValueError(f"interval pair #{index + 1} has lo > hi: {value!r}")
+        out.append((lo, hi))
+    return out
+
+
+def root_intervals_override(args: argparse.Namespace) -> list[Any] | None:
+    raw = str(getattr(args, "lect_root_intervals", "") or "").strip()
+    if not raw:
+        return None
+    return [sbf.Interval(float(lo), float(hi)) for lo, hi in parse_interval_pairs(raw)]
+
+
+def split_joint_metrics(diagnostics: dict[str, float], dof: int) -> list[dict[str, Any]]:
+    total_split_count = sum(float(diagnostics.get(f"oracle.split_dim.{index}", 0.0)) for index in range(max(0, int(dof))))
+    total_split_ms = float(diagnostics.get("profile.oracle.split_node.total_ms", 0.0))
+    metrics: list[dict[str, Any]] = []
+    for index in range(max(0, int(dof))):
+        split_count = float(diagnostics.get(f"oracle.split_dim.{index}", 0.0))
+        metrics.append({
+            "joint_index": int(index),
+            "joint_name": IIWA_JOINT_NAMES[index] if index < len(IIWA_JOINT_NAMES) else f"joint_{index}",
+            "split_count": int(split_count),
+            "split_fraction": float(split_count / total_split_count) if total_split_count > 0.0 else 0.0,
+            "split_time_proxy_ms": float(total_split_ms * split_count / total_split_count) if total_split_count > 0.0 else 0.0,
+            "split_width_sum": float(diagnostics.get(f"oracle.split_width_sum.{index}", 0.0)),
+            "split_width_max": float(diagnostics.get(f"oracle.split_width_max.{index}", 0.0)),
+        })
+    return metrics
+
+
+def summarize_joint_split_metrics(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    joint_count = max((len(row.get("build", {}).get("joint_split_metrics", [])) for row in rows), default=0)
+    summary: list[dict[str, Any]] = []
+    for index in range(joint_count):
+        items = [
+            row["build"]["joint_split_metrics"][index]
+            for row in rows
+            if index < len(row.get("build", {}).get("joint_split_metrics", []))
+        ]
+        if not items:
+            continue
+        summary.append({
+            "joint_index": int(index),
+            "joint_name": str(items[0].get("joint_name", f"joint_{index}")),
+            "split_count_median": median(float(item.get("split_count", 0.0)) for item in items),
+            "split_fraction_median": median(float(item.get("split_fraction", 0.0)) for item in items),
+            "split_time_proxy_median_ms": median(float(item.get("split_time_proxy_ms", 0.0)) for item in items),
+            "split_width_sum_median": median(float(item.get("split_width_sum", 0.0)) for item in items),
+            "split_width_max_median": median(float(item.get("split_width_max", 0.0)) for item in items),
+        })
+    return summary
+
+
+def balanced_low_latency_stage_ids(args: argparse.Namespace) -> tuple[str, ...]:
+    raw_stage_ids = getattr(args, "stage_ids", None)
+    if raw_stage_ids is None:
+        return BALANCED_LOW_LATENCY_STAGE_IDS
+    values = [item.strip() for item in str(raw_stage_ids).split(",") if item.strip()]
+    return tuple(values) if values else BALANCED_LOW_LATENCY_STAGE_IDS
+
+
+def parse_stage_override(name: str, values: list[Any], cast: Any, stage_ids: tuple[str, ...]) -> tuple[Any, ...]:
+    expected = len(stage_ids)
     if not values:
+        if expected != len(BALANCED_LOW_LATENCY_STAGE_SEQUENCE):
+            raise ValueError(
+                f"{name} override expects {expected} entries for stages {stage_ids}, got 0"
+            )
         return tuple(cast(stage[name]) for stage in BALANCED_LOW_LATENCY_STAGE_SEQUENCE)
     if len(values) != expected:
         raise ValueError(
-            f"{name} override expects {expected} entries for stages {BALANCED_LOW_LATENCY_STAGE_IDS}, got {len(values)}"
+            f"{name} override expects {expected} entries for stages {stage_ids}, got {len(values)}"
         )
     return tuple(cast(value) for value in values)
 
 
 def balanced_low_latency_stage_sequence(args: argparse.Namespace) -> tuple[dict[str, Any], ...]:
+    stage_ids = balanced_low_latency_stage_ids(args)
     quality_values = parse_stage_override(
         "quality_min_connected_boxes",
         list(getattr(args, "latency_stage_quality_min_connected_boxes", []) or []),
         int,
+        stage_ids,
     )
     extra_values = parse_stage_override(
         "post_connect_extra_boxes",
         list(getattr(args, "latency_stage_post_connect_extra_boxes", []) or []),
         int,
+        stage_ids,
     )
     budget_values = parse_stage_override(
         "post_connect_time_budget_ms",
         list(getattr(args, "latency_stage_post_connect_time_budget_ms", []) or []),
         float,
+        stage_ids,
     )
     max_box_values = parse_stage_override(
         "max_boxes",
         list(getattr(args, "latency_stage_max_boxes", []) or []),
         int,
+        stage_ids,
     )
     stages: list[dict[str, Any]] = []
-    for index, base_stage in enumerate(BALANCED_LOW_LATENCY_STAGE_SEQUENCE):
+    for index, stage_id in enumerate(stage_ids):
         stages.append({
-            "stage_id": str(base_stage["stage_id"]),
+            "stage_id": str(stage_id),
             "quality_min_connected_boxes": int(quality_values[index]),
             "post_connect_extra_boxes": int(extra_values[index]),
             "post_connect_time_budget_ms": float(budget_values[index]),
@@ -173,6 +259,9 @@ def parse_args() -> argparse.Namespace:
         rbf_max_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
         connector_pave_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
         component_connect_ffb_max_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
+        rrt_goal_bias=0.20,
+        intertree_goal_bias=0.25,
+        component_connect_prob=0.35,
         quality_min_connected_boxes=64,
         post_connect_extra_boxes=0,
         post_connect_time_budget_ms=450.0,
@@ -183,11 +272,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--database-path", type=Path, required=True)
     parser.add_argument("--seeds-list", default="0")
     parser.add_argument("--endpoint-source", choices=list(SUPPORTED_ENDPOINT_SOURCES), default=ENDPOINT_AAFK)
-    parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
+    parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-scoring", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--warm-cache-label", default=DEFAULT_P18_CACHE_LABEL)
+    parser.add_argument(
+        "--lect-root-intervals",
+        default="",
+        help="Optional restricted LECT root intervals in 'lo:hi;lo:hi;...' format.",
+    )
     parser.add_argument("--clean-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=True)
@@ -199,6 +293,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
     parser.add_argument("--post-audit-segment-step", type=float, default=0.04)
+    parser.add_argument("--final-ompl-simplify-time-s", type=float, default=0.0)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--latency-profile",
@@ -245,13 +340,15 @@ def apply_latency_profile(local_args: argparse.Namespace) -> None:
     if profile != LATENCY_PROFILE_BALANCED_LOW_LATENCY:
         raise ValueError(f"unsupported latency profile {profile!r}")
 
+    explicit_stage = str(getattr(local_args, "latency_stage_id", "") or "")
     local_args.max_boxes = min(int(local_args.max_boxes), 2500)
     local_args.component_connect_candidate_limit = min(int(local_args.component_connect_candidate_limit), 1)
     local_args.connector_max_pairs_per_gap = min(int(local_args.connector_max_pairs_per_gap), 4)
     local_args.connector_pair_timeout_ms = min(float(local_args.connector_pair_timeout_ms), 80.0)
-    local_args.quality_min_connected_boxes = min(int(local_args.quality_min_connected_boxes), 16)
-    local_args.post_connect_extra_boxes = 0
-    local_args.post_connect_time_budget_ms = min(float(local_args.post_connect_time_budget_ms), 0.0)
+    if not explicit_stage:
+        local_args.quality_min_connected_boxes = min(int(local_args.quality_min_connected_boxes), 16)
+        local_args.post_connect_extra_boxes = 0
+        local_args.post_connect_time_budget_ms = min(float(local_args.post_connect_time_budget_ms), 0.0)
     local_args.corridor_refine_budget_ms = min(float(local_args.corridor_refine_budget_ms), 80.0)
     local_args.corridor_refine_max_boxes = min(int(local_args.corridor_refine_max_boxes), 16)
     local_args.corridor_refine_boxes_per_query = min(int(local_args.corridor_refine_boxes_per_query), 8)
@@ -279,11 +376,30 @@ def configure_endpoint(cfg: Any, endpoint_source: str) -> None:
     cfg.endpoint_source.source = endpoint_enum(endpoint_source)
 
 
-def configure_lect_split(cfg: Any, robot: Any, policy: str, max_depth: int) -> None:
+def configure_lect_split(cfg: Any, robot: Any, policy: str, max_depth: int, sample_nodes_per_depth: int = 8) -> None:
+    override_intervals = list(getattr(cfg.database, "root_intervals_override", []) or [])
+    split_root_intervals = override_intervals if override_intervals else None
     if policy == LECT_SPLIT_AAFK_VOLUME_MIN:
-        cfg.database.split_policy = make_aafk_volume_min_split_policy(robot, int(max_depth))
+        cfg.database.split_policy = make_aafk_volume_min_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=split_root_intervals,
+            sample_nodes_per_depth=sample_nodes_per_depth,
+        )
     elif policy == LECT_SPLIT_AAFK_VOLUME_MIN_DIM6:
-        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(robot, int(max_depth))
+        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=split_root_intervals,
+            sample_nodes_per_depth=sample_nodes_per_depth,
+        )
+    elif policy == LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN:
+        cfg.database.split_policy = make_support_hull_volume_min_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=split_root_intervals,
+            sample_nodes_per_depth=sample_nodes_per_depth,
+        )
     elif policy == LECT_SPLIT_ROUND_ROBIN:
         descriptor = sbf.SplitPolicyDescriptor()
         descriptor.strategy = sbf.SplitStrategy.RoundRobin
@@ -309,9 +425,23 @@ def case_config(args: argparse.Namespace, robot: Any, seed: int) -> Any:
     local_args.rbf_cache_root = Path(args.database_path).parent
     local_args.rbf_cache_label = Path(args.database_path).name
     cfg = configure_standalone_sbf(local_args, seed=seed, preset=str(args.preset), robot=robot)
+    override_intervals = root_intervals_override(local_args)
+    if override_intervals is not None:
+        cfg.database.root_intervals_override = list(override_intervals)
+    if bool(getattr(local_args, "ffb_auto_mask_inert", False)):
+        mask_root = override_intervals if override_intervals is not None else list(robot.joint_limits().limits)
+        inert_mask = compute_inert_dim_mask(robot, mask_root)
+        if inert_mask and any(v == 0 for v in inert_mask):
+            apply_dim_mask(cfg, inert_mask)
     set_rbf_envelope(cfg, str(args.rbf_envelope), local_args)
     configure_endpoint(cfg, str(args.endpoint_source))
-    configure_lect_split(cfg, robot, str(args.lect_split_policy), effective_lect_schedule_depth(args))
+    configure_lect_split(
+        cfg,
+        robot,
+        str(args.lect_split_policy),
+        effective_lect_schedule_depth(local_args),
+        sample_nodes_per_depth=int(getattr(local_args, "aafk_sample_nodes_per_depth", 8)),
+    )
     cfg.database.path = str(args.database_path)
     cfg.database.create_if_missing = True
     cfg.database.read_only = False
@@ -466,6 +596,31 @@ def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: a
         row["bridge_progress"] = int(bridge_progress)
         row["bridge_time_s"] = float(bridge_s)
         row["post_audit_source"] = "retry_after_bridge"
+    final_simplify = {
+        "path": [list(point) for point in row.get("waypoints", [])],
+        "path_length": float(row.get("length", 0.0)) if bool(row.get("ok")) else None,
+        "query_s": 0.0,
+        "applied": False,
+        "reason": "not_eligible",
+    }
+    if bool(row.get("ok")) and bool(row.get("audit_passed")):
+        final_simplify = final_ompl_simplify_path(
+            sbf,
+            robot,
+            obstacles,
+            [list(point) for point in row.get("waypoints", [])],
+            segment_step=float(args.audit_segment_step),
+            audit_segment_step=float(args.post_audit_segment_step),
+            simplify_time_s=float(getattr(args, "final_ompl_simplify_time_s", 0.0)),
+        )
+        row["t_s"] = float(row.get("t_s", 0.0) or 0.0) + float(final_simplify["query_s"])
+        row["waypoints"] = [list(point) for point in final_simplify["path"]]
+        row["waypoint_count"] = len(row["waypoints"])
+        if final_simplify["path_length"] is not None:
+            row["length"] = float(final_simplify["path_length"])
+    row["ompl_final_simplify_time_s"] = float(final_simplify["query_s"])
+    row["ompl_final_simplify_applied"] = bool(final_simplify["applied"])
+    row["ompl_final_simplify_reason"] = str(final_simplify["reason"])
     final_post_audit = post_collision_audit(
         robot,
         obstacles,
@@ -481,6 +636,10 @@ def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: a
 def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
     split_policy = cfg.database.split_policy
     stage_sequence = balanced_low_latency_stage_sequence(args) if uses_balanced_low_latency_stages(args) else ()
+    root_override = [
+        [float(interval.lo), float(interval.hi)]
+        for interval in list(getattr(cfg.database, "root_intervals_override", []) or [])
+    ]
     return {
         "case_name": str(args.case_name),
         "preset": str(args.preset),
@@ -489,6 +648,7 @@ def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
         "envelope": str(args.rbf_envelope),
         "envelope_type_raw": str(cfg.envelope_type.type).split(".")[-1],
         "lect_split_policy": str(args.lect_split_policy),
+        "aafk_sample_nodes_per_depth": int(getattr(args, "aafk_sample_nodes_per_depth", 8)),
         "split_policy_descriptor": sbf.split_policy_descriptor(split_policy),
         "split_policy_hash": int(sbf.split_policy_hash(split_policy)),
         "depth_dimensions": [int(value) for value in list(getattr(split_policy, "depth_dimensions", []))],
@@ -503,6 +663,7 @@ def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
         "external_evidence_backfill_active": bool(getattr(cfg.validation, "external_evidence_backfill_active", False)),
         "canonical_mode": bool(getattr(cfg.database, "canonical_mode", False)),
         "symmetry_descriptor": str(getattr(cfg.database, "symmetry_descriptor", "")),
+        "root_intervals_override": root_override,
         "checkpoint_after_build": bool(getattr(cfg.database, "checkpoint_after_build", False)),
         "online_cache_allow_database_backfill": bool(getattr(cfg.database.online_cache, "allow_database_backfill", True)),
         "max_depth": int(args.rbf_max_depth),
@@ -566,6 +727,8 @@ def run_single_seed_attempt(args: argparse.Namespace,
     boxes = list(forest.boxes())
     query_rows = [run_query(forest, robot, obstacles, query, effective_args) for query in queries]
     diagnostics = {str(key): float(value) for key, value in dict(profile.diagnostics).items()}
+    dof = len(coverage_seeds[0]) if coverage_seeds else len(queries[0].start) if queries else len(IIWA_JOINT_NAMES)
+    joint_metrics = split_joint_metrics(diagnostics, int(dof))
     engine_audit_ok = all(bool(query["audit_passed"]) for query in query_rows)
     post_audit_ok = all(bool(query.get("post_audit_passed", False)) for query in query_rows)
     audit_ok = bool(engine_audit_ok and post_audit_ok)
@@ -603,12 +766,16 @@ def run_single_seed_attempt(args: argparse.Namespace,
             "provisional_box_count": box_count_with_status(boxes, sbf.BoxSafetyStatus.ProvisionalFree),
             "strict_audit_required_box_count": sum(1 for box in boxes if bool(box.strict_audit_required)),
             "segment_edges": int(profile.segment_edges),
+            "grow_adjacency_islands": int(getattr(profile, "grow_adjacency_islands", 0)),
+            "grow_largest_island": int(getattr(profile, "grow_largest_island", 0)),
+            "connector_islands_initial": int(diagnostics.get("connector.islands_initial", getattr(profile, "grow_adjacency_islands", 0))),
             "adjacency_islands": int(profile.adjacency_islands),
             "prebridge_time_s": float(refine_s),
             "prebridge_added_boxes": int(refine_added),
             "prebridge_attempts": int(refine_attempts),
             "latency_stage_id": str(getattr(effective_args, "latency_stage_id", "")),
             "latency_stage_index": int(getattr(effective_args, "latency_stage_index", -1)),
+            "joint_split_metrics": joint_metrics,
             "diagnostics": diagnostics,
         },
         "queries": query_rows,
@@ -749,8 +916,13 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "sr": mean(1.0 if query.get("ok") else 0.0 for query in items),
             "audit_sr": mean(1.0 if query.get("audit_passed") else 0.0 for query in items),
             "query_time_median_s": median(float(query.get("t_s", 0.0)) for query in successes),
+            "planning_time_median_ms": median(float(query.get("planning_time_ms", 0.0)) for query in items),
+            "audit_time_median_ms": median(float(query.get("audit_time_ms", 0.0)) for query in items),
+            "repair_time_median_ms": median(float(query.get("repair_time_ms", 0.0)) for query in items),
             "path_length_median": median(float(query.get("length", 0.0)) for query in successes),
             "repair_count_median": median(float(query.get("repair_count", 0.0)) for query in items),
+            "ompl_final_simplify_applied_rate": mean(1.0 if query.get("ompl_final_simplify_applied") else 0.0 for query in items),
+            "ompl_final_simplify_time_median_s": median(float(query.get("ompl_final_simplify_time_s", 0.0)) for query in items),
         })
     return {
         "ok": all(bool(row.get("ok")) for row in rows),
@@ -761,6 +933,7 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "unique_box_count_median": median(float(row["build"]["unique_box_count"]) for row in rows),
         "external_hits_mean": mean(float(row["build"]["diagnostics"].get("oracle.materialization_reused_external_evidence", 0.0)) for row in rows),
         "stored_endpoint_mean": mean(float(row["build"]["diagnostics"].get("oracle.materialization_stored_endpoint", 0.0)) for row in rows),
+        "joint_split_metrics": summarize_joint_split_metrics(rows),
         "queries": query_summary,
     }
 

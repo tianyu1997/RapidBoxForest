@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <span>
@@ -15,6 +16,11 @@
 #include <utility>
 
 namespace rbf::lect_database {
+
+// Upper bound on the resident evidence cache (records). Defined here so the
+// inline streaming/bulk prewarm setters below can clamp against it; the
+// streaming store reloads any evicted child records from the durable store.
+inline constexpr std::size_t kMaxResidentEvidenceRecords = 8192;
 
 struct LectDbOpenOptions {
     bool read_only = false;
@@ -39,6 +45,7 @@ struct LectDatabaseConfig {
     bool defer_parent_hull_writes = false;
     std::uint32_t page_size_bytes = 64u * 1024u;
     std::uint32_t max_resident_pages = 256u;
+    int root_depth = 0;
     int max_tree_depth = 64;
     double exact_box_tolerance = 1e-12;
 };
@@ -91,6 +98,47 @@ public:
     std::uint64_t generation() const noexcept { return generation_; }
     std::size_t node_count() const noexcept { return static_cast<std::size_t>(node_count_); }
     std::size_t evidence_count() const noexcept { return std::max(evidence_.size(), evidence_index_count_); }
+    bool propagate_parent_hulls_enabled() const noexcept { return config_.propagate_parent_hulls; }
+    // Runtime toggle used by LECT prewarm: per-leaf auto-propagation is disabled
+    // during the leaf-materialization loop and replaced by a single bottom-up
+    // sweep (materialize_internal_parent_hulls_bottom_up), trading scattered
+    // O(leaves*depth) walk-ups for one O(leaves) pass.
+    void set_propagate_parent_hulls(bool enabled) noexcept { config_.propagate_parent_hulls = enabled; }
+    // Runtime toggle used by LECT bulk prewarm. While enabled the database keeps
+    // every materialized record resident (up to `expected_records`) and skips the
+    // per-record text journal, so the binary store is consolidated exactly once
+    // at the final checkpoint instead of being rewritten every time the resident
+    // set exceeds kMaxResidentEvidenceRecords. checkpoint() truncates the journal
+    // anyway, so intra-prewarm journaling is pure write amplification.
+    void set_bulk_prewarm_mode(bool enabled, std::size_t expected_records = 0) noexcept {
+        bulk_prewarm_mode_ = enabled;
+        bulk_prewarm_resident_cap_ = enabled ? expected_records : 0;
+        if (enabled && expected_records > 0) {
+            try {
+                evidence_.reserve(expected_records);
+                reserve_evidence_index(expected_records);
+            } catch (...) {
+                // Pre-reservation is an optimization only; normal growth remains valid.
+            }
+        }
+    }
+    bool bulk_prewarm_mode_enabled() const noexcept { return bulk_prewarm_mode_; }
+    // Runtime toggle used by LECT streaming prewarm for depths whose full
+    // resident set would exceed RAM (e.g. D25 ~62M records). Records are already
+    // appended to the durable binary store as they are created; while streaming
+    // is enabled the resident `evidence_` cache is bounded to `resident_cap`
+    // records (evicting committed records once the cap is crossed) and the
+    // index sidecar / manifest are written exactly once at the final
+    // checkpoint instead of being rewritten on every flush. This keeps peak RAM
+    // O(resident_cap) and total store writes O(records); the bottom-up parent
+    // sweep transparently reloads any evicted child records from the store.
+    void set_streaming_prewarm_mode(bool enabled, std::size_t resident_cap) noexcept {
+        streaming_prewarm_mode_ = enabled;
+        streaming_resident_cap_ = enabled
+            ? std::max<std::size_t>(resident_cap, std::size_t{8192})
+            : 0;
+    }
+    bool streaming_prewarm_mode_enabled() const noexcept { return streaming_prewarm_mode_; }
     int max_tree_depth() const noexcept { return config_.max_tree_depth; }
     NodeId root_node() const noexcept { return node_count_ == 0 ? kInvalidNodeId : 0; }
 
@@ -117,6 +165,23 @@ public:
     BoxLookupResult split_to_box(const BoxKey& box, int max_depth = 128);
 
     bool put_evidence(EvidenceRecord record);
+    // Hardcoded LECT-prewarm strategy: after the leaf layer has been
+    // FK-materialized, derive every internal-node envelope purely from its two
+    // children via the cheap conservative AABB union (build_parent_hull_from_node),
+    // bottom-up from `deepest_depth-1` to the root. Internal nodes are NEVER
+    // FK-materialized. Children's narrower interval domains make the union a
+    // strictly tighter (and far cheaper) parent envelope than direct parent FK.
+    // Skips nodes whose children lack stored evidence (e.g. sector-boundary
+    // straddle leaves) so the result stays sound; those few ancestors fall back
+    // to query-time FK. Stores directly (no per-node re-propagation). Returns the
+    // number of parent hulls written.
+    // `layer_progress`, when set, is invoked once per processed depth layer with
+    // (remaining_layers_including_current, depth, cumulative_built) so callers can
+    // render a progress bar / ETA for the bottom-up sweep.
+    std::size_t materialize_internal_parent_hulls_bottom_up(
+        int deepest_depth,
+        const EvidenceKey& key_template,
+        const std::function<void(int depth, std::size_t built)>& layer_progress = {});
     std::optional<EvidenceRecordView> evidence(const EvidenceKey& key) const;
     std::optional<std::uint64_t> evidence_offset(const EvidenceKey& key) const;
     bool has_evidence(const EvidenceKey& key) const;
@@ -270,6 +335,10 @@ private:
     std::vector<DeferredParentHullWrite> deferred_parent_hull_writes_;
     std::uint64_t generation_ = 0;
     bool pending_changes_ = false;
+    bool bulk_prewarm_mode_ = false;
+    std::size_t bulk_prewarm_resident_cap_ = 0;
+    bool streaming_prewarm_mode_ = false;
+    std::size_t streaming_resident_cap_ = 0;
     mutable LectDatabaseStats stats_;
 };
 

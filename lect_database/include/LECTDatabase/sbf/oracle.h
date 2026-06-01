@@ -6,9 +6,9 @@
 #include <rbf/lect_database.h>
 #include <rbf/lect_database/evidence_source.h>
 
-#include <sbf/core/aa_fk.h>
 #include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/envelope_type.h>
+#include <sbf/envelope/ifk_aa_source.h>
 
 #include <Eigen/Core>
 
@@ -42,8 +42,40 @@ enum class BoxCommitPolicy : std::uint8_t {
     AuditBeforeCommit = 2,
 };
 
+struct BestTightenOptions {
+    bool depth_synchronous = true;
+    bool prefer_sector_boundary = true;
+    bool use_minimax = true;
+    int max_candidate_dim = -1;
+    double min_candidate_width = 0.0;
+    double width_penalty = 0.0;
+    bool shape_balancing = true;
+    double max_child_aspect = 64.0;
+    double min_split_width_fraction = 0.05;
+    double shape_weight = 0.25;
+    double balance_weight = 0.05;
+    double relative_gain_weight = 0.10;
+    double widest_tiebreak_weight = 0.02;
+    bool recent_dim_cooling = true;
+    int recent_dim_window = 6;
+    double recent_dim_weight = 0.04;
+    double recent_dim_shape_aspect_trigger = 16.0;
+    // General per-dimension mask. Empty => all dims allowed. Otherwise an entry
+    // of 0 forbids splitting that dim (e.g. kinematically inert dims that never
+    // tighten the endpoint envelope). More general than max_candidate_dim since
+    // masked dims need not be contiguous at the top. Precomputed once per robot.
+    std::vector<int> dim_mask;
+    // L2 soft dim-priority bias. Per-dim weights (typically per-robot envelope
+    // sensitivity, larger => more useful to split). Empty => no bias. The term
+    // dim_priority_weight * dim_priority_weights[dim] is subtracted from the
+    // (minimized) balanced score, gently preferring high-sensitivity dims.
+    std::vector<double> dim_priority_weights;
+    double dim_priority_weight = 0.0;
+};
+
 struct OracleSplitOptions {
     bool use_best_tighten = true;
+    BestTightenOptions best_tighten;
 };
 
 struct SplitNodeResult {
@@ -216,6 +248,9 @@ public:
     virtual void release_node(OracleNodeId node) = 0;
     virtual void release_box(int box_id) = 0;
     virtual void clear_reservations() = 0;
+    virtual void record_visit(OracleNodeId node) {
+        (void)node;
+    }
     virtual OracleNodeId select_unexplored_node() const = 0;
     virtual int common_ancestor_depth(OracleNodeId lhs_node, OracleNodeId rhs_node) const {
         (void)lhs_node;
@@ -296,6 +331,7 @@ public:
     void release_node(OracleNodeId node) override;
     void release_box(int box_id) override;
     void clear_reservations() override;
+    void record_visit(OracleNodeId node) override;
     OracleNodeId select_unexplored_node() const override;
     int common_ancestor_depth(OracleNodeId lhs_node, OracleNodeId rhs_node) const override;
     std::unique_ptr<BoxOracleSession> make_session(const OracleSessionConfig& config) override;
@@ -314,6 +350,11 @@ public:
     lect_database::LectDatabase& database() { return database_; }
     const lect_database::LectDatabase& database() const { return database_; }
 
+    // Public accessor exposing the canonical endpoint EvidenceKey (channel /
+    // source / primary sector / payload_kind) so prewarm can build a key
+    // template for bottom-up parent-hull materialization.
+    lect_database::EvidenceKey endpoint_evidence_key(OracleNodeId node) const { return endpoint_key(node); }
+
     // Lazily create and return the master-owned shared endpoint cache used to
     // share endpoints across worker tasks. Returns the same instance on every
     // call so all workers spawned from this master read/write one cache.
@@ -327,7 +368,16 @@ public:
         shared_endpoint_cache_ = std::move(cache);
     }
 
+    friend class DatabaseBoxOracleSession;
+
 private:
+    // Pre-seed best_tighten_depth_dims_ from the canonical FixedDepthSchedule so
+    // the grower's split dimension sequence is determined by (robot, domain),
+    // not by the first query that reaches each depth (keeps node paths canonical
+    // and external-evidence keys reusable). No-op unless strategy is
+    // AAFKVolumeMin with a non-empty schedule.
+    void seed_best_tighten_schedule_from_policy();
+
     struct EndpointPayload {
         std::vector<float> owned_payload;
         std::shared_ptr<const lect_database::EvidenceRecord> record_storage;
@@ -359,11 +409,17 @@ private:
     OracleValidationDetail last_validation_detail_;
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;
-    // Incremental AA-FK chain prefix reused along a single-threaded parent->child
-    // descent. Bit-exact with a full pass; only IFK single-pass materialization
-    // uses it. Not shared across threads (each worker owns its own oracle).
+    // Incremental AA-backed endpoint state reused along a single-threaded
+    // parent->child descent. IFK reuses a single AA-FK chain prefix; HIFK
+    // reuses per-leaf AA-FK states when the split schedule is deterministic.
+    // Not shared across threads (each worker owns its own oracle).
     AaFkPrefixState aa_fk_prefix_state_;
+    HifkAaState hifk_aa_state_;
     std::unordered_map<std::uint64_t, LinkEnvelope> envelope_cache_;
+    mutable std::unordered_map<OracleNodeId, std::uint64_t> visit_counts_;
+    std::vector<int> best_tighten_depth_dims_;
+    std::vector<int> best_tighten_recent_dims_;
+    std::vector<double> best_tighten_reference_volumes_;
     // Thread-safe interval-keyed endpoint cache shared across worker tasks. The
     // master lazily owns it via shared_endpoint_cache(); workers receive the same
     // instance via set_shared_endpoint_cache().

@@ -1,6 +1,7 @@
 #include <sbf/core/robot.h>
 #include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/ifk_aa_source.h>
 #include <sbf/envelope/support_hull.h>
 #include <sbf/envelope/envelope_type.h>
 #include <link_interval_envelope/batch.h>
@@ -70,9 +71,20 @@ int main() {
         endpoint.n_active_links,
         robot.active_link_radii(),
         envelope_config);
-    assert(shape_envelope.kdop_n_axes == 0);
-    assert(shape_envelope.kdop_intervals.empty());
+    assert(shape_envelope.kdop_n_axes > 0);
+    assert(!shape_envelope.kdop_intervals.empty());
     assert(!shape_envelope.support_hulls.empty());
+    if (robot.active_link_radii() != nullptr) {
+        assert(std::abs(shape_envelope.support_hulls[12] - static_cast<float>(robot.active_link_radii()[0])) < 1e-6f);
+    }
+
+    std::vector<float> helper_support_hulls = rbf::compute_support_hulls_from_aabbs({0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f});
+    assert(helper_support_hulls.size() == static_cast<std::size_t>(rbf::kSupportHullRecordSize));
+    for (int i = 0; i < 6; ++i) {
+        assert(std::abs(helper_support_hulls[static_cast<std::size_t>(i)] - (i < 3 ? 0.0f : 1.0f)) < 1e-6f);
+        assert(std::abs(helper_support_hulls[static_cast<std::size_t>(i + 6)] - (i < 3 ? 0.0f : 1.0f)) < 1e-6f);
+    }
+    assert(std::abs(helper_support_hulls[12]) < 1e-6f);
 
     std::vector<float> synthetic_endpoint_iaabbs = {
         0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f,
@@ -88,12 +100,26 @@ int main() {
         synthetic_shape_config);
     assert(synthetic_shape_envelope.support_hulls.size() ==
         static_cast<std::size_t>(rbf::kSupportHullRecordSize));
-    assert(synthetic_shape_envelope.kdop_n_axes == 0);
-    assert(synthetic_shape_envelope.kdop_intervals.empty());
+    assert(synthetic_shape_envelope.kdop_n_axes > 0);
+    assert(!synthetic_shape_envelope.kdop_intervals.empty());
     for (int i = 0; i < 12; ++i) {
         assert(std::abs(synthetic_shape_envelope.support_hulls[static_cast<std::size_t>(i)] -
             synthetic_endpoint_iaabbs[static_cast<std::size_t>(i)]) < 1e-6f);
     }
+    assert(std::abs(synthetic_shape_envelope.support_hulls[12]) < 1e-6f);
+
+    rbf::EnvelopeTypeConfig synthetic_support_eps_config = synthetic_shape_config;
+    synthetic_support_eps_config.support_hull_config.safety_epsilon = 0.5;
+    const auto synthetic_support_eps_envelope = rbf::compute_link_envelope(
+        synthetic_endpoint_iaabbs.data(),
+        1,
+        nullptr,
+        synthetic_support_eps_config);
+    for (int i = 0; i < 12; ++i) {
+        assert(std::abs(synthetic_support_eps_envelope.support_hulls[static_cast<std::size_t>(i)] -
+            synthetic_endpoint_iaabbs[static_cast<std::size_t>(i)]) < 1e-6f);
+    }
+    assert(std::abs(synthetic_support_eps_envelope.support_hulls[12]) < 1e-6f);
 
     const rbf::Obstacle diagonal_gap_obstacle(0.0f, 1.6f, 0.0f, 0.4f, 1.9f, 1.0f);
     rbf::EnvelopeTypeConfig synthetic_aabb_config;
@@ -161,6 +187,22 @@ int main() {
     assert(support_stats.gjk_tests == 1);
     assert(support_stats.gjk_rejects == 1);
     assert(support_stats.maybe_pairs == 0);
+
+    const rbf::Obstacle epsilon_only_obstacle(1.2f, 0.2f, 0.2f, 1.3f, 0.3f, 0.3f);
+    rbf::EnvelopeCollisionOptions support_eps_options;
+    support_eps_options.mode = rbf::EnvelopeCollisionMode::GJK;
+    support_eps_options.safety_epsilon = 0.5;
+    rbf::EnvelopeCollisionStats support_eps_stats;
+    const auto support_eps_kind = rbf::collide_envelope_aabbs(
+        synthetic_support_eps_envelope,
+        &epsilon_only_obstacle,
+        1,
+        support_eps_options,
+        &support_eps_stats);
+    assert(support_eps_kind == rbf::CollisionResultKind::MaybeColliding);
+    assert(support_eps_stats.link_aabb_tests == 1);
+    assert(support_eps_stats.gjk_tests == 1);
+    assert(support_eps_stats.maybe_pairs == 1);
 
     std::vector<rbf::Interval> parent_intervals = {
         {-0.4, 0.4},
@@ -235,15 +277,29 @@ int main() {
     const auto explicit_hifk_endpoint = rbf::compute_endpoint_iaabb(robot, wide_intervals, explicit_hifk_config);
     assert_close(auto_hifk_endpoint.endpoint_iaabbs, explicit_hifk_endpoint.endpoint_iaabbs);
 
+    std::vector<rbf::Interval> sampled_schedule_root = {
+        {-1.2, 0.3},
+        {-0.9, 0.6},
+    };
+    const auto default_aafk_schedule = rbf::aafk_volume_min_depth_schedule(robot, sampled_schedule_root, 5);
+    const auto single_path_aafk_schedule = rbf::aafk_volume_min_depth_schedule(robot, sampled_schedule_root, 5, 1);
+    const auto sampled_aafk_schedule = rbf::aafk_volume_min_depth_schedule(robot, sampled_schedule_root, 5, 4);
+    assert((single_path_aafk_schedule == std::vector<int>{0, 1, 0, 0, 1}));
+    assert((sampled_aafk_schedule == std::vector<int>{0, 1, 0, 1, 0}));
+    assert(single_path_aafk_schedule != sampled_aafk_schedule);
+    assert(default_aafk_schedule == sampled_aafk_schedule);
+
     link_interval_envelope::IncrementalEnvelopeContext context(
         robot, endpoint_config, envelope_config);
     auto first = context.compute(parent_intervals);
     assert(first.endpoint.is_safe);
     assert(!first.used_incremental_fk);
+    assert(!first.used_source_incremental_state);
     assert(!context.has_valid_fk());
     auto second = context.compute(child_intervals);
     assert(second.changed_dim == 1);
     assert(!second.used_incremental_fk);
+    assert(second.used_source_incremental_state);
     auto full_child_envelope = rbf::compute_link_envelope(
         rbf::compute_endpoint_iaabb(robot, child_intervals, endpoint_config).endpoint_iaabbs.data(),
         robot.n_active_links(),
@@ -255,7 +311,29 @@ int main() {
 
     auto third = context.compute(child_intervals);
     assert(!third.reused_fk);
+    assert(third.used_source_incremental_state);
     assert_close(third.endpoint.endpoint_iaabbs, full_endpoint.endpoint_iaabbs);
+
+    rbf::EndpointSourceConfig hifk_incremental_config = hifk_config;
+    hifk_incremental_config.hifk_max_depth = 1;
+    hifk_incremental_config.hifk_split_strategy = rbf::HifkSplitStrategy::FixedDepthSchedule;
+    hifk_incremental_config.hifk_depth_dimensions = {1};
+    link_interval_envelope::IncrementalEnvelopeContext hifk_context(
+        robot, hifk_incremental_config, envelope_config);
+    auto hifk_first = hifk_context.compute(parent_intervals);
+    assert(hifk_first.endpoint.is_safe);
+    assert(!hifk_first.used_source_incremental_state);
+    auto hifk_second = hifk_context.compute(child_intervals);
+    assert(hifk_second.changed_dim == 1);
+    assert(hifk_second.used_source_incremental_state);
+    const auto full_hifk_child_endpoint = rbf::compute_endpoint_iaabb(
+        robot, child_intervals, hifk_incremental_config);
+    assert_close(hifk_second.endpoint.endpoint_iaabbs,
+                 full_hifk_child_endpoint.endpoint_iaabbs);
+    auto hifk_third = hifk_context.compute(child_intervals);
+    assert(hifk_third.used_source_incremental_state);
+    assert_close(hifk_third.endpoint.endpoint_iaabbs,
+                 full_hifk_child_endpoint.endpoint_iaabbs);
 
     rbf::EndpointSourceConfig crit_config;
     crit_config.source = rbf::EndpointSource::CritSample;
@@ -287,6 +365,48 @@ int main() {
     assert(crit_third.reused_endpoint_cache);
     assert(crit_third.endpoint.endpoint_cache_reused);
     assert_close(crit_third.endpoint.endpoint_iaabbs, crit_full_endpoint.endpoint_iaabbs);
+
+    const std::string iiwa14_path = std::string(LIE_EXAMPLE_DATA_DIR) + "/iiwa14.json";
+    const rbf::Robot iiwa14 = rbf::Robot::from_json(iiwa14_path);
+    std::vector<rbf::Interval> old_seq986_intervals = {
+        {-0.37085, 0.0},
+        {0.6544375, 0.7853249999999999},
+        {0.37085, 0.7417},
+        {-0.261775, 0.0},
+        {0.0, 0.7417},
+        {-1.0471, 0.0},
+        {0.0, 1.52705},
+    };
+    std::vector<rbf::Interval> old_node1_intervals = {
+        {-2.9668, 2.9668},
+        {-2.0942, 2.0942},
+        {-2.9668, 2.9668},
+        {-2.0942, 2.0942},
+        {-2.9668, 2.9668},
+        {-2.0942, 2.0942},
+        {-3.0541, 0.0},
+    };
+
+    link_interval_envelope::IncrementalEnvelopeContext crit_guard_context(
+        iiwa14, crit_config, envelope_config);
+    auto old_prev = crit_guard_context.compute(old_seq986_intervals, -1);
+    assert(!old_prev.used_source_incremental_state);
+    auto guarded_node1 = crit_guard_context.compute(old_node1_intervals, 6);
+    assert(guarded_node1.changed_dim == -1);
+    assert(!guarded_node1.used_source_incremental_state);
+    assert(!guarded_node1.reused_endpoint_cache);
+
+    const auto old_node1_full_endpoint = rbf::compute_endpoint_iaabb(
+        iiwa14, old_node1_intervals, crit_config);
+    const auto old_node1_full_envelope = rbf::compute_link_envelope(
+        old_node1_full_endpoint.endpoint_iaabbs.data(),
+        old_node1_full_endpoint.n_active_links,
+        iiwa14.active_link_radii(),
+        envelope_config);
+    assert_close(guarded_node1.endpoint.endpoint_iaabbs,
+                 old_node1_full_endpoint.endpoint_iaabbs);
+    assert_close(guarded_node1.envelope.link_iaabbs,
+                 old_node1_full_envelope.link_iaabbs);
 
     rbf::EndpointSourceConfig crit_parallel_config = crit_config;
     crit_parallel_config.n_threads = 2;

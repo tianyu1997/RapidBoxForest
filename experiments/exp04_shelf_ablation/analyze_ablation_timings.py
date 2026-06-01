@@ -172,6 +172,9 @@ def summarize_stage(
             "prebridge_added_boxes": int(build.get("prebridge_added_boxes", 0)),
             "prebridge_attempts": int(build.get("prebridge_attempts", 0)),
             "grow_ms": float(build.get("grow_ms", 0.0)),
+            "grow_adjacency_islands": int(build.get("grow_adjacency_islands", diagnostics.get("grower.adjacency_islands", 0.0))),
+            "grow_largest_island": int(build.get("grow_largest_island", diagnostics.get("grower.adjacency_largest_island", 0.0))),
+            "connector_islands_initial": int(build.get("connector_islands_initial", diagnostics.get("connector.islands_initial", 0.0))),
             "connector_ms": float(build.get("connector_ms", 0.0)),
             "adjacency_ms": float(build.get("adjacency_ms", 0.0)),
             "merge_ms": float(build.get("merge_ms", 0.0)),
@@ -180,6 +183,7 @@ def summarize_stage(
             "total_ms": float(build.get("total_ms", 0.0)),
             "unique_box_count": int(build.get("unique_box_count", 0)),
             "certified_box_count": int(build.get("certified_box_count", 0)),
+            "adjacency_islands": int(build.get("adjacency_islands", 0)),
         },
         "split": {
             "node_calls": float(diagnostics.get("profile.oracle.split_node.calls", 0.0)),

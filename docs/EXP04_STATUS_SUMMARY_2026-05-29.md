@@ -1,5 +1,72 @@
 # Exp04 当前状态总结（2026-05-29）
 
+## 2026-05-30 补充：E4 默认参数切换到 0.20 / 0.25 / 0.35 后的重跑摘要
+
+本次补跑使用的新默认 grower 参数为：
+
+- `rrt_goal_bias = 0.20`
+- `intertree_goal_bias = 0.25`
+- `component_connect_prob = 0.35`
+
+对应产物位于：
+
+- `outputs/new_experiments/exp04_e4_ccprob035_20260530/baseline_warm_aafk_support_hull_8t_aafk_volume_min.json`
+- `outputs/new_experiments/exp04_e4_ccprob035_20260530/no_lect_cache_online_envelopes.json`
+- `outputs/new_experiments/exp04_e4_ccprob035_20260530/single_thread.json`
+
+### E4 关键重跑表
+
+| Case | Threads | Fast total (s) | Fast grow / connector (ms) | Fast final islands | High total (s) | High grow / connector (ms) | High final islands | component-connect success / attempts (fast, high) | BiRRT invocations (fast, high) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| baseline_warm_aafk_support_hull_8t_aafk_volume_min | 8 | 0.273 | 56.1 / 157.6 | 1 | 0.330 | 234.3 / 57.5 | 1 | 15/93, 44/281 | 5, 4 |
+| no_lect_cache_online_envelopes | 8 | 0.249 | 60.2 / 137.2 | 1 | 0.326 | 227.9 / 57.2 | 1 | 15/93, 44/281 | 5, 4 |
+| single_thread | 1 | 0.594 | 89.3 / 206.1 | 2 | 0.858 | 463.7 / 198.0 | 2 | 18/71, 73/289 | 5, 4 |
+
+补充观察：
+
+- 这三条结果都仍然使用了 BiRRT connector，而不是 no-BiRRT 变体；直接证据是对应 stage diagnostics 中 `connector.birrt_invocations` 非零。
+- baseline 和 no_lect_cache_online_envelopes 在新默认下都能在 `high` 档稳定收敛到 1 island，说明把 `component_connect_prob` 从 0.45 降到 0.35 后，没有把压力简单转移成更差的最终连通性。
+- single_thread 仍明显退化，说明这一行的主瓶颈依旧是并行度，而不是当前 goal bias / component-connect 参数。
+- 本次重跑中的 incremental FK 统计已正常计数，不再是旧版本里的假零：例如 baseline 的 `oracle.materialization_incremental_fk` 为 75，`grower.worker_oracle.materialization_source_incremental_state` 在 `fast/high` 分别达到 978 / 3104。
+
+### 与旧的 0.45 baseline 对照
+
+旧对照产物：
+
+- `outputs/new_experiments/exp04_e4_baseline_no_external_20260530_fix/baseline_warm_aafk_support_hull_8t_aafk_volume_min.json`
+
+最关键的差异不在 `fast`，而在 `high`：
+
+| Baseline variant | component_connect_prob | Fast total (s) | Fast connector (ms) | Fast final islands | High total (s) | High connector (ms) | High final islands |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| baseline_0.45 | 0.45 | 0.201 | 50.5 | 1 | 0.694 | 181.9 | 2 |
+| baseline_0.35 | 0.35 | 0.273 | 157.6 | 1 | 0.330 | 57.5 | 1 |
+
+解释：
+
+- 单次 seed 下，`0.35` 的 `fast` 档不一定比 `0.45` 更快。
+- 但 `0.35` 明显改善了 `high` 档的连通稳定性和 connector 成本：`high total` 从 `0.694s` 降到 `0.330s`，`connector_ms` 从 `181.9ms` 降到 `57.5ms`，最终 islands 从 `2` 变成 `1`。
+- 这和前面的 multiseed 结论一致：`0.20 / 0.25 / 0.35` 的价值主要体现在高档位的稳定性，而不是追求某一次 `fast` 的最小单点值。
+
+### Ablation manifest 产物登记修复
+
+`experiments/exp04_shelf_ablation/run_shelf_ablation.py` 之前只把子进程 `measurement` 写进 `runs`，没有在执行后把 artifact 回填，所以 manifest 里会出现 `status/artifact = null` 的脏记录。
+
+现已修复为：
+
+- 每个 row 显式记录 `artifact_path`
+- 执行后基于 `returncode + artifact 是否存在` 回填 `runs.status`
+- 同时写出 `runs.artifact`
+
+最小验证产物：
+
+- `outputs/new_experiments/exp04_manifest_registration_check_20260530/shelf_ablation_manifest.json`
+
+该验证 manifest 中，baseline row 已正确登记为：
+
+- `status = completed`
+- `artifact = outputs/new_experiments/exp04_manifest_registration_check_20260530/baseline_warm_aafk_support_hull_8t_aafk_volume_min.json`
+
 ## 背景
 
 这轮工作的目标已经从“继续盲调 cache / envelope / connector”收敛成两件更具体的事：

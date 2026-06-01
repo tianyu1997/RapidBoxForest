@@ -1,5 +1,8 @@
 #include <SBF/sbf.h>
 
+#include <cstdio>
+#include <cstdlib>
+
 #include <rbf/lect_database/read_snapshot.h>
 #include <sbf/envelope/ifk_aa_source.h>
 
@@ -38,6 +41,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -73,6 +77,98 @@ std::vector<Eigen::VectorXd> eigen_vectors_from_lists(const std::vector<std::vec
         result.push_back(eigen_vector_from_list(item));
     }
     return result;
+}
+
+std::vector<double> vector_to_list(const Eigen::VectorXd& values) {
+    std::vector<double> result(static_cast<std::size_t>(values.size()));
+    for (Eigen::Index i = 0; i < values.size(); ++i) {
+        result[static_cast<std::size_t>(i)] = values[i];
+    }
+    return result;
+}
+
+std::vector<rbf::Interval> intervals_from_pairs(const std::vector<std::vector<double>>& pairs) {
+    std::vector<rbf::Interval> intervals;
+    intervals.reserve(pairs.size());
+    for (const auto& pair : pairs) {
+        if (pair.size() != 2) {
+            throw std::invalid_argument("each interval pair must have exactly two entries");
+        }
+        if (pair[1] < pair[0]) {
+            throw std::invalid_argument("interval upper bound must be >= lower bound");
+        }
+        intervals.push_back(rbf::Interval{pair[0], pair[1]});
+    }
+    return intervals;
+}
+
+py::list interval_pairs_to_python(const std::vector<rbf::Interval>& intervals) {
+    py::list result;
+    for (const auto& interval : intervals) {
+        py::list pair;
+        pair.append(interval.lo);
+        pair.append(interval.hi);
+        result.append(std::move(pair));
+    }
+    return result;
+}
+
+py::dict oracle_validation_detail_to_python(const rbf::OracleValidationDetail& detail) {
+    py::dict result;
+    result["node"] = detail.node;
+    result["depth"] = detail.depth;
+    result["mode"] = static_cast<int>(detail.mode);
+    result["validation"] = static_cast<int>(detail.validation);
+    result["safety_status"] = static_cast<int>(detail.safety_status);
+    result["collision_possible"] = detail.collision_possible;
+    result["strict_audit_required"] = detail.strict_audit_required;
+    result["endpoint_source"] = static_cast<int>(detail.endpoint_source);
+    result["endpoint_is_safe"] = detail.endpoint_is_safe;
+    result["endpoint_safety_level"] = static_cast<int>(detail.endpoint_safety_level);
+    result["materialized"] = detail.materialized;
+    result["changed_dim"] = detail.changed_dim;
+    result["used_incremental_fk"] = detail.used_incremental_fk;
+    result["used_source_incremental_state"] = detail.used_source_incremental_state;
+    result["reused_fk"] = detail.reused_fk;
+    result["reused_endpoint_cache"] = detail.reused_endpoint_cache;
+    result["reused_external_evidence"] = detail.reused_external_evidence;
+    result["endpoint_time_us"] = detail.endpoint_time_us;
+    result["envelope_time_us"] = detail.envelope_time_us;
+    result["candidate_dirty_count"] = detail.candidate_dirty_count;
+    result["predh_rebuild_count"] = detail.predh_rebuild_count;
+    result["aabb_overlap"] = detail.aabb_overlap;
+    return result;
+}
+
+py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
+    py::dict result;
+    result["node_validations"] = counters.node_validations;
+    result["interval_validations"] = counters.interval_validations;
+    result["certified_free"] = counters.certified_free;
+    result["provisional_free"] = counters.provisional_free;
+    result["collision_possible"] = counters.collision_possible;
+    result["unsafe_free_rejected"] = counters.unsafe_free_rejected;
+    result["validation_cache_hits"] = counters.validation_cache_hits;
+    result["validation_cache_misses"] = counters.validation_cache_misses;
+    result["materializations"] = counters.materializations;
+    result["materialization_endpoint_time_us"] = counters.materialization_endpoint_time_us;
+    result["materialization_envelope_time_us"] = counters.materialization_envelope_time_us;
+    result["validate_node_total_time_us"] = counters.validate_node_total_time_us;
+    result["validate_node_endpoint_path_time_us"] = counters.validate_node_endpoint_path_time_us;
+    result["validate_node_classify_time_us"] = counters.validate_node_classify_time_us;
+    result["envelope_collision_queries"] = counters.envelope_collision_queries;
+    result["envelope_collision_free"] = counters.envelope_collision_free;
+    result["envelope_collision_maybe"] = counters.envelope_collision_maybe;
+    return result;
+}
+
+rbf::OracleValidationConfig uncached_validation_config(rbf::OracleValidationConfig config) {
+    config.enable_validation_cache = false;
+    config.enable_endpoint_evidence_cache = false;
+    config.store_endpoint_evidence_cache = false;
+    config.external_evidence_materialization = false;
+    config.external_evidence_scoring = false;
+    return config;
 }
 
 std::vector<double> list_from_ompl_state(const ompl::base::State* state, int dimension) {
@@ -351,10 +447,84 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("active_link_radii", &active_link_radii_vec);
 
     module.def("aafk_volume_min_depth_schedule",
-        [](const rbf::Robot& robot, int max_depth) {
-            return rbf::aafk_volume_min_depth_schedule(robot, robot.joint_limits().limits, max_depth);
+        [](const rbf::Robot& robot, int max_depth, int sample_nodes_per_depth) {
+            return rbf::aafk_volume_min_depth_schedule(
+                robot,
+                robot.joint_limits().limits,
+                max_depth,
+                sample_nodes_per_depth);
         },
-        py::arg("robot"), py::arg("max_depth"));
+        py::arg("robot"), py::arg("max_depth"), py::arg("sample_nodes_per_depth") = 8);
+
+    module.def("aafk_volume_min_depth_schedule",
+        [](const rbf::Robot& robot,
+           const std::vector<rbf::Interval>& root_intervals,
+           int max_depth,
+           int sample_nodes_per_depth) {
+            return rbf::aafk_volume_min_depth_schedule(
+                robot,
+                root_intervals,
+                max_depth,
+                sample_nodes_per_depth);
+        },
+        py::arg("robot"),
+        py::arg("root_intervals"),
+        py::arg("max_depth"),
+        py::arg("sample_nodes_per_depth") = 8);
+
+    module.def("support_hull_volume_min_depth_schedule",
+        [](const rbf::Robot& robot, int max_depth, int sample_nodes_per_depth) {
+            return rbf::support_hull_volume_min_depth_schedule(
+                robot,
+                robot.joint_limits().limits,
+                max_depth,
+                sample_nodes_per_depth);
+        },
+        py::arg("robot"), py::arg("max_depth"), py::arg("sample_nodes_per_depth") = 8);
+
+    module.def("support_hull_volume_min_depth_schedule",
+        [](const rbf::Robot& robot,
+           const std::vector<rbf::Interval>& root_intervals,
+           int max_depth,
+           int sample_nodes_per_depth) {
+            return rbf::support_hull_volume_min_depth_schedule(
+                robot,
+                root_intervals,
+                max_depth,
+                sample_nodes_per_depth);
+        },
+        py::arg("robot"),
+        py::arg("root_intervals"),
+        py::arg("max_depth"),
+        py::arg("sample_nodes_per_depth") = 8);
+
+    module.def("canonical_root_intervals_for_robot",
+        [](const rbf::Robot& robot,
+           bool canonical_mode,
+           const std::string& symmetry_descriptor) {
+            return rbf::lect_database::canonical_root_intervals_for_robot(
+                robot,
+                canonical_mode,
+                symmetry_descriptor);
+        },
+        py::arg("robot"),
+        py::arg("canonical_mode") = true,
+        py::arg("symmetry_descriptor") = "joint_symmetry_native_v1");
+
+    module.def("build_lect_snapshot_from_legacy",
+        [](const std::string& legacy_root, const std::string& snapshot_path) {
+            std::string reason;
+            const std::filesystem::path legacy_path(legacy_root);
+            const std::filesystem::path snapshot_path_fs = snapshot_path.empty()
+                ? rbf::lect_database::LectReadSnapshot::default_snapshot_path(legacy_path)
+                : std::filesystem::path(snapshot_path);
+            if (!rbf::lect_database::LectReadSnapshot::build_from_legacy(legacy_path, snapshot_path_fs, &reason)) {
+                throw std::runtime_error(reason.empty() ? "failed to build LECT snapshot from legacy cache" : reason);
+            }
+            return snapshot_path_fs.string();
+        },
+        py::arg("legacy_root"),
+        py::arg("snapshot_path") = "");
 
     py::enum_<rbf::EndpointSource>(module, "EndpointSource")
         .value("IFK", rbf::EndpointSource::IFK)
@@ -513,9 +683,32 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("run_connector", &rbf::SubtractiveBuildOptions::run_connector)
         .def_readwrite("use_validation_obstacles_for_final_scene", &rbf::SubtractiveBuildOptions::use_validation_obstacles_for_final_scene);
 
+    py::class_<rbf::BestTightenOptions>(module, "BestTightenOptions")
+        .def(py::init<>())
+        .def_readwrite("depth_synchronous", &rbf::BestTightenOptions::depth_synchronous)
+        .def_readwrite("prefer_sector_boundary", &rbf::BestTightenOptions::prefer_sector_boundary)
+        .def_readwrite("use_minimax", &rbf::BestTightenOptions::use_minimax)
+        .def_readwrite("max_candidate_dim", &rbf::BestTightenOptions::max_candidate_dim)
+        .def_readwrite("min_candidate_width", &rbf::BestTightenOptions::min_candidate_width)
+        .def_readwrite("width_penalty", &rbf::BestTightenOptions::width_penalty)
+        .def_readwrite("shape_balancing", &rbf::BestTightenOptions::shape_balancing)
+        .def_readwrite("max_child_aspect", &rbf::BestTightenOptions::max_child_aspect)
+        .def_readwrite("min_split_width_fraction", &rbf::BestTightenOptions::min_split_width_fraction)
+        .def_readwrite("shape_weight", &rbf::BestTightenOptions::shape_weight)
+        .def_readwrite("balance_weight", &rbf::BestTightenOptions::balance_weight)
+        .def_readwrite("relative_gain_weight", &rbf::BestTightenOptions::relative_gain_weight)
+        .def_readwrite("widest_tiebreak_weight", &rbf::BestTightenOptions::widest_tiebreak_weight)
+        .def_readwrite("recent_dim_cooling", &rbf::BestTightenOptions::recent_dim_cooling)
+        .def_readwrite("recent_dim_window", &rbf::BestTightenOptions::recent_dim_window)
+        .def_readwrite("recent_dim_weight", &rbf::BestTightenOptions::recent_dim_weight)
+        .def_readwrite("recent_dim_shape_aspect_trigger", &rbf::BestTightenOptions::recent_dim_shape_aspect_trigger)
+        .def_readwrite("dim_mask", &rbf::BestTightenOptions::dim_mask)
+        .def_readwrite("dim_priority_weights", &rbf::BestTightenOptions::dim_priority_weights)
+        .def_readwrite("dim_priority_weight", &rbf::BestTightenOptions::dim_priority_weight);
     py::class_<rbf::OracleSplitOptions>(module, "OracleSplitOptions")
         .def(py::init<>())
-        .def_readwrite("use_best_tighten", &rbf::OracleSplitOptions::use_best_tighten);
+        .def_readwrite("use_best_tighten", &rbf::OracleSplitOptions::use_best_tighten)
+        .def_readwrite("best_tighten", &rbf::OracleSplitOptions::best_tighten);
 
     py::class_<rbf::OracleValidationConfig>(module, "OracleValidationConfig")
         .def(py::init<>())
@@ -529,6 +722,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("external_evidence_materialization", &rbf::OracleValidationConfig::external_evidence_materialization)
         .def_readwrite("external_evidence_scoring", &rbf::OracleValidationConfig::external_evidence_scoring)
         .def_readwrite("external_evidence_backfill_active", &rbf::OracleValidationConfig::external_evidence_backfill_active)
+        .def_readwrite("stateless_materialization_context", &rbf::OracleValidationConfig::stateless_materialization_context)
         .def_readwrite("enable_worker_shared_endpoint_cache", &rbf::OracleValidationConfig::enable_worker_shared_endpoint_cache)
         .def_readwrite("shared_endpoint_cache_max_entries", &rbf::OracleValidationConfig::shared_endpoint_cache_max_entries)
         .def_readwrite("shared_endpoint_cache_max_bytes", &rbf::OracleValidationConfig::shared_endpoint_cache_max_bytes);
@@ -573,6 +767,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("high_goal_bias_pulse_period", &rbf::GrowerConfig::high_goal_bias_pulse_period)
         .def_readwrite("rrt_step_ratio", &rbf::GrowerConfig::rrt_step_ratio)
         .def_readwrite("unexplored_sample_prob", &rbf::GrowerConfig::unexplored_sample_prob)
+        .def_readwrite("sample_categorical_allocation", &rbf::GrowerConfig::sample_categorical_allocation)
+        .def_readwrite("sample_uniform_prob", &rbf::GrowerConfig::sample_uniform_prob)
         .def_readwrite("expand_all_roots_per_sample", &rbf::GrowerConfig::expand_all_roots_per_sample)
         .def_readwrite("extra_random_roots", &rbf::GrowerConfig::extra_random_roots)
         .def_readwrite("root_seed_candidate_count", &rbf::GrowerConfig::root_seed_candidate_count)
@@ -643,6 +839,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("max_steps_per_waypoint", &rbf::ChainPaveConfig::max_steps_per_waypoint)
         .def_readwrite("adjacency_tolerance", &rbf::ChainPaveConfig::adjacency_tolerance)
         .def_readwrite("refine_covered_waypoints", &rbf::ChainPaveConfig::refine_covered_waypoints)
+        .def_readwrite("fill_gaps", &rbf::ChainPaveConfig::fill_gaps)
+        .def_readwrite("max_gap_fill_depth", &rbf::ChainPaveConfig::max_gap_fill_depth)
+        .def_readwrite("gap_fill_min_step", &rbf::ChainPaveConfig::gap_fill_min_step)
+        .def_readwrite("gap_fill_sample_step", &rbf::ChainPaveConfig::gap_fill_sample_step)
+        .def_readwrite("gap_fill_time_budget_ms", &rbf::ChainPaveConfig::gap_fill_time_budget_ms)
+        .def_readwrite("gap_fill_max_ffb_calls", &rbf::ChainPaveConfig::gap_fill_max_ffb_calls)
+        .def_readwrite("gap_fill_min_arc_gain", &rbf::ChainPaveConfig::gap_fill_min_arc_gain)
         .def_readwrite("find_free_box", &rbf::ChainPaveConfig::find_free_box)
         .def_readwrite("commit_policy", &rbf::ChainPaveConfig::commit_policy);
 
@@ -650,6 +853,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def(py::init<>())
         .def_readwrite("rrt", &rbf::IslandConnectorConfig::rrt)
         .def_readwrite("pave", &rbf::IslandConnectorConfig::pave)
+        .def_readwrite("enable_birrt", &rbf::IslandConnectorConfig::enable_birrt)
         .def_readwrite("frontier_bridge", &rbf::IslandConnectorConfig::frontier_bridge)
         .def_readwrite("frontier_bridge_adaptive_ffb", &rbf::IslandConnectorConfig::frontier_bridge_adaptive_ffb)
         .def_readwrite("frontier_bridge_gap_stall_iterations", &rbf::IslandConnectorConfig::frontier_bridge_gap_stall_iterations)
@@ -709,6 +913,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_property("external_evidence_snapshot_path",
             [](const rbf::LectDatabaseRuntimeConfig& config) { return config.external_evidence_snapshot_path.string(); },
             [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.external_evidence_snapshot_path = path; })
+        .def_readwrite("root_intervals_override", &rbf::LectDatabaseRuntimeConfig::root_intervals_override)
         .def_readwrite("split_policy", &rbf::LectDatabaseRuntimeConfig::split_policy)
         .def_readwrite("online_cache", &rbf::LectDatabaseRuntimeConfig::online_cache)
         .def_readwrite("external_evidence_use_snapshot", &rbf::LectDatabaseRuntimeConfig::external_evidence_use_snapshot)
@@ -766,6 +971,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("adjacency_ms", &rbf::BuildProfile::adjacency_ms)
         .def_readonly("raw_boxes", &rbf::BuildProfile::raw_boxes)
         .def_readonly("final_boxes", &rbf::BuildProfile::final_boxes)
+        .def_readonly("grow_adjacency_islands", &rbf::BuildProfile::grow_adjacency_islands)
+        .def_readonly("grow_largest_island", &rbf::BuildProfile::grow_largest_island)
         .def_readonly("bridge_boxes_added", &rbf::BuildProfile::bridge_boxes_added)
         .def_readonly("segment_edges", &rbf::BuildProfile::segment_edges)
         .def_readonly("segment_edges_added", &rbf::BuildProfile::segment_edges_added)
@@ -882,6 +1089,92 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                     return forest.bridge_query_known_needed(eigen_vector_from_list(start), eigen_vector_from_list(goal));
                          },
                          py::arg("start"), py::arg("goal"))
+                .def("debug_chain_pave",
+                         [](rbf::RBFPlanningForest& forest,
+                                const std::vector<double>& start,
+                                const std::vector<double>& goal,
+                                int max_chain,
+                                int max_depth,
+                                double edge_seed_step,
+                                int max_gap_fill_steps,
+                                bool fill_segment_gaps,
+                                int gap_fill_max_retries,
+                                double gap_fill_step_shrink,
+                                double gap_fill_min_step,
+                                int gap_fill_retry_depth_increment,
+                                int gap_fill_max_depth,
+                                double adjacency_tolerance,
+                                double gap_fill_sample_step,
+                                double gap_fill_time_budget_ms,
+                                int gap_fill_max_ffb_calls,
+                                double gap_fill_min_arc_gain) {
+                                    rbf::ChainPaveConfig pave;
+                                    pave.commit_policy = rbf::BoxCommitPolicy::CommitProvisionalAllowed;
+                                    pave.max_chain = max_chain;
+                                    pave.fill_gaps = fill_segment_gaps;
+                                    pave.adjacency_tolerance = adjacency_tolerance;
+                                    // Recursion depth bounds the bisection subdivisions (2^depth seeds).
+                                    // Derive it from the requested seed budget while keeping a sane cap.
+                                    pave.max_gap_fill_depth = std::max(1, std::min(20, max_gap_fill_steps));
+                                    pave.gap_fill_min_step = gap_fill_min_step;
+                                    pave.gap_fill_sample_step = gap_fill_sample_step;
+                                    pave.gap_fill_time_budget_ms = gap_fill_time_budget_ms;
+                                    pave.gap_fill_max_ffb_calls = gap_fill_max_ffb_calls;
+                                    pave.gap_fill_min_arc_gain = gap_fill_min_arc_gain;
+                                    pave.find_free_box.max_depth = max_depth;
+                                    pave.find_free_box.reject_seed_collision = false;
+                                    (void)edge_seed_step;
+                                    (void)gap_fill_max_retries;
+                                    (void)gap_fill_step_shrink;
+                                    (void)gap_fill_retry_depth_increment;
+                                    (void)gap_fill_max_depth;
+                                    auto res = forest.debug_chain_pave(eigen_vector_from_list(start),
+                                                                       eigen_vector_from_list(goal),
+                                                                       pave);
+                                    py::dict result;
+                                    result["added"] = res.added;
+                                    result["bridge_found"] = res.bridge_found;
+                                    result["audit_passed"] = res.audit_passed;
+                                    result["start_box_id"] = res.start_box_id;
+                                    result["goal_box_id"] = res.goal_box_id;
+                                    result["fast_gap_fill_ffb_calls"] = res.fast_gap_fill_ffb_calls;
+                                    result["fast_gap_fill_ms"] = res.fast_gap_fill_ms;
+                                    py::list waypoints;
+                                    for (const auto& wp : res.waypoints) {
+                                        waypoints.append(vector_to_list(wp));
+                                    }
+                                    result["waypoints"] = waypoints;
+                                    py::list committed_boxes;
+                                    for (const auto& box : res.committed_boxes) {
+                                        committed_boxes.append(interval_pairs_to_python(box));
+                                    }
+                                    result["committed_boxes"] = committed_boxes;
+                                    py::list all_boxes;
+                                    for (const auto& box : res.all_boxes) {
+                                        all_boxes.append(interval_pairs_to_python(box));
+                                    }
+                                    result["all_boxes"] = all_boxes;
+                                    result["start_box"] = interval_pairs_to_python(res.start_box);
+                                    result["goal_box"] = interval_pairs_to_python(res.goal_box);
+                                    return result;
+                         },
+                         py::arg("start"),
+                         py::arg("goal"),
+                         py::arg("max_chain") = 4096,
+                         py::arg("max_depth") = 120,
+                         py::arg("edge_seed_step") = 1e-2,
+                         py::arg("max_gap_fill_steps") = 64,
+                         py::arg("fill_segment_gaps") = true,
+                         py::arg("gap_fill_max_retries") = 6,
+                         py::arg("gap_fill_step_shrink") = 0.5,
+                         py::arg("gap_fill_min_step") = 1e-4,
+                         py::arg("gap_fill_retry_depth_increment") = 24,
+                         py::arg("gap_fill_max_depth") = 240,
+                         py::arg("adjacency_tolerance") = 1e-9,
+                         py::arg("gap_fill_sample_step") = 0.05,
+                         py::arg("gap_fill_time_budget_ms") = 10.0,
+                         py::arg("gap_fill_max_ffb_calls") = 32,
+                         py::arg("gap_fill_min_arc_gain") = 0.01)
         .def("add_obstacle_and_rebuild", &rbf::RBFPlanningForest::add_obstacle_and_rebuild, py::arg("obstacle"))
         .def("remove_obstacle_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_and_regrow, py::arg("obstacle_index"))
         .def("remove_obstacle_suffix_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_suffix_and_regrow, py::arg("target_obstacle_count"))
@@ -908,38 +1201,313 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("prewarm_lifelong_cache",
              [](rbf::RBFPlanningForest& forest,
                 int target_depth,
-                const std::vector<rbf::Obstacle>& obstacles) {
+                const std::vector<rbf::Obstacle>& obstacles,
+                bool gray_leaf_order) {
                  if (obstacles.empty()) {
                      throw std::invalid_argument("prewarm_lifelong_cache requires a non-empty obstacle scene so endpoint evidence is materialized");
                  }
                  const auto start = std::chrono::steady_clock::now();
-                 const bool depth_ok = forest.database().ensure_depth(std::max(0, target_depth));
+                 const int materialize_depth = std::max(0, target_depth);
+                 // Progress bar + ETA to stderr (disable with SBF_PREWARM_PROGRESS=0).
+                 const char* progress_env = std::getenv("SBF_PREWARM_PROGRESS");
+                 const bool show_progress = (progress_env == nullptr || std::string(progress_env) != "0");
+                 // Prewarm persistence mode (env-selected):
+                 //   default                    -> bulk: all records resident,
+                 //       fastest, RAM ~ O(records). Good up to ~D20.
+                 //   SBF_PREWARM_STREAMING=1     -> streaming: resident cache is
+                 //       capped (SBF_PREWARM_RESIDENT_CAP records, default 2,000,000)
+                 //       so peak RAM stays bounded for deep trees (e.g. D25 ~62M
+                 //       records). Records are appended to the durable store as
+                 //       built; evicted child records are reloaded on demand by the
+                 //       bottom-up parent sweep. Output is bit-identical to bulk.
+                 //   SBF_DISABLE_BULK_PREWARM=1  -> legacy path (A/B baseline only).
+                 const bool legacy_prewarm = std::getenv("SBF_DISABLE_BULK_PREWARM") != nullptr;
+                 const bool streaming_prewarm = std::getenv("SBF_PREWARM_STREAMING") != nullptr;
+                 std::size_t streaming_cap = 2000000;
+                 if (const char* cap_env = std::getenv("SBF_PREWARM_RESIDENT_CAP")) {
+                     char* endp = nullptr;
+                     const unsigned long long parsed = std::strtoull(cap_env, &endp, 10);
+                     if (endp != cap_env && parsed > 0) {
+                         streaming_cap = static_cast<std::size_t>(parsed);
+                     }
+                 }
+                 double checkpoint_interval_s = 0.0;
+                 if (const char* checkpoint_env = std::getenv("SBF_PREWARM_CHECKPOINT_SECONDS")) {
+                     char* endp = nullptr;
+                     const double parsed = std::strtod(checkpoint_env, &endp);
+                     if (endp != checkpoint_env && parsed > 0.0) {
+                         checkpoint_interval_s = parsed;
+                     }
+                 }
+                 std::size_t periodic_checkpoint_attempts = 0;
+                 std::size_t periodic_checkpoint_failures = 0;
+                 auto last_checkpoint_time = start;
+                 auto run_periodic_checkpoint = [&](const char* phase,
+                                                    std::size_t done,
+                                                    std::size_t total,
+                                                    bool force = false) {
+                     if (checkpoint_interval_s <= 0.0 || periodic_checkpoint_failures > 0) {
+                         return;
+                     }
+                     const auto now = std::chrono::steady_clock::now();
+                     const double since_last = std::chrono::duration<double>(now - last_checkpoint_time).count();
+                     if (!force && since_last < checkpoint_interval_s) {
+                         return;
+                     }
+                     const auto checkpoint_start = std::chrono::steady_clock::now();
+                     const bool ok = forest.database().checkpoint();
+                     const auto checkpoint_end = std::chrono::steady_clock::now();
+                     ++periodic_checkpoint_attempts;
+                     if (!ok) {
+                         ++periodic_checkpoint_failures;
+                     }
+                     last_checkpoint_time = checkpoint_end;
+                     if (show_progress) {
+                         const double checkpoint_s = std::chrono::duration<double>(checkpoint_end - checkpoint_start).count();
+                         std::fprintf(stderr,
+                                      "\n[prewarm checkpoint] phase=%s done=%zu/%zu ok=%d elapsed %.1fs\n",
+                                      phase,
+                                      done,
+                                      total,
+                                      ok ? 1 : 0,
+                                      checkpoint_s);
+                         std::fflush(stderr);
+                     }
+                 };
+                 const auto expected_leaf_records_for_depth = [](int depth) -> std::size_t {
+                     if (depth < 0 || depth >= static_cast<int>(std::numeric_limits<std::size_t>::digits)) {
+                         return 0;
+                     }
+                     return std::size_t{1} << depth;
+                 };
+                 const std::size_t expected_leaf_records = expected_leaf_records_for_depth(materialize_depth);
+                 const std::size_t expected_prewarm_records =
+                     expected_leaf_records > 0 &&
+                             expected_leaf_records <= (std::numeric_limits<std::size_t>::max() - 64) / 2
+                         ? expected_leaf_records * 2 + 64
+                         : 0;
+                 if (!legacy_prewarm) {
+                     if (streaming_prewarm) {
+                         forest.database().set_streaming_prewarm_mode(true, streaming_cap);
+                     } else {
+                         forest.database().set_bulk_prewarm_mode(true, expected_prewarm_records);
+                     }
+                 }
+                 if (show_progress) {
+                     std::fprintf(stderr, "[prewarm setup] ensure_depth 0/%d\n", materialize_depth);
+                     std::fflush(stderr);
+                 }
+                 const auto ensure_start = std::chrono::steady_clock::now();
+                 bool depth_ok = true;
+                 if (show_progress) {
+                     const std::size_t setup_total = expected_leaf_records > 0
+                         ? expected_leaf_records - 1
+                         : std::size_t{0};
+                     std::size_t setup_done = 0;
+                     for (int depth = 0; depth < materialize_depth && depth_ok; ++depth) {
+                         const auto layer = forest.database().layer_nodes(depth);
+                         const std::size_t layer_total = layer.size();
+                         const std::size_t layer_stride =
+                             std::max<std::size_t>(std::size_t{1}, layer_total / 200);
+                         std::size_t layer_done = 0;
+                         for (rbf::lect_database::NodeId node_id : layer) {
+                             const auto children = forest.database().split_leaf(node_id);
+                             if (children.first == rbf::lect_database::kInvalidNodeId ||
+                                 children.second == rbf::lect_database::kInvalidNodeId) {
+                                 depth_ok = false;
+                                 break;
+                             }
+                             ++layer_done;
+                             ++setup_done;
+                             if (layer_done % layer_stride == 0 || layer_done == layer_total) {
+                                 const double el = std::chrono::duration<double>(
+                                                       std::chrono::steady_clock::now() - ensure_start)
+                                                       .count();
+                                 const double frac = static_cast<double>(setup_done) /
+                                                     static_cast<double>(std::max<std::size_t>(setup_total, 1));
+                                 const double eta = el * (1.0 - frac) / std::max(frac, 1e-9);
+                                 std::fprintf(stderr,
+                                              "\r[prewarm setup] depth %2d/%2d  layer %zu/%zu  %5.1f%%  elapsed %6.1fs  ETA %6.1fs   ",
+                                              depth + 1,
+                                              materialize_depth,
+                                              layer_done,
+                                              layer_total,
+                                              100.0 * std::min(frac, 1.0),
+                                              el,
+                                              eta);
+                                 std::fflush(stderr);
+                             }
+                             run_periodic_checkpoint("ensure_depth", setup_done, setup_total);
+                         }
+                     }
+                     std::fprintf(stderr, "\n");
+                     std::fflush(stderr);
+                 } else {
+                     depth_ok = forest.database().ensure_depth(materialize_depth);
+                 }
+                 if (show_progress) {
+                     const double el = std::chrono::duration<double>(
+                                           std::chrono::steady_clock::now() - ensure_start)
+                                           .count();
+                     std::fprintf(stderr, "[prewarm setup] ensure_depth done %.1fs\n", el);
+                     std::fflush(stderr);
+                 }
+                 if (depth_ok) {
+                     run_periodic_checkpoint("ensure_depth", expected_leaf_records, expected_leaf_records, true);
+                 }
                  rbf::DatabaseBoxOracle oracle(forest.robot(),
-                                               forest.online_cache(),
+                                               forest.database(),
                                                rbf::Scene(obstacles),
                                                forest.config().endpoint_source,
                                                forest.config().envelope_type,
                                                forest.config().validation);
                  std::size_t nodes_touched = 0;
                  const std::size_t evidence_before = forest.database().evidence_count();
-                 const int materialize_depth = std::max(0, target_depth);
-                 for (rbf::lect_database::NodeId node_id : forest.database().layer_nodes(materialize_depth)) {
+                 // Disable per-leaf auto-propagation; the bottom-up sweep below
+                 // does all ancestor unions in a single O(leaves) pass instead of
+                 // scattered O(leaves*depth) walk-ups during leaf inserts.
+                 const bool prev_propagate = forest.database().propagate_parent_hulls_enabled();
+                 forest.database().set_propagate_parent_hulls(false);
+                 // Visit the leaf layer in reflected Gray-code (boustrophedon)
+                 // order so that consecutive leaves differ in exactly one split
+                 // decision -- i.e. exactly one joint interval changes between
+                 // successive FK materializations. The IFK stateful endpoint
+                 // source then reuses its AA-FK chain prefix and recomputes only
+                 // the changed suffix; the incremental result is provably
+                 // identical to a full pass, so the stored payloads are
+                 // bit-for-bit unchanged -- this is a pure prewarm speedup.
+                 const auto leaf_layer = forest.database().layer_nodes(materialize_depth);
+                 if (!legacy_prewarm && !streaming_prewarm && leaf_layer.size() > expected_leaf_records) {
+                     forest.database().set_bulk_prewarm_mode(true, leaf_layer.size() * 2 + 64);
+                 }
+                 std::vector<rbf::lect_database::NodeId> ordered_leaves;
+                 ordered_leaves.reserve(leaf_layer.size());
+                 {
+                     const auto roots = forest.database().layer_nodes(0);
+                     if (!roots.empty()) {
+                         struct Frame {
+                             rbf::lect_database::NodeId node;
+                             int depth;
+                             bool reversed;
+                         };
+                         std::vector<Frame> stack;
+                         stack.push_back({roots.front(), 0, false});
+                         while (!stack.empty()) {
+                             const Frame fr = stack.back();
+                             stack.pop_back();
+                             if (fr.depth >= materialize_depth) {
+                                 ordered_leaves.push_back(fr.node);
+                                 continue;
+                             }
+                             const auto topo = forest.database().topology(fr.node);
+                             if (topo.left == rbf::lect_database::kInvalidNodeId ||
+                                 topo.right == rbf::lect_database::kInvalidNodeId) {
+                                 ordered_leaves.push_back(fr.node);
+                                 continue;
+                             }
+                             // forward: visit left (forward) then right (reversed);
+                             // reversed: visit right (forward) then left (reversed).
+                             const rbf::lect_database::NodeId first =
+                                 fr.reversed ? topo.right : topo.left;
+                             const rbf::lect_database::NodeId second =
+                                 fr.reversed ? topo.left : topo.right;
+                             // LIFO: push the second-visited child first.
+                             stack.push_back({second, fr.depth + 1, true});
+                             stack.push_back({first, fr.depth + 1, false});
+                         }
+                     }
+                 }
+                 const bool use_gray_order =
+                     !ordered_leaves.empty() && ordered_leaves.size() == leaf_layer.size();
+                 const std::vector<rbf::lect_database::NodeId>& leaf_iteration =
+                     (gray_leaf_order && use_gray_order) ? ordered_leaves : leaf_layer;
+                 const auto leaf_loop_start = std::chrono::steady_clock::now();
+                 const std::size_t leaf_total = leaf_iteration.size();
+                 const std::size_t leaf_stride =
+                     std::max<std::size_t>(std::size_t{1}, leaf_total / 200);
+                 std::size_t leaf_done = 0;
+                 for (rbf::lect_database::NodeId node_id : leaf_iteration) {
                      auto intervals = forest.database().node_box(node_id);
                      if (!intervals) {
                          continue;
                      }
                      oracle.validate_node(static_cast<int>(node_id), *intervals, -1);
                      nodes_touched += 1;
+                     ++leaf_done;
+                     if (show_progress &&
+                         (leaf_done % leaf_stride == 0 || leaf_done == leaf_total)) {
+                         const double el = std::chrono::duration<double>(
+                                               std::chrono::steady_clock::now() - leaf_loop_start)
+                                               .count();
+                         const double rate = static_cast<double>(leaf_done) / std::max(el, 1e-9);
+                         const double eta =
+                             static_cast<double>(leaf_total - leaf_done) / std::max(rate, 1e-9);
+                         std::fprintf(stderr,
+                                      "\r[prewarm leaves]  %5.1f%%  %zu/%zu  %.0f/s  elapsed %6.1fs  ETA %6.1fs   ",
+                                      100.0 * static_cast<double>(leaf_done) /
+                                          static_cast<double>(std::max<std::size_t>(leaf_total, 1)),
+                                      leaf_done, leaf_total, rate, el, eta);
+                         std::fflush(stderr);
+                     }
+                     run_periodic_checkpoint("leaves", leaf_done, leaf_total);
                  }
+                 if (show_progress) {
+                     std::fprintf(stderr, "\n");
+                     std::fflush(stderr);
+                 }
+                 const auto leaf_loop_end = std::chrono::steady_clock::now();
+                 // HARDCODED: LECT prewarm only FK-materializes the leaf layer,
+                 // then derives every internal-node envelope bottom-up as the
+                 // cheap conservative union of its two children (tighter than a
+                 // direct parent FK). Internal nodes are never FK-recomputed.
+                 const std::size_t parent_total_estimate =
+                     forest.database().node_count() > leaf_total
+                         ? forest.database().node_count() - leaf_total
+                         : std::size_t{0};
+                 const std::size_t parent_hulls_built =
+                     forest.database().materialize_internal_parent_hulls_bottom_up(
+                         materialize_depth, oracle.endpoint_evidence_key(0),
+                         show_progress
+                             ? std::function<void(int, std::size_t)>(
+                                   [&](int depth, std::size_t built) {
+                                       const double el =
+                                           std::chrono::duration<double>(
+                                               std::chrono::steady_clock::now() - leaf_loop_end)
+                                               .count();
+                                       const int done_layers = materialize_depth - depth;
+                                       const double frac =
+                                           static_cast<double>(done_layers) /
+                                           static_cast<double>(std::max(materialize_depth, 1));
+                                       const double eta =
+                                           el * (1.0 - frac) / std::max(frac, 1e-9);
+                                       std::fprintf(stderr,
+                                                    "\r[prewarm parents] depth %2d  %5.1f%%  built %zu  elapsed %6.1fs  ETA %6.1fs   ",
+                                                    depth, 100.0 * frac, built, el, eta);
+                                       std::fflush(stderr);
+                                       run_periodic_checkpoint("parents", built, parent_total_estimate);
+                                   })
+                             : std::function<void(int, std::size_t)>{});
+                 if (show_progress) {
+                     std::fprintf(stderr, "\n");
+                     std::fflush(stderr);
+                 }
+                 const auto sweep_end = std::chrono::steady_clock::now();
+                 forest.database().set_propagate_parent_hulls(prev_propagate);
                  const bool checkpoint_ok = forest.database().checkpoint();
+                 forest.database().set_bulk_prewarm_mode(false);
+                 forest.database().set_streaming_prewarm_mode(false, 0);
                  const auto end = std::chrono::steady_clock::now();
                  const auto& counters = oracle.counters();
                  py::dict result;
-                 result["ok"] = depth_ok && checkpoint_ok;
+                 result["ok"] = depth_ok && checkpoint_ok && periodic_checkpoint_failures == 0;
                  result["target_depth"] = materialize_depth;
                  result["depth_ok"] = depth_ok;
                  result["checkpoint_ok"] = checkpoint_ok;
+                 result["periodic_checkpoint_seconds"] = checkpoint_interval_s;
+                 result["periodic_checkpoint_attempts"] = periodic_checkpoint_attempts;
+                 result["periodic_checkpoint_failures"] = periodic_checkpoint_failures;
                  result["nodes_touched"] = nodes_touched;
+                 result["parent_hulls_built"] = parent_hulls_built;
                  result["node_count"] = forest.database().node_count();
                  result["evidence_before"] = evidence_before;
                  result["evidence_after"] = forest.database().evidence_count();
@@ -947,10 +1515,327 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  result["reused_endpoint_cache"] = counters.materialization_reused_endpoint_cache;
                  result["reused_shared_endpoint_cache"] = counters.materialization_reused_shared_endpoint_cache;
                  result["stored_shared_endpoint_cache"] = counters.materialization_stored_shared_endpoint_cache;
+                 result["incremental_fk"] = counters.materialization_incremental_fk;
+                 result["source_incremental_state"] = counters.materialization_source_incremental_state;
+                 result["gray_leaf_order"] = gray_leaf_order && use_gray_order;
+                 // --- prewarm time breakdown (seconds) ---
+                 result["t_leaf_loop_s"] =
+                     std::chrono::duration<double>(leaf_loop_end - leaf_loop_start).count();
+                 result["t_parent_sweep_s"] =
+                     std::chrono::duration<double>(sweep_end - leaf_loop_end).count();
+                 result["t_checkpoint_s"] =
+                     std::chrono::duration<double>(end - sweep_end).count();
+                 // --- per-leaf validate_node cost decomposition (microseconds) ---
+                 result["us_validate_total"] = counters.validate_node_total_time_us;
+                 result["us_validate_endpoint_path"] = counters.validate_node_endpoint_path_time_us;
+                 result["us_validate_classify"] = counters.validate_node_classify_time_us;
+                 result["us_endpoint_fk_wall"] = counters.materialization_endpoint_wall_time_us;
+                 result["us_envelope_compute"] = counters.materialization_envelope_compute_time_us;
+                 result["us_envelope_collision"] = counters.materialization_envelope_collision_time_us;
+                 result["us_cache_lookup"] = counters.materialization_cache_lookup_time_us;
+                 result["us_cache_read"] = counters.materialization_cache_read_time_us;
                  result["wall_s"] = std::chrono::duration<double>(end - start).count();
                  return result;
              },
-             py::arg("target_depth"), py::arg("obstacles"))
+             py::arg("target_depth"), py::arg("obstacles"), py::arg("gray_leaf_order") = true)
+        .def("debug_validate_intervals",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<rbf::Obstacle>& obstacles,
+                const std::vector<std::vector<double>>& interval_pairs,
+                int changed_dim,
+                bool disable_caches) {
+                 const auto intervals = intervals_from_pairs(interval_pairs);
+                 if (static_cast<int>(intervals.size()) != forest.robot().n_joints()) {
+                     throw std::invalid_argument("interval count must match robot.n_joints()");
+                 }
+                 rbf::OracleValidationConfig validation = disable_caches
+                     ? uncached_validation_config(forest.config().validation)
+                     : forest.config().validation;
+                 rbf::lect_database::OnlineEnvelopeCacheTree cache(forest.database(), {});
+                 rbf::DatabaseBoxOracle oracle(forest.robot(),
+                                               cache,
+                                               rbf::Scene(obstacles),
+                                               forest.config().endpoint_source,
+                                               forest.config().envelope_type,
+                                               validation);
+                 const auto validation_result = oracle.validate_node(oracle.root_node(), intervals, changed_dim);
+                 py::dict result;
+                 result["validation"] = static_cast<int>(validation_result);
+                 result["intervals"] = interval_pairs_to_python(intervals);
+                 result["root_intervals"] = interval_pairs_to_python(oracle.root_intervals());
+                 result["changed_dim"] = changed_dim;
+                 result["disable_caches"] = disable_caches;
+                 result["validation_detail"] = oracle_validation_detail_to_python(oracle.last_validation_detail());
+                 result["counters"] = oracle_counters_to_python(oracle.counters());
+                 return result;
+             },
+             py::arg("obstacles"),
+             py::arg("interval_pairs"),
+             py::arg("changed_dim") = -1,
+             py::arg("disable_caches") = true)
+        .def("debug_find_free_box",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<double>& seed_values,
+                const std::vector<rbf::Obstacle>& obstacles,
+                const rbf::FindFreeBoxOptions& options,
+                bool disable_caches) {
+                 using Clock = std::chrono::steady_clock;
+                 const Eigen::VectorXd seed = eigen_vector_from_list(seed_values);
+                 if (seed.size() != forest.robot().n_joints()) {
+                     throw std::invalid_argument("seed dimension must match robot.n_joints()");
+                 }
+
+                 rbf::OracleValidationConfig validation = disable_caches
+                     ? uncached_validation_config(forest.config().validation)
+                     : forest.config().validation;
+                 rbf::lect_database::OnlineEnvelopeCacheTree cache(forest.database(), {});
+                 rbf::DatabaseBoxOracle oracle(forest.robot(),
+                                               cache,
+                                               rbf::Scene(obstacles),
+                                               forest.config().endpoint_source,
+                                               forest.config().envelope_type,
+                                               validation);
+
+                 py::dict result;
+                 py::list trace;
+                 py::list split_events;
+                 py::list validation_events;
+                 const auto start = Clock::now();
+
+                 const Eigen::VectorXd tree_seed = oracle.tree_configuration_for_query(seed);
+                 result["seed"] = seed_values;
+                 result["tree_seed"] = vector_to_list(tree_seed);
+                 result["root_intervals"] = interval_pairs_to_python(oracle.root_intervals());
+                 result["disable_caches"] = disable_caches;
+
+                 // Seed-independent: canonical split depends only on (robot,
+                 // domain). No query-seed coupling is applied to split values.
+                 rbf::OracleSplitOptions split_options = options.split;
+
+                 bool seed_in_domain = false;
+                 if (tree_seed.size() == oracle.n_dims()) {
+                     seed_in_domain = oracle.contains_point(oracle.root_node(), tree_seed);
+                 }
+                 result["seed_in_domain"] = seed_in_domain;
+                 if (tree_seed.size() != oracle.n_dims() || !seed_in_domain) {
+                     result["found"] = false;
+                     result["seed_collision"] = false;
+                     result["hit_reserved_depth_cap"] = false;
+                     result["hit_unknown_depth_cap"] = false;
+                     result["deadline_reached"] = false;
+                     result["fail_code"] = 5;
+                     result["node"] = rbf::kInvalidOracleNodeId;
+                     result["decisions"] = 0;
+                     result["splits"] = 0;
+                     result["changed_dim"] = -1;
+                     result["intervals"] = py::list();
+                     result["trace"] = trace;
+                     result["validation_events"] = validation_events;
+                     result["split_events"] = split_events;
+                     result["counters"] = oracle_counters_to_python(oracle.counters());
+                     result["total_ms"] = 0.0;
+                     return result;
+                 }
+
+                 if (options.reject_seed_collision && oracle.point_in_collision(seed)) {
+                     result["found"] = false;
+                     result["seed_collision"] = true;
+                     result["hit_reserved_depth_cap"] = false;
+                     result["hit_unknown_depth_cap"] = false;
+                     result["deadline_reached"] = false;
+                     result["fail_code"] = 1;
+                     result["node"] = rbf::kInvalidOracleNodeId;
+                     result["decisions"] = 0;
+                     result["splits"] = 0;
+                     result["changed_dim"] = -1;
+                     result["intervals"] = py::list();
+                     result["trace"] = trace;
+                     result["validation_events"] = validation_events;
+                     result["split_events"] = split_events;
+                     result["counters"] = oracle_counters_to_python(oracle.counters());
+                     result["total_ms"] = 0.0;
+                     return result;
+                 }
+
+                 auto elapsed_ms = [&]() {
+                     return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+                 };
+
+                 bool found = false;
+                 bool seed_collision = false;
+                 bool hit_reserved_depth_cap = false;
+                 bool hit_unknown_depth_cap = false;
+                 bool deadline_reached = false;
+                 int fail_code = 0;
+                 rbf::OracleNodeId node = oracle.root_node();
+                 int changed_dim = -1;
+                 int decisions = 0;
+                 int splits = 0;
+                 int result_changed_dim = -1;
+                 std::vector<rbf::Interval> result_intervals;
+                 rbf::OracleValidationDetail final_detail;
+                 const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle.max_tree_depth() - 1));
+                 std::uint64_t step_sequence = 0;
+                 std::uint64_t split_sequence = 0;
+                 std::uint64_t validation_sequence = 0;
+
+                 while (true) {
+                     py::dict step;
+                     step["sequence"] = step_sequence++;
+                     step["node"] = node;
+                     step["depth"] = oracle.depth(node);
+                     step["changed_dim_in"] = changed_dim;
+                     const auto tree_intervals = oracle.node_intervals(node);
+                     const auto query_intervals = oracle.query_intervals_for_node(node, tree_intervals, seed);
+                     step["tree_intervals"] = interval_pairs_to_python(tree_intervals);
+                     step["query_intervals"] = interval_pairs_to_python(query_intervals);
+                     step["is_leaf"] = oracle.is_leaf(node);
+                     step["is_reserved"] = oracle.is_reserved(node);
+
+                     if (step.cast<py::dict>()["is_reserved"].cast<bool>()) {
+                         if (oracle.depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
+                             hit_reserved_depth_cap = true;
+                             result_intervals = query_intervals;
+                             fail_code = 2;
+                             step["terminal"] = true;
+                             step["fail_code"] = fail_code;
+                             trace.append(std::move(step));
+                             break;
+                         }
+                         if (oracle.is_leaf(node)) {
+                             const auto split = oracle.split_node(node, tree_intervals, changed_dim, split_options);
+                             step["split"] = split.split;
+                             if (!split.split) {
+                                 fail_code = 6;
+                                 step["terminal"] = true;
+                                 step["fail_code"] = fail_code;
+                                 trace.append(std::move(step));
+                                 break;
+                             }
+                             step["split_dim"] = split.split_dim;
+                             step["split_value"] = split.split_value;
+                             splits += 1;
+                             py::dict split_event;
+                             split_event["sequence"] = split_sequence++;
+                             split_event["node"] = split.node;
+                             split_event["depth"] = oracle.depth(split.node);
+                             split_event["split_dim"] = split.split_dim;
+                             split_event["split_val"] = split.split_value;
+                             split_event["best_tighten"] = options.split.use_best_tighten;
+                             split_event["sector_aligned"] = false;
+                             split_events.append(std::move(split_event));
+                         }
+                         changed_dim = oracle.split_dim(node);
+                         const double next_split_value = oracle.split_value(node);
+                         const bool go_left = tree_seed[changed_dim] <= next_split_value;
+                         step["next_split_dim"] = changed_dim;
+                         step["next_split_value"] = next_split_value;
+                         step["child_branch"] = go_left ? "left" : "right";
+                         trace.append(std::move(step));
+                         node = go_left ? oracle.left_child(node) : oracle.right_child(node);
+                         continue;
+                     }
+
+                     const auto validation_result = oracle.validate_node(node, query_intervals, changed_dim);
+                     final_detail = oracle.last_validation_detail();
+                     decisions += 1;
+                     step["validation"] = static_cast<int>(validation_result);
+                     step["validation_detail"] = oracle_validation_detail_to_python(final_detail);
+                     py::dict validation_event;
+                     validation_event["sequence"] = validation_sequence++;
+                     validation_event["node"] = node;
+                     validation_event["depth"] = oracle.depth(node);
+                     validation_event["validation"] = static_cast<int>(validation_result);
+                     validation_event["safety_status"] = static_cast<int>(final_detail.safety_status);
+                     validation_event["collision_possible"] = final_detail.collision_possible;
+                     validation_event["strict_audit_required"] = final_detail.strict_audit_required;
+                     validation_event["intervals"] = interval_pairs_to_python(query_intervals);
+                     validation_events.append(std::move(validation_event));
+
+                     if (validation_result == rbf::BoxValidation::Free) {
+                         found = true;
+                         result_changed_dim = changed_dim;
+                         result_intervals = query_intervals;
+                         fail_code = 0;
+                         step["terminal"] = true;
+                         step["fail_code"] = fail_code;
+                         trace.append(std::move(step));
+                         break;
+                     }
+                     if (validation_result == rbf::BoxValidation::Occupied) {
+                         result_intervals = query_intervals;
+                         fail_code = 3;
+                         step["terminal"] = true;
+                         step["fail_code"] = fail_code;
+                         trace.append(std::move(step));
+                         break;
+                     }
+                     if (oracle.depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
+                         hit_unknown_depth_cap = true;
+                         result_intervals = query_intervals;
+                         fail_code = 2;
+                         step["terminal"] = true;
+                         step["fail_code"] = fail_code;
+                         trace.append(std::move(step));
+                         break;
+                     }
+                     if (oracle.is_leaf(node)) {
+                         const auto split = oracle.split_node(node, tree_intervals, changed_dim, split_options);
+                         step["split"] = split.split;
+                         if (!split.split) {
+                             fail_code = 6;
+                             step["terminal"] = true;
+                             step["fail_code"] = fail_code;
+                             trace.append(std::move(step));
+                             break;
+                         }
+                         step["split_dim"] = split.split_dim;
+                         step["split_value"] = split.split_value;
+                         splits += 1;
+                         py::dict split_event;
+                         split_event["sequence"] = split_sequence++;
+                         split_event["node"] = split.node;
+                         split_event["depth"] = oracle.depth(split.node);
+                         split_event["split_dim"] = split.split_dim;
+                         split_event["split_val"] = split.split_value;
+                         split_event["best_tighten"] = options.split.use_best_tighten;
+                         split_event["sector_aligned"] = false;
+                         split_events.append(std::move(split_event));
+                     }
+                     changed_dim = oracle.split_dim(node);
+                     const double next_split_value = oracle.split_value(node);
+                     const bool go_left = tree_seed[changed_dim] <= next_split_value;
+                     step["next_split_dim"] = changed_dim;
+                     step["next_split_value"] = next_split_value;
+                     step["child_branch"] = go_left ? "left" : "right";
+                     trace.append(std::move(step));
+                     node = go_left ? oracle.left_child(node) : oracle.right_child(node);
+                 }
+
+                 result["found"] = found;
+                 result["seed_collision"] = seed_collision;
+                 result["hit_reserved_depth_cap"] = hit_reserved_depth_cap;
+                 result["hit_unknown_depth_cap"] = hit_unknown_depth_cap;
+                 result["deadline_reached"] = deadline_reached;
+                 result["fail_code"] = fail_code;
+                 result["node"] = node;
+                 result["decisions"] = decisions;
+                 result["splits"] = splits;
+                 result["changed_dim"] = result_changed_dim;
+                 result["intervals"] = interval_pairs_to_python(result_intervals);
+                 result["validation_detail"] = oracle_validation_detail_to_python(final_detail);
+                 result["trace"] = trace;
+                 result["validation_events"] = validation_events;
+                 result["split_events"] = split_events;
+                 result["counters"] = oracle_counters_to_python(oracle.counters());
+                 result["effective_max_depth"] = effective_max_depth;
+                 result["total_ms"] = elapsed_ms();
+                 return result;
+             },
+             py::arg("seed"),
+             py::arg("obstacles"),
+             py::arg("options") = rbf::FindFreeBoxOptions{},
+             py::arg("disable_caches") = true)
         .def("boxes", [](const rbf::RBFPlanningForest& forest) { return forest.boxes(); })
         .def("raw_boxes", [](const rbf::RBFPlanningForest& forest) { return forest.raw_boxes(); })
         .def("adjacency", [](const rbf::RBFPlanningForest& forest) { return forest.adjacency(); })

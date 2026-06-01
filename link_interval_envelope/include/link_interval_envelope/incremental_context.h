@@ -7,6 +7,7 @@
 #include <sbf/envelope/crit_source.h>
 #include <sbf/envelope/endpoint_source.h>
 #include <sbf/envelope/envelope_type.h>
+#include <sbf/envelope/ifk_aa_source.h>
 
 #include <vector>
 
@@ -24,8 +25,9 @@ struct IncrementalEnvelopeResult {
     bool reused_endpoint_cache = false;
 };
 
-/// Stateful context that keeps the previous v6-compatible rbf::FKState for
-/// sources that need it internally, plus reusable CritSample state.
+/// Stateful context that keeps reusable source-local state: the previous
+/// v6-compatible rbf::FKState for sources that need it internally, reusable
+/// CritSample state, and AA-backed IFK/HIFK incremental state.
 ///
 /// The FKState layout is intentionally the same as `cpp/v6/include/rbf/core/fk_state.h`
 /// in this repository snapshot. C++ callers can pass the exposed `fk_state()` to
@@ -57,6 +59,8 @@ private:
     rbf::EnvelopeTypeConfig envelope_config_;
     rbf::FKState fk_state_;
     rbf::CritSampleState crit_state_;
+    rbf::AaFkPrefixState aa_fk_state_;
+    rbf::HifkAaState hifk_aa_state_;
     std::vector<rbf::Interval> last_intervals_;
 
     int infer_changed_dim(const std::vector<rbf::Interval>& intervals) const;

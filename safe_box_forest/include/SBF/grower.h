@@ -121,6 +121,13 @@ struct GrowerConfig {
 	double intertree_goal_bias = 0.25;
 	double rrt_step_ratio = 0.08;
 	double unexplored_sample_prob = 0.45;
+	// When true, the per-sample target category is drawn from a single
+	// categorical distribution over {component_connect, intertree, rrt_goal,
+	// unexplored, uniform}. The configured probabilities are interpreted
+	// directly; if they sum to less than 1, the remainder is assigned to the
+	// pure-uniform bucket.
+	bool sample_categorical_allocation = false;
+	double sample_uniform_prob = 0.0;
 	bool connect_mode = true;
 	double component_connect_prob = 0.0;
 	int component_connect_candidate_limit = 4;

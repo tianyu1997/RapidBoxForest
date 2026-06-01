@@ -70,10 +70,16 @@ void populate_aabb_payloads(LinkEnvelope& result, const double* link_radii) {
 void populate_shape_payloads(
     LinkEnvelope& result,
     const float* endpoint_iaabbs,
+    const double* link_radii,
     const EnvelopeTypeConfig& config)
 {
-    const bool wants_kdop = config.type == EnvelopeType::KDOP;
     const bool wants_support_hull = config.type == EnvelopeType::SupportHull;
+    // Build the KDOP payload for pure KDOP envelopes AND for SupportHull
+    // envelopes that request keep_kdop. The SupportHull collision pipeline uses
+    // the KDOP intervals as a separation prefilter (KDOPThenGJK); without them
+    // collision degrades to pure float GJK which almost never proves separation.
+    const bool wants_kdop = config.type == EnvelopeType::KDOP ||
+        (wants_support_hull && config.support_hull_config.keep_kdop);
     result.kdop_direction_set = config.kdop_config.direction_set;
     result.kdop_n_axes = wants_kdop ? kdop_axis_count(config.kdop_config.direction_set) : 0;
     if (wants_kdop && endpoint_iaabbs != nullptr && result.n_active_links > 0) {
@@ -90,8 +96,8 @@ void populate_shape_payloads(
         result.support_hulls = compute_support_hulls_from_endpoint_iaabbs(
             endpoint_iaabbs,
             result.n_active_links,
-            result.n_subdivisions,
-            static_cast<float>(std::max(0.0, config.support_hull_config.safety_epsilon)));
+            link_radii,
+            result.n_subdivisions);
     } else {
         result.support_hulls.clear();
     }
@@ -132,7 +138,7 @@ LinkEnvelope compute_link_envelope(
     }
 
     populate_aabb_payloads(result, link_radii);
-    populate_shape_payloads(result, endpoint_iaabbs, config);
+    populate_shape_payloads(result, endpoint_iaabbs, link_radii, config);
 
     return result;
 }

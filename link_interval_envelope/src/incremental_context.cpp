@@ -14,6 +14,26 @@ bool same_interval(const rbf::Interval& a, const rbf::Interval& b) {
     return a.lo == b.lo && a.hi == b.hi;
 }
 
+bool differs_only_in_dim(const std::vector<rbf::Interval>& lhs,
+                         const std::vector<rbf::Interval>& rhs,
+                         int changed_dim) {
+    if (changed_dim < 0 || lhs.size() != rhs.size()) {
+        return false;
+    }
+
+    bool saw_change = false;
+    for (int index = 0; index < static_cast<int>(lhs.size()); ++index) {
+        if (same_interval(lhs[static_cast<std::size_t>(index)], rhs[static_cast<std::size_t>(index)])) {
+            continue;
+        }
+        if (index != changed_dim || saw_change) {
+            return false;
+        }
+        saw_change = true;
+    }
+    return saw_change;
+}
+
 }  // namespace
 
 IncrementalEnvelopeContext::IncrementalEnvelopeContext(
@@ -28,6 +48,8 @@ IncrementalEnvelopeContext::IncrementalEnvelopeContext(
 void IncrementalEnvelopeContext::reset() {
     fk_state_ = rbf::FKState{};
     crit_state_.reset();
+    aa_fk_state_ = rbf::AaFkPrefixState{};
+    hifk_aa_state_ = rbf::HifkAaState{};
     last_intervals_.clear();
 }
 
@@ -92,6 +114,10 @@ IncrementalEnvelopeResult IncrementalEnvelopeContext::compute(
     int effective_changed_dim = changed_dim;
     if (effective_changed_dim < 0) {
         effective_changed_dim = infer_changed_dim(intervals);
+    } else if (endpoint_config_.source == rbf::EndpointSource::CritSample &&
+               !differs_only_in_dim(last_intervals_, intervals, effective_changed_dim)) {
+        reset();
+        effective_changed_dim = -1;
     }
     out.changed_dim = effective_changed_dim == -2 ? -1 : effective_changed_dim;
 
@@ -123,6 +149,12 @@ IncrementalEnvelopeResult IncrementalEnvelopeContext::compute(
             endpoint_config_.n_threads,
             endpoint_config_.parallel_min_combos);
         out.used_source_incremental_state = can_use_incremental_crit;
+    } else if (endpoint_config_.source == rbf::EndpointSource::IFK) {
+        out.endpoint = rbf::compute_endpoint_iaabb_ifk_aa_stateful(
+            robot_, intervals, aa_fk_state_, &out.used_source_incremental_state);
+    } else if (endpoint_config_.source == rbf::EndpointSource::HIFK) {
+        out.endpoint = rbf::compute_endpoint_iaabb_hifk_aa_stateful(
+            robot_, intervals, endpoint_config_, hifk_aa_state_, &out.used_source_incremental_state);
     } else {
         out.endpoint = rbf::compute_endpoint_iaabb(
             robot_,

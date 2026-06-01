@@ -2004,6 +2004,95 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         return sample_uniform();
     };
 
+    // One-shot categorical over target categories using explicit configured
+    // probabilities. This replaces the legacy sequence of independent
+    // Bernoulli gates while keeping each category's probability directly under
+    // user control. If the configured mass sums to less than 1, the remainder
+    // is assigned to pure-uniform sampling.
+    auto choose_target_category = [&](int source_root_id, int sample_index) -> GrowTargetType {
+        const bool roots_multi = active_groups.roots.size() > 1;
+        const bool can_component = config_.connect_mode && source_root_id >= 0 &&
+                                   roots_multi && config_.component_connect_prob > 0.0;
+        const bool can_intertree = source_root_id >= 0 && roots_multi;
+        const bool can_rrt = roots.size() > 1;
+        (void)sample_index;
+        double p_cc = can_component ? std::clamp(config_.component_connect_prob, 0.0, 1.0) : 0.0;
+        double p_inter = can_intertree ? std::clamp(config_.intertree_goal_bias, 0.0, 1.0) : 0.0;
+        double p_rrt = can_rrt ? std::clamp(config_.rrt_goal_bias, 0.0, 1.0) : 0.0;
+        double p_unexp = std::clamp(config_.unexplored_sample_prob, 0.0, 1.0);
+        double p_uniform = std::clamp(config_.sample_uniform_prob, 0.0, 1.0);
+        const double assigned = p_cc + p_inter + p_rrt + p_unexp + p_uniform;
+        if (assigned < 1.0) {
+            p_uniform += 1.0 - assigned;
+        }
+        const double r = u01(rng_);
+        double acc = p_cc;
+        if (r < acc) {
+            return GrowTargetType::ComponentConnect;
+        }
+        acc += p_inter;
+        if (r < acc) {
+            return GrowTargetType::IntertreeRoot;
+        }
+        acc += p_rrt;
+        if (r < acc) {
+            return GrowTargetType::QueryRoot;
+        }
+        acc += p_unexp;
+        if (r < acc) {
+            return GrowTargetType::Unexplored;
+        }
+        return GrowTargetType::Uniform;
+    };
+
+    // Build a growth target for an already-selected category (categorical mode).
+    // Mirrors the branches of sample_target but is driven by an explicit
+    // category rather than a Bernoulli cascade; unavailable directed branches
+    // gracefully fall back to a uniform sample.
+    auto build_target_for_category = [&](int source_root_id,
+                                         GrowTargetType category,
+                                         int& target_root_id,
+                                         bool& intertree,
+                                         GrowTargetType& target_type) -> Eigen::VectorXd {
+        intertree = false;
+        target_root_id = -1;
+        if (category == GrowTargetType::IntertreeRoot && source_root_id >= 0 &&
+            active_groups.roots.size() > 1) {
+            std::vector<int> candidates;
+            candidates.reserve(active_groups.roots.size() - 1);
+            for (int candidate_root : active_groups.roots) {
+                if (candidate_root != source_root_id) {
+                    candidates.push_back(candidate_root);
+                }
+            }
+            if (!candidates.empty()) {
+                std::uniform_int_distribution<int> pick(0, static_cast<int>(candidates.size()) - 1);
+                target_root_id = candidates[static_cast<std::size_t>(pick(rng_))];
+                intertree = true;
+                target_type = GrowTargetType::IntertreeRoot;
+                if (target_root_id >= 0 && target_root_id < static_cast<int>(roots.size())) {
+                    return roots[static_cast<std::size_t>(target_root_id)];
+                }
+                const auto group_it = active_groups.by_root.find(target_root_id);
+                if (group_it != active_groups.by_root.end() && !group_it->second.empty()) {
+                    return boxes[static_cast<std::size_t>(group_it->second.front())].center();
+                }
+            }
+        }
+        if (category == GrowTargetType::QueryRoot && roots.size() > 1) {
+            std::uniform_int_distribution<int> pick_root_seed(0, static_cast<int>(roots.size()) - 1);
+            target_root_id = pick_root_seed(rng_);
+            target_type = GrowTargetType::QueryRoot;
+            return roots[static_cast<std::size_t>(target_root_id)];
+        }
+        if (category == GrowTargetType::Unexplored) {
+            target_type = GrowTargetType::Unexplored;
+            return sample_unexplored();
+        }
+        target_type = GrowTargetType::Uniform;
+        return sample_uniform();
+    };
+
     RootComponentGraph component_graph;
     const void* component_graph_ptr = nullptr;
     if (config_.connect_mode && active_groups.roots.size() > 1 && config_.component_connect_prob > 0.0) {
@@ -2033,8 +2122,19 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         TaskRequest request;
         request.source_root_id = source_root_id;
         request.iteration = first_task_id + sample_index;
-        if (config_.connect_mode && source_root_id >= 0 && active_groups.roots.size() > 1 &&
-            config_.component_connect_prob > 0.0 && u01(rng_) < config_.component_connect_prob) {
+        GrowTargetType chosen_category = GrowTargetType::Uniform;
+        bool want_component_connect = false;
+        if (config_.sample_categorical_allocation) {
+            chosen_category = choose_target_category(source_root_id, sample_index);
+            want_component_connect = (chosen_category == GrowTargetType::ComponentConnect);
+        } else {
+            want_component_connect = config_.connect_mode && source_root_id >= 0 &&
+                                     active_groups.roots.size() > 1 &&
+                                     config_.component_connect_prob > 0.0 &&
+                                     u01(rng_) < config_.component_connect_prob;
+        }
+        if (want_component_connect && config_.connect_mode && source_root_id >= 0 &&
+            active_groups.roots.size() > 1 && config_.component_connect_prob > 0.0) {
             bool found_component_connect_seed = false;
             if (use_component_connect_seed_cache) {
                 auto [cache_it, inserted] = component_connect_seed_cache.try_emplace(source_root_id);
@@ -2100,11 +2200,19 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
             }
             context.diagnostics().add_counter("grower.component_connect_target_no_candidate");
         }
-        request.target = sample_target(source_root_id,
-                                       sample_index,
-                                       request.target_root_id,
-                                       request.intertree,
-                                       request.target_type);
+        if (config_.sample_categorical_allocation) {
+            request.target = build_target_for_category(source_root_id,
+                                                       chosen_category,
+                                                       request.target_root_id,
+                                                       request.intertree,
+                                                       request.target_type);
+        } else {
+            request.target = sample_target(source_root_id,
+                                           sample_index,
+                                           request.target_root_id,
+                                           request.intertree,
+                                           request.target_type);
+        }
         return request;
     };
 
@@ -2125,13 +2233,49 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         context.diagnostics().add_counter("grower.all_root_sample_root_attempts", static_cast<double>(requests.size()));
     }
     int intertree_requests = 0;
+    int component_connect_requests = 0;
+    int query_root_requests = 0;
+    int unexplored_requests = 0;
+    int uniform_requests = 0;
     for (const auto& request : requests) {
         if (request.intertree && !request.component_connect) {
             intertree_requests += 1;
         }
+        switch (request.target_type) {
+        case GrowTargetType::ComponentConnect:
+            component_connect_requests += 1;
+            break;
+        case GrowTargetType::QueryRoot:
+            query_root_requests += 1;
+            break;
+        case GrowTargetType::Unexplored:
+            unexplored_requests += 1;
+            break;
+        case GrowTargetType::Uniform:
+            uniform_requests += 1;
+            break;
+        default:
+            break;
+        }
     }
     if (intertree_requests > 0) {
         context.diagnostics().add_counter("grower.intertree_goal_bias_tasks", static_cast<double>(intertree_requests));
+    }
+    if (component_connect_requests > 0) {
+        context.diagnostics().add_counter("grower.target_category.component_connect",
+                                          static_cast<double>(component_connect_requests));
+    }
+    if (query_root_requests > 0) {
+        context.diagnostics().add_counter("grower.target_category.query_root",
+                                          static_cast<double>(query_root_requests));
+    }
+    if (unexplored_requests > 0) {
+        context.diagnostics().add_counter("grower.target_category.unexplored",
+                                          static_cast<double>(unexplored_requests));
+    }
+    if (uniform_requests > 0) {
+        context.diagnostics().add_counter("grower.target_category.uniform",
+                                          static_cast<double>(uniform_requests));
     }
 
     std::vector<GrowTask> tasks(requests.size());

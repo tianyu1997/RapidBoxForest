@@ -403,8 +403,8 @@ class IncrementalEnvelopeComputer:
     The first call builds the endpoint state. Later calls infer the changed joint
     dimension when exactly one interval changed, or accept ``changed_dim``
     explicitly. CritSample reuses critical candidates, precomputed DH matrices,
-    and unchanged endpoint caches; AA-backed IFK/HIFK remain one-shot endpoint
-    evaluations inside this wrapper.
+    and unchanged endpoint caches; AA-backed IFK/HIFK reuse source-local
+    incremental AA state when the source configuration is deterministic.
     """
 
     def __init__(

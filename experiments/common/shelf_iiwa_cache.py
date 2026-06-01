@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import time
@@ -14,12 +15,14 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import write_json
+from experiments.common.build_lect_snapshot_streaming import build_snapshot as build_lect_snapshot_streaming
 from safe_box_forest.experiments.sbf_old.common_sbf_config import (
     RBF_LIFELONG_PRESET,
     add_common_sbf_args,
     configure_standalone_sbf,
     make_aafk_volume_min_dim6_split_policy,
     make_aafk_volume_min_split_policy,
+    make_support_hull_volume_min_split_policy,
     rbf_lifelong_config_metadata,
     set_online_cache_backfill,
 )
@@ -76,6 +79,7 @@ ENDPOINT_CPP_NAMES = {
 }
 LECT_SPLIT_AAFK_VOLUME_MIN = "aafk_volume_min"
 LECT_SPLIT_AAFK_VOLUME_MIN_DIM6 = "aafk_volume_min_dim6"
+LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN = "support_hull_volume_min"
 LECT_SPLIT_ROUND_ROBIN = "round_robin"
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
@@ -111,6 +115,7 @@ def cache_identity_fingerprint(
     envelope: str,
     endpoint_source: str,
     lect_split_policy: str,
+    lect_root_intervals: str = "",
     canonical_mode: bool = True,
 ) -> dict[str, Any]:
     source = normalize_endpoint_source(endpoint_source)
@@ -126,6 +131,7 @@ def cache_identity_fingerprint(
         "endpoint_cpp_source": endpoint_cpp_name(source),
         "endpoint_channel": endpoint_cache_channel(source),
         "lect_split_policy": str(lect_split_policy),
+        "lect_root_intervals": normalize_lect_root_intervals(lect_root_intervals),
         "payload_layout": "endpoint_envelope_v1",
         "builder_version": "sbf_online_cache_v1",
     }
@@ -145,11 +151,31 @@ def configure_cache_endpoint(cfg: Any, endpoint_source: str) -> None:
     cfg.endpoint_source.source = endpoint_enum(endpoint_source)
 
 
-def configure_cache_split_policy(cfg: Any, robot: Any, lect_split_policy: str, max_depth: int) -> None:
+def configure_cache_split_policy(
+    cfg: Any,
+    robot: Any,
+    lect_split_policy: str,
+    max_depth: int,
+    root_intervals: list[Any] | None = None,
+) -> None:
     if lect_split_policy == LECT_SPLIT_AAFK_VOLUME_MIN:
-        cfg.database.split_policy = make_aafk_volume_min_split_policy(robot, int(max_depth))
+        cfg.database.split_policy = make_aafk_volume_min_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=root_intervals,
+        )
     elif lect_split_policy == LECT_SPLIT_AAFK_VOLUME_MIN_DIM6:
-        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(robot, int(max_depth))
+        cfg.database.split_policy = make_aafk_volume_min_dim6_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=root_intervals,
+        )
+    elif lect_split_policy == LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN:
+        cfg.database.split_policy = make_support_hull_volume_min_split_policy(
+            robot,
+            int(max_depth),
+            root_intervals=root_intervals,
+        )
     elif lect_split_policy == LECT_SPLIT_ROUND_ROBIN:
         descriptor = sbf.SplitPolicyDescriptor()
         descriptor.strategy = sbf.SplitStrategy.RoundRobin
@@ -190,6 +216,7 @@ def split_manifest_matches(manifest: dict[str, str], lect_split_policy: str) -> 
         LECT_SPLIT_ROUND_ROBIN: 0,
         LECT_SPLIT_AAFK_VOLUME_MIN: 2,
         LECT_SPLIT_AAFK_VOLUME_MIN_DIM6: 2,
+        LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN: 2,
     }.get(str(lect_split_policy))
     if expected_strategy is None:
         return False
@@ -234,39 +261,28 @@ def ensure_cache_snapshot(
     max_depth: int,
     endpoint_source: str,
     lect_split_policy: str,
+    lect_root_intervals: str,
     canonical_mode: bool,
     dry_run: bool,
 ) -> dict[str, Any]:
     snapshot_path = snapshot_path_for_cache(cache_path)
     summary = snapshot_summary(snapshot_path)
     summary["ensured"] = False
+    summary["enabled"] = prewarm_snapshot_enabled()
+    if not prewarm_snapshot_enabled():
+        summary["skipped"] = True
+        return summary
     if dry_run or summary["exists"]:
         return summary
 
-    prewarm_args = make_prewarm_config_args(
-        cache_path,
-        prewarm_depth,
-        envelope,
-        prewarm_threads,
-        max_depth,
-        endpoint_source,
-        lect_split_policy,
-        canonical_mode,
-    )
-    robot = sbf.load_iiwa14_robot()
-    cfg = configure_standalone_sbf(prewarm_args, seed=0, preset=RBF_LIFELONG_PRESET, robot=robot)
-    configure_cache_endpoint(cfg, str(endpoint_source))
-    configure_cache_split_policy(cfg, robot, str(lect_split_policy), int(max_depth))
-    set_online_cache_backfill(cfg, True)
-    forest = sbf.SafeBoxForest(robot, cfg)
     t0 = time.perf_counter()
-    publish_ok = bool(forest.database_wait_for_snapshot_publish())
-    actual_snapshot_path = Path(forest.database_snapshot_path() or str(snapshot_path))
-    summary = snapshot_summary(actual_snapshot_path)
+    build_summary = build_lect_snapshot_streaming(cache_path, snapshot_path)
+    summary = snapshot_summary(snapshot_path)
     summary["ensured"] = True
-    summary["publish_ok"] = publish_ok
+    summary["publish_ok"] = True
+    summary["builder"] = "streaming-hardlink-v1"
+    summary["build"] = build_summary
     summary["publish_wait_s"] = time.perf_counter() - t0
-    del forest
     return summary
 
 
@@ -287,6 +303,92 @@ def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def prewarm_verify_strict_enabled() -> bool:
+    raw = os.environ.get("SBF_PREWARM_VERIFY_STRICT")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def prewarm_verify_enabled() -> bool:
+    raw = os.environ.get("SBF_PREWARM_VERIFY")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def prewarm_snapshot_enabled() -> bool:
+    raw = os.environ.get("SBF_PREWARM_SNAPSHOT")
+    if raw is None:
+        return True
+    return raw.strip().lower() not in {"0", "false", "no", "off"}
+
+
+def prewarm_progress_enabled() -> bool:
+    return os.environ.get("SBF_PREWARM_PROGRESS", "1").strip() != "0"
+
+
+def prewarm_log(message: str) -> None:
+    if prewarm_progress_enabled():
+        print(message, file=sys.stderr, flush=True)
+
+
+def allow_manifest_only_cache_reuse() -> bool:
+    raw = os.environ.get("SBF_ALLOW_MANIFEST_ONLY_CACHE_REUSE")
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def normalize_lect_root_intervals(raw: str) -> str:
+    items = [item.strip() for item in str(raw).split(";") if item.strip()]
+    if not items:
+        return ""
+    parts: list[str] = []
+    for index, item in enumerate(items):
+        lo_text, sep, hi_text = item.partition(":")
+        if not sep:
+            raise ValueError(f"interval pair #{index + 1} must use lo:hi format, got {item!r}")
+        lo = float(lo_text)
+        hi = float(hi_text)
+        if lo > hi:
+            raise ValueError(f"interval pair #{index + 1} has lo > hi: {item!r}")
+        parts.append(f"{lo:.17g}:{hi:.17g}")
+    return ";".join(parts)
+
+
+def parse_lect_root_intervals(raw: str) -> list[Any] | None:
+    normalized = normalize_lect_root_intervals(raw)
+    if not normalized:
+        return None
+    intervals: list[Any] = []
+    for item in normalized.split(";"):
+        lo_text, _, hi_text = item.partition(":")
+        intervals.append(sbf.Interval(float(lo_text), float(hi_text)))
+    return intervals
+
+
+def root_manifest_matches(manifest: dict[str, str], lect_root_intervals: str) -> bool:
+    normalized = normalize_lect_root_intervals(lect_root_intervals)
+    if not normalized:
+        return True
+    pairs: list[tuple[float, float]] = []
+    for item in normalized.split(";"):
+        lo_text, _, hi_text = item.partition(":")
+        pairs.append((float(lo_text), float(hi_text)))
+    try:
+        if int(manifest.get("root_dims", "-1")) != len(pairs):
+            return False
+        for index, (lo, hi) in enumerate(pairs):
+            manifest_lo = float(manifest.get(f"root_{index}_lo", "nan"))
+            manifest_hi = float(manifest.get(f"root_{index}_hi", "nan"))
+            if abs(manifest_lo - lo) > 1e-12 or abs(manifest_hi - hi) > 1e-12:
+                return False
+    except ValueError:
+        return False
+    return True
+
+
 def far_obstacle() -> Any:
     return sbf.Obstacle(100.0, 100.0, 100.0, 101.0, 101.0, 101.0)
 
@@ -299,6 +401,7 @@ def make_prewarm_config_args(
     max_depth: int,
     endpoint_source: str = ENDPOINT_AAFK,
     lect_split_policy: str = LECT_SPLIT_AAFK_VOLUME_MIN,
+    lect_root_intervals: str = "",
     canonical_mode: bool = True,
 ) -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
@@ -315,6 +418,7 @@ def make_prewarm_config_args(
     args.rbf_envelope = str(envelope)
     args.endpoint_source = normalize_endpoint_source(endpoint_source)
     args.lect_split_policy = str(lect_split_policy)
+    args.lect_root_intervals = normalize_lect_root_intervals(lect_root_intervals)
     args.rbf_canonical_cache = bool(canonical_mode)
     args.threads = max(1, int(prewarm_threads))
     args.task_batch_size = max(1, int(prewarm_threads))
@@ -331,6 +435,7 @@ def run_p18_prewarm(
     dry_run: bool,
     endpoint_source: str = ENDPOINT_AAFK,
     lect_split_policy: str = LECT_SPLIT_AAFK_VOLUME_MIN,
+    lect_root_intervals: str = "",
     canonical_mode: bool = True,
 ) -> dict[str, Any]:
     prewarm_args = make_prewarm_config_args(
@@ -341,6 +446,7 @@ def run_p18_prewarm(
         max_depth,
         endpoint_source,
         lect_split_policy,
+        lect_root_intervals,
         canonical_mode,
     )
     if dry_run:
@@ -359,6 +465,7 @@ def run_p18_prewarm(
                 "max_depth": int(max_depth),
                 "endpoint_source": str(endpoint_source),
                 "lect_split_policy": str(lect_split_policy),
+                "lect_root_intervals": normalize_lect_root_intervals(lect_root_intervals),
                 "canonical_mode": bool(canonical_mode),
             },
             "prewarm": {},
@@ -367,10 +474,20 @@ def run_p18_prewarm(
     if clean_cache and cache_path.exists():
         shutil.rmtree(cache_path)
 
+    prewarm_log(f"[prewarm python] prepare cache={cache_path} depth={prewarm_depth} max_depth={max_depth}")
     robot = sbf.load_iiwa14_robot()
     cfg = configure_standalone_sbf(prewarm_args, seed=0, preset=RBF_LIFELONG_PRESET, robot=robot)
+    root_override = parse_lect_root_intervals(lect_root_intervals)
+    if root_override is not None:
+        cfg.database.root_intervals_override = list(root_override)
     configure_cache_endpoint(cfg, str(endpoint_source))
-    configure_cache_split_policy(cfg, robot, str(lect_split_policy), int(max_depth))
+    configure_cache_split_policy(
+        cfg,
+        robot,
+        str(lect_split_policy),
+        int(max_depth),
+        root_intervals=root_override,
+    )
     set_online_cache_backfill(cfg, True)
     identity = cache_identity_fingerprint(
         robot,
@@ -379,6 +496,7 @@ def run_p18_prewarm(
         envelope=str(envelope),
         endpoint_source=str(endpoint_source),
         lect_split_policy=str(lect_split_policy),
+        lect_root_intervals=normalize_lect_root_intervals(lect_root_intervals),
         canonical_mode=bool(canonical_mode),
     )
     metadata = rbf_lifelong_config_metadata(cfg, prewarm_args)
@@ -388,28 +506,179 @@ def run_p18_prewarm(
     metadata["endpoint_channel"] = identity["endpoint_channel"]
     metadata["endpoint_source_raw"] = str(cfg.endpoint_source.source).split(".")[-1]
     metadata["lect_split_policy"] = str(lect_split_policy)
+    metadata["lect_root_intervals"] = normalize_lect_root_intervals(lect_root_intervals)
     metadata["split_policy"] = str(lect_split_policy)
+    prewarm_log("[prewarm python] construct forest")
     forest = sbf.SafeBoxForest(robot, cfg)
     t0 = time.perf_counter()
+    prewarm_log("[prewarm python] enter C++ prewarm_lifelong_cache")
     prewarm = dict(forest.prewarm_lifelong_cache(int(prewarm_depth), [far_obstacle()]))
     prewarm["wall_s_outer"] = time.perf_counter() - t0
-    verify_ok = bool(forest.database_verify(True))
-    snapshot_wait_t0 = time.perf_counter()
-    snapshot_wait_ok = bool(forest.database_wait_for_snapshot_publish())
-    actual_snapshot_path = Path(forest.database_snapshot_path() or str(snapshot_path_for_cache(cache_path)))
-    snapshot = snapshot_summary(actual_snapshot_path)
+    verify_enabled = prewarm_verify_enabled()
+    verify_strict = prewarm_verify_strict_enabled() if verify_enabled else False
+    prewarm_log(
+        f"[prewarm python] verify enabled={int(verify_enabled)} strict={int(verify_strict)}"
+    )
+    verify_ok = bool(forest.database_verify(verify_strict)) if verify_enabled else None
+    snapshot_enabled = prewarm_snapshot_enabled()
+    snapshot_wait_ok = True
+    if snapshot_enabled:
+        snapshot_wait_t0 = time.perf_counter()
+        prewarm_log("[prewarm python] publish snapshot")
+        snapshot_wait_ok = bool(forest.database_wait_for_snapshot_publish())
+        actual_snapshot_path = Path(forest.database_snapshot_path() or str(snapshot_path_for_cache(cache_path)))
+        snapshot = snapshot_summary(actual_snapshot_path)
+        snapshot["publish_wait_s"] = time.perf_counter() - snapshot_wait_t0
+    else:
+        snapshot = snapshot_summary(snapshot_path_for_cache(cache_path))
+        snapshot["skipped"] = True
+    snapshot["enabled"] = snapshot_enabled
     snapshot["wait_ok"] = snapshot_wait_ok
-    snapshot["publish_wait_s"] = time.perf_counter() - snapshot_wait_t0
     del forest
 
     return {
-        "ok": bool(prewarm.get("ok")) and verify_ok and snapshot_wait_ok,
+        "ok": bool(prewarm.get("ok")) and (verify_ok is not False) and snapshot_wait_ok,
         "dry_run": False,
         "cache_path": str(cache_path),
         "cache_bytes": directory_size(cache_path),
         "cache_file_sizes": cache_file_sizes(cache_path),
         "snapshot": snapshot,
         "verify_ok": verify_ok,
+        "verify_enabled": verify_enabled,
+        "verify_strict": verify_strict,
+        "manifest": read_manifest(cache_path / "manifest.json"),
+        "metadata": metadata,
+        "prewarm": prewarm,
+    }
+
+
+def run_build_driven_prewarm(
+    cache_path: Path,
+    envelope: str,
+    prewarm_threads: int,
+    max_depth: int,
+    clean_cache: bool,
+    endpoint_source: str = ENDPOINT_AAFK,
+    lect_split_policy: str = LECT_SPLIT_AAFK_VOLUME_MIN,
+    lect_root_intervals: str = "",
+    canonical_mode: bool = True,
+) -> dict[str, Any]:
+    """Plan C: warm only the subtrees a representative adaptive build descends into.
+
+    Instead of the blanket ``prewarm_lifelong_cache(depth)`` (which materialises the
+    full uniform ``2**depth`` layer regardless of whether the build ever visits it),
+    this runs a real ``build_coverage`` over the shelf obstacles/seeds with backfill
+    enabled, so the persisted cache contains exactly the deep canonical boxes the
+    build actually descends into (up to ``max_depth``).  Endpoints are
+    scene-independent, so the warmed deep boxes remain reusable across queries.
+    """
+    prewarm_args = make_prewarm_config_args(
+        cache_path,
+        prewarm_depth=max_depth,
+        envelope=envelope,
+        prewarm_threads=prewarm_threads,
+        max_depth=max_depth,
+        endpoint_source=endpoint_source,
+        lect_split_policy=lect_split_policy,
+        lect_root_intervals=lect_root_intervals,
+        canonical_mode=canonical_mode,
+    )
+
+    if clean_cache and cache_path.exists():
+        shutil.rmtree(cache_path)
+
+    prewarm_log(f"[prewarm python] prepare build-driven cache={cache_path} max_depth={max_depth}")
+    robot = sbf.load_iiwa14_robot()
+    cfg = configure_standalone_sbf(prewarm_args, seed=0, preset=RBF_LIFELONG_PRESET, robot=robot)
+    root_override = parse_lect_root_intervals(lect_root_intervals)
+    if root_override is not None:
+        cfg.database.root_intervals_override = list(root_override)
+    configure_cache_endpoint(cfg, str(endpoint_source))
+    configure_cache_split_policy(
+        cfg,
+        robot,
+        str(lect_split_policy),
+        int(max_depth),
+        root_intervals=root_override,
+    )
+    set_online_cache_backfill(cfg, True)
+    cfg.database.create_if_missing = True
+    identity = cache_identity_fingerprint(
+        robot,
+        prewarm_depth=int(max_depth),
+        max_depth=int(max_depth),
+        envelope=str(envelope),
+        endpoint_source=str(endpoint_source),
+        lect_split_policy=str(lect_split_policy),
+        lect_root_intervals=normalize_lect_root_intervals(lect_root_intervals),
+        canonical_mode=bool(canonical_mode),
+    )
+    metadata = rbf_lifelong_config_metadata(cfg, prewarm_args)
+    metadata["prewarm_threads"] = int(prewarm_threads)
+    metadata["prewarm_mode"] = "build_driven"
+    metadata["cache_identity"] = identity
+    metadata["endpoint_source"] = identity["endpoint_source"]
+    metadata["endpoint_channel"] = identity["endpoint_channel"]
+    metadata["endpoint_source_raw"] = str(cfg.endpoint_source.source).split(".")[-1]
+    metadata["lect_split_policy"] = str(lect_split_policy)
+    metadata["lect_root_intervals"] = normalize_lect_root_intervals(lect_root_intervals)
+    metadata["split_policy"] = str(lect_split_policy)
+
+    obstacles = sbf.make_combined_obstacles()
+    coverage_seeds = [list(seed) for seed in sbf.make_coverage_seeds(include_extra_anchors=False)]
+
+    prewarm_log("[prewarm python] construct forest")
+    forest = sbf.SafeBoxForest(robot, cfg)
+    t0 = time.perf_counter()
+    prewarm_log("[prewarm python] enter build_coverage")
+    profile = forest.build_coverage(obstacles, coverage_seeds)
+    build_wall_s = time.perf_counter() - t0
+    diag = {str(k): float(v) for k, v in dict(profile.diagnostics).items()}
+    prewarm = {
+        "ok": True,
+        "wall_s_outer": build_wall_s,
+        "grow_ms": float(getattr(profile, "grow_ms", 0.0)),
+        "materializations": diag.get("grower.worker_oracle.materializations", 0.0),
+        "reused_shared": diag.get(
+            "grower.worker_oracle.materialization_reused_shared_endpoint_cache", 0.0
+        ),
+        "shared_cache_size": diag.get("oracle.shared_endpoint_cache_size", 0.0),
+    }
+
+    verify_enabled = prewarm_verify_enabled()
+    verify_strict = prewarm_verify_strict_enabled() if verify_enabled else False
+    prewarm_log(
+        f"[prewarm python] verify enabled={int(verify_enabled)} strict={int(verify_strict)}"
+    )
+    verify_ok = bool(forest.database_verify(verify_strict)) if verify_enabled else None
+    snapshot_enabled = prewarm_snapshot_enabled()
+    snapshot_wait_ok = True
+    if snapshot_enabled:
+        snapshot_wait_t0 = time.perf_counter()
+        prewarm_log("[prewarm python] publish snapshot")
+        snapshot_wait_ok = bool(forest.database_wait_for_snapshot_publish())
+        actual_snapshot_path = Path(
+            forest.database_snapshot_path() or str(snapshot_path_for_cache(cache_path))
+        )
+        snapshot = snapshot_summary(actual_snapshot_path)
+        snapshot["publish_wait_s"] = time.perf_counter() - snapshot_wait_t0
+    else:
+        snapshot = snapshot_summary(snapshot_path_for_cache(cache_path))
+        snapshot["skipped"] = True
+    snapshot["enabled"] = snapshot_enabled
+    snapshot["wait_ok"] = snapshot_wait_ok
+    del forest
+
+    return {
+        "ok": bool(prewarm.get("ok")) and (verify_ok is not False) and snapshot_wait_ok,
+        "dry_run": False,
+        "cache_path": str(cache_path),
+        "cache_bytes": directory_size(cache_path),
+        "cache_file_sizes": cache_file_sizes(cache_path),
+        "snapshot": snapshot,
+        "verify_ok": verify_ok,
+        "verify_enabled": verify_enabled,
+        "verify_strict": verify_strict,
         "manifest": read_manifest(cache_path / "manifest.json"),
         "metadata": metadata,
         "prewarm": prewarm,
@@ -424,6 +693,7 @@ def existing_p18_cache_summary(
     max_depth: int,
     endpoint_source: str,
     lect_split_policy: str,
+    lect_root_intervals: str,
     canonical_mode: bool,
 ) -> dict[str, Any]:
     manifest = read_manifest(cache_path / "manifest.json")
@@ -436,6 +706,7 @@ def existing_p18_cache_summary(
         max_depth,
         endpoint_source,
         lect_split_policy,
+        lect_root_intervals,
         canonical_mode,
         dry_run=False,
     )
@@ -454,6 +725,7 @@ def existing_p18_cache_summary(
             "envelope": str(envelope),
             "endpoint_source": str(endpoint_source),
             "lect_split_policy": str(lect_split_policy),
+            "lect_root_intervals": normalize_lect_root_intervals(lect_root_intervals),
             "canonical_mode": bool(canonical_mode),
             "prewarm_threads": int(prewarm_threads),
             "max_depth": int(max_depth),
@@ -478,6 +750,7 @@ def prewarm_summary_matches(
     max_depth: int,
     endpoint_source: str,
     lect_split_policy: str,
+    lect_root_intervals: str,
     canonical_mode: bool,
 ) -> bool:
     if not summary:
@@ -492,6 +765,7 @@ def prewarm_summary_matches(
         and str(metadata.get("envelope", "")) == str(envelope)
         and str(metadata.get("endpoint_source", ENDPOINT_AAFK)) == str(endpoint_source)
         and str(metadata.get("lect_split_policy", LECT_SPLIT_AAFK_VOLUME_MIN)) == str(lect_split_policy)
+        and str(metadata.get("lect_root_intervals", "")) == normalize_lect_root_intervals(lect_root_intervals)
         and bool(metadata.get("canonical_mode", True)) == bool(canonical_mode)
         and int(metadata.get("prewarm_threads", -1)) == int(prewarm_threads)
         and int(metadata.get("max_depth", metadata.get("lect_schedule_depth", -1))) == int(max_depth)
@@ -512,6 +786,7 @@ def p18_cache_manifest_matches(
     max_depth: int,
     endpoint_source: str,
     lect_split_policy: str,
+    lect_root_intervals: str,
     canonical_mode: bool,
 ) -> bool:
     manifest = read_manifest(cache_path / "manifest.json")
@@ -521,6 +796,8 @@ def p18_cache_manifest_matches(
     if not canonical_manifest_matches(manifest, robot, canonical_mode=bool(canonical_mode)):
         return False
     if manifest_schedule_depth(manifest) != int(max_depth):
+        return False
+    if not root_manifest_matches(manifest, lect_root_intervals):
         return False
     if not endpoint_manifest_matches(manifest, str(endpoint_source)):
         return False
@@ -544,6 +821,7 @@ def ensure_p18_prewarm_summary(
     max_depth: int = DEFAULT_AAFK_SCHEDULE_DEPTH,
     endpoint_source: str = ENDPOINT_AAFK,
     lect_split_policy: str = LECT_SPLIT_AAFK_VOLUME_MIN,
+    lect_root_intervals: str = "",
     canonical_mode: bool = True,
     clean_cache: bool,
     dry_run: bool,
@@ -559,6 +837,7 @@ def ensure_p18_prewarm_summary(
             max_depth=int(max_depth),
             endpoint_source=str(endpoint_source),
             lect_split_policy=str(lect_split_policy),
+            lect_root_intervals=str(lect_root_intervals),
             canonical_mode=bool(canonical_mode),
         ):
             return existing
@@ -570,6 +849,7 @@ def ensure_p18_prewarm_summary(
             max_depth=int(max_depth),
             endpoint_source=str(endpoint_source),
             lect_split_policy=str(lect_split_policy),
+            lect_root_intervals=str(lect_root_intervals),
             canonical_mode=bool(canonical_mode),
             clean_cache=False,
             dry_run=True,
@@ -587,6 +867,7 @@ def ensure_p18_prewarm_summary(
             max_depth=int(max_depth),
             endpoint_source=str(endpoint_source),
             lect_split_policy=str(lect_split_policy),
+            lect_root_intervals=str(lect_root_intervals),
             canonical_mode=bool(canonical_mode),
         ):
             existing["snapshot"] = ensure_cache_snapshot(
@@ -597,19 +878,22 @@ def ensure_p18_prewarm_summary(
                 int(max_depth),
                 str(endpoint_source),
                 str(lect_split_policy),
+                str(lect_root_intervals),
                 bool(canonical_mode),
                 dry_run=False,
             )
             write_json(prewarm_json, existing)
             return existing
-    if not clean_cache and (cache_path / "manifest.json").exists() and p18_cache_manifest_matches(
+    cache_manifest_matches = bool(not clean_cache and (cache_path / "manifest.json").exists() and p18_cache_manifest_matches(
         cache_path,
         envelope=str(envelope),
         max_depth=int(max_depth),
         endpoint_source=str(endpoint_source),
         lect_split_policy=str(lect_split_policy),
+        lect_root_intervals=str(lect_root_intervals),
         canonical_mode=bool(canonical_mode),
-    ):
+    ))
+    if cache_manifest_matches and allow_manifest_only_cache_reuse():
         summary = existing_p18_cache_summary(
             cache_path=cache_path,
             prewarm_depth=int(prewarm_depth),
@@ -618,11 +902,12 @@ def ensure_p18_prewarm_summary(
             max_depth=int(max_depth),
             endpoint_source=str(endpoint_source),
             lect_split_policy=str(lect_split_policy),
+            lect_root_intervals=str(lect_root_intervals),
             canonical_mode=bool(canonical_mode),
         )
         write_json(prewarm_json, summary)
         return summary
-    rebuild_clean = bool(clean_cache or cache_path.exists() or (prewarm_json.exists() and not bool(existing.get("dry_run"))))
+    rebuild_clean = bool(clean_cache or (cache_path.exists() and not cache_manifest_matches))
     summary = run_p18_prewarm(
         cache_path=cache_path,
         prewarm_depth=int(prewarm_depth),
@@ -631,6 +916,7 @@ def ensure_p18_prewarm_summary(
         max_depth=int(max_depth),
         endpoint_source=str(endpoint_source),
         lect_split_policy=str(lect_split_policy),
+        lect_root_intervals=str(lect_root_intervals),
         canonical_mode=bool(canonical_mode),
         clean_cache=bool(rebuild_clean),
         dry_run=bool(dry_run),

@@ -15,9 +15,16 @@ namespace rbf {
 struct RRTConnectConfig {
 	int max_iters = 50000;
 	double timeout_ms = 0.0;
-	double step_size = 0.25;
+	// step_size 0.25 rad was too small for the iiwa joint scale: the BiRRT trees
+	// expanded too slowly to traverse narrow shelf passages within the per-pair
+	// budget. step_size 0.5 with segment_resolution 32 keeps the collision-check
+	// density identical (0.5/32 == 0.25/16 == 0.0156 rad/check) while reaching
+	// farther per iteration. Measured (iiwa+shelf, 80ms, 10 seeds, matched
+	// density): TS->CS 7/10 -> 9/10 (47ms -> 15ms median), CS->LB 8/10 -> 9/10;
+	// pipeline island-bridging unchanged (14/4/4 successes/timeouts/failures).
+	double step_size = 0.5;
 	double goal_bias = 0.2;
-	int segment_resolution = 16;
+	int segment_resolution = 32;
 	double local_sampling_radius = 0.0;
 };
 
@@ -27,6 +34,35 @@ struct ChainPaveConfig {
 	int max_steps_per_waypoint = 12;
 	bool refine_covered_waypoints = false;
 	double adjacency_tolerance = 1e-9;
+	// Residual-gap filling: when a box certified at a seed cannot be committed
+	// because it is not adjacent to the current chain box (e.g. canonical boxes
+	// that only touch diagonally, or a thin uncovered sliver between them), bisect
+	// the segment between the current box center and the seed and recursively
+	// insert intermediate connected boxes until the chain reaches the seed. This
+	// lets chain_pave fully cover a connector segment instead of leaving holes.
+	bool fill_gaps = false;
+	// Maximum bisection recursion depth per gap (<=0 disables gap filling). Each
+	// level halves the remaining segment, so depth d allows up to 2^d subdivisions.
+	int max_gap_fill_depth = 8;
+	// Stop bisecting once the midpoint is within this C-space distance of either
+	// endpoint, to avoid degenerate zero-length subdivisions.
+	double gap_fill_min_step = 1e-4;
+	// Arc-length spacing used to densify the bridge polyline before per-sample
+	// box seeding. Smaller => denser samples => higher segment coverage at the
+	// cost of more boxes. <=0 falls back to max_steps_per_waypoint subdivisions.
+	// In fast-budget mode this is only a coarse probe spacing for locating gaps;
+	// the real budget is the wall-clock/FFB-call limit below.
+	double gap_fill_sample_step = 0.05;
+	// Fast gap-fill budget. >0 enables wall-clock bounded greedy gap filling;
+	// <=0 disables the local wall-clock deadline (old exhaustive behavior can be
+	// selected by also setting gap_fill_max_ffb_calls < 0).
+	double gap_fill_time_budget_ms = 10.0;
+	// Maximum fresh FFB calls in fast gap-fill. <0 means unlimited (subject to
+	// max_chain/time); 0 means reuse-only coverage.
+	int gap_fill_max_ffb_calls = 32;
+	// Do not spend a fresh FFB result unless its certified box covers at least this
+	// much bridge arc length. <=0 accepts any containing certified box.
+	double gap_fill_min_arc_gain = 0.01;
 	FindFreeBoxOptions find_free_box;
 };
 
@@ -35,6 +71,7 @@ struct IslandConnectorConfig {
 	double per_pair_timeout_ms = 250.0;
 	int max_pairs_per_gap = 8;
 	RRTConnectConfig rrt;
+	bool enable_birrt = true;
 	int max_total_bridge_boxes = 0;
 	bool frontier_bridge = false;
 	bool frontier_bridge_adaptive_ffb = false;

@@ -10,11 +10,13 @@
 #include <filesystem>
 #include <fstream>
 #include <limits>
+#include <memory>
 #include <span>
 #include <sstream>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
+#include <vector>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
@@ -34,12 +36,12 @@ namespace {
 constexpr std::uint64_t kSnapshotManifestMagic = 0x324d46424454434cull;
 constexpr std::uint64_t kSnapshotNodesMagic = 0x32444f4e4254434cull;
 constexpr std::uint64_t kSnapshotEvidenceTableMagic = 0x325456454254434cull;
-constexpr std::uint32_t kSnapshotFormatVersion = 1;
+constexpr std::uint32_t kSnapshotFormatVersion = 2;
 constexpr std::uint32_t kSnapshotNodePresent = 1u << 0;
 constexpr std::uint32_t kSnapshotEvidencePresent = 1u << 0;
 constexpr std::uint32_t kSnapshotEvidenceChildHull = 1u << 1;
 constexpr std::uint32_t kSnapshotEvidenceUnavailable = 1u << 2;
-constexpr std::uint32_t kLegacyEvidenceStoreSchemaVersion = 3;
+constexpr std::uint32_t kLegacyEvidenceStoreSchemaVersion = 4;
 constexpr std::uint64_t kLegacyEvidenceIndexSidecarMagic = 0x3158444945424652ull;
 constexpr std::uint64_t kLegacyNodeIndexSidecarMagic = 0x31584449444f4e52ull;
 
@@ -81,6 +83,52 @@ std::filesystem::path snapshot_direct_evidence_path(const std::filesystem::path&
 
 std::filesystem::path snapshot_payload_path(const std::filesystem::path& root) {
     return root / "payload.bin";
+}
+
+// Decode an IEEE binary16 (half) value to float32. Mirrors the encoder used by
+// the authoritative evidence store (lect_database/database.cpp). Snapshot
+// payloads are stored as outward-rounded halves (schema v4); decode on read.
+float f32_from_f16(std::uint16_t h) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000u) << 16;
+    const std::uint32_t exp = (h >> 10) & 0x1fu;
+    const std::uint32_t mant = h & 0x3ffu;
+    std::uint32_t bits;
+    if (exp == 0) {
+        if (mant == 0) {
+            bits = sign;  // +/- zero
+        } else {
+            // Subnormal half -> normalized float.
+            std::uint32_t m = mant;
+            std::int32_t e = -1;
+            do {
+                m <<= 1;
+                ++e;
+            } while ((m & 0x400u) == 0);
+            m &= 0x3ffu;
+            const std::uint32_t fexp = static_cast<std::uint32_t>(127 - 15 - e);
+            bits = sign | (fexp << 23) | (m << 13);
+        }
+    } else if (exp == 0x1fu) {
+        bits = sign | 0x7f800000u | (mant << 13);  // inf / nan
+    } else {
+        const std::uint32_t fexp = exp + (127u - 15u);
+        bits = sign | (fexp << 23) | (mant << 13);
+    }
+    float out;
+    std::memcpy(&out, &bits, sizeof(out));
+    return out;
+}
+
+// Decode `count` halves starting at `base` into a freshly owned float buffer.
+std::shared_ptr<std::vector<float>> decode_half_payload(const std::uint16_t* base, std::size_t count) {
+    auto buffer = std::make_shared<std::vector<float>>();
+    buffer->resize(count);
+    for (std::size_t i = 0; i < count; ++i) {
+        std::uint16_t h;
+        std::memcpy(&h, base + i, sizeof(h));
+        (*buffer)[i] = f32_from_f16(h);
+    }
+    return buffer;
 }
 
 std::size_t next_power_of_two(std::size_t value) {
@@ -620,7 +668,7 @@ std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotD
         direct.payload_kind != static_cast<std::uint8_t>(key.payload_kind)) {
         return std::nullopt;
     }
-    const auto payload_bytes = static_cast<std::uint64_t>(direct.payload_count) * sizeof(float);
+    const auto payload_bytes = static_cast<std::uint64_t>(direct.payload_count) * sizeof(std::uint16_t);
     if (direct.payload_offset > payload_file->size() || payload_bytes > payload_file->size() - direct.payload_offset) {
         return std::nullopt;
     }
@@ -633,17 +681,18 @@ std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotD
     view.unavailable = (direct.flags & kSnapshotEvidenceUnavailable) != 0;
     view.generation = direct.generation;
     view.checksum = direct.checksum;
-    view.storage_owner = std::static_pointer_cast<const void>(payload_file);
-    view.payload = std::span<const float>(
-        reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(direct.payload_offset)),
+    auto decoded = decode_half_payload(
+        reinterpret_cast<const std::uint16_t*>(payload.data() + static_cast<std::size_t>(direct.payload_offset)),
         direct.payload_count);
+    view.payload = std::span<const float>(decoded->data(), decoded->size());
+    view.storage_owner = std::static_pointer_cast<const void>(std::move(decoded));
     return view;
 }
 
 std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot& slot,
                                                      const EvidenceKey& key,
                                                      const std::shared_ptr<MappedFile>& payload_file) {
-    const auto payload_bytes = static_cast<std::uint64_t>(slot.payload_count) * sizeof(float);
+    const auto payload_bytes = static_cast<std::uint64_t>(slot.payload_count) * sizeof(std::uint16_t);
     if (slot.payload_offset > payload_file->size() || payload_bytes > payload_file->size() - slot.payload_offset) {
         return std::nullopt;
     }
@@ -656,10 +705,11 @@ std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot&
     view.unavailable = (slot.flags & kSnapshotEvidenceUnavailable) != 0;
     view.generation = slot.generation;
     view.checksum = slot.checksum;
-    view.storage_owner = std::static_pointer_cast<const void>(payload_file);
-    view.payload = std::span<const float>(
-        reinterpret_cast<const float*>(payload.data() + static_cast<std::size_t>(slot.payload_offset)),
+    auto decoded = decode_half_payload(
+        reinterpret_cast<const std::uint16_t*>(payload.data() + static_cast<std::size_t>(slot.payload_offset)),
         slot.payload_count);
+    view.payload = std::span<const float>(decoded->data(), decoded->size());
+    view.storage_owner = std::static_pointer_cast<const void>(std::move(decoded));
     return view;
 }
 
@@ -879,7 +929,7 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
             const auto relative_payload_offset = legacy_record_header_size +
                 path_code_storage_bytes(raw.path_word_count);
             if (relative_payload_offset > raw.size || raw.offset + raw.size > evidence_file_size ||
-                (raw.size - relative_payload_offset) % sizeof(float) != 0) {
+                (raw.size - relative_payload_offset) % sizeof(std::uint16_t) != 0) {
                 if (reason) *reason = "legacy evidence.index contains an invalid payload range";
                 return false;
             }
@@ -893,7 +943,7 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
             if ((raw.flags & 1u) != 0) slot.flags |= kSnapshotEvidenceChildHull;
             if ((raw.flags & 2u) != 0) slot.flags |= kSnapshotEvidenceUnavailable;
             slot.payload_offset = raw.offset + relative_payload_offset;
-            slot.payload_count = static_cast<std::uint32_t>((raw.size - relative_payload_offset) / sizeof(float));
+            slot.payload_count = static_cast<std::uint32_t>((raw.size - relative_payload_offset) / sizeof(std::uint16_t));
             slot.generation = raw.generation;
             slot.checksum = raw.checksum;
 

@@ -45,6 +45,7 @@ struct KdopConfig {
 };
 
 struct SupportHullConfig {
+    bool keep_kdop = true;      // build KDOP intervals as a collision prefilter
     double safety_epsilon = 0.0;
 };
 

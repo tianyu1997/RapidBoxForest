@@ -57,6 +57,9 @@ def parse_args() -> argparse.Namespace:
         rbf_max_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
         connector_pave_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
         component_connect_ffb_max_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
+        rrt_goal_bias=0.20,
+        intertree_goal_bias=0.25,
+        component_connect_prob=0.35,
         quality_min_connected_boxes=64,
         post_connect_extra_boxes=0,
         post_connect_time_budget_ms=450.0,
@@ -92,13 +95,23 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-source", choices=list(shelf.SUPPORTED_ENDPOINT_SOURCES), default=shelf.ENDPOINT_AAFK)
     parser.add_argument(
         "--lect-split-policy",
-        choices=[shelf.LECT_SPLIT_AAFK_VOLUME_MIN, shelf.LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, shelf.LECT_SPLIT_ROUND_ROBIN],
+        choices=[
+            shelf.LECT_SPLIT_AAFK_VOLUME_MIN,
+            shelf.LECT_SPLIT_AAFK_VOLUME_MIN_DIM6,
+            shelf.LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN,
+            shelf.LECT_SPLIT_ROUND_ROBIN,
+        ],
         default=shelf.LECT_SPLIT_AAFK_VOLUME_MIN,
     )
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-materialization", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--external-evidence-scoring", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--warm-cache-label", default=shelf.DEFAULT_P18_CACHE_LABEL)
+    parser.add_argument(
+        "--lect-root-intervals",
+        default="",
+        help="Optional restricted LECT root intervals in 'lo:hi;lo:hi;...' format.",
+    )
     parser.add_argument("--clean-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=True)
@@ -110,6 +123,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
     parser.add_argument("--post-audit-segment-step", type=float, default=UNIFIED_SBF_ANYTIME_POST_AUDIT_SEGMENT_STEP)
+    parser.add_argument("--final-ompl-simplify-time-s", type=float, default=0.0)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--latency-profile",

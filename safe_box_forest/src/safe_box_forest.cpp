@@ -96,6 +96,7 @@ RBFPlanningConfig::RBFPlanningConfig() {
     envelope_type.n_subdivisions = 4;
     envelope_type.kdop_config.direction_set = KdopDirectionSet::DOP26;
     envelope_type.kdop_config.safety_epsilon = 1e-9;
+    envelope_type.support_hull_config.keep_kdop = true;
     envelope_type.support_hull_config.safety_epsilon = 1e-9;
 
     validation.mode = OracleValidationMode::CoverageHeuristic;
@@ -119,6 +120,11 @@ RBFPlanningConfig::RBFPlanningConfig() {
     connector.pave.max_steps_per_waypoint = 12;
     connector.pave.find_free_box.max_depth = 120;
     connector.pave.find_free_box.reject_seed_collision = false;
+    // Fill residual gaps along the connector segment: when a box certified at a
+    // seed is not face-adjacent to the current chain box, bisect and insert
+    // intermediate connected boxes so the segment is fully covered by boxes.
+    connector.pave.fill_gaps = true;
+    connector.pave.max_gap_fill_depth = 8;
     connector.per_pair_timeout_ms = 250.0;
     connector.max_pairs_per_gap = 8;
     connector.rrt.max_iters = 50000;
@@ -1109,6 +1115,44 @@ std::string envelope_descriptor_for(const EnvelopeTypeConfig& config) {
     return out.str();
 }
 
+std::vector<Interval> database_root_intervals_for(const Robot& robot,
+                                                  const RBFPlanningConfig& config) {
+    const bool canonical_mode = config.database.canonical_mode;
+    const std::string symmetry_descriptor = effective_symmetry_descriptor(config);
+    std::vector<Interval> root_intervals = lect_database::canonical_root_intervals_for_robot(
+        robot,
+        canonical_mode,
+        symmetry_descriptor);
+    const auto& override_intervals = config.database.root_intervals_override;
+    if (override_intervals.empty()) {
+        return root_intervals;
+    }
+    if (override_intervals.size() != root_intervals.size()) {
+        std::ostringstream out;
+        out << "database root_intervals_override has " << override_intervals.size()
+            << " dims, expected " << root_intervals.size();
+        throw std::runtime_error(out.str());
+    }
+    for (std::size_t dim = 0; dim < override_intervals.size(); ++dim) {
+        const Interval& allowed = root_intervals[dim];
+        const Interval& requested = override_intervals[dim];
+        if (requested.lo > requested.hi) {
+            std::ostringstream out;
+            out << "database root_intervals_override[" << dim << "] is invalid: ["
+                << requested.lo << ", " << requested.hi << "]";
+            throw std::runtime_error(out.str());
+        }
+        if (requested.lo + 1e-12 < allowed.lo || requested.hi - 1e-12 > allowed.hi) {
+            std::ostringstream out;
+            out << "database root_intervals_override[" << dim << "]=["
+                << requested.lo << ", " << requested.hi << "] exceeds canonical root ["
+                << allowed.lo << ", " << allowed.hi << "]";
+            throw std::runtime_error(out.str());
+        }
+    }
+    return override_intervals;
+}
+
 lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
                                                        const RBFPlanningConfig& config) {
     lect_database::LectDatabaseConfig database_config;
@@ -1117,10 +1161,7 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
     database_config.path = config.database.path.empty()
         ? default_database_path(robot)
         : config.database.path;
-    database_config.root_intervals = lect_database::canonical_root_intervals_for_robot(
-        robot,
-        canonical_mode,
-        symmetry_descriptor);
+    database_config.root_intervals = database_root_intervals_for(robot, config);
     database_config.split_policy = config.database.split_policy;
     database_config.open.read_only = config.database.read_only;
     database_config.open.create_if_missing = config.database.create_if_missing;
@@ -1197,8 +1238,14 @@ RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
             external_evidence_snapshot_source_ = std::make_unique<lect_database::LectSnapshotEvidenceSource>(*external_evidence_snapshot_);
             external_evidence_source_ = external_evidence_snapshot_source_.get();
         } else {
-            throw std::runtime_error(
-                "legacy mutable external LECTDatabase evidence reuse is disabled; use snapshot external evidence");
+            external_evidence_database_ = std::make_unique<lect_database::LectDatabase>();
+            std::string external_reason;
+            if (!external_evidence_database_->open(external_config, &external_reason)) {
+                throw std::runtime_error("failed to open external LECTDatabase evidence source: " + external_reason);
+            }
+            external_evidence_database_source_ = std::make_unique<lect_database::LectDatabaseEvidenceSource>(*external_evidence_database_);
+            external_evidence_source_ = external_evidence_database_source_.get();
+            direct_external_evidence_database_ = external_evidence_database_.get();
         }
     }
     online_cache_ = std::make_unique<lect_database::OnlineEnvelopeCacheTree>(*database_, config_.database.online_cache);
@@ -1252,6 +1299,8 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     last_build_ = {};
     last_build_.grow_ms = grow.build_time_ms;
     last_build_.raw_boxes = static_cast<int>(raw_boxes_.size());
+    last_build_.grow_adjacency_islands = grow.adjacency_islands;
+    last_build_.grow_largest_island = grow.adjacency_largest_island;
 
     const auto merge_t0 = Clock::now();
     if (config_.enable_merger && !boxes_.empty()) {
@@ -1293,6 +1342,8 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().record_timing("forest.adjacency_stage", last_build_.adjacency_ms);
     last_build_.final_boxes = static_cast<int>(boxes_.size());
     last_build_.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    context.diagnostics().set_value("grower.adjacency_islands", static_cast<double>(last_build_.grow_adjacency_islands));
+    context.diagnostics().set_value("grower.adjacency_largest_island", static_cast<double>(last_build_.grow_largest_island));
     const OracleCounters oracle_counters = oracle_->counters();
     context.diagnostics().set_value("oracle.node_validations", static_cast<double>(oracle_counters.node_validations));
     context.diagnostics().set_value("oracle.interval_validations", static_cast<double>(oracle_counters.interval_validations));
@@ -1427,6 +1478,9 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
     };
 
     const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_->max_tree_depth() - 1));
+    // Seed-independent: canonical split depends only on (robot, domain). No
+    // query-seed coupling is applied to the split values.
+    OracleSplitOptions split_options = options.split;
     OracleNodeId node = oracle_->root_node();
     int changed_dim = -1;
     while (true) {
@@ -1488,7 +1542,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 result.fail_code = 2;
                 break;
             }
-            const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
+            const auto split = oracle_->split_node(node, intervals, changed_dim, split_options);
             if (!split.split) {
                 result.fail_code = 6;
                 break;
@@ -1525,7 +1579,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             result.fail_code = 2;
             break;
         }
-        const auto split = oracle_->split_node(node, intervals, changed_dim, options.split);
+        const auto split = oracle_->split_node(node, intervals, changed_dim, split_options);
         if (!split.split) {
             result.fail_code = 6;
             break;
@@ -2051,6 +2105,75 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     (void)gap_result;
     invalidate_query_cache();
     return added + direct_segment_edges_added;
+}
+
+DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const Eigen::VectorXd>& start,
+                                                         const Eigen::Ref<const Eigen::VectorXd>& goal,
+                                                         const ChainPaveConfig& pave) {
+    DebugChainPaveResult out;
+    if (boxes_.empty() || !oracle_) {
+        return out;
+    }
+    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    if (start_box_id < 0) {
+        return out;
+    }
+    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    if (goal_box_id < 0 || goal_box_id == start_box_id) {
+        return out;
+    }
+    out.start_box_id = start_box_id;
+    out.goal_box_id = goal_box_id;
+    for (const auto& box : boxes_) {
+        if (box.id == start_box_id) {
+            out.start_box = box.joint_intervals;
+        }
+        if (box.id == goal_box_id) {
+            out.goal_box = box.joint_intervals;
+        }
+    }
+    StageContext context = StageContext::from_runtime(config_.runtime);
+    CollisionChecker checker(robot_, scene_);
+    RRTConnectConfig bridge_rrt = config_.connector.rrt;
+    bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
+    auto waypoint_path = rrt_connect(start, goal, checker, robot_, context, bridge_rrt, 20260503);
+    if (waypoint_path.empty()) {
+        return out;
+    }
+    out.bridge_found = true;
+    out.waypoints = waypoint_path;
+    out.audit_passed = audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed;
+    const std::size_t boxes_before = boxes_.size();
+    int next_id = next_box_id();
+    out.added = chain_pave_along_path(
+        waypoint_path,
+        start_box_id,
+        boxes_,
+        *oracle_,
+        adjacency_,
+        next_id,
+        context,
+        pave);
+    out.fast_gap_fill_ffb_calls = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_fast_ffb_calls", 0.0));
+    out.fast_gap_fill_ms =
+        context.diagnostics().value("connector.chain_pave_fast_ms", 0.0);
+    for (std::size_t i = boxes_before; i < boxes_.size(); ++i) {
+        out.committed_boxes.push_back(boxes_[i].joint_intervals);
+    }
+    // Export EVERY forest box so callers can measure the bridge's true coverage:
+    // chain_pave may COVER a path point by reusing a pre-existing forest box
+    // (committed during build), which would otherwise be invisible to a caller
+    // inspecting only `committed_boxes` and thus look like an uncovered gap.
+    out.all_boxes.reserve(boxes_.size());
+    for (const auto& box : boxes_) {
+        out.all_boxes.push_back(box.joint_intervals);
+    }
+    if (out.added > 0) {
+        rebuild_adjacency();
+    }
+    invalidate_query_cache();
+    return out;
 }
 
 int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,

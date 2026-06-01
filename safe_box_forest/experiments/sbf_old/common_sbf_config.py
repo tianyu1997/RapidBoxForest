@@ -93,7 +93,52 @@ def serialize_depth_dimensions(depth_dimensions: Iterable[int]) -> str:
     return ",".join(str(int(dim)) for dim in depth_dimensions)
 
 
-def aafk_volume_min_dim6_schedule(robot: Any, max_depth: int) -> list[int]:
+def compute_inert_dim_mask(robot: Any, root_intervals: Iterable[Any]) -> list[int]:
+    """Detect kinematically inert split dims for a robot over a root domain.
+
+    Uses the aafk_volume_min depth schedule (greedy min-endpoint-measure split
+    selection): a dim never chosen by the schedule contributes nothing to the
+    endpoint envelope and is safe to mask. Returns a 0/1 mask (0 = mask the dim).
+    Per-robot, one-shot; no hot-path cost.
+    """
+    root = list(root_intervals)
+    ndim = len(root)
+    if ndim == 0:
+        return []
+    counts = list(sbf.aafk_volume_min_depth_schedule(robot, root, max(8 * ndim, 48), 8))
+    hist = [0] * ndim
+    for d in counts:
+        idx = int(d)
+        if 0 <= idx < ndim:
+            hist[idx] += 1
+    return [0 if hist[d] == 0 else 1 for d in range(ndim)]
+
+
+def apply_dim_mask(cfg: Any, mask: Iterable[int]) -> None:
+    """Apply a per-dim split mask to grower + connector BestTighten configs."""
+    mask_list = [int(v) for v in mask]
+    for prefix in ("grower.find_free_box", "connector.pave.find_free_box"):
+        set_path_if_available(cfg, f"{prefix}.split.best_tighten.dim_mask", list(mask_list))
+
+
+def _schedule_root_intervals(root_intervals: Iterable[Any] | None) -> list[Any] | None:
+    if root_intervals is None:
+        return None
+    return [interval for interval in root_intervals]
+
+
+def _aafk_sample_nodes_per_depth(sample_nodes_per_depth: int | None) -> int:
+    if sample_nodes_per_depth is None:
+        return 8
+    return max(1, int(sample_nodes_per_depth))
+
+
+def aafk_volume_min_dim6_schedule(
+    robot: Any,
+    max_depth: int,
+    root_intervals: Iterable[Any] | None = None,
+    sample_nodes_per_depth: int | None = None,
+) -> list[int]:
     """Volume-min greedy schedule with guaranteed coverage of starved DOFs.
 
     The pure AAFKVolumeMin greedy heuristic never splits joints that barely change
@@ -104,7 +149,12 @@ def aafk_volume_min_dim6_schedule(robot: Any, max_depth: int) -> list[int]:
     receives coverage (like round-robin) while preserving volume-min priority for
     the remaining 6/7 of the splits.
     """
-    base = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth)))
+    schedule_root = _schedule_root_intervals(root_intervals)
+    sample_budget = _aafk_sample_nodes_per_depth(sample_nodes_per_depth)
+    if schedule_root is None:
+        base = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth), sample_budget))
+    else:
+        base = list(sbf.aafk_volume_min_depth_schedule(robot, schedule_root, int(max_depth), sample_budget))
     n_joints = int(robot.n_joints())
     present = set(int(d) for d in base)
     missing = [d for d in range(n_joints) if d not in present]
@@ -119,8 +169,18 @@ def aafk_volume_min_dim6_schedule(robot: Any, max_depth: int) -> list[int]:
     return schedule
 
 
-def make_aafk_volume_min_dim6_split_policy(robot: Any, max_depth: int) -> Any:
-    schedule = aafk_volume_min_dim6_schedule(robot, int(max_depth))
+def make_aafk_volume_min_dim6_split_policy(
+    robot: Any,
+    max_depth: int,
+    root_intervals: Iterable[Any] | None = None,
+    sample_nodes_per_depth: int | None = None,
+) -> Any:
+    schedule = aafk_volume_min_dim6_schedule(
+        robot,
+        int(max_depth),
+        root_intervals=root_intervals,
+        sample_nodes_per_depth=sample_nodes_per_depth,
+    )
     if len(schedule) < int(max_depth):
         raise RuntimeError(
             f"AAFKVolumeMinDim6 schedule has {len(schedule)} entries, expected at least {int(max_depth)}"
@@ -135,11 +195,57 @@ def make_aafk_volume_min_dim6_split_policy(robot: Any, max_depth: int) -> Any:
     return descriptor
 
 
-def make_aafk_volume_min_split_policy(robot: Any, max_depth: int) -> Any:
-    schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth)))
+def make_aafk_volume_min_split_policy(
+    robot: Any,
+    max_depth: int,
+    root_intervals: Iterable[Any] | None = None,
+    sample_nodes_per_depth: int | None = None,
+) -> Any:
+    schedule_root = _schedule_root_intervals(root_intervals)
+    sample_budget = _aafk_sample_nodes_per_depth(sample_nodes_per_depth)
+    if schedule_root is None:
+        schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth), sample_budget))
+    else:
+        schedule = list(sbf.aafk_volume_min_depth_schedule(robot, schedule_root, int(max_depth), sample_budget))
     if len(schedule) < int(max_depth):
         raise RuntimeError(
             f"AAFKVolumeMin schedule has {len(schedule)} entries, expected at least {int(max_depth)}"
+        )
+    descriptor = sbf.SplitPolicyDescriptor()
+    descriptor.strategy = sbf.SplitStrategy.AAFKVolumeMin
+    descriptor.min_width = 0.0
+    descriptor.midpoint = True
+    descriptor.deterministic_tie_break = True
+    descriptor.depth_dimensions = schedule
+    descriptor.dimension_schedule_hash = str(sbf.stable_hash(serialize_depth_dimensions(schedule)))
+    return descriptor
+
+
+def make_support_hull_volume_min_split_policy(
+    robot: Any,
+    max_depth: int,
+    root_intervals: Iterable[Any] | None = None,
+    sample_nodes_per_depth: int | None = None,
+) -> Any:
+    """Seed/scene-independent split policy minimising the SupportHull envelope.
+
+    Identical machinery to :func:`make_aafk_volume_min_split_policy` (the runtime
+    replays ``depth_dimensions`` under the AAFKVolumeMin strategy) but the schedule
+    is computed against the SupportHull swept-envelope volume — the envelope used
+    at certification time — instead of the looser endpoint-AABB sum. The schedule
+    remains a pure function of (robot, canonical root intervals).
+    """
+    schedule_root = _schedule_root_intervals(root_intervals)
+    sample_budget = _aafk_sample_nodes_per_depth(sample_nodes_per_depth)
+    if schedule_root is None:
+        schedule = list(sbf.support_hull_volume_min_depth_schedule(robot, int(max_depth), sample_budget))
+    else:
+        schedule = list(
+            sbf.support_hull_volume_min_depth_schedule(robot, schedule_root, int(max_depth), sample_budget)
+        )
+    if len(schedule) < int(max_depth):
+        raise RuntimeError(
+            f"SupportHullVolumeMin schedule has {len(schedule)} entries, expected at least {int(max_depth)}"
         )
     descriptor = sbf.SplitPolicyDescriptor()
     descriptor.strategy = sbf.SplitStrategy.AAFKVolumeMin
@@ -175,7 +281,11 @@ def apply_rbf_lifelong_defaults(cfg: Any, args: Namespace, robot: Any, seed: int
     if skip_depth > max_depth:
         raise ValueError(f"rbf ffb start depth {skip_depth} cannot exceed max depth {max_depth}")
 
-    split_policy = make_aafk_volume_min_split_policy(robot, max_depth)
+    split_policy = make_aafk_volume_min_split_policy(
+        robot,
+        max_depth,
+        sample_nodes_per_depth=int(getattr(args, "aafk_sample_nodes_per_depth", 8)),
+    )
     cfg.database.split_policy = split_policy
     cfg.database.canonical_mode = bool(args.rbf_canonical_cache)
     if bool(cfg.database.canonical_mode):
@@ -237,8 +347,8 @@ def configure_external_evidence_reuse(
 ) -> dict[str, Any]:
     external_path = Path(source_path)
     mode = str(getattr(args, "external_evidence_mode", "snapshot")) if args is not None else "snapshot"
-    if mode != "snapshot":
-        raise ValueError("legacy external evidence reuse is disabled; use --external-evidence-mode snapshot")
+    if mode not in {"snapshot", "legacy"}:
+        raise ValueError(f"unsupported external evidence reuse mode {mode!r}")
     use_snapshot = mode == "snapshot"
     snapshot_path = default_external_evidence_snapshot_path(external_path)
 
@@ -273,6 +383,7 @@ def rbf_lifelong_config_metadata(cfg: Any, args: Namespace | None = None) -> dic
         "endpoint_source": endpoint_source_raw,
         "endpoint_channel": endpoint_channel,
         "split_policy": split_policy_name,
+        "aafk_sample_nodes_per_depth": int(getattr(args, "aafk_sample_nodes_per_depth", 8)) if args is not None else 8,
         "split_policy_descriptor": sbf.split_policy_descriptor(split_policy),
         "split_policy_hash": int(sbf.split_policy_hash(split_policy)),
         "dimension_schedule_hash": str(split_policy.dimension_schedule_hash),
@@ -332,9 +443,13 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--best-tighten-depth-synchronous", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--best-tighten-prefer-sector-boundary", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--best-tighten-use-minimax", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--best-tighten-shape-balancing", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--best-tighten-recent-dim-cooling", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--best-tighten-shape-balancing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--best-tighten-recent-dim-cooling", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--ffb-min-split-width", type=float, default=0.0)
+    # Seed-independent split policy: the canonical LECT split depends only on
+    # (robot, domain). No query-seed coupling knob is exposed.
+    parser.add_argument("--ffb-auto-mask-inert", action=argparse.BooleanOptionalAction, default=True,
+                        help="Auto-detect kinematically inert split dims (per-robot, via aafk schedule) and mask them by default.")
     parser.add_argument("--endpoint-cache-min-effective-width", type=float, default=0.0)
     parser.add_argument("--enable-merger", action="store_true", default=False)
     parser.add_argument("--enable-connector", action="store_true", default=True)
@@ -342,6 +457,18 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--rrt-goal-bias", type=float, default=0.2)
     parser.add_argument("--intertree-goal-bias", type=float, default=0.25)
     parser.add_argument("--unexplored-prob", type=float, default=0.45)
+    parser.add_argument(
+        "--sample-categorical-allocation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Draw the per-sample target category from a single explicit categorical split instead of sequential Bernoulli gates.",
+    )
+    parser.add_argument(
+        "--sample-uniform-prob",
+        type=float,
+        default=0.0,
+        help="Explicit pure-uniform probability for categorical allocation; any leftover mass is also assigned to uniform.",
+    )
     parser.add_argument("--step-ratio", type=float, default=0.08)
     parser.add_argument("--component-connect-prob", type=float, default=0.45)
     parser.add_argument("--component-connect-candidate-limit", type=int, default=4)
@@ -371,15 +498,26 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--validation-cache-max-entries", type=int, default=200000)
     parser.add_argument("--endpoint-evidence-cache", action="store_true", default=True)
     parser.add_argument("--no-endpoint-evidence-cache", dest="endpoint_evidence_cache", action="store_false")
+    parser.add_argument("--incremental-materialization", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--incremental-materialization-bind-online-cache", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--worker-shared-endpoint-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--collision-shortcut", action="store_true", default=True)
     parser.add_argument("--no-collision-shortcut", dest="collision_shortcut", action="store_false")
     parser.add_argument("--collision-shortcut-resolution", type=int, default=24)
     parser.add_argument("--frontier-bridge", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--frontier-bridge-adaptive-ffb", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--frontier-bridge-ffb-max-depth", type=int, default=0)
+    parser.add_argument("--frontier-bridge-ffb-depth-increment", type=int, default=2)
+    parser.add_argument("--frontier-bridge-gap-stall-iterations", type=int, default=4)
+    parser.add_argument("--frontier-bridge-candidate-limit", type=int, default=8)
+    parser.add_argument("--connector-point-gap-tolerance", type=float, default=0.0)
+    parser.add_argument("--connector-point-gap-resolution", type=int, default=16)
     parser.add_argument("--connector-bridge-boxes", type=int, default=0)
     parser.add_argument("--segment-edges", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--connector-pair-batch-size", type=int, default=1)
     parser.add_argument("--connector-pair-timeout-ms", type=float, default=250.0)
     parser.add_argument("--connector-max-pairs-per-gap", type=int, default=8)
+    parser.add_argument("--connector-birrt", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--connector-rrt-iters", type=int, default=50000)
     parser.add_argument("--connector-rrt-timeout-ms", type=float, default=2000.0)
     parser.add_argument("--connector-rrt-step-size", type=float, default=0.25)
@@ -402,7 +540,13 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--rbf-auto-publish-snapshot-async", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-online-cache-max-nodes", type=int, default=200000)
     parser.add_argument("--rbf-online-cache-max-payload-bytes", type=int, default=512 * 1024 * 1024)
-    parser.add_argument("--external-evidence-mode", choices=["snapshot"], default="snapshot")
+    parser.add_argument(
+        "--aafk-sample-nodes-per-depth",
+        type=int,
+        default=8,
+        help="Number of sampled nodes per depth when building the AAFKVolumeMin dimension schedule.",
+    )
+    parser.add_argument("--external-evidence-mode", choices=["snapshot", "legacy"], default="snapshot")
     parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
 
 
@@ -480,6 +624,19 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.validation.validation_cache_max_entries = int(args.validation_cache_max_entries)
     set_if_available(cfg.validation, "enable_endpoint_evidence_cache", bool(args.endpoint_evidence_cache))
     set_if_available(cfg.validation, "endpoint_cache_min_effective_width", float(args.endpoint_cache_min_effective_width))
+    incremental_materialization = bool(args.incremental_materialization)
+    if bool(args.incremental_materialization_bind_online_cache) and not bool(args.endpoint_evidence_cache):
+        incremental_materialization = False
+    force_stateless_materialization = (
+        cfg.endpoint_source.source == sbf.EndpointSource.CritSample
+        and cfg.validation.mode == sbf.OracleValidationMode.CoverageHeuristic
+    )
+    set_if_available(
+        cfg.validation,
+        "stateless_materialization_context",
+        force_stateless_materialization or not incremental_materialization,
+    )
+    set_if_available(cfg.validation, "enable_worker_shared_endpoint_cache", bool(args.worker_shared_endpoint_cache) and bool(args.endpoint_evidence_cache))
 
     cfg.grower.mode = sbf.GrowerMode.RRT
     cfg.grower.rng_seed = int(args.seed_base) + int(seed)
@@ -500,6 +657,21 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     set_if_available(cfg.grower, "sustained_goal_bias_cap", min(0.25, float(args.intertree_goal_bias)))
     set_if_available(cfg.grower, "rrt_step_ratio", float(args.step_ratio))
     set_if_available(cfg.grower, "unexplored_sample_prob", float(args.unexplored_prob))
+    if bool(args.sample_categorical_allocation):
+        total_target_prob = (
+            max(0.0, float(args.component_connect_prob))
+            + max(0.0, float(args.intertree_goal_bias))
+            + max(0.0, float(args.rrt_goal_bias))
+            + max(0.0, float(args.unexplored_prob))
+            + max(0.0, float(args.sample_uniform_prob))
+        )
+        if total_target_prob > 1.0 + 1e-9:
+            raise ValueError(
+                "categorical grower probabilities must sum to <= 1.0: "
+                f"component_connect + intertree + rrt + unexplored + uniform = {total_target_prob:.6f}"
+            )
+    set_if_available(cfg.grower, "sample_categorical_allocation", bool(args.sample_categorical_allocation))
+    set_if_available(cfg.grower, "sample_uniform_prob", float(args.sample_uniform_prob))
     cfg.grower.connect_mode = True
     cfg.grower.expand_all_roots_per_sample = True
     set_if_available(cfg.grower, "component_connect_prob", float(args.component_connect_prob))
@@ -534,6 +706,13 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     set_if_available(cfg.query, "repair_local_sampling_growth", float(args.repair_local_sampling_growth))
 
     set_if_available(cfg.connector, "frontier_bridge", bool(args.frontier_bridge))
+    set_if_available(cfg.connector, "frontier_bridge_adaptive_ffb", bool(args.frontier_bridge_adaptive_ffb))
+    set_if_available(cfg.connector, "frontier_bridge_ffb_max_depth", int(args.frontier_bridge_ffb_max_depth))
+    set_if_available(cfg.connector, "frontier_bridge_ffb_depth_increment", int(args.frontier_bridge_ffb_depth_increment))
+    set_if_available(cfg.connector, "frontier_bridge_gap_stall_iterations", int(args.frontier_bridge_gap_stall_iterations))
+    set_if_available(cfg.connector, "frontier_bridge_candidate_limit", int(args.frontier_bridge_candidate_limit))
+    set_if_available(cfg.connector, "point_validated_gap_tolerance", float(args.connector_point_gap_tolerance))
+    set_if_available(cfg.connector, "point_validated_gap_resolution", int(args.connector_point_gap_resolution))
     cfg.connector.max_total_bridge_boxes = int(args.connector_bridge_boxes)
     cfg.connector.segment_edges_enabled = bool(args.segment_edges)
     cfg.connector.rrt_segment_edges = bool(args.segment_edges)
@@ -543,6 +722,7 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.connector.parallel_threshold = 1
     set_if_available(cfg.connector, "per_pair_timeout_ms", float(args.connector_pair_timeout_ms))
     set_if_available(cfg.connector, "max_pairs_per_gap", int(args.connector_max_pairs_per_gap))
+    set_if_available(cfg.connector, "enable_birrt", bool(args.connector_birrt))
     cfg.connector.rrt.max_iters = int(args.connector_rrt_iters)
     cfg.connector.rrt.timeout_ms = float(args.connector_rrt_timeout_ms)
     cfg.connector.rrt.step_size = float(args.connector_rrt_step_size)

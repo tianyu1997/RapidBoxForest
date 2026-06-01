@@ -34,13 +34,14 @@ namespace rbf::lect_database {
 namespace {
 
 constexpr std::size_t kBufferedIoBytes = 1u << 20;
-constexpr std::size_t kMaxResidentEvidenceRecords = 8192;
 constexpr std::uint64_t kEvidenceAppendsPerFlush = 1024;
 constexpr std::size_t kEvidenceIndexLoadFactorNumerator = 13;
 constexpr std::size_t kEvidenceIndexLoadFactorDenominator = 16;
-constexpr std::uint32_t kEvidenceStoreSchemaVersion = 3;
+// v4: evidence payloads persisted as outward-rounded IEEE binary16 (half),
+// halving on-disk size while keeping envelopes conservatively sound.
+constexpr std::uint32_t kEvidenceStoreSchemaVersion = 4;
 constexpr std::uint64_t kEvidenceStoreMagic = 0x3156454242464652ull;
-constexpr std::uint32_t kEvidenceIndexSidecarSchemaVersion = 3;
+constexpr std::uint32_t kEvidenceIndexSidecarSchemaVersion = 4;
 constexpr std::uint64_t kEvidenceIndexSidecarMagic = 0x3158444945424652ull;
 constexpr std::string_view kCurrentNodeIdScheme = "path_handle_v3";
 constexpr std::string_view kCurrentEvidenceEncoding = "pathcode_v3";
@@ -352,6 +353,143 @@ std::uint64_t payload_checksum(std::span<const float> payload) {
     return hash;
 }
 
+// ─── IEEE-754 binary16 (half) codec with directed (outward) rounding ─────────
+// Evidence payloads are conservative outer envelopes (min xyz / max xyz). To
+// halve on-disk size we persist each float as a 16-bit half. To keep the box a
+// *sound* (never-shrinking) outer bound we round min slots toward -inf and max
+// slots toward +inf, so the dequantized box always contains the original one.
+// Payloads are snapped to half-representable float32 values *before* the
+// checksum is taken, so the in-memory value, the checksum, and the on-disk half
+// are all mutually consistent and the read path is exact.
+std::uint16_t f16_from_f32_nearest(float value) {
+    std::uint32_t x;
+    std::memcpy(&x, &value, sizeof(x));
+    const std::uint32_t sign = (x >> 16) & 0x8000u;
+    const std::uint32_t biased = (x >> 23) & 0xFFu;
+    std::uint32_t mant = x & 0x7FFFFFu;
+    if (biased == 0xFFu) {  // inf / nan
+        return static_cast<std::uint16_t>(sign | (mant ? 0x7E00u : 0x7C00u));
+    }
+    const std::int32_t exp = static_cast<std::int32_t>(biased) - 127 + 15;
+    if (exp >= 0x1F) {  // overflow -> inf
+        return static_cast<std::uint16_t>(sign | 0x7C00u);
+    }
+    if (exp <= 0) {  // subnormal / zero
+        if (exp < -10) {
+            return static_cast<std::uint16_t>(sign);
+        }
+        mant |= 0x800000u;
+        const std::uint32_t shift = static_cast<std::uint32_t>(14 - exp);  // 14..24
+        std::uint32_t half_mant = mant >> shift;
+        const std::uint32_t remainder = mant & ((1u << shift) - 1u);
+        const std::uint32_t halfway = 1u << (shift - 1u);
+        if (remainder > halfway || (remainder == halfway && (half_mant & 1u))) {
+            ++half_mant;
+        }
+        return static_cast<std::uint16_t>(sign | half_mant);
+    }
+    std::uint16_t half_bits = static_cast<std::uint16_t>((exp << 10) | (mant >> 13));
+    const std::uint32_t remainder = mant & 0x1FFFu;
+    if (remainder > 0x1000u || (remainder == 0x1000u && (half_bits & 1u))) {
+        ++half_bits;  // may carry into exponent (and to inf), which stays sound
+    }
+    return half_bits | static_cast<std::uint16_t>(sign);
+}
+
+float f32_from_f16(std::uint16_t h) {
+    const std::uint32_t sign = static_cast<std::uint32_t>(h & 0x8000u) << 16;
+    std::uint32_t exp = (h >> 10) & 0x1Fu;
+    std::uint32_t mant = h & 0x3FFu;
+    std::uint32_t out;
+    if (exp == 0) {
+        if (mant == 0) {
+            out = sign;
+        } else {
+            exp = 127 - 15 + 1;
+            while ((mant & 0x400u) == 0u) {
+                mant <<= 1;
+                --exp;
+            }
+            mant &= 0x3FFu;
+            out = sign | (exp << 23) | (mant << 13);
+        }
+    } else if (exp == 0x1F) {
+        out = sign | 0x7F800000u | (mant << 13);
+    } else {
+        out = sign | ((exp - 15u + 127u) << 23) | (mant << 13);
+    }
+    float value;
+    std::memcpy(&value, &out, sizeof(value));
+    return value;
+}
+
+// Monotonic ordering key so we can step to the adjacent half value.
+std::uint16_t half_order_key(std::uint16_t h) {
+    return (h & 0x8000u) ? static_cast<std::uint16_t>(~h)
+                         : static_cast<std::uint16_t>(h | 0x8000u);
+}
+std::uint16_t half_from_order_key(std::uint16_t k) {
+    return (k & 0x8000u) ? static_cast<std::uint16_t>(k & 0x7FFFu)
+                         : static_cast<std::uint16_t>(~k);
+}
+bool half_is_inf(std::uint16_t h) {
+    return ((h >> 10) & 0x1Fu) == 0x1Fu && (h & 0x3FFu) == 0u;
+}
+std::uint16_t half_next_up(std::uint16_t h) {
+    if (half_is_inf(h) && !(h & 0x8000u)) {
+        return h;  // already +inf
+    }
+    return half_from_order_key(static_cast<std::uint16_t>(half_order_key(h) + 1u));
+}
+std::uint16_t half_next_down(std::uint16_t h) {
+    if (half_is_inf(h) && (h & 0x8000u)) {
+        return h;  // already -inf
+    }
+    return half_from_order_key(static_cast<std::uint16_t>(half_order_key(h) - 1u));
+}
+
+// Snap a float to a half-representable value, rounding outward in the requested
+// direction, and return it as float32 (which is then bit-exact across the
+// half round-trip).
+float snap_to_half_outward(float value, bool round_up) {
+    if (!std::isfinite(value)) {
+        return value;
+    }
+    std::uint16_t h = f16_from_f32_nearest(value);
+    const float decoded = f32_from_f16(h);
+    if (round_up) {
+        if (decoded < value) {
+            h = half_next_up(h);
+        }
+    } else if (decoded > value) {
+        h = half_next_down(h);
+    }
+    return f32_from_f16(h);
+}
+
+// Quantize a payload in place to outward-rounded half precision. Mirrors the
+// min/max slot orientation used by merge_payload_hull so the box only grows.
+void quantize_payload_outward(EvidencePayloadKind kind, std::vector<float>& payload) {
+    const std::size_t n = payload.size();
+    if (kind == EvidencePayloadKind::EndpointEnvelope && (n % 6) == 0) {
+        for (std::size_t i = 0; i < n; i += 6) {
+            payload[i + 0] = snap_to_half_outward(payload[i + 0], false);
+            payload[i + 1] = snap_to_half_outward(payload[i + 1], false);
+            payload[i + 2] = snap_to_half_outward(payload[i + 2], false);
+            payload[i + 3] = snap_to_half_outward(payload[i + 3], true);
+            payload[i + 4] = snap_to_half_outward(payload[i + 4], true);
+            payload[i + 5] = snap_to_half_outward(payload[i + 5], true);
+        }
+        return;
+    }
+    for (std::size_t i = 0; i < n; i += 2) {
+        payload[i] = snap_to_half_outward(payload[i], false);
+        if (i + 1 < n) {
+            payload[i + 1] = snap_to_half_outward(payload[i + 1], true);
+        }
+    }
+}
+
 std::uint32_t path_word_count_for_bits(int bit_count) {
     if (bit_count < 0) {
         return 0;
@@ -477,7 +615,7 @@ EvidenceRecord clone_evidence_record(const EvidenceRecordView& view) {
 
 std::uint32_t evidence_binary_record_size(std::size_t payload_count, std::uint32_t path_word_count) {
     const auto path_bytes = path_code_storage_bytes(path_word_count);
-    const auto payload_bytes = static_cast<std::uint64_t>(payload_count) * sizeof(float);
+    const auto payload_bytes = static_cast<std::uint64_t>(payload_count) * sizeof(std::uint16_t);
     const auto total_bytes = sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes;
     return total_bytes > std::numeric_limits<std::uint32_t>::max()
         ? 0u
@@ -543,7 +681,7 @@ std::optional<EvidenceRecord> parse_binary_evidence_record(std::span<const std::
         return std::nullopt;
     }
     const auto path_bytes = static_cast<std::size_t>(path_code_storage_bytes(header.path_word_count));
-    const auto payload_bytes = static_cast<std::size_t>(header.payload_count) * sizeof(float);
+    const auto payload_bytes = static_cast<std::size_t>(header.payload_count) * sizeof(std::uint16_t);
     if (sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes != bytes.size()) {
         return std::nullopt;
     }
@@ -569,9 +707,12 @@ std::optional<EvidenceRecord> parse_binary_evidence_record(std::span<const std::
     record.checksum = header.checksum;
     record.payload.resize(header.payload_count);
     if (payload_bytes > 0) {
-        std::memcpy(record.payload.data(),
-                    bytes.data() + sizeof(EvidenceStoreRecordHeader) + path_bytes,
-                    payload_bytes);
+        const auto* half_bytes = bytes.data() + sizeof(EvidenceStoreRecordHeader) + path_bytes;
+        for (std::size_t i = 0; i < header.payload_count; ++i) {
+            std::uint16_t h;
+            std::memcpy(&h, half_bytes + i * sizeof(std::uint16_t), sizeof(h));
+            record.payload[i] = f32_from_f16(h);
+        }
     }
     return record;
 }
@@ -730,6 +871,10 @@ bool merge_payload_hull(EvidencePayloadKind kind,
 
 bool valid_tree_depth_limit(int max_tree_depth) {
     return max_tree_depth >= 1;
+}
+
+bool valid_root_depth(int root_depth, int max_tree_depth) {
+    return root_depth >= 0 && root_depth < max_tree_depth;
 }
 
 }  // namespace
@@ -958,6 +1103,10 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
         if (reason) *reason = "max tree depth must be positive";
         return false;
     }
+    if (!valid_root_depth(config_.root_depth, config_.max_tree_depth)) {
+        if (reason) *reason = "root depth must be non-negative and less than max tree depth";
+        return false;
+    }
     std::error_code ignored;
     if (config_.open.create_if_missing) {
         std::filesystem::create_directories(config_.path, ignored);
@@ -1027,7 +1176,7 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
 
     NodeRecord root;
     root.id = 0;
-    root.depth = 0;
+    root.depth = config_.root_depth;
     write_node_record(std::move(root));
     rebuild_layer_index();
     assign_page_ids();
@@ -1396,7 +1545,7 @@ bool LectDatabase::ensure_depth(int target_depth) {
         return false;
     }
     bool changed = false;
-    for (int depth = 0; depth < target_depth; ++depth) {
+    for (int depth = config_.root_depth; depth < target_depth; ++depth) {
         const auto layer = layer_nodes(depth);
         for (NodeId id : layer) {
             const auto node_record = read_node(id);
@@ -1503,39 +1652,58 @@ bool LectDatabase::put_evidence(EvidenceRecord record) {
     ++generation_;
     pending_changes_ = true;
     record.generation = generation_;
+    quantize_payload_outward(record.key.payload_kind, record.payload);
     record.checksum = payload_checksum(record.payload);
-    const std::string journal_record = "evidence|" + serialize_evidence_record(record);
+    // The text journal is a write-ahead log for crash recovery between
+    // checkpoints. During bulk/streaming prewarm we skip it entirely: the final
+    // checkpoint truncates the journal anyway and persists the authoritative
+    // binary store, so per-record journaling is pure write amplification.
+    const std::string journal_record =
+        (bulk_prewarm_mode_ || streaming_prewarm_mode_)
+            ? std::string()
+            : ("evidence|" + serialize_evidence_record(record));
     const bool direct_evidence = !record.child_hull;
     const bool node_is_internal = !node_item->is_leaf();
     const NodeId parent_id = node_item->parent;
+    const bool streaming_append_only = streaming_prewarm_mode_ &&
+        !config_.propagate_parent_hulls &&
+        streaming_resident_cap_ > 0 &&
+        evidence_.size() >= streaming_resident_cap_;
 
-    auto stored_record = std::make_shared<EvidenceRecord>(std::move(record));
-    auto [stored_it, stored_inserted] = evidence_.insert_or_assign(key, stored_record);
-    (void)stored_inserted;
-    if (!append_evidence_record_to_store(*stored_it->second)) {
-        return false;
-    }
-    if (config_.propagate_parent_hulls) {
-        if (config_.defer_parent_hull_writes) {
-            deferred_parent_hull_writes_.push_back(DeferredParentHullWrite{key});
-        } else {
-            std::shared_ptr<const EvidenceRecord> propagated_child = stored_it->second;
-            if (direct_evidence && node_is_internal) {
-                if (auto child_hull = build_parent_hull_from_node(*node_item, key)) {
-                    child_hull->generation = generation_;
-                    child_hull->checksum = payload_checksum(child_hull->payload);
-                    auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
-                    auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
-                                                                                           child_hull_record);
-                    (void)child_hull_inserted;
-                    if (!append_evidence_record_to_store(*child_hull_it->second)) {
-                        return false;
+    if (streaming_append_only) {
+        if (!append_evidence_record_to_store(record)) {
+            return false;
+        }
+    } else {
+        auto stored_record = std::make_shared<EvidenceRecord>(std::move(record));
+        auto [stored_it, stored_inserted] = evidence_.insert_or_assign(key, stored_record);
+        (void)stored_inserted;
+        if (!append_evidence_record_to_store(*stored_it->second)) {
+            return false;
+        }
+        if (config_.propagate_parent_hulls) {
+            if (config_.defer_parent_hull_writes) {
+                deferred_parent_hull_writes_.push_back(DeferredParentHullWrite{key});
+            } else {
+                std::shared_ptr<const EvidenceRecord> propagated_child = stored_it->second;
+                if (direct_evidence && node_is_internal) {
+                    if (auto child_hull = build_parent_hull_from_node(*node_item, key)) {
+                        child_hull->generation = generation_;
+                        quantize_payload_outward(child_hull->key.payload_kind, child_hull->payload);
+                        child_hull->checksum = payload_checksum(child_hull->payload);
+                        auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
+                        auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
+                                                                                               child_hull_record);
+                        (void)child_hull_inserted;
+                        if (!append_evidence_record_to_store(*child_hull_it->second)) {
+                            return false;
+                        }
+                        propagated_child = child_hull_it->second;
                     }
-                    propagated_child = child_hull_it->second;
                 }
-            }
-            if (!propagate_parent_hulls_from(parent_id, key, propagated_child)) {
-                return false;
+                if (!propagate_parent_hulls_from(parent_id, key, propagated_child)) {
+                    return false;
+                }
             }
         }
     }
@@ -1672,19 +1840,29 @@ LectDbQuerySession LectDatabase::make_query_session() const {
 
 VerificationResult LectDatabase::verify(bool strict) const {
     VerificationResult result;
-    std::unordered_map<EvidenceKey,
-                       std::shared_ptr<const EvidenceRecord>,
-                       EvidenceKeyHash>
-        strict_records;
-    std::unordered_map<NodeId, NodeRecord> strict_parent_nodes;
-    if (strict) {
-        strict_records.reserve(evidence_index_count_);
-        strict_parent_nodes.reserve(std::min<std::size_t>(node_count_, evidence_index_count_));
-    }
     if (!opened_) {
         result.add_error("database is not open");
         return result;
     }
+    const auto load_uncached_evidence = [this](const EvidenceKey& raw_key) -> std::optional<EvidenceRecord> {
+        EvidenceKey normalized_key = raw_key;
+        if (!normalize_evidence_key(&normalized_key)) {
+            return std::nullopt;
+        }
+        const auto* index_entry = find_evidence_index(normalized_key);
+        if (index_entry == nullptr || index_entry->size == 0) {
+            return std::nullopt;
+        }
+        const auto bytes_view = load_evidence_bytes(index_entry->offset, index_entry->size);
+        if (!bytes_view) {
+            return std::nullopt;
+        }
+        auto record = parse_binary_evidence_record(*bytes_view);
+        if (!record || !normalize_evidence_key(&record->key)) {
+            return std::nullopt;
+        }
+        return record;
+    };
     if (identity_.root_domain_fingerprint != fingerprint_intervals(root_intervals_)) {
         result.add_error("root domain fingerprint does not match stored root intervals");
     }
@@ -1738,73 +1916,47 @@ VerificationResult LectDatabase::verify(bool strict) const {
             }
         }
     }
+    std::vector<float> expected_payload;
     for (const auto& slot : evidence_index_) {
         if (slot.key.node_id == kInvalidNodeId || slot.entry.unavailable) {
             continue;
         }
-        std::shared_ptr<const EvidenceRecord> record_owner;
-        const auto loaded_it = evidence_.find(slot.key);
-        if (loaded_it != evidence_.end()) {
-            record_owner = loaded_it->second;
-        } else {
-            record_owner = load_indexed_evidence(slot.key);
-        }
-        if (record_owner == nullptr || record_owner->unavailable) {
+        const auto record_storage = load_uncached_evidence(slot.key);
+        if (!record_storage || record_storage->unavailable) {
             result.add_error("evidence row could not be materialized");
             continue;
         }
-        if (strict) {
-            strict_records.insert_or_assign(slot.key, record_owner);
-        }
-        const auto& record = *record_owner;
+        const auto& record = *record_storage;
         if (record.checksum != payload_checksum(record.payload)) {
             result.add_error("evidence payload checksum mismatch");
         }
-    }
-    if (strict) {
-        std::vector<float> expected_payload;
-        for (const auto& [key, record_owner] : strict_records) {
-            const auto& record = *record_owner;
-            if (!record.child_hull) {
+        if (strict && record.child_hull) {
+            const auto parent_opt = read_node(record.key.node_id);
+            if (!parent_opt) {
                 continue;
             }
-
-            NodeRecord parent_node;
-            const auto parent_it = strict_parent_nodes.find(record.key.node_id);
-            if (parent_it != strict_parent_nodes.end()) {
-                parent_node = parent_it->second;
-            } else {
-                const auto parent_opt = read_node(record.key.node_id);
-                if (!parent_opt) {
-                    continue;
-                }
-                parent_node = *parent_opt;
-                strict_parent_nodes.emplace(parent_node.id, parent_node);
-            }
+            const auto& parent_node = *parent_opt;
             if (parent_node.is_leaf()) {
                 continue;
             }
 
-            EvidenceKey left_key = key;
-            EvidenceKey right_key = key;
+            EvidenceKey left_key = record.key;
+            EvidenceKey right_key = record.key;
             left_key.node_id = parent_node.left;
             right_key.node_id = parent_node.right;
-            const auto left_it = strict_records.find(left_key);
-            const auto right_it = strict_records.find(right_key);
-            if (left_it == strict_records.end() || right_it == strict_records.end()) {
+            const auto left_record = load_uncached_evidence(left_key);
+            const auto right_record = load_uncached_evidence(right_key);
+            if (!left_record || !right_record || left_record->unavailable || right_record->unavailable) {
                 continue;
             }
-            if (left_it->second == nullptr || right_it->second == nullptr) {
-                continue;
-            }
-            if (left_it->second->payload.size() != right_it->second->payload.size()) {
+            if (left_record->payload.size() != right_record->payload.size()) {
                 continue;
             }
 
             expected_payload.clear();
             if (!merge_payload_hull(record.key.payload_kind,
-                                    left_it->second->payload,
-                                    right_it->second->payload,
+                                    left_record->payload,
+                                    right_record->payload,
                                     expected_payload)) {
                 continue;
             }
@@ -2227,7 +2379,7 @@ std::vector<Interval> LectDatabase::node_box_unchecked(NodeId node_id) const {
 std::vector<Interval> LectDatabase::node_box_from_path(const PathCode& path) const {
     auto intervals = root_intervals_;
     for (int depth = 0; depth < path.bit_count; ++depth) {
-        const int dim = split_policy_.choose_dimension(root_intervals_, intervals, depth);
+        const int dim = split_policy_.choose_dimension(root_intervals_, intervals, config_.root_depth + depth);
         if (dim < 0 || dim >= static_cast<int>(intervals.size())) {
             return intervals;
         }
@@ -2357,9 +2509,14 @@ bool LectDatabase::load_manifest(std::string* reason) {
     generation_ = get_u64(values, "generation");
     config_.page_size_bytes = static_cast<std::uint32_t>(get_u64(values, "page_size_bytes", config_.page_size_bytes));
     config_.max_resident_pages = static_cast<std::uint32_t>(get_u64(values, "max_resident_pages", config_.max_resident_pages));
+    config_.root_depth = get_int(values, "root_depth", config_.root_depth);
     config_.max_tree_depth = get_int(values, "max_tree_depth", config_.max_tree_depth);
     if (!valid_tree_depth_limit(config_.max_tree_depth)) {
         if (reason) *reason = "manifest max_tree_depth must be positive";
+        return false;
+    }
+    if (!valid_root_depth(config_.root_depth, config_.max_tree_depth)) {
+        if (reason) *reason = "manifest root_depth must be non-negative and less than max_tree_depth";
         return false;
     }
     node_count_ = static_cast<NodeId>(get_u64(values, "node_count", node_count_));
@@ -2409,6 +2566,7 @@ bool LectDatabase::save_manifest() const {
         << "root_dims=" << root_intervals_.size() << '\n'
         << "page_size_bytes=" << config_.page_size_bytes << '\n'
         << "max_resident_pages=" << config_.max_resident_pages << '\n'
+        << "root_depth=" << config_.root_depth << '\n'
         << "max_tree_depth=" << config_.max_tree_depth << '\n'
         << "node_count=" << node_count_ << '\n'
         << "max_node_id=" << max_node_id_ << '\n'
@@ -2901,7 +3059,7 @@ bool LectDatabase::scan_binary_evidence_store(std::ifstream& input,
         }
 
         const auto path_bytes = path_code_storage_bytes(record_header.path_word_count);
-        const auto payload_bytes = static_cast<std::uint64_t>(record_header.payload_count) * sizeof(float);
+        const auto payload_bytes = static_cast<std::uint64_t>(record_header.payload_count) * sizeof(std::uint16_t);
         const auto expected_record_size = sizeof(EvidenceStoreRecordHeader) + path_bytes + payload_bytes;
         if (record_header.record_size != expected_record_size ||
             record_header.record_size < sizeof(EvidenceStoreRecordHeader) ||
@@ -3088,8 +3246,12 @@ bool LectDatabase::append_evidence_record_to_store(const EvidenceRecord& record)
                                       static_cast<std::streamsize>(path_code_storage_bytes(header.path_word_count)));
     }
     if (!record.payload.empty()) {
-        evidence_append_stream_.write(reinterpret_cast<const char*>(record.payload.data()),
-                                      static_cast<std::streamsize>(record.payload.size() * sizeof(float)));
+        std::vector<std::uint16_t> halves(record.payload.size());
+        for (std::size_t i = 0; i < record.payload.size(); ++i) {
+            halves[i] = f16_from_f32_nearest(record.payload[i]);
+        }
+        evidence_append_stream_.write(reinterpret_cast<const char*>(halves.data()),
+                                      static_cast<std::streamsize>(halves.size() * sizeof(std::uint16_t)));
     }
     if (!evidence_append_stream_) {
         return false;
@@ -3196,6 +3358,14 @@ bool LectDatabase::flush_incremental_storage() const {
 }
 
 bool LectDatabase::maybe_flush_incremental_storage() const {
+    // Prewarm defers the heavy incremental flush (index sidecar + manifest +
+    // node pages) to the final checkpoint. Records are already appended to the
+    // durable store and the read path flushes the append stream on demand, so
+    // skipping the periodic full-sidecar rewrite keeps total store writes
+    // O(records) instead of O(records^2 / kEvidenceAppendsPerFlush).
+    if (bulk_prewarm_mode_ || streaming_prewarm_mode_) {
+        return true;
+    }
     if (evidence_appends_since_flush_ < kEvidenceAppendsPerFlush) {
         return true;
     }
@@ -3203,7 +3373,38 @@ bool LectDatabase::maybe_flush_incremental_storage() const {
 }
 
 void LectDatabase::trim_evidence_cache() const {
-    if (evidence_.size() <= kMaxResidentEvidenceRecords) {
+    // Streaming prewarm: bound the resident cache to streaming_resident_cap_
+    // records. The records are already in the append-only store, so eviction is
+    // cheap -- flush the append stream so the bytes are durable, then drop
+    // resident copies that have a committed on-disk index entry. The index
+    // sidecar is written once at the final checkpoint (not here), so this is
+    // O(evicted) with no full-store or sidecar rewrite. Any evicted child record
+    // needed by the bottom-up parent sweep is reloaded on demand from the store.
+    if (streaming_prewarm_mode_) {
+        if (evidence_.size() <= streaming_resident_cap_) {
+            return;
+        }
+        if (evidence_append_stream_.is_open()) {
+            evidence_append_stream_.flush();
+        }
+        for (auto it = evidence_.begin();
+             it != evidence_.end() && evidence_.size() > streaming_resident_cap_;) {
+            const auto* index_entry = find_evidence_index(it->first);
+            if (index_entry != nullptr && index_entry->size > 0) {
+                it = evidence_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        return;
+    }
+    // During bulk prewarm keep every materialized record resident so the store
+    // is consolidated once at checkpoint instead of being fully rewritten each
+    // time the resident set crosses kMaxResidentEvidenceRecords.
+    const std::size_t cap = bulk_prewarm_mode_
+        ? std::max<std::size_t>(bulk_prewarm_resident_cap_, kMaxResidentEvidenceRecords)
+        : kMaxResidentEvidenceRecords;
+    if (evidence_.size() <= cap) {
         return;
     }
     save_evidence();
@@ -3340,6 +3541,9 @@ void LectDatabase::close_journal_append_stream() {
 }
 
 void LectDatabase::append_committed_transaction(const LectDbTransaction& transaction) {
+    if (bulk_prewarm_mode_ || streaming_prewarm_mode_) {
+        return;
+    }
     if (config_.path.empty() || !ensure_journal_append_stream()) {
         return;
     }
@@ -3374,6 +3578,7 @@ bool LectDatabase::propagate_parent_hulls_from(NodeId parent_id,
             break;
         }
         parent_record->generation = generation_;
+        quantize_payload_outward(parent_record->key.payload_kind, parent_record->payload);
         parent_record->checksum = payload_checksum(parent_record->payload);
         auto shared_parent_record = std::make_shared<EvidenceRecord>(std::move(*parent_record));
         auto [parent_it, parent_inserted] = evidence_.insert_or_assign(shared_parent_record->key,
@@ -3413,6 +3618,7 @@ bool LectDatabase::drain_deferred_parent_hulls() {
         if (!stored->child_hull && !node_item->is_leaf()) {
             if (auto child_hull = build_parent_hull_from_node(*node_item, item.key)) {
                 child_hull->generation = generation_;
+                quantize_payload_outward(child_hull->key.payload_kind, child_hull->payload);
                 child_hull->checksum = payload_checksum(child_hull->payload);
                 auto child_hull_record = std::make_shared<EvidenceRecord>(std::move(*child_hull));
                 auto [child_hull_it, child_hull_inserted] = evidence_.insert_or_assign(child_hull_record->key,
@@ -3498,6 +3704,44 @@ std::optional<EvidenceRecord> LectDatabase::build_parent_hull(NodeId parent_id,
         return std::nullopt;
     }
     return build_parent_hull_from_node(*parent_node, key_template);
+}
+
+std::size_t LectDatabase::materialize_internal_parent_hulls_bottom_up(
+    int deepest_depth,
+    const EvidenceKey& key_template,
+    const std::function<void(int depth, std::size_t built)>& layer_progress) {
+    std::size_t built = 0;
+    for (int depth = deepest_depth - 1; depth >= 0; --depth) {
+        for (NodeId node_id : layer_nodes(depth)) {
+            const auto parent_node = read_node(node_id);
+            if (!parent_node || parent_node->is_leaf()) {
+                continue;
+            }
+            auto parent_record = build_parent_hull_from_node(*parent_node, key_template);
+            if (!parent_record) {
+                // Children not (yet) materialized (e.g. sector-boundary straddle
+                // leaf with no stored evidence); leave this ancestor uncached.
+                continue;
+            }
+            parent_record->generation = generation_;
+            quantize_payload_outward(parent_record->key.payload_kind, parent_record->payload);
+            parent_record->checksum = payload_checksum(parent_record->payload);
+            auto shared_parent_record = std::make_shared<EvidenceRecord>(std::move(*parent_record));
+            auto [parent_it, parent_inserted] = evidence_.insert_or_assign(shared_parent_record->key,
+                                                                           shared_parent_record);
+            (void)parent_inserted;
+            remember_evidence_metadata(*parent_it->second);
+            if (!config_.open.read_only && !append_evidence_record_to_store(*parent_it->second)) {
+                return built;
+            }
+            pending_changes_ = true;
+            ++built;
+        }
+        if (layer_progress) {
+            layer_progress(depth, built);
+        }
+    }
+    return built;
 }
 
 LectDbQuerySession::LectDbQuerySession(const LectDatabase& database)

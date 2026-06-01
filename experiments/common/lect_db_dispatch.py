@@ -51,6 +51,7 @@ def ensure_shelf_cache(
     max_depth: int,
     endpoint_source: str = "aafk",
     lect_split_policy: str = "aafk_volume_min",
+    lect_root_intervals: str = "",
     canonical_mode: bool = True,
     clean_cache: bool,
     dry_run: bool,
@@ -64,6 +65,7 @@ def ensure_shelf_cache(
         max_depth=int(max_depth),
         endpoint_source=str(endpoint_source),
         lect_split_policy=str(lect_split_policy),
+        lect_root_intervals=str(lect_root_intervals),
         canonical_mode=bool(canonical_mode),
         clean_cache=bool(clean_cache),
         dry_run=bool(dry_run),
@@ -106,6 +108,8 @@ def build_shelf_sbf_case_command(
     external_evidence_scoring: bool = True,
     clean_active_cache: bool = True,
     latency_profile: str = "stable",
+    lect_root_intervals: str = "",
+    aafk_sample_nodes_per_depth: int = 8,
 ) -> list[str]:
     command = [
         python_executable,
@@ -146,9 +150,17 @@ def build_shelf_sbf_case_command(
         str(external_evidence_mode),
         "--latency-profile",
         str(latency_profile),
+        "--aafk-sample-nodes-per-depth",
+        str(max(1, int(aafk_sample_nodes_per_depth))),
     ]
+    if str(lect_root_intervals).strip():
+        command.extend([
+            "--lect-root-intervals",
+            str(lect_root_intervals),
+        ])
     command.append("--clean-active-cache" if clean_active_cache else "--no-clean-active-cache")
     command.append("--endpoint-evidence-cache" if endpoint_evidence_cache else "--no-endpoint-evidence-cache")
+    command.append("--incremental-materialization" if endpoint_evidence_cache else "--no-incremental-materialization")
     command.append("--use-external-evidence" if use_external_evidence else "--no-use-external-evidence")
     command.append("--external-evidence-materialization" if external_evidence_materialization else "--no-external-evidence-materialization")
     command.append("--external-evidence-scoring" if external_evidence_scoring else "--no-external-evidence-scoring")
@@ -183,8 +195,13 @@ def build_current_shelf_sbf_anytime_command(
     rbf_max_depth: int = UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
     canonical_cache: bool = True,
     require_no_repair: bool = False,
+    lect_root_intervals: str = "",
+    aafk_sample_nodes_per_depth: int = 8,
+    ffb_auto_mask_inert: bool = True,
+    rbf_ffb_start_depth: int = UNIFIED_SBF_ANYTIME_FFB_START_DEPTH,
 ) -> list[str]:
     effective_rbf_max_depth = max(1, int(rbf_max_depth))
+    effective_ffb_start_depth = min(max(1, int(rbf_ffb_start_depth)), effective_rbf_max_depth)
     command = [
         python_executable,
         str(SHELF_SBF_ANYTIME_CURRENT),
@@ -219,7 +236,7 @@ def build_current_shelf_sbf_anytime_command(
         "--component-connect-ffb-max-depth",
         str(effective_rbf_max_depth),
         "--rbf-ffb-start-depth",
-        str(min(int(UNIFIED_SBF_ANYTIME_FFB_START_DEPTH), effective_rbf_max_depth)),
+        str(effective_ffb_start_depth),
         "--audit-segment-step",
         str(UNIFIED_SBF_ANYTIME_AUDIT_SEGMENT_STEP),
         "--post-audit-segment-step",
@@ -245,7 +262,14 @@ def build_current_shelf_sbf_anytime_command(
         csv_floats(UNIFIED_SBF_ANYTIME_POST_CONNECT_TIME_BUDGET_MS),
         "--connector-max-pairs-per-gap",
         "1",
+        "--aafk-sample-nodes-per-depth",
+        str(max(1, int(aafk_sample_nodes_per_depth))),
     ]
+    if str(lect_root_intervals).strip():
+        command.extend([
+            "--lect-root-intervals",
+            str(lect_root_intervals),
+        ])
     command.append("--clean-active-cache" if clean_active_cache else "--no-clean-active-cache")
     command.append("--endpoint-evidence-cache" if endpoint_evidence_cache else "--no-endpoint-evidence-cache")
     command.append("--use-external-evidence" if use_external_evidence else "--no-use-external-evidence")
@@ -254,6 +278,7 @@ def build_current_shelf_sbf_anytime_command(
     command.append("--external-evidence-auto-build-snapshot" if external_evidence_auto_build_snapshot else "--no-external-evidence-auto-build-snapshot")
     command.append("--rbf-canonical-cache" if bool(canonical_cache) else "--no-rbf-canonical-cache")
     command.append("--require-no-repair" if bool(require_no_repair) else "--no-require-no-repair")
+    command.append("--ffb-auto-mask-inert" if bool(ffb_auto_mask_inert) else "--no-ffb-auto-mask-inert")
     return command
 
 

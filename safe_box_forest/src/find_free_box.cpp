@@ -100,6 +100,10 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
     };
 
+    // Seed-independent: the canonical LECT split depends only on (robot,
+    // domain). No query-seed coupling is applied to the split values.
+    OracleSplitOptions split_options = options.split;
+
     const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
     OracleNodeId node = oracle_.root_node();
     int changed_dim = -1;
@@ -109,6 +113,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             result.fail_code = 4;
             break;
         }
+
+        oracle_.record_visit(node);
 
         const auto intervals_start = Clock::now();
         auto tree_intervals = oracle_.node_intervals(node);
@@ -125,7 +131,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             if (oracle_.is_leaf(node)) {
                 const auto split_start = Clock::now();
                 const int split_depth = oracle_.depth(node);
-                const auto split = oracle_.split_node(node, tree_intervals, changed_dim, options.split);
+                const auto split = oracle_.split_node(node, tree_intervals, changed_dim, split_options);
                 record_elapsed(context, "oracle.split_node", split_start);
                 record_split_diagnostics(context, split, tree_intervals, split_depth);
                 if (!split.split) {
@@ -152,6 +158,24 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             result.changed_dim = changed_dim;
             result.intervals = std::move(query_intervals);
             result.fail_code = 0;
+            // P4: the descent returns the FIRST (hence shallowest) canonical
+            // ancestor that certifies DefinitelyFree along the seed path; this is
+            // the largest certified box containing the seed and depends only on
+            // which canonical nodes are certified (seed-independent). Record the
+            // hit depth and box log-volume so the seed-independent reuse can be
+            // measured (mean hit depth should drop / certified box volume rise).
+            const double free_depth = static_cast<double>(oracle_.depth(node));
+            context.diagnostics().add_counter("ffb.free_ancestor_hits");
+            context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
+            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth);
+            double free_log_volume = 0.0;
+            for (const auto& interval : result.intervals) {
+                const double width = std::max(0.0, interval.width());
+                if (width > 0.0) {
+                    free_log_volume += std::log(width);
+                }
+            }
+            context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
             break;
         }
         if (validation == BoxValidation::Occupied) {
@@ -170,7 +194,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         if (oracle_.is_leaf(node)) {
             const auto split_start = Clock::now();
             const int split_depth = oracle_.depth(node);
-            const auto split = oracle_.split_node(node, tree_intervals, changed_dim, options.split);
+            const auto split = oracle_.split_node(node, tree_intervals, changed_dim, split_options);
             record_elapsed(context, "oracle.split_node", split_start);
             record_split_diagnostics(context, split, tree_intervals, split_depth);
             if (!split.split) {

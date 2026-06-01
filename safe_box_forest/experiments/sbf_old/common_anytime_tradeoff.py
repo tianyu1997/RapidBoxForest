@@ -199,6 +199,13 @@ def incumbent_stage_record(
     incumbent_total_length = sum(float(row["path_length"]) for row in incumbent_rows if row.get("path_length") is not None)
     audit_count = len(incumbent_rows)
     incumbent_mean_length = incumbent_total_length / audit_count if audit_count else None
+    stage_audit_count = sum(1 for row in raw_tasks if bool(row.get("audit_passed")))
+    stage_native_count = sum(
+        1
+        for row in raw_tasks
+        if bool(row.get("audit_passed")) and bool(row.get("native_query_ok"))
+    )
+    stage_selected_count = sum(1 for row in raw_tasks if bool(row.get("ok")))
     return {
         "method": str(method),
         "stage_id": str(stage_id),
@@ -214,6 +221,12 @@ def incumbent_stage_record(
         "task_count": int(task_count),
         "incumbent_success_count": int(audit_count),
         "incumbent_audit_sr": float(audit_count) / max(1, int(task_count)),
+        "stage_audit_success_count": int(stage_audit_count),
+        "stage_audit_sr": float(stage_audit_count) / max(1, int(task_count)),
+        "stage_native_success_count": int(stage_native_count),
+        "stage_native_audit_sr": float(stage_native_count) / max(1, int(task_count)),
+        "stage_selected_success_count": int(stage_selected_count),
+        "stage_selected_sr": float(stage_selected_count) / max(1, int(task_count)),
         "incumbent_total_length": float(incumbent_total_length) if audit_count else None,
         "incumbent_mean_length": float(incumbent_mean_length) if incumbent_mean_length is not None else None,
         "raw_tasks": raw_tasks,
@@ -257,6 +270,9 @@ def aggregate_stage_records(
                     success_query_times.append(mean(task.get("query_s") for task in successes))
         else:
             success_total = sum(int(row.get("incumbent_success_count", 0)) for row in rows)
+            stage_audit_total = sum(int(row.get("stage_audit_success_count", 0)) for row in rows)
+            stage_native_total = sum(int(row.get("stage_native_success_count", 0)) for row in rows)
+            stage_selected_total = sum(int(row.get("stage_selected_success_count", 0)) for row in rows)
             mean_lengths = [row.get("incumbent_mean_length") for row in rows if row.get("incumbent_mean_length") is not None]
             total_lengths = [row.get("incumbent_total_length") for row in rows if row.get("incumbent_total_length") is not None]
             success_query_times = []
@@ -275,6 +291,14 @@ def aggregate_stage_records(
             "path_length": median(mean_lengths),
             "path_length_total": median(total_lengths),
             "audit_sr": float(success_total) / max(1, task_total),
+            "incumbent_success_count": success_total,
+            "incumbent_audit_sr": float(success_total) / max(1, task_total),
+            "stage_audit_success_count": stage_audit_total if not success_only_stage else success_total,
+            "stage_audit_sr": float(stage_audit_total if not success_only_stage else success_total) / max(1, task_total),
+            "stage_native_success_count": stage_native_total if not success_only_stage else success_total,
+            "stage_native_audit_sr": float(stage_native_total if not success_only_stage else success_total) / max(1, task_total),
+            "stage_selected_success_count": stage_selected_total if not success_only_stage else success_total,
+            "stage_selected_sr": float(stage_selected_total if not success_only_stage else success_total) / max(1, task_total),
             "seed_count": len(rows),
             "task_count": task_total,
             "success_count": success_total,

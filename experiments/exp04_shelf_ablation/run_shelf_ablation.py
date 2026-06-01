@@ -23,7 +23,10 @@ from experiments.common.experiment_io import (  # noqa: E402
     write_json,
 )
 from experiments.common.cache_maintenance import prune_directory_children  # noqa: E402
-from experiments.common.anytime_defaults import UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH  # noqa: E402
+from experiments.common.anytime_defaults import (  # noqa: E402
+    UNIFIED_SBF_ANYTIME_FFB_START_DEPTH,
+    UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
+)
 from experiments.common.lect_db_dispatch import (  # noqa: E402
     build_current_shelf_sbf_anytime_command,
     ensure_shelf_cache,
@@ -38,6 +41,39 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
 
 
 BASELINE_NAME = "baseline_warm_aafk_support_hull_8t_aafk_volume_min"
+FIXED_SHELF_ROOT_INTERVALS = ";".join([
+    "0.0:1.5707963267948966",
+    "0.3194:0.8645",
+    "-0.5077:0.5073",
+    "-1.98947519:-0.33002121",
+    "-0.447:0.4473",
+    "-1.34734773:1.51007653",
+    "1.262:1.8794",
+])
+
+
+def row_artifact_path(args: argparse.Namespace, name: str) -> Path:
+    return args.out_dir / f"{name}.json"
+
+
+def build_run_record(row: dict[str, Any], measurement: dict[str, Any]) -> dict[str, Any]:
+    artifact_path = Path(str(row["artifact_path"]))
+    artifact_exists = artifact_path.exists()
+    returncode = measurement.get("returncode")
+    if returncode == 0 and artifact_exists:
+        status = "completed"
+    elif returncode == 0:
+        status = "missing_artifact"
+    elif returncode is None:
+        status = "dry_run"
+    else:
+        status = "failed"
+    return {
+        "name": row["name"],
+        "status": status,
+        "artifact": str(artifact_path) if artifact_exists else None,
+        "measurement": measurement,
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -60,8 +96,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--only", default="all", help="Comma-separated row names or all.")
-    parser.add_argument("--external-evidence-mode", choices=["snapshot"], default="snapshot")
+    parser.add_argument("--external-evidence-mode", choices=["snapshot", "legacy"], default="snapshot")
     parser.add_argument("--external-evidence-auto-build-snapshot", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--lect-root-intervals", default=FIXED_SHELF_ROOT_INTERVALS)
+    parser.add_argument("--aafk-sample-nodes-per-depth", type=int, default=8)
+    # Global recommended defaults for FFB depth compression.
+    parser.add_argument("--ffb-auto-mask-inert", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--rbf-ffb-start-depth", type=int, default=UNIFIED_SBF_ANYTIME_FFB_START_DEPTH)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -82,7 +123,7 @@ def ablation_command(
 ) -> list[str]:
     return build_current_shelf_sbf_anytime_command(
         python_executable=sys.executable,
-        out_json=args.out_dir / f"{name}.json",
+        out_json=row_artifact_path(args, name),
         database_path=args.out_dir / "active_cache" / name,
         case_name=name,
         endpoint_source=str(endpoint_source),
@@ -103,6 +144,10 @@ def ablation_command(
         rbf_max_depth=int(rbf_max_depth if rbf_max_depth is not None else args.rbf_max_depth),
         canonical_cache=bool(args.warm_cache_canonical),
         require_no_repair=bool(args.require_no_repair),
+        lect_root_intervals=str(args.lect_root_intervals),
+        aafk_sample_nodes_per_depth=int(args.aafk_sample_nodes_per_depth),
+        ffb_auto_mask_inert=bool(getattr(args, "ffb_auto_mask_inert", True)),
+        rbf_ffb_start_depth=int(getattr(args, "rbf_ffb_start_depth", UNIFIED_SBF_ANYTIME_FFB_START_DEPTH)),
     )
 
 
@@ -111,22 +156,27 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     critsample_cache_label = channel_cache_label(str(args.warm_cache_label), "critsample", "aafk_volume_min")
     round_robin_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "round_robin")
     hybrid_dim6_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min_dim6")
+    support_hull_split_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "support_hull_volume_min")
     rows = [
         {
             "name": BASELINE_NAME,
+            "artifact_path": str(row_artifact_path(args, BASELINE_NAME)),
             "kind": "sbf_anytime_current",
             "factor": "baseline",
-            "description": "Warm native-root cache + AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy.",
+            "description": "No external LECT DB reuse; keep the active online endpoint cache path with AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy.",
             "changes_from_baseline": [],
-            "uses_external_evidence": True,
-            "warm_cache_label": baseline_cache_label,
-            "warm_cache_endpoint_source": "aafk",
-            "warm_cache_lect_split_policy": "aafk_volume_min",
+            "uses_external_evidence": False,
             "active_cache_path": str(args.out_dir / "active_cache" / BASELINE_NAME),
-            "command": ablation_command(args, name=BASELINE_NAME, warm_cache_label=baseline_cache_label),
+            "command": ablation_command(
+                args,
+                name=BASELINE_NAME,
+                use_external_evidence=False,
+                endpoint_evidence_cache=True,
+            ),
         },
         {
             "name": "no_lect_cache_online_envelopes",
+            "artifact_path": str(row_artifact_path(args, "no_lect_cache_online_envelopes")),
             "kind": "sbf_anytime_current",
             "factor": "cache",
             "description": "Disable external reuse and disable active endpoint evidence reuse so payloads stay fully online.",
@@ -142,6 +192,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         {
             "name": "critsample_endpoint_support_hull",
+            "artifact_path": str(row_artifact_path(args, "critsample_endpoint_support_hull")),
             "kind": "sbf_anytime_current",
             "factor": "endpoint_source",
             "description": "Replace AAFK with CritSample and reuse a CritSample-specific warm LECT cache.",
@@ -160,6 +211,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         {
             "name": "aabb_envelope_only",
+            "artifact_path": str(row_artifact_path(args, "aabb_envelope_only")),
             "kind": "sbf_anytime_current",
             "factor": "envelope_collision",
             "description": "Replace SupportHull with link/AABB envelopes under the same staged protocol.",
@@ -178,6 +230,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         {
             "name": "single_thread",
+            "artifact_path": str(row_artifact_path(args, "single_thread")),
             "kind": "sbf_anytime_current",
             "factor": "threads",
             "description": "Same as baseline with one worker thread.",
@@ -196,6 +249,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         {
             "name": "round_robin_split_policy",
+            "artifact_path": str(row_artifact_path(args, "round_robin_split_policy")),
             "kind": "sbf_anytime_current",
             "factor": "lect_split_policy",
             "description": "Same as baseline but replace AAFKVolumeMin with deterministic round-robin splitting and reuse a round-robin warm LECT cache.",
@@ -214,6 +268,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         },
         {
             "name": "hybrid_dim6_split_policy",
+            "artifact_path": str(row_artifact_path(args, "hybrid_dim6_split_policy")),
             "kind": "sbf_anytime_current",
             "factor": "lect_split_policy",
             "description": "Same as baseline but use the AAFKVolumeMin+dim6 hybrid schedule that guarantees coverage of starved DOFs (e.g. the wrist roll) and reuse a hybrid-specific warm LECT cache.",
@@ -228,6 +283,25 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 name="hybrid_dim6_split_policy",
                 lect_split_policy="aafk_volume_min_dim6",
                 warm_cache_label=hybrid_dim6_cache_label,
+            ),
+        },
+        {
+            "name": "support_hull_split_schedule",
+            "artifact_path": str(row_artifact_path(args, "support_hull_split_schedule")),
+            "kind": "sbf_anytime_current",
+            "factor": "lect_split_schedule_criterion",
+            "description": "NEW: seed/scene-independent split schedule that minimises the SupportHull swept-envelope volume (the certification envelope) instead of the looser endpoint-AABB sum. Compares the schedule criterion (AABB vs support-hull) while keeping the canonical, seed-independent invariant.",
+            "changes_from_baseline": ["lect_split_policy=support_hull_volume_min", "warm_cache=support_hull_volume_min"],
+            "uses_external_evidence": True,
+            "warm_cache_label": support_hull_split_cache_label,
+            "warm_cache_endpoint_source": "aafk",
+            "warm_cache_lect_split_policy": "support_hull_volume_min",
+            "active_cache_path": str(args.out_dir / "active_cache" / "support_hull_split_schedule"),
+            "command": ablation_command(
+                args,
+                name="support_hull_split_schedule",
+                lect_split_policy="support_hull_volume_min",
+                warm_cache_label=support_hull_split_cache_label,
             ),
         },
     ]
@@ -292,6 +366,7 @@ def main() -> int:
                 max_depth=prewarm_max_depth,
                 endpoint_source=str(spec["endpoint_source"]),
                 lect_split_policy=str(spec["lect_split_policy"]),
+                lect_root_intervals=str(args.lect_root_intervals),
                 canonical_mode=bool(spec["canonical_mode"]),
                 clean_cache=bool(args.clean_cache),
                 dry_run=bool(args.dry_run),
@@ -307,7 +382,7 @@ def main() -> int:
     if args.execute:
         for row in rows:
             measurement = run_command(row["command"], dry_run=bool(args.dry_run), extra_env=extra_env)
-            run_records.append({"name": row["name"], "measurement": measurement})
+            run_records.append(build_run_record(row, measurement))
             if not args.dry_run:
                 row_prefix = f"{row['name']}"
                 for candidate in active_cache_root.glob(f"{row_prefix}*"):

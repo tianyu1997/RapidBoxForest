@@ -30,9 +30,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", type=Path, default=DEFAULT_OUTPUT_JSON)
     parser.add_argument("--timeout-ms", type=float, default=80.0)
     parser.add_argument("--max-iters", type=int, default=50000)
-    parser.add_argument("--step-size", type=float, default=0.25)
-    parser.add_argument("--goal-bias", type=float, default=0.4)
-    parser.add_argument("--segment-resolution", type=int, default=16)
+    # Defaults mirror the production RRTConnectConfig (connector.h): step_size 0.5
+    # with segment_resolution 32 keeps collision-check density at 0.0156 rad/check
+    # while traversing the narrow shelf passages within budget.
+    parser.add_argument("--step-size", type=float, default=0.5)
+    parser.add_argument("--goal-bias", type=float, default=0.2)
+    parser.add_argument("--segment-resolution", type=int, default=32)
     parser.add_argument("--local-radius", type=float, default=0.0)
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--query", default="all")

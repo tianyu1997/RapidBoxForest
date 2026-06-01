@@ -142,6 +142,16 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
     database_path = args.database_path or (args.out_json.parent / "cache" / args.out_json.stem)
     cfg.database.path = str(database_path)
     cfg.database.create_if_missing = True
+    set_if_available(cfg.database, "canonical_mode", bool(args.canonical_symmetry))
+    set_if_available(
+        cfg.database,
+        "symmetry_descriptor",
+        "joint_symmetry_native_v1" if bool(args.canonical_symmetry) else "",
+    )
+    # Allow the lazily-split database tree to descend as deep as the FFB requests
+    # (default C++ database max_tree_depth=64 was clamping FFB depth to 63, far
+    # below the requested ffb_depth=120 and the old live-oracle behaviour).
+    set_if_available(cfg.database, "max_tree_depth", int(args.ffb_depth))
 
     if args.preset == "ifk_strict":
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
@@ -189,6 +199,12 @@ def configure(args: argparse.Namespace, seed: int) -> sbf.SBFConfig:
             cfg.envelope_type.kdop_config.direction_set = sbf.KdopDirectionSet.DOP26
             cfg.envelope_type.kdop_config.safety_epsilon = float(args.kdop_safety_epsilon)
             cfg.envelope_type.support_hull_config.safety_epsilon = float(args.support_hull_safety_epsilon)
+
+    force_stateless_materialization = (
+        cfg.endpoint_source.source == sbf.EndpointSource.CritSample
+        and cfg.validation.mode == sbf.OracleValidationMode.CoverageHeuristic
+    )
+    set_if_available(cfg.validation, "stateless_materialization_context", force_stateless_materialization)
 
     cfg.envelope_type.n_subdivisions = int(args.envelope_subdivisions)
     use_best_tighten = args.split_policy == "best-tighten"
@@ -414,6 +430,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="support_hull_coverage",
     )
     parser.add_argument("--envelope", choices=["preset", "link", "kdop26", "support_hull"], default="support_hull")
+    parser.add_argument("--canonical-symmetry", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--grow-only", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--seeds", type=int, default=1)
     parser.add_argument("--seed-base", type=int, default=20260504)
@@ -431,8 +448,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--best-tighten-depth-synchronous", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--best-tighten-prefer-sector-boundary", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--best-tighten-use-minimax", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--best-tighten-shape-balancing", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--best-tighten-recent-dim-cooling", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--best-tighten-shape-balancing", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--best-tighten-recent-dim-cooling", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--enable-merger", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--enable-connector", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--coverage-first-stop-loss", action=argparse.BooleanOptionalAction, default=True)
