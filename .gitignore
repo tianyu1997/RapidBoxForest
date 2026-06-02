@@ -32,6 +32,15 @@ compile_commands.json
 .cache/
 .pytest_cache/
 
+# LaTeX intermediate files
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.xdv
+*.out
+*.blg
+
 # Local editor/system files
 .vscode/
 .idea/

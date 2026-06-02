@@ -41,6 +41,28 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
 
 
 BASELINE_NAME = "baseline_warm_aafk_support_hull_8t_aafk_volume_min"
+DEFAULT_BASELINE_WARM_PREWARM_DEPTH = 23
+
+
+def warm_cache_paths(prewarm_depth: int) -> tuple[str, Path, Path]:
+    root = REPO_ROOT / "outputs" / "new_experiments" / f"exp04_shelf_ablation_d{int(prewarm_depth)}"
+    label = f"iiwa_shelf_endpoint_only_p{int(prewarm_depth)}_canonical_dim0q4_fixed_root"
+    prewarm_json = root / f"d{int(prewarm_depth)}_prewarm_canonical_aafk_volume_min.json"
+    return label, root / "cache", prewarm_json
+
+
+def warm_cache_ready(cache_path: Path) -> tuple[bool, str]:
+    snapshot_manifest = cache_path / "lect_snapshot" / "manifest.bin"
+    evidence_index = cache_path / "evidence.index"
+    if snapshot_manifest.is_file():
+        return True, ""
+    if evidence_index.is_file() and evidence_index.stat().st_size > 64:
+        return True, ""
+    return (
+        False,
+        f"warm cache at {cache_path} is not ready for external snapshot reuse "
+        f"(missing lect_snapshot/manifest.bin and evidence.index)",
+    )
 FIXED_SHELF_ROOT_INTERVALS = ";".join([
     "0.0:1.5707963267948966",
     "0.3194:0.8645",
@@ -103,9 +125,54 @@ def parse_args() -> argparse.Namespace:
     # Global recommended defaults for FFB depth compression.
     parser.add_argument("--ffb-auto-mask-inert", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-ffb-start-depth", type=int, default=UNIFIED_SBF_ANYTIME_FFB_START_DEPTH)
+    parser.add_argument(
+        "--skip-prewarm",
+        action="store_true",
+        help="Do not run or refresh prewarm; load existing --prewarm-json summaries only.",
+    )
+    parser.add_argument(
+        "--baseline-warm-cache-depth",
+        type=int,
+        default=None,
+        help="Baseline row reuses exp04_shelf_ablation_d<depth> warm LECT cache (external evidence on).",
+    )
+    parser.add_argument(
+        "--baseline-d23-cache",
+        action="store_true",
+        help=f"Shorthand for --baseline-warm-cache-depth {DEFAULT_BASELINE_WARM_PREWARM_DEPTH}.",
+    )
+    parser.add_argument(
+        "--non-baseline-no-cache",
+        action="store_true",
+        help="All non-baseline rows disable external LECT and online endpoint evidence reuse.",
+    )
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
+
+
+def baseline_warm_prewarm_depth(args: argparse.Namespace) -> int | None:
+    if bool(getattr(args, "baseline_d23_cache", False)):
+        return int(DEFAULT_BASELINE_WARM_PREWARM_DEPTH)
+    depth = getattr(args, "baseline_warm_cache_depth", None)
+    if depth is None:
+        return None
+    return int(depth)
+
+
+def apply_run_profile_defaults(args: argparse.Namespace) -> None:
+    warm_depth = baseline_warm_prewarm_depth(args)
+    if warm_depth is not None:
+        label, cache_root, prewarm_json = warm_cache_paths(warm_depth)
+        if args.warm_cache_label is None:
+            args.warm_cache_label = label
+        if args.rbf_cache_root is None:
+            args.rbf_cache_root = cache_root
+        if args.prewarm_json is None:
+            args.prewarm_json = prewarm_json
+        args.prewarm_depth = int(warm_depth)
+        if args.prewarm_max_depth is None:
+            args.prewarm_max_depth = 64
 
 
 def ablation_command(
@@ -152,26 +219,62 @@ def ablation_command(
 
 
 def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
-    baseline_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min")
+    baseline_warm_depth = baseline_warm_prewarm_depth(args)
+    baseline_warm_cache = baseline_warm_depth is not None
+    non_baseline_no_cache = bool(getattr(args, "non_baseline_no_cache", False))
+    baseline_cache_label = (
+        str(args.warm_cache_label)
+        if baseline_warm_cache
+        else channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min")
+    )
     critsample_cache_label = channel_cache_label(str(args.warm_cache_label), "critsample", "aafk_volume_min")
     round_robin_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "round_robin")
     hybrid_dim6_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "aafk_volume_min_dim6")
     support_hull_split_cache_label = channel_cache_label(str(args.warm_cache_label), "aafk", "support_hull_volume_min")
+
+    def no_cache_overrides(**kwargs: Any) -> dict[str, Any]:
+        if not non_baseline_no_cache:
+            return kwargs
+        return {
+            **kwargs,
+            "use_external_evidence": False,
+            "endpoint_evidence_cache": False,
+            "warm_cache_label": None,
+        }
+
+    baseline_description = (
+        f"Reuse the d{baseline_warm_depth} warm LECT cache with AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy."
+        if baseline_warm_cache
+        else "No external LECT DB reuse; keep the active online endpoint cache path with AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy."
+    )
     rows = [
         {
             "name": BASELINE_NAME,
             "artifact_path": str(row_artifact_path(args, BASELINE_NAME)),
             "kind": "sbf_anytime_current",
             "factor": "baseline",
-            "description": "No external LECT DB reuse; keep the active online endpoint cache path with AAFK + SupportHull + 8 threads + AAFKVolumeMin split policy.",
-            "changes_from_baseline": [],
-            "uses_external_evidence": False,
+            "description": baseline_description,
+            "changes_from_baseline": (
+                [f"warm_cache=d{baseline_warm_depth}"] if baseline_warm_cache else []
+            ),
+            "uses_external_evidence": bool(baseline_warm_cache),
+            **(
+                {
+                    "warm_cache_label": baseline_cache_label,
+                    "warm_cache_endpoint_source": "aafk",
+                    "warm_cache_lect_split_policy": "aafk_volume_min",
+                }
+                if baseline_warm_cache
+                else {}
+            ),
             "active_cache_path": str(args.out_dir / "active_cache" / BASELINE_NAME),
             "command": ablation_command(
                 args,
                 name=BASELINE_NAME,
-                use_external_evidence=False,
+                use_external_evidence=bool(baseline_warm_cache),
                 endpoint_evidence_cache=True,
+                rbf_max_depth=int(args.prewarm_max_depth) if baseline_warm_cache and args.prewarm_max_depth is not None else None,
+                **({"warm_cache_label": baseline_cache_label} if baseline_warm_cache else {}),
             ),
         },
         {
@@ -206,7 +309,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="critsample_endpoint_support_hull",
                 endpoint_source="critsample",
-                warm_cache_label=critsample_cache_label,
+                **no_cache_overrides(warm_cache_label=critsample_cache_label),
             ),
         },
         {
@@ -225,7 +328,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="aabb_envelope_only",
                 envelope="link",
-                warm_cache_label=baseline_cache_label,
+                **no_cache_overrides(warm_cache_label=baseline_cache_label),
             ),
         },
         {
@@ -244,7 +347,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="single_thread",
                 threads=1,
-                warm_cache_label=baseline_cache_label,
+                **no_cache_overrides(warm_cache_label=baseline_cache_label),
             ),
         },
         {
@@ -263,7 +366,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="round_robin_split_policy",
                 lect_split_policy="round_robin",
-                warm_cache_label=round_robin_cache_label,
+                **no_cache_overrides(warm_cache_label=round_robin_cache_label),
             ),
         },
         {
@@ -282,7 +385,7 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="hybrid_dim6_split_policy",
                 lect_split_policy="aafk_volume_min_dim6",
-                warm_cache_label=hybrid_dim6_cache_label,
+                **no_cache_overrides(warm_cache_label=hybrid_dim6_cache_label),
             ),
         },
         {
@@ -301,10 +404,25 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 args,
                 name="support_hull_split_schedule",
                 lect_split_policy="support_hull_volume_min",
-                warm_cache_label=support_hull_split_cache_label,
+                **no_cache_overrides(warm_cache_label=support_hull_split_cache_label),
             ),
         },
     ]
+    if non_baseline_no_cache:
+        for row in rows:
+            if row["name"] == BASELINE_NAME:
+                continue
+            row["uses_external_evidence"] = False
+            row["changes_from_baseline"] = list(row.get("changes_from_baseline", [])) + [
+                "use_external_evidence=false",
+                "endpoint_evidence_cache=false",
+            ]
+            for key in (
+                "warm_cache_label",
+                "warm_cache_endpoint_source",
+                "warm_cache_lect_split_policy",
+            ):
+                row.pop(key, None)
     wanted = set(csv_list(args.only))
     if wanted and "all" not in wanted:
         rows = [row for row in rows if row["name"] in wanted]
@@ -322,6 +440,7 @@ def omitted_rows() -> list[dict[str, Any]]:
 
 def main() -> int:
     args = parse_args()
+    apply_run_profile_defaults(args)
     if args.warm_cache_label is None:
         args.warm_cache_label = DEFAULT_P18_CACHE_LABEL if bool(args.warm_cache_canonical) else DEFAULT_P18_NATIVE_CACHE_LABEL
     prewarm_max_depth = int(args.prewarm_max_depth if args.prewarm_max_depth is not None else args.rbf_max_depth)
@@ -330,6 +449,16 @@ def main() -> int:
     out_json = args.out_json or (args.out_dir / "shelf_ablation_manifest.json")
     args.out_json = out_json
     rows = command_rows(args)
+    warm_depth = baseline_warm_prewarm_depth(args)
+    if args.execute and not args.dry_run and warm_depth is not None:
+        _, cache_root, _ = warm_cache_paths(warm_depth)
+        cache_path = cache_root / str(args.warm_cache_label)
+        ready, reason = warm_cache_ready(cache_path)
+        if not ready and bool(args.skip_prewarm):
+            raise SystemExit(
+                f"{reason}. Build it first, e.g. ensure_shelf_cache under "
+                f"outputs/new_experiments/exp04_shelf_ablation_d{warm_depth}/."
+            )
     cache_specs: dict[str, dict[str, str]] = {}
     for row in rows:
         if not bool(row.get("uses_external_evidence")):
@@ -356,7 +485,7 @@ def main() -> int:
     for label, spec in cache_specs.items():
         prewarm_json = args.prewarm_json if label == str(args.warm_cache_label) else args.out_dir / f"p18_prewarm_{label}.json"
         prewarm_jsons[label] = prewarm_json
-        if args.execute:
+        if args.execute and not bool(getattr(args, "skip_prewarm", False)):
             prewarm_summaries[label] = ensure_shelf_cache(
                 prewarm_json=prewarm_json,
                 cache_path=args.rbf_cache_root / label,

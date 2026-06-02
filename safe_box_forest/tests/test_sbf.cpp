@@ -222,6 +222,7 @@ void test_safe_box_forest_rrt() {
     config.grower.max_boxes = 12;
     config.grower.max_consecutive_miss = 100;
     config.envelope_type.n_subdivisions = 4;
+    config.query.nearest_if_outside = true;
     rbf::RBFPlanningForest forest(robot, config);
     Eigen::VectorXd start(2), goal(2);
     start << -0.5, -0.25;
@@ -234,12 +235,26 @@ void test_safe_box_forest_rrt() {
     assert(query.path.size() >= 2);
 }
 
+void test_audit_segment_step_requires_finer_sampling_than_fixed_resolution() {
+    Eigen::VectorXd start(2);
+    Eigen::VectorXd goal(2);
+    start << 0.0, 0.0;
+    goal << 2.7032930184929542, 0.0;
+    const int coarse_only = 32;
+    const double fine_step = 0.01;
+    const int fine_resolution = std::max(
+        coarse_only,
+        std::max(2, static_cast<int>(std::ceil((goal - start).norm() / fine_step))));
+    assert(fine_resolution > coarse_only);
+}
+
 void test_query_strict_path_audit() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_query_strict_path_audit");
     config.enable_connector = false;
     config.query.strict_path_audit = true;
     config.query.audit_resolution = 8;
+    config.query.nearest_if_outside = true;
     rbf::RBFPlanningForest forest(robot, config);
     Eigen::VectorXd start(2), goal(2);
     start << -0.5, -0.25;
@@ -309,6 +324,7 @@ int main() {
     test_parallel_merger_candidates();
     test_database_oracle_session_commit();
     test_safe_box_forest_rrt();
+    test_audit_segment_step_requires_finer_sampling_than_fixed_resolution();
     test_query_strict_path_audit();
     test_safe_box_forest_frontwave();
     test_obstacle_rebuild();

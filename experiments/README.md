@@ -11,6 +11,7 @@
 5. `04_shelf_ablation_plan.md` — Shelf planning 和消融计划。
 6. `05_shelf_cross_algorithm_plan.md` — Shelf 跨算法比较计划。
 7. `06_random_robot_plan.md` — 随机场景与跨机器人计划。
+8. `exp_chain_pave_coverage/` — chain-pave 覆盖率专项诊断。
 
 ## Runner
 
@@ -23,6 +24,7 @@ python3 experiments/exp03_lect_microbench/run_lect_microbench.py --dry-run
 python3 experiments/exp04_shelf_ablation/run_shelf_ablation.py --dry-run
 python3 experiments/exp05_shelf_cross_algorithm/run_shelf_cross_algorithm.py --dry-run
 python3 experiments/exp06_random_robot/run_random_robot.py --dry-run
+python3 experiments/exp_chain_pave_coverage/chain_pave_coverage_probe.py --help
 ```
 
 ## 当前实现状态
@@ -32,3 +34,4 @@ python3 experiments/exp06_random_robot/run_random_robot.py --dry-run
 3. Exp.3 已有外部命令式 measurement harness；native LECT counters 需要后续 C++ hook。
 4. Exp.4 已有完整消融矩阵 manifest；旧 runner 无法表达的 no-cache 和 true round-robin 被显式标记为待补 hook。
 5. Exp.5/Exp.6 已有跨算法/随机场景 dispatcher，可统一生成命令和输出路径。
+6. chain-pave coverage 属于专项诊断脚本；优先用于定位 connector 覆盖问题，尚未纳入统一 dispatcher。

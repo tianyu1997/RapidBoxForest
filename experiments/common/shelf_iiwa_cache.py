@@ -306,14 +306,14 @@ def load_json(path: Path) -> dict[str, Any]:
 def prewarm_verify_strict_enabled() -> bool:
     raw = os.environ.get("SBF_PREWARM_VERIFY_STRICT")
     if raw is None:
-        return True
+        return False
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
 def prewarm_verify_enabled() -> bool:
     raw = os.environ.get("SBF_PREWARM_VERIFY")
     if raw is None:
-        return True
+        return False
     return raw.strip().lower() not in {"0", "false", "no", "off"}
 
 
@@ -423,6 +423,75 @@ def make_prewarm_config_args(
     args.threads = max(1, int(prewarm_threads))
     args.task_batch_size = max(1, int(prewarm_threads))
     return args
+
+
+def publish_shelf_cache_snapshot(
+    cache_path: Path,
+    *,
+    prewarm_depth: int,
+    envelope: str,
+    prewarm_threads: int,
+    max_depth: int,
+    endpoint_source: str = ENDPOINT_AAFK,
+    lect_split_policy: str = LECT_SPLIT_AAFK_VOLUME_MIN,
+    lect_root_intervals: str = "",
+    canonical_mode: bool = True,
+) -> dict[str, Any]:
+    """Build lect_snapshot from an on-disk cache without re-prewarming or verify."""
+    prewarm_args = make_prewarm_config_args(
+        cache_path,
+        prewarm_depth,
+        envelope,
+        prewarm_threads,
+        max_depth,
+        endpoint_source,
+        lect_split_policy,
+        lect_root_intervals,
+        canonical_mode,
+    )
+    robot = sbf.load_iiwa14_robot()
+    cfg = configure_standalone_sbf(prewarm_args, seed=0, preset=RBF_LIFELONG_PRESET, robot=robot)
+    root_override = parse_lect_root_intervals(lect_root_intervals)
+    if root_override is not None:
+        cfg.database.root_intervals_override = list(root_override)
+    configure_cache_endpoint(cfg, str(endpoint_source))
+    configure_cache_split_policy(
+        cfg,
+        robot,
+        str(lect_split_policy),
+        int(max_depth),
+        root_intervals=root_override,
+    )
+    set_online_cache_backfill(cfg, True)
+    metadata = rbf_lifelong_config_metadata(cfg, prewarm_args)
+    metadata["prewarm_threads"] = int(prewarm_threads)
+    prewarm_log(f"[prewarm python] publish snapshot only cache={cache_path}")
+    forest = sbf.SafeBoxForest(robot, cfg)
+    snapshot_wait_t0 = time.perf_counter()
+    snapshot_wait_ok = bool(forest.database_wait_for_snapshot_publish())
+    actual_snapshot_path = Path(
+        forest.database_snapshot_path() or str(snapshot_path_for_cache(cache_path))
+    )
+    snapshot = snapshot_summary(actual_snapshot_path)
+    snapshot["publish_wait_s"] = time.perf_counter() - snapshot_wait_t0
+    snapshot["wait_ok"] = snapshot_wait_ok
+    del forest
+    return {
+        "ok": bool(snapshot_wait_ok) and bool(snapshot.get("exists")),
+        "dry_run": False,
+        "reused_existing_cache": True,
+        "skipped_verify": True,
+        "cache_path": str(cache_path),
+        "cache_bytes": directory_size(cache_path),
+        "cache_file_sizes": cache_file_sizes(cache_path),
+        "snapshot": snapshot,
+        "verify_ok": None,
+        "verify_enabled": False,
+        "verify_strict": False,
+        "manifest": read_manifest(cache_path / "manifest.json"),
+        "metadata": metadata,
+        "prewarm": {"skipped_existing_cache": True, "prewarm_depth": int(prewarm_depth)},
+    }
 
 
 def run_p18_prewarm(

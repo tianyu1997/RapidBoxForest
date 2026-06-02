@@ -173,9 +173,26 @@ struct PathAuditCheck {
     int failed_segment_index = -1;
 };
 
+int effective_audit_segment_resolution(const Eigen::VectorXd& start,
+                                       const Eigen::VectorXd& goal,
+                                       int min_resolution,
+                                       double segment_step) {
+    const int safe_resolution = std::max(1, min_resolution);
+    if (!(segment_step > 0.0) || !std::isfinite(segment_step)) {
+        return safe_resolution;
+    }
+    const double distance = (goal - start).norm();
+    if (!(distance > 0.0) || !std::isfinite(distance)) {
+        return safe_resolution;
+    }
+    const int step_resolution = std::max(2, static_cast<int>(std::ceil(distance / segment_step)));
+    return std::max(safe_resolution, step_resolution);
+}
+
 PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
                                    const CollisionChecker& checker,
-                                   int resolution) {
+                                   int resolution,
+                                   double segment_step) {
     PathAuditCheck audit;
     if (path.empty()) {
         audit.failed_segment_index = 0;
@@ -189,7 +206,12 @@ PathAuditCheck audit_waypoint_path(const std::vector<Eigen::VectorXd>& path,
         }
     }
     for (std::size_t index = 0; index + 1 < path.size(); ++index) {
-        if (checker.check_segment(path[index], path[index + 1], safe_resolution)) {
+        const int segment_resolution = effective_audit_segment_resolution(
+            path[index],
+            path[index + 1],
+            safe_resolution,
+            segment_step);
+        if (checker.check_segment(path[index], path[index + 1], segment_resolution)) {
             audit.failed_segment_index = static_cast<int>(index);
             return audit;
         }
@@ -890,12 +912,13 @@ std::vector<DirtySeedCandidate> make_insertion_regrow_seeds(const std::vector<Bo
 
 bool segment_edge_survives_scene(const SegmentEdge& edge,
                                  const CollisionChecker& checker,
-                                 int audit_resolution) {
+                                 int audit_resolution,
+                                 double audit_segment_step) {
     if (edge.waypoints.size() < 2) {
         return false;
     }
     const int resolution = std::max({1, audit_resolution, edge.segment_resolution});
-    return audit_waypoint_path(edge.waypoints, checker, resolution).passed;
+    return audit_waypoint_path(edge.waypoints, checker, resolution, audit_segment_step).passed;
 }
 
 std::vector<int> spatial_dirty_box_indices(const Robot& robot,
@@ -1054,13 +1077,21 @@ bool try_local_birrt_repair(QueryResult& result,
         for (std::size_t index = static_cast<std::size_t>(audit.failed_segment_index + 1); index < result.path.size(); ++index) {
             append_waypoint_unique(repaired, result.path[index]);
         }
-        if (audit_waypoint_path(repaired, checker, query_config.audit_resolution).passed) {
+        if (audit_waypoint_path(repaired,
+                                checker,
+                                query_config.audit_resolution,
+                                query_config.audit_segment_step)
+                .passed) {
             if (query_config.collision_shortcut && repaired.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repaired,
                     checker,
                     collision_shortcut_resolution(query_config));
-                if (audit_waypoint_path(shortened, checker, query_config.audit_resolution).passed &&
+                if (audit_waypoint_path(shortened,
+                                        checker,
+                                        query_config.audit_resolution,
+                                        query_config.audit_segment_step)
+                        .passed &&
                     path_length(shortened) <= path_length(repaired) + 1e-12) {
                     repaired = std::move(shortened);
                 }
@@ -1703,7 +1734,8 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 removed_box_ids.find(edge.target_box_id) != removed_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, carving_checker, config_.query.audit_resolution);
+            return !segment_edge_survives_scene(
+                edge, carving_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
         }), segment_edges_.end());
 
         const auto local_adj_t0 = Clock::now();
@@ -1858,7 +1890,8 @@ BuildProfile RBFPlanningForest::build_subtractive(
                 live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
                 return true;
             }
-            return !segment_edge_survives_scene(edge, validation_checker, config_.query.audit_resolution);
+            return !segment_edge_survives_scene(
+                edge, validation_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
         }), segment_edges_.end());
         scene_.set_obstacles(std::move(final_obstacles));
         reset_oracle(scene_);
@@ -1945,13 +1978,19 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         repair_config.segment_resolution = std::max(repair_config.segment_resolution, query_config.audit_resolution);
         std::vector<Eigen::VectorXd> repair_path = rrt_connect(start, goal, checker, robot_, repair_config, 20260511);
         if (!repair_path.empty()) {
-            PathAuditCheck repair_audit = audit_waypoint_path(repair_path, checker, query_config.audit_resolution);
+            PathAuditCheck repair_audit = audit_waypoint_path(repair_path,
+                                                             checker,
+                                                             query_config.audit_resolution,
+                                                             query_config.audit_segment_step);
             if (repair_audit.passed && do_collision_shortcut && repair_path.size() > 2) {
                 std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                     repair_path,
                     checker,
                     collision_shortcut_resolution(query_config));
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened,
+                                                                     checker,
+                                                                     query_config.audit_resolution,
+                                                                     query_config.audit_segment_step);
                 if (shortened_audit.passed && path_length(shortened) <= path_length(repair_path) + 1e-12) {
                     repair_path = std::move(shortened);
                     repair_audit = shortened_audit;
@@ -1973,7 +2012,10 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     if (result.success && query_config.strict_path_audit) {
         CollisionChecker checker(robot_, scene_);
         const auto audit_t0 = Clock::now();
-        PathAuditCheck audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
+        PathAuditCheck audit = audit_waypoint_path(result.path,
+                                                   checker,
+                                                   query_config.audit_resolution,
+                                                   query_config.audit_segment_step);
         result.failed_segment_index = audit.failed_segment_index;
         if (audit.passed) {
             if (do_collision_shortcut && result.path.size() > 2) {
@@ -1981,7 +2023,10 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
                     result.path,
                     checker,
                     collision_shortcut_resolution(query_config));
-                PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                PathAuditCheck shortened_audit = audit_waypoint_path(shortened,
+                                                                     checker,
+                                                                     query_config.audit_resolution,
+                                                                     query_config.audit_segment_step);
                 if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                     result.path = std::move(shortened);
                     result.path_length = path_length(result.path);
@@ -1997,13 +2042,19 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             const bool repaired = try_local_birrt_repair(result, audit, checker, robot_, query_config, config_.connector.rrt);
             result.repair_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - repair_t0).count();
             if (repaired) {
-                PathAuditCheck repaired_audit = audit_waypoint_path(result.path, checker, query_config.audit_resolution);
+                PathAuditCheck repaired_audit = audit_waypoint_path(result.path,
+                                                                    checker,
+                                                                    query_config.audit_resolution,
+                                                                    query_config.audit_segment_step);
                 if (repaired_audit.passed && do_collision_shortcut && result.path.size() > 2) {
                     std::vector<Eigen::VectorXd> shortened = collision_shortcut_path(
                         result.path,
                         checker,
                         collision_shortcut_resolution(query_config));
-                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened, checker, query_config.audit_resolution);
+                    PathAuditCheck shortened_audit = audit_waypoint_path(shortened,
+                                                                         checker,
+                                                                         query_config.audit_resolution,
+                                                                         query_config.audit_segment_step);
                     if (shortened_audit.passed && path_length(shortened) <= result.path_length + 1e-12) {
                         result.path = std::move(shortened);
                         result.path_length = path_length(result.path);
@@ -2069,7 +2120,11 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     if (waypoint_path.empty()) {
         return 0;
     }
-    if (!audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
+    if (!audit_waypoint_path(waypoint_path,
+                             checker,
+                             config_.query.audit_resolution,
+                             config_.query.audit_segment_step)
+             .passed) {
         return 0;
     }
     int direct_segment_edges_added = 0;
@@ -2142,7 +2197,11 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
     }
     out.bridge_found = true;
     out.waypoints = waypoint_path;
-    out.audit_passed = audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed;
+    out.audit_passed = audit_waypoint_path(waypoint_path,
+                                           checker,
+                                           config_.query.audit_resolution,
+                                           config_.query.audit_segment_step)
+                           .passed;
     const std::size_t boxes_before = boxes_.size();
     int next_id = next_box_id();
     out.added = chain_pave_along_path(
@@ -2222,7 +2281,11 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         pave_config);
     if (added > 0) {
         rebuild_adjacency();
-        if (audit_waypoint_path(waypoint_path, checker, config_.query.audit_resolution).passed) {
+        if (audit_waypoint_path(waypoint_path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step)
+                .passed) {
             const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
             const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
             if (source_box_id >= 0 && target_box_id >= 0) {
@@ -2311,7 +2374,8 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
             live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
             return true;
         }
-        return !segment_edge_survives_scene(edge, updated_checker, config_.query.audit_resolution);
+        return !segment_edge_survives_scene(
+            edge, updated_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
     }), segment_edges_.end());
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 

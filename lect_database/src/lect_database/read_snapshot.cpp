@@ -596,7 +596,8 @@ struct LectReadSnapshot::Impl {
     std::span<const SnapshotNodeRow> nodes;
     std::span<const SnapshotDirectEvidenceEntry> direct_evidence;
     std::span<const SnapshotEvidenceSlot> evidence_slots;
-    std::unordered_map<SnapshotBoxIndexKey, NodeId, SnapshotBoxIndexKeyHash> exact_box_index;
+    // Populated lazily on endpoint/box exact lookups; avoids O(node_count) work at open.
+    mutable std::unordered_map<SnapshotBoxIndexKey, NodeId, SnapshotBoxIndexKeyHash> exact_box_index;
 
     bool has_node(NodeId node_id) const noexcept {
         const auto index = static_cast<std::size_t>(node_id);
@@ -608,48 +609,56 @@ struct LectReadSnapshot::Impl {
         return has_node(node_id) ? &nodes[static_cast<std::size_t>(node_id)] : nullptr;
     }
 
-    bool build_exact_box_index(std::string* reason) {
-        exact_box_index.clear();
-        if (!has_node(0)) {
-            return true;
+    static bool valid_cached_node(NodeId node_id) noexcept {
+        return node_id != kInvalidNodeId;
+    }
+
+    std::optional<NodeId> cached_exact_box_node(const SnapshotBoxIndexKey& key) const {
+        const auto found = exact_box_index.find(key);
+        if (found == exact_box_index.end() || !valid_cached_node(found->second)) {
+            return std::nullopt;
         }
-        exact_box_index.reserve(static_cast<std::size_t>(manifest.node_count) * 2u);
-        struct StackItem {
-            NodeId node_id = kInvalidNodeId;
-            std::vector<Interval> intervals;
-        };
-        std::vector<StackItem> stack;
-        stack.push_back({0, root});
-        while (!stack.empty()) {
-            auto item = std::move(stack.back());
-            stack.pop_back();
-            const auto key = make_snapshot_box_index_key(item.intervals);
-            auto [it, inserted] = exact_box_index.emplace(key, item.node_id);
-            if (!inserted && it->second != item.node_id) {
-                it->second = kInvalidNodeId;
+        return found->second;
+    }
+
+    void remember_exact_box_node(const SnapshotBoxIndexKey& key, NodeId node_id) const {
+        if (!valid_cached_node(node_id)) {
+            return;
+        }
+        auto [it, inserted] = exact_box_index.emplace(key, node_id);
+        if (!inserted && it->second != node_id) {
+            it->second = kInvalidNodeId;
+        }
+    }
+
+    std::optional<NodeId> locate_exact_box_node(const std::vector<Interval>& box_intervals,
+                                                  double tolerance) const {
+        if (!has_node(0) || box_intervals.size() != root.size()) {
+            return std::nullopt;
+        }
+        NodeId cursor = 0;
+        auto intervals = root;
+        while (has_node(cursor)) {
+            if (intervals_equal(intervals, box_intervals, tolerance)) {
+                return cursor;
             }
-            const auto* row = node(item.node_id);
-            if (row == nullptr || row->split_dim < 0 ||
-                row->split_dim >= static_cast<int>(item.intervals.size())) {
-                continue;
+            const auto* row = node(cursor);
+            if (row == nullptr || (row->left == kInvalidNodeId && row->right == kInvalidNodeId) ||
+                row->split_dim < 0 || row->split_dim >= static_cast<int>(intervals.size())) {
+                break;
             }
             const auto dim = static_cast<std::size_t>(row->split_dim);
-            if (has_node(row->right)) {
-                auto right = item.intervals;
-                right[dim].lo = row->split_value;
-                stack.push_back({row->right, std::move(right)});
-            }
-            if (has_node(row->left)) {
-                auto left = std::move(item.intervals);
-                left[dim].hi = row->split_value;
-                stack.push_back({row->left, std::move(left)});
+            if (box_intervals[dim].hi <= row->split_value + tolerance && has_node(row->left)) {
+                intervals[dim].hi = row->split_value;
+                cursor = row->left;
+            } else if (box_intervals[dim].lo + tolerance >= row->split_value && has_node(row->right)) {
+                intervals[dim].lo = row->split_value;
+                cursor = row->right;
+            } else {
+                break;
             }
         }
-        if (exact_box_index.empty()) {
-            if (reason) *reason = "snapshot exact box index is empty";
-            return false;
-        }
-        return true;
+        return std::nullopt;
     }
 };
 
@@ -1147,7 +1156,8 @@ bool LectReadSnapshot::open(const std::filesystem::path& snapshot_path, std::str
         close();
         return false;
     }
-    if (!impl_->build_exact_box_index(reason)) {
+    if (nodes_header.row_count != 0 && !impl_->has_node(0)) {
+        if (reason) *reason = "snapshot root node is missing";
         close();
         return false;
     }
@@ -1338,31 +1348,20 @@ BoxLookupResult LectReadSnapshot::box_to_node_exact(const BoxKey& box) const {
         result.reason = "dimension mismatch";
         return result;
     }
-    NodeId cursor = 0;
-    auto intervals = impl_->root;
-    while (impl_->has_node(cursor)) {
-        if (intervals_equal(intervals, box.intervals, box.tolerance)) {
-            result.found = true;
-            result.node_id = cursor;
-            return result;
-        }
-        const auto* row = impl_->node(cursor);
-        if (row == nullptr || (row->left == kInvalidNodeId && row->right == kInvalidNodeId) ||
-            row->split_dim < 0 || row->split_dim >= static_cast<int>(intervals.size())) {
-            break;
-        }
-        const auto dim = static_cast<std::size_t>(row->split_dim);
-        if (box.intervals[dim].hi <= row->split_value + box.tolerance && impl_->has_node(row->left)) {
-            intervals[dim].hi = row->split_value;
-            cursor = row->left;
-        } else if (box.intervals[dim].lo + box.tolerance >= row->split_value && impl_->has_node(row->right)) {
-            intervals[dim].lo = row->split_value;
-            cursor = row->right;
-        } else {
-            break;
-        }
+    const auto box_index_key = make_snapshot_box_index_key(box.intervals);
+    if (const auto cached = impl_->cached_exact_box_node(box_index_key)) {
+        result.found = true;
+        result.node_id = *cached;
+        return result;
     }
-    result.reason = "box does not match a stored node";
+    const auto located = impl_->locate_exact_box_node(box.intervals, box.tolerance);
+    if (!located) {
+        result.reason = "box does not match a stored node";
+        return result;
+    }
+    impl_->remember_exact_box_node(box_index_key, *located);
+    result.found = true;
+    result.node_id = *located;
     return result;
 }
 
@@ -1447,24 +1446,43 @@ std::optional<EvidenceRecordView> LectReadSnapshot::endpoint_for_box_exact(const
         return std::nullopt;
     }
     const auto box_index_key = make_snapshot_box_index_key(intervals);
-    const auto direct_node = impl_->exact_box_index.find(box_index_key);
-    if (direct_node != impl_->exact_box_index.end() && valid_node_id(direct_node->second)) {
-        key_template.node_id = direct_node->second;
+    if (const auto cached = impl_->cached_exact_box_node(box_index_key)) {
+        key_template.node_id = *cached;
         key_template.node_path = {};
         key_template.node_path_valid = false;
-        return lookup_evidence_uncached(impl_->direct_evidence,
-                                        impl_->evidence_slots,
-                                        key_template,
-                                        impl_->payload_file);
+        if (auto view = lookup_evidence_uncached(impl_->direct_evidence,
+                                                 impl_->evidence_slots,
+                                                 key_template,
+                                                 impl_->payload_file)) {
+            return view;
+        }
     }
-    return lookup_endpoint_exact_uncached(impl_->nodes,
-                                          impl_->root,
-                                          impl_->direct_evidence,
-                                          impl_->evidence_slots,
-                                          impl_->payload_file,
-                                          intervals,
-                                          tolerance,
-                                          key_template);
+    if (const auto located = impl_->locate_exact_box_node(intervals, tolerance)) {
+        key_template.node_id = *located;
+        key_template.node_path = {};
+        key_template.node_path_valid = false;
+        if (auto view = lookup_evidence_uncached(impl_->direct_evidence,
+                                                 impl_->evidence_slots,
+                                                 key_template,
+                                                 impl_->payload_file)) {
+            impl_->remember_exact_box_node(box_index_key, *located);
+            return view;
+        }
+    }
+    if (auto view = lookup_endpoint_exact_uncached(impl_->nodes,
+                                                   impl_->root,
+                                                   impl_->direct_evidence,
+                                                   impl_->evidence_slots,
+                                                   impl_->payload_file,
+                                                   intervals,
+                                                   tolerance,
+                                                   key_template)) {
+        if (valid_node_id(key_template.node_id)) {
+            impl_->remember_exact_box_node(box_index_key, key_template.node_id);
+        }
+        return view;
+    }
+    return std::nullopt;
 }
 
 }  // namespace rbf::lect_database
