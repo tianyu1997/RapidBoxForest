@@ -16,6 +16,7 @@ struct QueryConfig {
 	// When > 0, strict path audit samples each segment at least every audit_segment_step
 	// radians (in addition to audit_resolution). Must match experiment post-audit step.
 	double audit_segment_step = 0.01;
+	double audit_collision_tolerance = 0.0;
 	bool repair_on_audit_failure = false;
 	double repair_timeout_ms = 0.0;
 	int repair_rrt_max_iters = 50000;

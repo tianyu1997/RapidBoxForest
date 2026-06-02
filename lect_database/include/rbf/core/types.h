@@ -1,3 +1,3 @@
 #pragma once
 
-#include <sbf/core/types.h>
+#include <link_interval_envelope/types.h>

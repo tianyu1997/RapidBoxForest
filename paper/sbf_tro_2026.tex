@@ -134,16 +134,16 @@ and a radius-lifted link envelope provides an inexpensive filter for box
 validation and collision rejection. A rapidly-exploring random tree
 (RRT)-inspired grower builds a scene-specific box forest into a queryable
 corridor graph, and a Lifelong Envelope Cache Tree (LECT) selectively caches
-kinematics-keyed envelope records when replay is cheaper than recomputation. On
-the reported benchmark set, the d18 cache prewarm stores
-524287 evidence records in 20.22~s and reopens in 1.460~s with 262144 reused
-leaf records. On Shelf+IIWA, the current LinkIAABB warm rows replay 3420
-external records in E2 and 7201 in E3 while preserving 1/1 and 5/5 strict-audit
-success; wall time remains about 1.8~s and 1.6~s because scene-specific growth
-and validation dominate this inexpensive envelope setting. A dynamic-update study further shows 1.9$\times$--140$\times$
-speedups over warm rebuild on matched obstacle-edit paths. This paper keeps the
-original planning formulation and title, but limits its quantitative claims to
-results regenerated from the current RapidBoxForest implementation.
+kinematics-keyed envelope records when replay is cheaper than recomputation. The
+reported experiments evaluate strict-audit Shelf+IIWA planning, the
+link-envelope representation trade-off, persistent evidence replay, and local
+dynamic-scene updates. On Shelf+IIWA, warm external-evidence rows preserve
+strict-audit success, while wall time remains dominated by scene-specific growth
+and validation in the inexpensive LinkIAABB setting. A dynamic-update study
+further shows speedups over warm rebuild on matched obstacle-edit paths. This
+paper keeps the original planning formulation and title, but limits its
+quantitative claims to results regenerated from the current RapidBoxForest
+implementation.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -596,16 +596,13 @@ source whose reported planning paths are discharged by the final scene audit
 unless an external certificate is added.
 
 \paragraph{Analytical extrema.}
-The third source solves endpoint-coordinate extrema from the trigonometric
-structure of the chain. Because each revolute-joint transform is affine in
-$(\cos q_j,\sin q_j)$, an endpoint coordinate becomes a simple sinusoid when
-one joint is free and a low-degree bilinear trigonometric polynomial when two
-joints remain free. This yields a structured solver: vertices and 1D boundary
-edges can be enumerated exactly, 2D faces reduced to polynomial root finding,
-and higher-dimensional residual cases handled by local descent with interval
-verification or branch-and-bound closure. Analytical bounds are the tightest of
-the three sources, but also the most expensive, so they are better suited to
-offline certification and profiling than to the online path.
+The third source exploits the trigonometric structure of the kinematic chain to
+tighten endpoint-coordinate bounds in selected low-dimensional cases. In the
+current implementation this source is used primarily as an offline profiling and
+certification aid rather than as the default online planner source. It is
+therefore reported as part of the endpoint-source design space, while the main
+planning rows rely on the sources and audit protocol specified in
+\cref{sec:exp}.
 
 Taken together, these sources define a clear spectrum: IFK is the cheapest
 certified AA baseline, HIFK\_3 and HIFK\_5 offer progressively tighter
@@ -658,9 +655,8 @@ coordinate axes, six face-diagonal axes, and four body-diagonal axes, for a
 total of 13 unsigned axes and 26 supporting planes. Endpoint boxes are projected
 onto these axes, padded by the link radius, and merged over each
 subsegment. Collision checking is correspondingly cheap: after the ordinary
-link AABB test, the slab test continues with the non-axis directions and exits
-on the first separating interval. The staged order first tests the DOP18 axes
-and only reaches the final DOP26 diagonals for near survivors.
+link AABB test, the slab test evaluates the configured support directions and
+exits on the first separating interval.
 
 \paragraph{SupportHull envelope.}
 When the endpoint envelopes are convex, their convex hull preserves directional
@@ -745,10 +741,10 @@ Persistence is selective. Endpoint evidence is the common reusable record, but
 simple IFK+AABB evidence can be cheaper to recompute online than to reload.
 KDOP26 and SupportHull records are stored only when their tighter filters are
 expected to amortize storage and lookup cost. Implementation details such as
-node arrays and residency management are engineering choices at the
-implementation level; the paper does not claim runtime benefit from sector
-symmetry, because the cache mechanism operates in canonical-identity mode with
-an empty symmetry descriptor.
+node arrays, residency management, and canonical coordinate choices are
+engineering choices at the implementation level. The reported cache claim is
+limited to replay of compatible kinematic evidence and does not rely on any
+additional symmetry-transfer speedup.
 
 The prewarm phase follows the same separation. It materializes FK/link-envelope
 evidence only on the target leaf layer and reconstructs upper layers by
@@ -766,12 +762,12 @@ build still regrows and revalidates scene-specific \rbf{} boxes and never treats
 a persisted box label as a free-space certificate. In \cref{sec:forest}, LECT
 serves only as the materialization layer; obstacle checking, occupancy metadata,
 adjacency bookkeeping, and regrowth reactions to changing $\mathcal{O}$ remain
-inside the box-region forest routines. For the reviewer-sensitive Shelf+IIWA
-protocol, the external d18 cache is treated as read-only during evaluation:
-warm shelf rows disable active-database backfill and therefore cannot silently
-accumulate new online envelope evidence while being measured. The balanced
-random-scene study keeps that writeback path enabled because it measures cache
-growth on novel scenes rather than a fixed held-out shelf target.
+inside the box-region forest routines. For the Shelf+IIWA protocol, the external
+d23 cache is treated as read-only during evaluation: warm shelf rows disable
+active-database backfill and therefore cannot silently accumulate new online
+envelope evidence while being measured. Other cache studies state their own
+writeback policy when they measure cache growth rather than fixed held-out
+replay.
 
 % ==============================================================================
 \section{RapidBoxForest Construction}\label{sec:forest}
@@ -940,22 +936,21 @@ result only when it extends the forest by a usable connected corridor segment.
 
 Each iteration makes two explicit heuristic decisions: it samples a target
 configuration $q_t$, then chooses a boundary seed on an existing box face that
-is closest to that target. The reported planning configuration uses a sequential
-Bernoulli schedule with component-connector probability $p_c=0.45$, query-root
-bias $p_g=0.20$, intertree-root bias $p_i=0.25$, and unexplored-volume
-probability $p_u=0.45$. A component-connector target between disconnected root
-components is attempted first. If no connector target is used, coordinated
-multi-tree mode may target a root from another active component; because
-$p_i\le 0.5$ in the reported runs, no high-bias pulse is active and the
-sustained cap is also $0.25$. If no intertree target is used, the grower then
-tries a query-root target, then a LECT unexplored-volume leaf, and finally a
-uniform root-interval sample. The same reported configuration uses 5000 boxes,
-a 60~s build timeout, an FFB depth cap of 120, eight worker threads, a
-component-connector candidate limit of four, a staged component-connect radius
-of 0.35 in normalized $L_\infty$ distance, a post-connect time budget of
-450~ms, and a quality floor of 64 connected boxes. These numbers are planner
-settings rather than envelope-theory parameters, but they are part of the
-self-contained specification for the reported rows.
+is closest to that target. The reported shelf baseline uses a categorical
+allocation schedule rather than sequential Bernoulli gates. Its target masses
+are intertree-root $p_i=0.25$, unexplored-volume $p_u=0.20$, query-root
+$p_g=0.15$, fixed anchor $p_a=0.025$, and pure-uniform root sampling
+$p_{\mathrm{uni}}=0.375$; the remaining component-connector target probability
+is set to zero during the grow stage. This configuration is denoted
+\texttt{cat\_i25\_u20\_r15\_a025\_localbest} in the experiment scripts. Build
+connectivity is then handled by the post-build connector, so segment bridges
+remain a fallback mechanism rather than the primary grower distribution. The
+same reported shelf configuration uses a d23 warm LECT cache, eight worker
+threads, a 40-level RBF evidence cap, a 15-level FFB start depth, a 28-level
+free-box cap for accepted boxes, 280 total boxes, 210 front-wave bootstrap
+boxes, and eight fixed IRIS/GCS anchor configurations. These numbers are
+planner settings rather than envelope-theory parameters, but they are part of
+the self-contained specification for the reported rows.
 
 Given a target $q_t$ and an existing box
 $B=\prod_j[\ell_j,u_j]$, the grower enumerates feasible faces
@@ -1041,48 +1036,25 @@ query-ready box-region object only.
 \subsection{Forest Consolidation}\label{sec:forest_consolidation}
 
 Raw growth tends to produce a forest that is finer than necessary. The purpose
-of consolidation is to replace a large collection of locally valid
-boxes by a smaller collection of equally valid but more useful regions.
-Two operations are central.
-
-The first is \emph{promotion}. When two occupied sibling leaves are both
-collision-free and their parent interval is also collision-free, the two leaves can be
-replaced by the parent. This is the most local form of coarsening and directly
-reuses the multiresolution structure of LECT.
-
-The second is \emph{multi-level coarsening}. Exact connected merges are the
-cleanest case: if two boxes are connected and their union is itself one box,
-the merged region can be accepted directly after validation. More general
-connected candidate merges are handled by constructing a candidate parent
-region and accepting it only when its chosen envelope representation remains
-collision-free against the current obstacle set. This is where the representation choices of
-\Cref{sec:link_envelopes,sec:lect} become operational. In an AABB-based forest, the compact parent witness
-is typically the enclosing AABB of the two child boxes. KDOP parents can merge
-child slab intervals by per-axis minima and maxima, while SupportHull parents
-are kept compact only when the merged endpoint-hull witness remains acceptable;
-otherwise the child witnesses are kept. Greedy non-sibling candidates are
-ranked by a volume-expansion score, so exact face merges are preferred and
-high-inflation parents are deferred unless they pass validation under the
-scene oracle. The consolidation logic is summarized in
+of consolidation is to replace locally valid boxes by fewer validated regions
+while preserving the graph structure used for corridor search. The implementation
+uses two conservative operations. First, exact connected pairs whose union is
+again a box may be merged after validation. Second, more general connected
+candidate pairs are ranked by a volume-expansion score and accepted only if the
+candidate hull passes the same scene oracle. A final containment-pruning pass
+removes boxes that are fully covered by accepted validated regions when their
+graph incidence can be transferred. The consolidation logic is summarized in
 \Cref{alg:forest_consolidation}.
-The final containment-pruning step removes only boxes that are fully covered by
-accepted validated regions and whose graph incidence can be transferred to a
-selected covering region. It changes neither the represented
-free-space union nor the corridor witnesses used by query search.
 
 \begin{algorithm}[t]
-\caption{ConsolidateForest: graph-preserving promotion, merging, and pruning.}
+\caption{ConsolidateForest: graph-preserving merging and pruning.}
 \label{alg:forest_consolidation}
 \footnotesize
 \begin{algorithmic}[1]
 \REQUIRE Validated forest $\mathcal{F}$, LECT $T$, obstacle set $\calO$
 \ENSURE Consolidated validated forest $\mathcal{F}'$
 \STATE $\mathcal{F}' \gets \mathcal{F}$
-\algcommentline{Stage 1: sibling promotion}
-\REPEAT
-  \STATE promote any validated sibling leaves whose parent is collision-free
-\UNTIL{no eligible sibling pair remains}
-\algcommentline{Stage 2: validated connected/contact merging}
+\algcommentline{Stage 1: validated connected/contact merging}
 \STATE merge exact connected pairs whose union is itself a single box
 \FORALL{connected candidate pairs $(B_i,B_j)$ in $\mathcal{F}'$}
   \STATE build a candidate parent region $H$ and score its volume expansion
@@ -1090,16 +1062,16 @@ free-space union nor the corridor witnesses used by query search.
     \STATE replace $B_i,B_j$ by $H$
   \ENDIF
 \ENDFOR
-\algcommentline{Stage 3: containment pruning}
+\algcommentline{Stage 2: containment pruning}
 \STATE remove only contained boxes whose adjacency and segment witnesses transfer to selected covering regions
 \RETURN $\mathcal{F}'$
 \end{algorithmic}
 \end{algorithm}
 
-Validity follows directly: every accepted promotion or merge has itself passed
-the scene oracle, so the represented free-space union cannot shrink.
-Containment pruning removes only boxes fully covered by a selected region that
-inherits their adjacency witnesses, preserving all corridor connectivity.
+Validity follows directly: every accepted merge has itself passed the scene
+oracle. Containment pruning removes only boxes fully covered by a selected region
+that inherits their adjacency witnesses, preserving the corridor connectivity
+used by query search.
 
 \subsection{Corridor Query}
 \label{sec:forest_graph}
@@ -1227,18 +1199,20 @@ completeness.
 Planner success in this paper means strict path-audit success under the current
 query pipeline. Cache reuse is allowed only at the envelope-materialization
 layer: target builds still regrow and revalidate scene-specific boxes, and warm
-rows are never credited for persisted free-space labels. For the
-reviewer-sensitive Shelf+IIWA rows, the external d18 cache is read-only during
-evaluation and active-database backfill is disabled.
+rows are never credited for persisted free-space labels. For the Shelf+IIWA
+baseline warm rows, the external d23 cache is read-only during evaluation and
+active-database backfill is disabled.
 
 \paragraph{Fixed Configuration.}
-All rows use the configuration
+The RBF planning rows use the configuration
 \texttt{rbf\_ifk\_aa\_aafkvol\_d40\_s15\_canonical\_lifelong}: the public API
 spelling \texttt{EndpointSource.IFK} for the IFK\_AA-backed certified endpoint
 source, an AAFKVolumeMin split schedule through depth 40, find-free-box start
-depth 15, strict-certificate validation with certified-only commit, a depth-18
-prewarm, a default LECT tree-depth cap of 64, and the adopted link-envelope family
-\{LinkIAABB, KDOP26, SupportHull\}.
+depth 15, the reported validation and final-audit policy, a default LECT
+tree-depth cap of 64, and the adopted link-envelope family
+\{LinkIAABB, KDOP26, SupportHull\}. In the Shelf+IIWA ablation, the baseline
+warm row uses the d23 external cache, while non-baseline comparison rows are run
+without external cache replay unless explicitly stated.
 
 \paragraph{Platform and Scenes.}
 Planner rows were generated with one worker thread; the standalone
@@ -1262,18 +1236,13 @@ UR5, and Panda at five scene seeds per setting.
 \input{../sbf_old/generated/tab_tro_rbf_only_warm_reuse.tex}
 
 \Cref{fig:marcucci_scene,tab:tro_appendix_rbf_only_warm_reuse} summarize the
-Shelf+IIWA rows. The single-query E2 shelf row remains strict-audit safe in both
-cold and warm modes: wall time changes from 1.820~s to 1.812~s, and the warm row
-replays 3420 external evidence records while both rows use one bounded repair.
-The five-query E3 main row also preserves all strict audits: cold and warm wall
-times are 1.587~s and 1.588~s, respectively, with the warm row replaying 7201
-external evidence records and requiring no query repairs.
-
-The current LinkIAABB shelf rows therefore demonstrate correct external-evidence
-replay without persisted free-space labels, not a large wall-time speedup. This
-is expected for this inexpensive representation: scene-specific box growth,
-obstacle validation, and query post-processing dominate the measured wall time
-once endpoint evidence replay is enabled.
+Shelf+IIWA rows. Both the single-query and five-query settings preserve
+strict-audit success in cold and warm modes. The warm rows replay external
+kinematic evidence but do not reuse persisted free-space labels, so they should
+be read as a validation of the evidence-replay semantics rather than as a claim
+of large wall-time speedup. In this inexpensive LinkIAABB setting, scene-specific
+box growth, obstacle validation, and query post-processing dominate the measured
+wall time once endpoint evidence replay is enabled.
 
 \subsection{Balanced Random-Scene Pipeline Study}\label{sec:exp_generalization}
 
@@ -1304,13 +1273,11 @@ compresses the same artifact into one aggregate summary view.
 
 \paragraph{LECT mechanism.}
 \Cref{tab:tro_appendix_rbf_only_cache_mechanism} summarizes the cache semantics.
-The d18 prewarm materializes only the target leaf
-layer, storing 524287 evidence records while directly evaluating 262144 leaf
-records in 20.22~s. Reopening the same cache takes 1.460~s and reuses 262144
-cached leaf records without fresh FK above the leaves. This is the paper's main
-cache-mechanism result: the current implementation does perform persistent
-evidence replay, but the reported rows support a canonical-identity cache claim
-rather than a stronger sector-symmetry reuse claim.
+The prewarm phase materializes the target leaf layer and stores reusable
+kinematic evidence; reopening a compatible cache replays those leaf records
+without recomputing FK at the replayed leaves. This is the paper's main
+cache-mechanism result: the current implementation performs persistent evidence
+replay, but the reported rows do not claim a stronger symmetry-transfer speedup.
 
 \paragraph{Envelope sweep.}
 \Cref{tab:tro_appendix_rbf_only_sweep} gives a compact cross-width summary of
@@ -1365,9 +1332,8 @@ conservative IFK validation and path containment inside the validated box union;
 the reported rows do not claim that condition, and the dataset still does not
 store corridor-containment fields. The strict audit is an implementation-level
 acceptance rule rather than a continuous safety proof. The cache mechanism
-supports persistent evidence replay, but the reported results
-justify only canonical-identity caching and do not imply that replay produces
-wall-time speedup in every envelope setting.
+supports persistent evidence replay, but the reported results do not imply that
+replay produces wall-time speedup in every envelope setting.
 
 \paragraph{Scope and Future Work.}
 The empirical scope covers Shelf+IIWA, the cache/update studies, and the

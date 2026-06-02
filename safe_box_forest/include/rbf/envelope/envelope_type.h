@@ -1,3 +1,3 @@
 #pragma once
 
-#include <sbf/envelope/envelope_type.h>
+#include <link_interval_envelope/envelope.h>

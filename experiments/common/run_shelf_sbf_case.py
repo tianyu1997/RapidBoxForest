@@ -15,6 +15,15 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import environment_metadata, namespace_dict, proc_status, run_id, write_json  # noqa: E402
+from experiments.common.anytime_defaults import (  # noqa: E402
+    UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB,
+    UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION,
+    UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB,
+    UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
+    UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
+)
 from experiments.common.marcucci_anchor_guard import validate_marcucci_query_artifact  # noqa: E402
 from experiments.common.shelf_iiwa_cache import (  # noqa: E402
     DEFAULT_P18_CACHE_LABEL,
@@ -33,6 +42,7 @@ from experiments.common.shelf_iiwa_cache import (  # noqa: E402
 )
 from safe_box_forest.experiments.sbf_old import common_sbf_config as sbf_config  # noqa: E402
 from safe_box_forest.experiments.sbf_old.common_sbf_config import (  # noqa: E402
+    IRIS_GCS_SHELF_ANCHOR8,
     add_common_sbf_args,
     apply_dim_mask,
     compute_inert_dim_mask,
@@ -57,6 +67,10 @@ LATENCY_PROFILE_BALANCED_LOW_LATENCY = "balanced_low_latency"
 LATENCY_STAGE_SELECTION_AUTO = "auto"
 LATENCY_STAGE_SELECTION_ZERO_REPAIR = "zero_repair"
 LATENCY_STAGE_SELECTION_ACCEPT_REPAIR = "accept_repair"
+SEGMENT_EDGE_POLICY_NORMAL = "normal"
+SEGMENT_EDGE_POLICY_FALLBACK_ONLY = "fallback_only"
+SEGMENT_EDGE_POLICY_OFF = "off"
+CORRIDOR_REFINE_MODE_BOX_ONLY_LONG_PATH = "box_only_long_path"
 
 BALANCED_LOW_LATENCY_STAGE_SEQUENCE: tuple[dict[str, Any], ...] = (
     {
@@ -130,6 +144,45 @@ def root_intervals_override(args: argparse.Namespace) -> list[Any] | None:
     if not raw:
         return None
     return [sbf.Interval(float(lo), float(hi)) for lo, hi in parse_interval_pairs(raw)]
+
+
+def clip_query_anchor_to_canonical_root(anchor: Iterable[float],
+                                        canonical: Iterable[float],
+                                        intervals: Iterable[Any]) -> list[float]:
+    values = [float(value) for value in anchor]
+    tree_values = [float(value) for value in canonical]
+    root = list(intervals)
+    if len(values) != len(root) or len(tree_values) != len(root):
+        return values
+    clipped = list(values)
+    for index, interval in enumerate(root):
+        if abs(tree_values[index] - values[index]) > 1e-9:
+            continue
+        clipped[index] = min(max(clipped[index], float(interval.lo)), float(interval.hi))
+    return clipped
+
+
+def coverage_seeds_for_args(args: argparse.Namespace, robot: Any) -> list[list[float]]:
+    preset = str(getattr(args, "coverage_anchor_preset", "default"))
+    if preset != "iris8":
+        return [list(seed) for seed in sbf.make_coverage_seeds(include_extra_anchors=False)]
+    root = root_intervals_override(args)
+    if root is None:
+        root = sbf.canonical_root_intervals_for_robot(
+            robot,
+            bool(getattr(args, "rbf_canonical_cache", True)),
+            "joint_symmetry_native_v1" if bool(getattr(args, "rbf_canonical_cache", True)) else "",
+        )
+    seeds: list[list[float]] = []
+    for anchor in IRIS_GCS_SHELF_ANCHOR8:
+        canonical = sbf.canonicalize_configuration_for_robot(
+            robot,
+            list(anchor),
+            bool(getattr(args, "rbf_canonical_cache", True)),
+            "joint_symmetry_native_v1" if bool(getattr(args, "rbf_canonical_cache", True)) else "",
+        )
+        seeds.append(clip_query_anchor_to_canonical_root(anchor, canonical, root))
+    return seeds
 
 
 def split_joint_metrics(diagnostics: dict[str, float], dof: int) -> list[dict[str, Any]]:
@@ -259,9 +312,13 @@ def parse_args() -> argparse.Namespace:
         rbf_max_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
         connector_pave_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
         component_connect_ffb_max_depth=DEFAULT_AAFK_SCHEDULE_DEPTH,
-        rrt_goal_bias=0.20,
-        intertree_goal_bias=0.25,
-        component_connect_prob=0.35,
+        rrt_goal_bias=UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
+        intertree_goal_bias=UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS,
+        unexplored_prob=UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
+        anchor_target_prob=UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB,
+        sample_uniform_prob=UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
+        sample_categorical_allocation=UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION,
+        component_connect_prob=UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB,
         quality_min_connected_boxes=64,
         post_connect_extra_boxes=0,
         post_connect_time_budget_ms=450.0,
@@ -271,6 +328,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-json", type=Path, required=True)
     parser.add_argument("--database-path", type=Path, required=True)
     parser.add_argument("--seeds-list", default="0")
+    parser.add_argument("--coverage-anchor-preset", choices=["default", "iris8"], default="default")
     parser.add_argument("--endpoint-source", choices=list(SUPPORTED_ENDPOINT_SOURCES), default=ENDPOINT_AAFK)
     parser.add_argument("--lect-split-policy", choices=[LECT_SPLIT_AAFK_VOLUME_MIN, LECT_SPLIT_AAFK_VOLUME_MIN_DIM6, LECT_SPLIT_SUPPORT_HULL_VOLUME_MIN, LECT_SPLIT_ROUND_ROBIN], default=LECT_SPLIT_AAFK_VOLUME_MIN)
     parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
@@ -285,6 +343,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clean-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--segment-edge-policy",
+        choices=[SEGMENT_EDGE_POLICY_NORMAL, SEGMENT_EDGE_POLICY_FALLBACK_ONLY, SEGMENT_EDGE_POLICY_OFF],
+        default=SEGMENT_EDGE_POLICY_FALLBACK_ONLY,
+    )
     parser.add_argument("--corridor-refine", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--corridor-refine-budget-ms", type=float, default=250.0)
     parser.add_argument("--corridor-refine-max-boxes", type=int, default=48)
@@ -292,6 +355,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-passes", type=int, default=2)
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
+    parser.add_argument("--box-refine-long-path-ratio", type=float, default=1.25)
+    parser.add_argument("--box-refine-min-delta", type=float, default=0.25)
     parser.add_argument("--post-audit-segment-step", type=float, default=0.04)
     parser.add_argument("--final-ompl-simplify-time-s", type=float, default=0.0)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=False)
@@ -360,6 +425,10 @@ def effective_case_args(args: argparse.Namespace) -> argparse.Namespace:
     local_args.task_batch_size = max(1, int(local_args.task_batch_size))
     apply_latency_profile(local_args)
     return local_args
+
+
+def segment_edge_policy(args: argparse.Namespace) -> str:
+    return str(getattr(args, "segment_edge_policy", SEGMENT_EDGE_POLICY_FALLBACK_ONLY))
 
 
 def uses_balanced_low_latency_stages(args: argparse.Namespace) -> bool:
@@ -452,6 +521,19 @@ def case_config(args: argparse.Namespace, robot: Any, seed: int) -> Any:
     cfg.database.online_cache.max_nodes = int(args.rbf_online_cache_max_nodes)
     cfg.database.online_cache.max_payload_bytes = int(args.rbf_online_cache_max_payload_bytes)
     set_online_cache_backfill(cfg, allow_database_backfill=False)
+    policy = segment_edge_policy(local_args)
+    cfg.connector.segment_edges_fallback_only = policy == SEGMENT_EDGE_POLICY_FALLBACK_ONLY
+    if policy == SEGMENT_EDGE_POLICY_FALLBACK_ONLY:
+        cfg.query.repair_on_audit_failure = False
+        cfg.query.shortcut_boxes = False
+    if policy == SEGMENT_EDGE_POLICY_OFF:
+        cfg.connector.segment_edges_enabled = False
+        cfg.connector.rrt_segment_edges = False
+        cfg.connector.point_gap_segment_edges = False
+        cfg.connector.segment_edges_fallback_only = False
+        cfg.connector.point_validated_gap_tolerance = -1.0
+        cfg.query.repair_on_audit_failure = False
+        cfg.query.shortcut_boxes = False
     return cfg
 
 
@@ -463,7 +545,13 @@ def to_float_list(values: Iterable[Any]) -> list[float]:
     return [float(value) for value in values]
 
 
-def post_collision_audit(robot: Any, obstacles: list[Any], path: list[list[float]], step: float) -> dict[str, Any]:
+def post_collision_audit(
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    step: float,
+    collision_tolerance: float = 0.0,
+) -> dict[str, Any]:
     if len(path) < 2:
         return {"passed": False, "failed_segment_index": -1, "checked_samples": 0}
     checked = 0
@@ -480,7 +568,7 @@ def post_collision_audit(robot: Any, obstacles: list[Any], path: list[list[float
                 for dim in range(len(start))
             ]
             checked += 1
-            if sbf.check_config_collision(robot, obstacles, point):
+            if sbf.check_config_collision(robot, obstacles, point, float(collision_tolerance)):
                 return {
                     "passed": False,
                     "failed_segment_index": int(index),
@@ -547,7 +635,17 @@ def refine_corridors(forest: Any, queries: list[Any], args: argparse.Namespace) 
             if attempts > 0 and budget_s - elapsed_s < start_margin_s:
                 break
             quota = min(per_query, max_total - added_total)
-            added = int(forest.refine_query_corridor(list(query.start), list(query.goal), quota))
+            if segment_edge_policy(args) == SEGMENT_EDGE_POLICY_NORMAL:
+                added = int(forest.refine_query_corridor(list(query.start), list(query.goal), quota))
+            else:
+                added = int(forest.refine_query_corridor(
+                    list(query.start),
+                    list(query.goal),
+                    quota,
+                    CORRIDOR_REFINE_MODE_BOX_ONLY_LONG_PATH,
+                    float(getattr(args, "box_refine_long_path_ratio", 1.25)),
+                    float(getattr(args, "box_refine_min_delta", 0.25)),
+                ))
             attempts += 1
             added_total += added
             pass_added += added
@@ -557,15 +655,17 @@ def refine_corridors(forest: Any, queries: list[Any], args: argparse.Namespace) 
 
 
 def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: argparse.Namespace) -> dict[str, Any]:
+    audit_robot = forest.audit_robot() if hasattr(forest, "audit_robot") else robot
     query_t0 = time.perf_counter()
     result = forest.query(list(query.start), list(query.goal))
     query_s = time.perf_counter() - query_t0
     row = query_payload(query, result, query_s)
     initial_post_audit = post_collision_audit(
-        robot,
+        audit_robot,
         obstacles,
         row["waypoints"],
         float(args.post_audit_segment_step),
+        float(getattr(args, "audit_collision_tolerance", 0.0)),
     )
     row["initial_post_audit"] = initial_post_audit
     row["initial_post_audit_passed"] = bool(initial_post_audit.get("passed"))
@@ -573,12 +673,15 @@ def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: a
     row["bridge_progress"] = 0
     row["bridge_time_s"] = 0.0
     row["post_audit_source"] = "direct_query"
-    should_bridge = (not result.success and args.bridge_failed_queries) or (
-        bool(args.bridge_repaired_queries)
-        and result.success
-        and int(result.repair_count) > 0
-        and int(result.start_box_id) != int(result.goal_box_id)
-    )
+    policy = segment_edge_policy(args)
+    should_bridge = policy != SEGMENT_EDGE_POLICY_OFF and (not result.success and args.bridge_failed_queries)
+    if policy == SEGMENT_EDGE_POLICY_NORMAL:
+        should_bridge = should_bridge or (
+            bool(args.bridge_repaired_queries)
+            and result.success
+            and int(result.repair_count) > 0
+            and int(result.start_box_id) != int(result.goal_box_id)
+        )
     if should_bridge:
         bridge_t0 = time.perf_counter()
         if hasattr(forest, "bridge_query_known_needed"):
@@ -606,7 +709,7 @@ def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: a
     if bool(row.get("ok")) and bool(row.get("audit_passed")):
         final_simplify = final_ompl_simplify_path(
             sbf,
-            robot,
+            audit_robot,
             obstacles,
             [list(point) for point in row.get("waypoints", [])],
             segment_step=float(args.audit_segment_step),
@@ -622,10 +725,11 @@ def run_query(forest: Any, robot: Any, obstacles: list[Any], query: Any, args: a
     row["ompl_final_simplify_applied"] = bool(final_simplify["applied"])
     row["ompl_final_simplify_reason"] = str(final_simplify["reason"])
     final_post_audit = post_collision_audit(
-        robot,
+        audit_robot,
         obstacles,
         row["waypoints"],
         float(args.post_audit_segment_step),
+        float(getattr(args, "audit_collision_tolerance", 0.0)),
     )
     row["post_audit"] = final_post_audit
     row["post_audit_passed"] = bool(final_post_audit.get("passed"))
@@ -682,10 +786,14 @@ def metadata_payload(cfg: Any, args: argparse.Namespace) -> dict[str, Any]:
         "strict_path_audit": bool(getattr(args, "strict_path_audit", True)),
         "audit_resolution": int(getattr(args, "audit_resolution", 0)),
         "audit_segment_step": float(getattr(args, "audit_segment_step", 0.01)),
+        "audit_collision_tolerance": float(getattr(args, "audit_collision_tolerance", 0.0)),
         "repair_on_audit_failure": bool(getattr(args, "repair_on_audit_failure", True)),
         "collision_shortcut": bool(getattr(args, "collision_shortcut", True)),
         "collision_shortcut_resolution": int(getattr(args, "collision_shortcut_resolution", 0)),
         "post_audit_segment_step": float(getattr(args, "post_audit_segment_step", 0.04)),
+        "segment_edge_policy": segment_edge_policy(args),
+        "box_refine_long_path_ratio": float(getattr(args, "box_refine_long_path_ratio", 1.25)),
+        "box_refine_min_delta": float(getattr(args, "box_refine_min_delta", 0.25)),
     }
 
 
@@ -942,7 +1050,7 @@ def main() -> int:
     args = parse_args()
     robot = sbf.load_iiwa14_robot()
     obstacles = sbf.make_combined_obstacles()
-    coverage_seeds = [list(seed) for seed in sbf.make_coverage_seeds(include_extra_anchors=False)]
+    coverage_seeds = coverage_seeds_for_args(args, robot)
     queries = sbf.make_combined_queries()
     seed_values = parse_csv_ints(args.seeds_list)
     before = proc_status()

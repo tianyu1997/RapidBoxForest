@@ -146,6 +146,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="All non-baseline rows disable external LECT and online endpoint evidence reuse.",
     )
+    parser.add_argument(
+        "--segment-edge-policy",
+        choices=["normal", "fallback_only", "off"],
+        default="fallback_only",
+        help="Keep segment bridge as a no-path fallback instead of a primary graph edge source.",
+    )
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -215,6 +221,7 @@ def ablation_command(
         aafk_sample_nodes_per_depth=int(args.aafk_sample_nodes_per_depth),
         ffb_auto_mask_inert=bool(getattr(args, "ffb_auto_mask_inert", True)),
         rbf_ffb_start_depth=int(getattr(args, "rbf_ffb_start_depth", UNIFIED_SBF_ANYTIME_FFB_START_DEPTH)),
+        segment_edge_policy=str(getattr(args, "segment_edge_policy", "fallback_only")),
     )
 
 
@@ -273,7 +280,6 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 name=BASELINE_NAME,
                 use_external_evidence=bool(baseline_warm_cache),
                 endpoint_evidence_cache=True,
-                rbf_max_depth=int(args.prewarm_max_depth) if baseline_warm_cache and args.prewarm_max_depth is not None else None,
                 **({"warm_cache_label": baseline_cache_label} if baseline_warm_cache else {}),
             ),
         },

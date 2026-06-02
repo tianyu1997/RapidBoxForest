@@ -88,6 +88,28 @@ std::string effective_symmetry_descriptor(const RBFPlanningConfig& config) {
         : config.database.symmetry_descriptor;
 }
 
+RRTConnectConfig with_query_root_hull_domain(const RRTConnectConfig& config,
+                                             const BoxOracle& oracle,
+                                             const Eigen::Ref<const Eigen::VectorXd>& start,
+                                             const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    RRTConnectConfig out = config;
+    auto lhs = oracle.query_intervals_for_node(
+        oracle.root_node(),
+        oracle.root_intervals(),
+        start);
+    auto rhs = oracle.query_intervals_for_node(
+        oracle.root_node(),
+        oracle.root_intervals(),
+        goal);
+    if (lhs.size() == rhs.size()) {
+        for (std::size_t index = 0; index < lhs.size(); ++index) {
+            lhs[index] = lhs[index].hull(rhs[index]);
+        }
+    }
+    out.domain_intervals = std::move(lhs);
+    return out;
+}
+
 }  // namespace
 
 RBFPlanningConfig::RBFPlanningConfig() {
@@ -124,6 +146,7 @@ RBFPlanningConfig::RBFPlanningConfig() {
     // seed is not face-adjacent to the current chain box, bisect and insert
     // intermediate connected boxes so the segment is fully covered by boxes.
     connector.pave.fill_gaps = true;
+    connector.pave.require_connected_chain = true;
     connector.pave.max_gap_fill_depth = 8;
     connector.per_pair_timeout_ms = 250.0;
     connector.max_pairs_per_gap = 8;
@@ -147,6 +170,16 @@ const SegmentEdge* find_segment_edge_by_id(const SegmentEdgeList& edges, int edg
         }
     }
     return nullptr;
+}
+
+Robot make_sbf_audit_robot(Robot robot) {
+    return robot;
+}
+
+CollisionChecker make_audit_checker(const Robot& robot, const Scene& scene, const QueryConfig& query_config) {
+    CollisionChecker checker(robot, scene);
+    checker.set_collision_tolerance(query_config.audit_collision_tolerance);
+    return checker;
 }
 
 const BoxNode* find_box_by_id(const std::vector<BoxNode>& boxes, int box_id) {
@@ -386,6 +419,24 @@ struct SubtractiveSeedCandidate {
     int domain_index = -1;
 };
 
+struct LeafRefineSeedCandidate {
+    Eigen::VectorXd seed;
+    int parent_box_id = -1;
+    int root_id = -1;
+    int domain_index = -1;
+};
+
+struct LeafRefineDomainRank {
+    int index = -1;
+    int adjacent_count = 0;
+    double volume = 0.0;
+    double priority_distance = std::numeric_limits<double>::infinity();
+};
+
+Eigen::VectorXd clamped_domain_seed(const BoxNode& domain,
+                                    const Eigen::Ref<const Eigen::VectorXd>& point,
+                                    double epsilon);
+
 bool intervals_subset_local(const std::vector<Interval>& inner,
                             const std::vector<Interval>& outer,
                             double tolerance = 0.0) {
@@ -428,6 +479,207 @@ bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals
         }
     }
     return true;
+}
+
+double box_priority_point_distance(const BoxNode& box,
+                                   const std::vector<Eigen::VectorXd>& priority_points) {
+    if (priority_points.empty()) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double best = std::numeric_limits<double>::infinity();
+    for (const auto& point : priority_points) {
+        if (point.size() != box.n_dims()) {
+            continue;
+        }
+        best = std::min(best, intervals_point_gap_local(box.joint_intervals, point));
+    }
+    return best;
+}
+
+std::vector<LeafRefineDomainRank> rank_leaf_refine_domains(
+    const std::vector<BoxNode>& domains,
+    const std::vector<BoxNode>& live_boxes,
+    const std::vector<Eigen::VectorXd>& priority_points,
+    double tolerance) {
+    std::vector<LeafRefineDomainRank> ranks;
+    ranks.reserve(domains.size());
+    for (int index = 0; index < static_cast<int>(domains.size()); ++index) {
+        const auto& domain = domains[static_cast<std::size_t>(index)];
+        LeafRefineDomainRank rank;
+        rank.index = index;
+        rank.volume = domain.volume;
+        rank.priority_distance = box_priority_point_distance(domain, priority_points);
+        for (const auto& live : live_boxes) {
+            if (boxes_connected(domain, live, tolerance)) {
+                rank.adjacent_count += 1;
+            }
+        }
+        ranks.push_back(rank);
+    }
+    std::sort(ranks.begin(), ranks.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.adjacent_count != rhs.adjacent_count) {
+            return lhs.adjacent_count > rhs.adjacent_count;
+        }
+        if (std::abs(lhs.priority_distance - rhs.priority_distance) > 1e-12) {
+            return lhs.priority_distance < rhs.priority_distance;
+        }
+        if (std::abs(lhs.volume - rhs.volume) > 1e-18) {
+            return lhs.volume > rhs.volume;
+        }
+        return lhs.index < rhs.index;
+    });
+    return ranks;
+}
+
+bool leaf_refine_seed_near_existing(const std::vector<LeafRefineSeedCandidate>& candidates,
+                                    const Eigen::Ref<const Eigen::VectorXd>& seed,
+                                    double tolerance) {
+    for (const auto& candidate : candidates) {
+        if (candidate.seed.size() == seed.size() && (candidate.seed - seed).norm() <= tolerance) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool append_leaf_refine_seed(std::vector<LeafRefineSeedCandidate>& seeds,
+                             const std::vector<BoxNode>& live_boxes,
+                             const BoxNode& domain,
+                             int domain_index,
+                             const Eigen::Ref<const Eigen::VectorXd>& raw_seed,
+                             int parent_box_id,
+                             int root_id,
+                             int limit,
+                             double epsilon,
+                             double dedup_tolerance) {
+    if (static_cast<int>(seeds.size()) >= limit) {
+        return false;
+    }
+    Eigen::VectorXd seed = clamped_domain_seed(domain, raw_seed, epsilon);
+    if (point_covered_by_existing_box_local(live_boxes, seed) ||
+        leaf_refine_seed_near_existing(seeds, seed, dedup_tolerance)) {
+        return false;
+    }
+    seeds.push_back(LeafRefineSeedCandidate{std::move(seed), parent_box_id, root_id, domain_index});
+    return true;
+}
+
+Eigen::VectorXd domain_face_seed_from_neighbor(const BoxNode& domain,
+                                               const BoxNode& neighbor,
+                                               double epsilon) {
+    Eigen::VectorXd seed = domain.center();
+    for (int dim = 0; dim < domain.n_dims(); ++dim) {
+        const auto& di = domain.joint_intervals[static_cast<std::size_t>(dim)];
+        const auto& ni = neighbor.joint_intervals[static_cast<std::size_t>(dim)];
+        const double width = std::max(0.0, di.width());
+        const double inset = std::min(std::max(epsilon, 1e-12), 0.25 * width);
+        if (ni.hi <= di.lo + epsilon && width > 2.0 * inset) {
+            seed[dim] = di.lo + inset;
+        } else if (ni.lo >= di.hi - epsilon && width > 2.0 * inset) {
+            seed[dim] = di.hi - inset;
+        } else {
+            const double lo = std::max(di.lo, ni.lo);
+            const double hi = std::min(di.hi, ni.hi);
+            seed[dim] = lo <= hi ? 0.5 * (lo + hi) : di.center();
+        }
+    }
+    return clamped_domain_seed(domain, seed, epsilon);
+}
+
+std::vector<LeafRefineSeedCandidate> make_leaf_refine_domain_seeds(
+    const BoxNode& domain,
+    int domain_index,
+    const std::vector<BoxNode>& live_boxes,
+    int limit,
+    double adjacency_tolerance,
+    double boundary_epsilon) {
+    std::vector<LeafRefineSeedCandidate> seeds;
+    if (limit <= 0) {
+        return seeds;
+    }
+    seeds.reserve(static_cast<std::size_t>(std::min(limit, 16)));
+    const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
+    const double dedup_tolerance = std::max(1e-9, 4.0 * epsilon);
+    for (const auto& live : live_boxes) {
+        if (!boxes_connected(domain, live, adjacency_tolerance)) {
+            continue;
+        }
+        const Eigen::VectorXd seed = domain_face_seed_from_neighbor(domain, live, epsilon);
+        append_leaf_refine_seed(seeds,
+                                live_boxes,
+                                domain,
+                                domain_index,
+                                seed,
+                                live.id,
+                                live.root_id >= 0 ? live.root_id : live.id,
+                                limit,
+                                epsilon,
+                                dedup_tolerance);
+        if (static_cast<int>(seeds.size()) >= limit) {
+            return seeds;
+        }
+    }
+    append_leaf_refine_seed(seeds,
+                            live_boxes,
+                            domain,
+                            domain_index,
+                            domain.center(),
+                            -1,
+                            domain.root_id >= 0 ? domain.root_id : domain.id,
+                            limit,
+                            epsilon,
+                            dedup_tolerance);
+    for (int dim = 0; dim < domain.n_dims() && static_cast<int>(seeds.size()) < limit; ++dim) {
+        const auto& interval = domain.joint_intervals[static_cast<std::size_t>(dim)];
+        const double width = std::max(0.0, interval.width());
+        const double inset = std::min(std::max(epsilon, 1e-12), 0.25 * width);
+        if (width <= 2.0 * inset) {
+            continue;
+        }
+        Eigen::VectorXd lo_seed = domain.center();
+        lo_seed[dim] = interval.lo + inset;
+        append_leaf_refine_seed(seeds,
+                                live_boxes,
+                                domain,
+                                domain_index,
+                                lo_seed,
+                                -1,
+                                domain.root_id >= 0 ? domain.root_id : domain.id,
+                                limit,
+                                epsilon,
+                                dedup_tolerance);
+        if (static_cast<int>(seeds.size()) >= limit) {
+            break;
+        }
+        Eigen::VectorXd hi_seed = domain.center();
+        hi_seed[dim] = interval.hi - inset;
+        append_leaf_refine_seed(seeds,
+                                live_boxes,
+                                domain,
+                                domain_index,
+                                hi_seed,
+                                -1,
+                                domain.root_id >= 0 ? domain.root_id : domain.id,
+                                limit,
+                                epsilon,
+                                dedup_tolerance);
+    }
+    return seeds;
+}
+
+bool leaf_refine_has_adjacency(const std::vector<BoxNode>& boxes,
+                               const BoxNode& box,
+                               double tolerance,
+                               int* parent_box_id) {
+    for (const auto& existing : boxes) {
+        if (boxes_connected(existing, box, tolerance)) {
+            if (parent_box_id != nullptr) {
+                *parent_box_id = existing.id;
+            }
+            return true;
+        }
+    }
+    return false;
 }
 
 int containing_domain_index(const std::vector<BoxNode>& domains,
@@ -1219,7 +1471,8 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
 }  // namespace
 
 RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
-    : robot_(std::move(robot)), config_(std::move(config)) {
+    : robot_(std::move(robot)), audit_robot_(make_sbf_audit_robot(robot_)),
+      config_(std::move(config)) {
     if (config_.envelope_type.n_subdivisions <= 0) {
         config_.envelope_type.n_subdivisions = 4;
     }
@@ -1450,6 +1703,276 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
         database_->checkpoint();
     }
     return last_build_;
+}
+
+LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>& obstacles,
+                                                    int start_depth,
+                                                    int max_depth,
+                                                    const LeafSweepConfig& leaf_sweep_config) {
+    LeafSweepConfig active_config = leaf_sweep_config;
+    const int configured_threads = active_config.n_threads > 0
+        ? active_config.n_threads
+        : std::max(1, config_.runtime.n_threads);
+    active_config.n_threads = configured_threads;
+    RuntimeConfig runtime = config_.runtime;
+    runtime.mode = configured_threads > 1 ? ExecutionMode::Parallel : ExecutionMode::Inline;
+    runtime.n_threads = configured_threads;
+    runtime.batch_size = std::max(1, active_config.validation_batch_size);
+    StageContext context(runtime, Deadline::after_ms(active_config.timeout_ms));
+    return build_leaf_sweep(obstacles, start_depth, max_depth, active_config, context);
+}
+
+LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>& obstacles,
+                                                    int start_depth,
+                                                    int max_depth,
+                                                    const LeafSweepConfig& leaf_sweep_config,
+                                                    StageContext& context) {
+    ScopedStageTimer function_timer(context.diagnostics(), "forest.build_leaf_sweep");
+    last_build_seeds_.clear();
+    scene_.set_obstacles(obstacles);
+    reset_oracle(scene_);
+    boxes_.clear();
+    raw_boxes_.clear();
+    adjacency_.clear();
+    segment_edges_.clear();
+    invalidate_query_cache();
+
+    LeafSweepConfig active_config = leaf_sweep_config;
+    if (active_config.n_threads <= 0) {
+        active_config.n_threads = std::max(1, context.executor().n_threads());
+    }
+    LeafSweepGrower grower(*oracle_, active_config, config_.grower.find_free_box.split);
+    LeafSweepResult result = grower.sweep(obstacles, start_depth, max_depth, context);
+
+    scene_.set_obstacles(obstacles);
+    oracle_->set_scene(scene_);
+    boxes_ = result.free_boxes;
+    raw_boxes_ = boxes_;
+    reserve_existing_boxes();
+    adjacency_.clear();
+    segment_edges_.clear();
+    invalidate_query_cache();
+
+    last_build_ = {};
+    last_build_.grow_ms = result.total_ms;
+    last_build_.raw_boxes = static_cast<int>(raw_boxes_.size());
+    last_build_.final_boxes = static_cast<int>(boxes_.size());
+    last_build_.total_ms = result.total_ms;
+    last_build_.diagnostics = result.diagnostics;
+    if (config_.database.checkpoint_after_build && database_) {
+        database_->checkpoint();
+    }
+    return result;
+}
+
+LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
+    const std::vector<Obstacle>& obstacles,
+    const LeafSweepRefineConfig& refine_config,
+    const std::vector<Eigen::VectorXd>& priority_points) {
+    using Clock = std::chrono::steady_clock;
+    const auto total_start = Clock::now();
+
+    LeafSweepRefineResult out;
+    LeafSweepConfig leaf_config;
+    leaf_config.obstacle_cluster_gap = refine_config.obstacle_cluster_gap;
+    leaf_config.n_threads = refine_config.leaf_threads;
+    leaf_config.validation_batch_size = refine_config.validation_batch_size;
+    leaf_config.timeout_ms = refine_config.leaf_timeout_ms;
+    leaf_config.store_group_results = refine_config.store_group_results;
+    leaf_config.use_virtual_topology = refine_config.use_virtual_topology;
+    leaf_config.parallel_virtual_validation = false;
+
+    out.leaf_sweep = build_leaf_sweep(obstacles,
+                                      refine_config.leaf_start_depth,
+                                      refine_config.leaf_max_depth,
+                                      leaf_config);
+    out.leaf_sweep_ms = out.leaf_sweep.total_ms;
+    out.leaf_free_count = static_cast<int>(out.leaf_sweep.free_boxes.size());
+    out.leaf_collision_count = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+
+    rebuild_adjacency();
+    const auto refine_start = Clock::now();
+    Deadline refine_deadline = refine_config.refine_timeout_ms > 0.0
+        ? Deadline::after_ms(refine_config.refine_timeout_ms)
+        : Deadline{};
+    StageContext refine_context = StageContext::from_runtime(config_.runtime, refine_deadline);
+    FindFreeBoxOptions refine_options = config_.grower.find_free_box;
+    refine_options.max_depth = refine_config.deep_ffb_depth;
+    refine_options.reject_seed_collision = true;
+
+    const double adjacency_tolerance = config_.query.adjacency_tolerance;
+    const double boundary_epsilon = std::max(1e-10, config_.grower.boundary_epsilon);
+    const auto domain_ranks = rank_leaf_refine_domains(out.leaf_sweep.collision_boxes,
+                                                       boxes_,
+                                                       priority_points,
+                                                       adjacency_tolerance);
+    int next_id = next_box_id();
+    std::unordered_map<int, int> domain_successes;
+    domain_successes.reserve(std::min<std::size_t>(domain_ranks.size(), 4096));
+    for (const auto& rank : domain_ranks) {
+        if (refine_context.should_stop() ||
+            out.deep_boxes_added >= std::max(0, refine_config.deep_max_boxes)) {
+            break;
+        }
+        if (rank.index < 0 ||
+            rank.index >= static_cast<int>(out.leaf_sweep.collision_boxes.size())) {
+            continue;
+        }
+        const BoxNode& domain = out.leaf_sweep.collision_boxes[static_cast<std::size_t>(rank.index)];
+        const auto seeds = make_leaf_refine_domain_seeds(domain,
+                                                         rank.index,
+                                                         boxes_,
+                                                         std::max(0, refine_config.domain_seed_cap),
+                                                         adjacency_tolerance,
+                                                         boundary_epsilon);
+        int attempts_in_domain = 0;
+        for (const auto& candidate : seeds) {
+            if (refine_context.should_stop() ||
+                out.deep_boxes_added >= std::max(0, refine_config.deep_max_boxes) ||
+                attempts_in_domain >= std::max(0, refine_config.domain_attempt_cap) ||
+                domain_successes[rank.index] >= std::max(0, refine_config.domain_success_cap)) {
+                break;
+            }
+            attempts_in_domain += 1;
+            out.deep_domain_attempts += 1;
+            if (point_covered_by_existing_box_local(boxes_, candidate.seed)) {
+                out.deep_contained_rejects += 1;
+                continue;
+            }
+            auto result = find_free_box_in_domain(candidate.seed,
+                                                  domain.joint_intervals,
+                                                  refine_context,
+                                                  refine_options);
+            if (!result.found) {
+                out.deep_ffb_fail += 1;
+                continue;
+            }
+            out.deep_ffb_success += 1;
+            if (!intervals_subset_local(result.intervals, domain.joint_intervals, 1e-12)) {
+                out.deep_domain_rejects += 1;
+                continue;
+            }
+            if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
+                out.deep_commit_rejects += 1;
+                continue;
+            }
+            BoxNode box;
+            box.id = next_id++;
+            box.joint_intervals = result.intervals;
+            box.seed_config = candidate.seed;
+            box.tree_id = result.node;
+            box.parent_box_id = candidate.parent_box_id;
+            box.root_id = candidate.root_id >= 0 ? candidate.root_id : box.id;
+            box.safety_status = result.validation_detail.safety_status;
+            box.strict_audit_required = result.validation_detail.strict_audit_required;
+            box.compute_volume();
+
+            bool contained_by_existing = false;
+            for (const auto& existing : boxes_) {
+                if (box_contains_box_exact_local(existing, box)) {
+                    contained_by_existing = true;
+                    break;
+                }
+            }
+            if (contained_by_existing) {
+                out.deep_contained_rejects += 1;
+                continue;
+            }
+
+            int adjacent_parent = candidate.parent_box_id;
+            if (adjacent_parent >= 0) {
+                const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
+                if (parent == nullptr || !boxes_connected(*parent, box, adjacency_tolerance)) {
+                    adjacent_parent = -1;
+                }
+            }
+            if (adjacent_parent < 0 &&
+                !leaf_refine_has_adjacency(boxes_, box, adjacency_tolerance, &adjacent_parent)) {
+                out.deep_adjacency_rejects += 1;
+                continue;
+            }
+            box.parent_box_id = adjacent_parent;
+            if (box.root_id < 0 && adjacent_parent >= 0) {
+                const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
+                box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : adjacent_parent;
+            }
+            oracle_->reserve_node(box.tree_id, box.id);
+            boxes_.push_back(box);
+            raw_boxes_.push_back(box);
+            domain_successes[rank.index] += 1;
+            out.deep_boxes_added += 1;
+        }
+    }
+    out.deep_refine_ms = std::chrono::duration<double, std::milli>(Clock::now() - refine_start).count();
+
+    const auto connector_start = Clock::now();
+    bool connector_ran = false;
+    rebuild_adjacency();
+    if (config_.enable_connector && !boxes_.empty()) {
+        StageContext connector_context = StageContext::from_runtime(config_.runtime);
+        CollisionChecker checker(robot_, scene_);
+        IslandConnectorConfig connector_config = config_.connector;
+        if (connector_config.n_threads <= 1 && config_.runtime.n_threads > 1) {
+            connector_config.n_threads = config_.runtime.n_threads;
+        }
+        IslandConnector connector(*oracle_, robot_, checker, connector_config);
+        int connector_next_id = next_box_id();
+        const auto connector_result = connector.connect_all(boxes_,
+                                                            adjacency_,
+                                                            segment_edges_,
+                                                            connector_next_id,
+                                                            connector_context);
+        out.profile.bridge_boxes_added = connector_result.bridge_boxes_added;
+        out.profile.segment_edges_added = connector_result.segment_edges_added;
+        out.profile.rrt_segment_edges_added = connector_result.rrt_segment_edges_added;
+        out.profile.point_gap_segment_edges_added = connector_result.point_gap_segment_edges_added;
+        out.profile.connector_attempted_pairs = connector_result.attempted_pairs;
+        out.profile.connector_connected = connector_result.connected;
+        connector_ran = true;
+    }
+    out.connector_ms = std::chrono::duration<double, std::milli>(Clock::now() - connector_start).count();
+    out.profile.connector_ms = out.connector_ms;
+
+    const auto adjacency_start = Clock::now();
+    out.profile.segment_edges = static_cast<int>(segment_edges_.size());
+    if (!connector_ran) {
+        rebuild_adjacency();
+    }
+    out.profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adjacency_start).count();
+    out.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
+    out.profile.final_boxes = static_cast<int>(boxes_.size());
+    out.profile.grow_ms = out.leaf_sweep_ms + out.deep_refine_ms;
+    out.profile.grow_adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    out.profile.grow_largest_island = 0;
+    for (const auto& island : find_islands(adjacency_)) {
+        out.profile.grow_largest_island =
+            std::max(out.profile.grow_largest_island, static_cast<int>(island.size()));
+    }
+    out.profile.adjacency_islands = out.profile.grow_adjacency_islands;
+    out.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+    out.profile.total_ms = out.total_ms;
+    out.profile.diagnostics = out.leaf_sweep.diagnostics;
+    out.profile.diagnostics["leaf_refine.leaf_sweep_ms"] = out.leaf_sweep_ms;
+    out.profile.diagnostics["leaf_refine.leaf_free_count"] = static_cast<double>(out.leaf_free_count);
+    out.profile.diagnostics["leaf_refine.leaf_collision_count"] = static_cast<double>(out.leaf_collision_count);
+    out.profile.diagnostics["leaf_refine.deep_refine_ms"] = out.deep_refine_ms;
+    out.profile.diagnostics["leaf_refine.deep_boxes_added"] = static_cast<double>(out.deep_boxes_added);
+    out.profile.diagnostics["leaf_refine.deep_domain_attempts"] = static_cast<double>(out.deep_domain_attempts);
+    out.profile.diagnostics["leaf_refine.deep_ffb_success"] = static_cast<double>(out.deep_ffb_success);
+    out.profile.diagnostics["leaf_refine.deep_ffb_fail"] = static_cast<double>(out.deep_ffb_fail);
+    out.profile.diagnostics["leaf_refine.deep_commit_rejects"] = static_cast<double>(out.deep_commit_rejects);
+    out.profile.diagnostics["leaf_refine.deep_domain_rejects"] = static_cast<double>(out.deep_domain_rejects);
+    out.profile.diagnostics["leaf_refine.deep_contained_rejects"] = static_cast<double>(out.deep_contained_rejects);
+    out.profile.diagnostics["leaf_refine.deep_adjacency_rejects"] = static_cast<double>(out.deep_adjacency_rejects);
+    out.profile.diagnostics["leaf_refine.connector_ms"] = out.connector_ms;
+    out.profile.diagnostics["leaf_refine.total_ms"] = out.total_ms;
+    out.diagnostics = out.profile.diagnostics;
+    last_build_ = out.profile;
+    invalidate_query_cache();
+    if (config_.database.checkpoint_after_build && database_) {
+        database_->checkpoint();
+    }
+    return out;
 }
 
 FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
@@ -1960,7 +2483,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     CorridorQuery query_engine(query_config);
     QueryResult result = query_engine.run(query_cache(), start, goal);
     if (result.success && do_collision_shortcut && !query_config.strict_path_audit && result.path.size() > 2) {
-        CollisionChecker checker(robot_, scene_);
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, query_config);
         result.path = collision_shortcut_path(result.path,
                                              checker,
                                              collision_shortcut_resolution(query_config));
@@ -1968,15 +2491,17 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     }
     summarize_query_path(result, boxes_, segment_edges_);
     if (!result.success && query_config.strict_path_audit && query_config.repair_on_audit_failure) {
-        CollisionChecker checker(robot_, scene_);
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, query_config);
         const auto repair_t0 = Clock::now();
-        RRTConnectConfig repair_config = config_.connector.rrt;
+        RRTConnectConfig repair_config = oracle_
+            ? with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal)
+            : config_.connector.rrt;
         repair_config.max_iters = std::max(repair_config.max_iters, query_config.repair_rrt_max_iters);
         if (query_config.repair_timeout_ms > 0.0) {
             repair_config.timeout_ms = query_config.repair_timeout_ms;
         }
         repair_config.segment_resolution = std::max(repair_config.segment_resolution, query_config.audit_resolution);
-        std::vector<Eigen::VectorXd> repair_path = rrt_connect(start, goal, checker, robot_, repair_config, 20260511);
+        std::vector<Eigen::VectorXd> repair_path = rrt_connect(start, goal, checker, audit_robot_, repair_config, 20260511);
         if (!repair_path.empty()) {
             PathAuditCheck repair_audit = audit_waypoint_path(repair_path,
                                                              checker,
@@ -2010,7 +2535,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         result.repair_time_ms += std::chrono::duration<double, std::milli>(Clock::now() - repair_t0).count();
     }
     if (result.success && query_config.strict_path_audit) {
-        CollisionChecker checker(robot_, scene_);
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, query_config);
         const auto audit_t0 = Clock::now();
         PathAuditCheck audit = audit_waypoint_path(result.path,
                                                    checker,
@@ -2039,7 +2564,10 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             result.remaining_unsafe_assumptions = 0;
         } else if (query_config.repair_on_audit_failure) {
             const auto repair_t0 = Clock::now();
-            const bool repaired = try_local_birrt_repair(result, audit, checker, robot_, query_config, config_.connector.rrt);
+            const RRTConnectConfig repair_domain_config = oracle_
+                ? with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal)
+                : config_.connector.rrt;
+            const bool repaired = try_local_birrt_repair(result, audit, checker, audit_robot_, query_config, repair_domain_config);
             result.repair_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - repair_t0).count();
             if (repaired) {
                 PathAuditCheck repaired_audit = audit_waypoint_path(result.path,
@@ -2113,10 +2641,10 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
-    CollisionChecker checker(robot_, scene_);
-    RRTConnectConfig bridge_rrt = config_.connector.rrt;
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
-    auto waypoint_path = rrt_connect(start, goal, checker, robot_, context, bridge_rrt, 20260503);
+    auto waypoint_path = rrt_connect(start, goal, checker, audit_robot_, context, bridge_rrt, 20260503);
     if (waypoint_path.empty()) {
         return 0;
     }
@@ -2128,7 +2656,8 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     int direct_segment_edges_added = 0;
-    if (config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges) {
+    const bool defer_query_segment_edge = config_.connector.segment_edges_fallback_only;
+    if (!defer_query_segment_edge && config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges) {
         const int edge_id = add_segment_edge(segment_edges_,
                                              adjacency_,
                                              start_box_id,
@@ -2141,6 +2670,18 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         direct_segment_edges_added = edge_id >= 0 ? 1 : 0;
     }
     int next_id = next_box_id();
+    ChainPaveConfig pave_config = config_.connector.pave;
+    if (defer_query_segment_edge) {
+        pave_config.max_chain = std::max(pave_config.max_chain, 256);
+        pave_config.refine_covered_waypoints = true;
+        pave_config.fill_gaps = true;
+        pave_config.find_free_box.max_depth = std::max(pave_config.find_free_box.max_depth, 64);
+        pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
+        pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 200.0);
+        pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 512);
+        pave_config.gap_fill_min_arc_gain = 0.0;
+        pave_config.require_connected_chain = true;
+    }
     const int added = chain_pave_along_path(
         waypoint_path,
         start_box_id,
@@ -2149,7 +2690,7 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         adjacency_,
         next_id,
         context,
-        config_.connector.pave);
+        pave_config);
     if (added > 0) {
         rebuild_adjacency();
     }
@@ -2159,6 +2700,31 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const auto gap_result = gap_connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
     (void)gap_result;
     invalidate_query_cache();
+    if (defer_query_segment_edge) {
+        QueryResult box_retry = run_query_internal(start, goal, false);
+        if (box_retry.success && box_retry.repair_count == 0 && box_retry.segment_edges_used == 0) {
+            return added;
+        }
+        if (config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges) {
+            const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+            const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+            if (source_box_id >= 0 && target_box_id >= 0) {
+                const int edge_id = add_segment_edge(segment_edges_,
+                                                     adjacency_,
+                                                     source_box_id,
+                                                     target_box_id,
+                                                     waypoint_path,
+                                                     SegmentEdgeType::QueryBridge,
+                                                     bridge_rrt.segment_resolution,
+                                                     SegmentEdgeValidation::CollisionChecked,
+                                                     true);
+                direct_segment_edges_added = edge_id >= 0 ? 1 : 0;
+                if (direct_segment_edges_added > 0) {
+                    invalidate_query_cache();
+                }
+            }
+        }
+    }
     return added + direct_segment_edges_added;
 }
 
@@ -2188,10 +2754,10 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
         }
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
-    CollisionChecker checker(robot_, scene_);
-    RRTConnectConfig bridge_rrt = config_.connector.rrt;
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
-    auto waypoint_path = rrt_connect(start, goal, checker, robot_, context, bridge_rrt, 20260503);
+    auto waypoint_path = rrt_connect(start, goal, checker, audit_robot_, context, bridge_rrt, 20260503);
     if (waypoint_path.empty()) {
         return out;
     }
@@ -2238,23 +2804,55 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
 int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
                                          const Eigen::Ref<const Eigen::VectorXd>& goal,
                                          int max_boxes_to_add) {
+    return refine_query_corridor(start,
+                                 goal,
+                                 max_boxes_to_add,
+                                 CorridorRefineMode::LegacyBridge,
+                                 std::numeric_limits<double>::infinity(),
+                                 std::numeric_limits<double>::infinity());
+}
+
+int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
+                                         const Eigen::Ref<const Eigen::VectorXd>& goal,
+                                         int max_boxes_to_add,
+                                         CorridorRefineMode mode,
+                                         double long_path_ratio,
+                                         double long_path_min_delta) {
     if (boxes_.empty() || !oracle_ || max_boxes_to_add <= 0) {
         return 0;
     }
-    CollisionChecker checker(robot_, scene_);
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     QueryResult probe = run_query_internal(start, goal, false);
-    if (probe.success && probe.repair_count == 0 && probe.segment_edges_used == 0) {
-        return 0;
-    }
 
     std::vector<Eigen::VectorXd> waypoint_path;
-    if (probe.success && probe.audit_passed && !probe.path.empty()) {
+    bool add_query_segment_edge = false;
+    const bool graph_only_success =
+        probe.success && probe.audit_passed && probe.repair_count == 0 && probe.segment_edges_used == 0 && !probe.path.empty();
+    if (graph_only_success) {
+        if (mode != CorridorRefineMode::BoxOnlyLongPath) {
+            return 0;
+        }
+        const double direct = (goal - start).norm();
+        const double delta = probe.path_length - direct;
+        const bool ratio_trigger =
+            direct > 1e-9 && std::isfinite(long_path_ratio) && probe.path_length / direct >= long_path_ratio;
+        const bool delta_trigger = std::isfinite(long_path_min_delta) && delta >= long_path_min_delta;
+        if (!ratio_trigger && !delta_trigger) {
+            return 0;
+        }
         waypoint_path = probe.path;
+    } else if (probe.success && probe.audit_passed && !probe.path.empty()) {
+        if (mode == CorridorRefineMode::BoxOnlyLongPath) {
+            return 0;
+        }
+        waypoint_path = probe.path;
+        add_query_segment_edge = true;
     } else {
         StageContext rrt_context = StageContext::serial();
-        RRTConnectConfig refine_rrt = config_.connector.rrt;
+        RRTConnectConfig refine_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
         refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-        waypoint_path = rrt_connect(start, goal, checker, robot_, rrt_context, refine_rrt, 20260505);
+        waypoint_path = rrt_connect(start, goal, checker, audit_robot_, rrt_context, refine_rrt, 20260505);
+        add_query_segment_edge = mode != CorridorRefineMode::BoxOnlyLongPath;
     }
     if (waypoint_path.empty()) {
         return 0;
@@ -2268,6 +2866,15 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     pave_config.max_chain = std::min(max_boxes_to_add, std::max(1, max_boxes_to_add));
     pave_config.max_steps_per_waypoint = std::max(1, pave_config.max_steps_per_waypoint);
     pave_config.refine_covered_waypoints = true;
+    if (mode == CorridorRefineMode::BoxOnlyLongPath) {
+        pave_config.fill_gaps = true;
+        pave_config.find_free_box.max_depth = std::max(pave_config.find_free_box.max_depth, 64);
+        pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
+        pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 200.0);
+        pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 512);
+        pave_config.gap_fill_min_arc_gain = 0.0;
+        pave_config.require_connected_chain = true;
+    }
     StageContext context = StageContext::serial();
     int next_id = next_box_id();
     const int added = chain_pave_along_path(
@@ -2281,7 +2888,10 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         pave_config);
     if (added > 0) {
         rebuild_adjacency();
-        if (audit_waypoint_path(waypoint_path,
+        if (add_query_segment_edge &&
+            config_.connector.segment_edges_enabled &&
+            config_.connector.rrt_segment_edges &&
+            audit_waypoint_path(waypoint_path,
                                 checker,
                                 config_.query.audit_resolution,
                                 config_.query.audit_segment_step)

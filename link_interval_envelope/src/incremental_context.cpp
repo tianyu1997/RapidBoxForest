@@ -1,5 +1,8 @@
 #include <link_interval_envelope/incremental_context.h>
 
+#include <sbf/envelope/crit_source.h>
+#include <sbf/envelope/ifk_aa_source.h>
+
 #include <chrono>
 #include <cmath>
 #include <utility>
@@ -36,6 +39,12 @@ bool differs_only_in_dim(const std::vector<rbf::Interval>& lhs,
 
 }  // namespace
 
+struct IncrementalEnvelopeContext::Impl {
+    rbf::CritSampleState crit_state;
+    rbf::AaFkPrefixState aa_fk_state;
+    rbf::HifkAaState hifk_aa_state;
+};
+
 IncrementalEnvelopeContext::IncrementalEnvelopeContext(
     rbf::Robot robot,
     rbf::EndpointSourceConfig endpoint_config,
@@ -43,13 +52,20 @@ IncrementalEnvelopeContext::IncrementalEnvelopeContext(
     : robot_(std::move(robot))
     , endpoint_config_(endpoint_config)
     , envelope_config_(envelope_config)
+    , impl_(std::make_unique<Impl>())
 {}
+
+IncrementalEnvelopeContext::~IncrementalEnvelopeContext() = default;
+
+IncrementalEnvelopeContext::IncrementalEnvelopeContext(IncrementalEnvelopeContext&&) noexcept = default;
+
+IncrementalEnvelopeContext& IncrementalEnvelopeContext::operator=(IncrementalEnvelopeContext&&) noexcept = default;
 
 void IncrementalEnvelopeContext::reset() {
     fk_state_ = rbf::FKState{};
-    crit_state_.reset();
-    aa_fk_state_ = rbf::AaFkPrefixState{};
-    hifk_aa_state_ = rbf::HifkAaState{};
+    impl_->crit_state.reset();
+    impl_->aa_fk_state = rbf::AaFkPrefixState{};
+    impl_->hifk_aa_state = rbf::HifkAaState{};
     last_intervals_.clear();
 }
 
@@ -91,15 +107,15 @@ rbf::EndpointIAABBResult IncrementalEnvelopeContext::endpoint_from_crit_cache() 
     result.source = rbf::EndpointSource::CritSample;
     result.is_safe = false;
     result.safety_level = rbf::EndpointSafetyLevel::UnsafeHeuristic;
-    result.n_active_links = crit_state_.n_active_links;
-    result.endpoint_iaabbs = crit_state_.endpoint_iaabbs;
+    result.n_active_links = impl_->crit_state.n_active_links;
+    result.endpoint_iaabbs = impl_->crit_state.endpoint_iaabbs;
     result.fk_state = fk_state_;
-    result.combo_count = crit_state_.combo_count;
+    result.combo_count = impl_->crit_state.combo_count;
     result.enumerate_threads = 0;
     result.enumerate_time_us = 0.0;
-    result.parallel_min_combos_used = crit_state_.parallel_min_combos_used;
-    result.enumerate_chunk_size = crit_state_.enumerate_chunk_size;
-    result.enumerate_chunk_count = crit_state_.enumerate_chunk_count;
+    result.parallel_min_combos_used = impl_->crit_state.parallel_min_combos_used;
+    result.enumerate_chunk_size = impl_->crit_state.enumerate_chunk_size;
+    result.enumerate_chunk_count = impl_->crit_state.enumerate_chunk_count;
     result.candidate_dirty_count = 0;
     result.predh_rebuild_count = 0;
     result.endpoint_cache_reused = true;
@@ -123,14 +139,14 @@ IncrementalEnvelopeResult IncrementalEnvelopeContext::compute(
 
     const bool can_use_incremental_crit =
         endpoint_config_.source == rbf::EndpointSource::CritSample &&
-        crit_state_.valid &&
+        impl_->crit_state.valid &&
         effective_changed_dim >= 0 &&
         effective_changed_dim < static_cast<int>(intervals.size());
 
     const bool can_reuse_crit_cache =
         endpoint_config_.source == rbf::EndpointSource::CritSample &&
-        crit_state_.valid &&
-        crit_state_.endpoint_valid &&
+        impl_->crit_state.valid &&
+        impl_->crit_state.endpoint_valid &&
         effective_changed_dim == -2;
 
     const auto endpoint_start = Clock::now();
@@ -145,16 +161,16 @@ IncrementalEnvelopeResult IncrementalEnvelopeContext::compute(
             42,
             can_use_incremental_crit ? effective_changed_dim : -1,
             &fk_state_,
-            &crit_state_,
+            &impl_->crit_state,
             endpoint_config_.n_threads,
             endpoint_config_.parallel_min_combos);
         out.used_source_incremental_state = can_use_incremental_crit;
     } else if (endpoint_config_.source == rbf::EndpointSource::IFK) {
         out.endpoint = rbf::compute_endpoint_iaabb_ifk_aa_stateful(
-            robot_, intervals, aa_fk_state_, &out.used_source_incremental_state);
+            robot_, intervals, impl_->aa_fk_state, &out.used_source_incremental_state);
     } else if (endpoint_config_.source == rbf::EndpointSource::HIFK) {
         out.endpoint = rbf::compute_endpoint_iaabb_hifk_aa_stateful(
-            robot_, intervals, endpoint_config_, hifk_aa_state_, &out.used_source_incremental_state);
+            robot_, intervals, endpoint_config_, impl_->hifk_aa_state, &out.used_source_incremental_state);
     } else {
         out.endpoint = rbf::compute_endpoint_iaabb(
             robot_,

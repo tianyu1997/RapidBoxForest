@@ -2,10 +2,10 @@
 /// @file batch.h
 /// @brief Parallel batch envelope computation for supported endpoint sources.
 
-#include <sbf/core/types.h>
-#include <sbf/core/robot.h>
-#include <sbf/envelope/endpoint_source.h>
-#include <sbf/envelope/envelope_type.h>
+#include <link_interval_envelope/endpoint.h>
+#include <link_interval_envelope/envelope.h>
+#include <link_interval_envelope/robot.h>
+#include <link_interval_envelope/types.h>
 
 #include <vector>
 

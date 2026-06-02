@@ -24,6 +24,13 @@ from experiments.common.anytime_defaults import (  # noqa: E402
     UNIFIED_SBF_ANYTIME_STAGE_IDS,
     UNIFIED_SBF_ANYTIME_TASK_BATCH_SIZE,
     UNIFIED_SBF_ANYTIME_THREADS,
+    UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB,
+    UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION,
+    UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB,
+    UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
+    UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
     csv_floats,
     csv_ints,
     csv_text,
@@ -57,9 +64,13 @@ def parse_args() -> argparse.Namespace:
         rbf_max_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
         connector_pave_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
         component_connect_ffb_max_depth=UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
-        rrt_goal_bias=0.20,
-        intertree_goal_bias=0.25,
-        component_connect_prob=0.35,
+        rrt_goal_bias=UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
+        intertree_goal_bias=UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS,
+        unexplored_prob=UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
+        anchor_target_prob=UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB,
+        sample_uniform_prob=UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
+        sample_categorical_allocation=UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION,
+        component_connect_prob=UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB,
         quality_min_connected_boxes=64,
         post_connect_extra_boxes=0,
         post_connect_time_budget_ms=450.0,
@@ -69,6 +80,7 @@ def parse_args() -> argparse.Namespace:
         latency_stage_early_stop=False,
         bridge_failed_queries=True,
         bridge_repaired_queries=True,
+        segment_edge_policy=shelf.SEGMENT_EDGE_POLICY_FALLBACK_ONLY,
         corridor_refine=True,
         corridor_refine_budget_ms=250.0,
         corridor_refine_max_boxes=48,
@@ -115,6 +127,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--clean-active-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--segment-edge-policy",
+        choices=[shelf.SEGMENT_EDGE_POLICY_NORMAL, shelf.SEGMENT_EDGE_POLICY_FALLBACK_ONLY, shelf.SEGMENT_EDGE_POLICY_OFF],
+        default=shelf.SEGMENT_EDGE_POLICY_FALLBACK_ONLY,
+    )
     parser.add_argument("--corridor-refine", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--corridor-refine-budget-ms", type=float, default=250.0)
     parser.add_argument("--corridor-refine-max-boxes", type=int, default=48)
@@ -122,6 +139,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-passes", type=int, default=2)
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=120.0)
     parser.add_argument("--corridor-refine-defer-labels", default="CS->LB")
+    parser.add_argument("--box-refine-long-path-ratio", type=float, default=1.25)
+    parser.add_argument("--box-refine-min-delta", type=float, default=0.25)
     parser.add_argument("--post-audit-segment-step", type=float, default=UNIFIED_SBF_ANYTIME_POST_AUDIT_SEGMENT_STEP)
     parser.add_argument("--final-ompl-simplify-time-s", type=float, default=0.0)
     parser.add_argument("--require-no-repair", action=argparse.BooleanOptionalAction, default=False)
@@ -194,7 +213,8 @@ def query_tasks(row: dict[str, Any], args: argparse.Namespace) -> list[dict[str,
         repair_count = int(query.get("repair_count", 0))
         segment_edges_used = int(query.get("segment_edges_used", 0))
         box_sequence_len = len(query.get("box_sequence", []) or [])
-        native_ok = repair_count == 0 and segment_edges_used > 0 and box_sequence_len > 0
+        native_ok = repair_count == 0 and box_sequence_len > 0
+        box_graph_only_ok = native_ok and segment_edges_used == 0
         task_ok = bool(query.get("ok")) and audit_ok
         if bool(getattr(args, "require_no_repair", False)):
             task_ok = task_ok and native_ok
@@ -210,11 +230,48 @@ def query_tasks(row: dict[str, Any], args: argparse.Namespace) -> list[dict[str,
                 "repair_count": repair_count,
                 "used_repair_fallback": repair_count > 0,
                 "native_query_ok": native_ok,
+                "box_graph_only_query_ok": box_graph_only_ok,
                 "segment_edges_used": segment_edges_used,
                 "box_sequence_len": box_sequence_len,
             },
         ))
     return tasks
+
+
+def build_payload(
+    *,
+    args: argparse.Namespace,
+    stages: list[dict[str, Any]],
+    queries: list[Any],
+    records: list[dict[str, Any]],
+    raw_stage_rows: list[dict[str, Any]],
+    status: str,
+) -> dict[str, Any]:
+    summary = aggregate_stage_records(records, epsilon_path=float(args.epsilon_path))
+    payload = {
+        "experiment": "shelf_sbf_anytime_current",
+        "source_script": str(Path(__file__).resolve()),
+        "source_protocol": "current_run_shelf_sbf_case_staged_anytime_incumbent",
+        "reference_artifact": UNIFIED_SBF_ANYTIME_REFERENCE_ARTIFACT,
+        "scene": "shelf_iiwa_marcucci_combined",
+        "task_names": [query.label for query in queries],
+        "params": namespace_dict(args),
+        "environment": environment_metadata(),
+        "stage_schedule": stages,
+        "status": status,
+        "completed_stage_count": len(raw_stage_rows),
+        "summary": summary,
+        "records": records,
+        "raw_stage_rows": raw_stage_rows,
+        "notes": [
+            "This runner reuses experiments/common/run_shelf_sbf_case.py so the SBF path matches the current warm native-joint-symmetry shelf backend instead of the legacy paper_14 runner.",
+            "The default stage schedule is the refined d40 anytime operating configuration extracted from d40_r4_32_128_128_168_128.json.",
+            "Trade-off charging uses build.planning_s plus summed per-query wall time from each stage row.",
+            "This artifact is written incrementally after every completed stage, so a later crash preserves earlier stage rows.",
+        ],
+    }
+    payload["anchor_validation"] = validate_marcucci_query_artifact(payload, artifact_path=args.out_json)
+    return payload
 
 
 def main() -> int:
@@ -272,28 +329,24 @@ def main() -> int:
                 "stage_index": int(stage["stage_index"]),
                 "row": row,
             })
+            write_json(args.out_json, build_payload(
+                args=args,
+                stages=stages,
+                queries=queries,
+                records=records,
+                raw_stage_rows=raw_stage_rows,
+                status="partial",
+            ))
 
     summary = aggregate_stage_records(records, epsilon_path=float(args.epsilon_path))
-    payload = {
-        "experiment": "shelf_sbf_anytime_current",
-        "source_script": str(Path(__file__).resolve()),
-        "source_protocol": "current_run_shelf_sbf_case_staged_anytime_incumbent",
-        "reference_artifact": UNIFIED_SBF_ANYTIME_REFERENCE_ARTIFACT,
-        "scene": "shelf_iiwa_marcucci_combined",
-        "task_names": [query.label for query in queries],
-        "params": namespace_dict(args),
-        "environment": environment_metadata(),
-        "stage_schedule": stages,
-        "summary": summary,
-        "records": records,
-        "raw_stage_rows": raw_stage_rows,
-        "notes": [
-            "This runner reuses experiments/common/run_shelf_sbf_case.py so the SBF path matches the current warm native-joint-symmetry shelf backend instead of the legacy paper_14 runner.",
-            "The default stage schedule is the refined d40 anytime operating configuration extracted from d40_r4_32_128_128_168_128.json.",
-            "Trade-off charging uses build.planning_s plus summed per-query wall time from each stage row.",
-        ],
-    }
-    payload["anchor_validation"] = validate_marcucci_query_artifact(payload, artifact_path=args.out_json)
+    payload = build_payload(
+        args=args,
+        stages=stages,
+        queries=queries,
+        records=records,
+        raw_stage_rows=raw_stage_rows,
+        status="completed",
+    )
     write_json(args.out_json, payload)
     print({
         "out_json": str(args.out_json),

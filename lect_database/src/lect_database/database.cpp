@@ -189,6 +189,34 @@ bool evidence_sidecar_entry_less(const EvidenceIndexSidecarEntry& lhs,
     return lhs.path_blob_offset < rhs.path_blob_offset;
 }
 
+bool split_policy_prefix_compatible(const SplitPolicyDescriptor& stored,
+                                    const SplitPolicyDescriptor& requested,
+                                    int requested_max_depth) {
+    if (stored.strategy != requested.strategy ||
+        stored.min_width != requested.min_width ||
+        stored.midpoint != requested.midpoint ||
+        stored.deterministic_tie_break != requested.deterministic_tie_break) {
+        return false;
+    }
+    if (stored.strategy != SplitStrategy::AAFKVolumeMin) {
+        return true;
+    }
+    if (requested_max_depth <= 0) {
+        return false;
+    }
+    const auto required = static_cast<std::size_t>(requested_max_depth);
+    if (requested.depth_dimensions.size() < required ||
+        stored.depth_dimensions.size() < required) {
+        return false;
+    }
+    for (std::size_t index = 0; index < required; ++index) {
+        if (stored.depth_dimensions[index] != requested.depth_dimensions[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool evidence_sidecar_offsets_sorted(std::span<const EvidenceIndexSidecarEntry> entries) {
     for (std::size_t index = 1; index < entries.size(); ++index) {
         if (evidence_sidecar_entry_less(entries[index], entries[index - 1])) {
@@ -1125,8 +1153,16 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
         if (config_.open.verify_identity && has_requested_identity) {
             std::string mismatch;
             if (!identity_compatible(identity_, requested_identity, &mismatch)) {
-                if (reason) *reason = mismatch;
-                return false;
+                const bool allow_prefix_split_reuse =
+                    mismatch == "split policy differs" &&
+                    split_policy_prefix_compatible(
+                        split_policy_.descriptor(),
+                        config_.split_policy,
+                        config_.max_tree_depth);
+                if (!allow_prefix_split_reuse) {
+                    if (reason) *reason = mismatch;
+                    return false;
+                }
             }
         }
         if (config_.open.metadata_only) {
@@ -3219,6 +3255,9 @@ bool LectDatabase::save_evidence_index_sidecar(std::uint64_t evidence_file_size)
 
 void LectDatabase::remember_evidence_metadata(const EvidenceRecord& record) {
     EvidenceIndexEntry entry;
+    if (const auto* existing = find_evidence_index(record.key)) {
+        entry = *existing;
+    }
     entry.child_hull = record.child_hull;
     entry.unavailable = record.unavailable;
     entry.generation = record.generation;

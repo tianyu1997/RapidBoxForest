@@ -26,6 +26,9 @@ struct RRTConnectConfig {
 	double goal_bias = 0.2;
 	int segment_resolution = 32;
 	double local_sampling_radius = 0.0;
+	bool shortcut_path = true;
+	double domain_tolerance = 1e-3;
+	std::vector<Interval> domain_intervals;
 };
 
 struct ChainPaveConfig {
@@ -63,6 +66,10 @@ struct ChainPaveConfig {
 	// Do not spend a fresh FFB result unless its certified box covers at least this
 	// much bridge arc length. <=0 accepts any containing certified box.
 	double gap_fill_min_arc_gain = 0.01;
+	// When true, chain_pave advances only through graph-adjacent boxes and seeds
+	// new boxes from the current connected front instead of globally ranking
+	// uncovered segment samples.
+	bool require_connected_chain = false;
 	FindFreeBoxOptions find_free_box;
 };
 
@@ -83,6 +90,7 @@ struct IslandConnectorConfig {
 	bool segment_edges_enabled = true;
 	bool rrt_segment_edges = true;
 	bool point_gap_segment_edges = true;
+	bool segment_edges_fallback_only = false;
 	double point_validated_gap_tolerance = 0.0;
 	int point_validated_gap_resolution = 16;
 	int n_threads = 1;

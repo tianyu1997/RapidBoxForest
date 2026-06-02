@@ -34,6 +34,26 @@ import sbf  # noqa: E402
 
 RBF_LIFELONG_PRESET = "rbf_ifk_aa_aafkvol_d40_s15_canonical_lifelong"
 RBF_ONLY_OUTPUT_ROOT = ROOT / "outputs" / "paper" / "rbf_only"
+IRIS_GCS_SHELF_ANCHOR8 = (
+    (6.42e-05, 0.4719533, -0.0001493, -0.6716735, 0.0001854, 0.4261696, 1.5706922),
+    (-0.000155, 0.3972726, 0.0002196, -1.3674756, 0.0002472, -0.1929518, 1.5704688),
+    (-0.000176, 0.6830279, 0.000245, -1.6478229, 2.09e-05, -0.7590545, 1.5706263),
+    (1.3326656, 0.7865932, 0.3623384, -1.4916529, -0.3192509, 0.9217325, 1.7911904),
+    (-1.3324624, 0.7866478, -0.3626562, -1.4916528, 0.319534, 0.9217833, 1.350209),
+    (0.0, 0.2, 0.0, -2.0, 0.0, -0.3, 1.5707963267948966),
+    (0.8, 0.7, 0.0, -1.6, 0.0, 0.0, 1.5707963267948966),
+    (-0.8, 0.7, 0.0, -1.6, 0.0, 0.0, 1.5707963267948966),
+)
+IRIS_GCS_SHELF_PREFIX8_REGION_SEEDS = (
+    (6.42e-05, 0.4719533, -0.0001493, -0.6716735, 0.0001854, 0.4261696, 1.5706922),
+    (-0.000155, 0.3972726, 0.0002196, -1.3674756, 0.0002472, -0.1929518, 1.5704688),
+    (-0.000176, 0.6830279, 0.000245, -1.6478229, 2.09e-05, -0.7590545, 1.5706263),
+    (1.3326656, 0.7865932, 0.3623384, -1.4916529, -0.3192509, 0.9217325, 1.7911904),
+    (-1.3324624, 0.7866478, -0.3626562, -1.4916528, 0.319534, 0.9217833, 1.350209),
+    (-4.54e-05, 0.43461295, 3.515e-05, -1.01957455, 0.0002163, 0.1166089, 1.5705805),
+    (-0.0001655, 0.54015025, 0.0002323, -1.50764925, 0.00013405, -0.47600315, 1.57054755),
+    (0.6662448, 0.73481055, 0.1812917, -1.5697379, -0.159615, 0.081339, 1.68090835),
+)
 
 
 def mean(values: Iterable[float]) -> float | None:
@@ -68,6 +88,29 @@ def box_volume_sum(boxes: list[Any]) -> float:
 
 def count_status(boxes: list[Any], status: Any) -> int:
     return sum(1 for box in boxes if box.safety_status == status)
+
+
+def parse_grower_depth_stages(text: str) -> list[Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    stages: list[Any] = []
+    for index, item in enumerate(part.strip() for part in raw.split(",") if part.strip()):
+        pieces = [piece.strip() for piece in item.split(":")]
+        if len(pieces) not in {2, 3, 4}:
+            raise ValueError(
+                "grower depth stage must be box_limit:ffb_depth[:component_depth_increment[:component_max_depth]], "
+                f"got stage #{index + 1}: {item!r}"
+            )
+        stage = sbf.GrowerDepthStage()
+        stage.box_limit = int(pieces[0])
+        stage.ffb_depth = int(pieces[1])
+        if len(pieces) >= 3:
+            stage.component_connect_ffb_depth_increment = int(pieces[2])
+        if len(pieces) >= 4:
+            stage.component_connect_ffb_max_depth = int(pieces[3])
+        stages.append(stage)
+    return stages
 
 
 def set_if_available(obj: Any, name: str, value: Any) -> bool:
@@ -434,6 +477,11 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--max-boxes", type=int, default=5000)
     parser.add_argument("--timeout-ms", type=float, default=60000.0)
     parser.add_argument("--ffb-depth", type=int, default=120)
+    parser.add_argument(
+        "--grower-depth-stages",
+        default="",
+        help="Comma-separated box_limit:ffb_depth[:component_depth_increment[:component_max_depth]] stages.",
+    )
     parser.add_argument("--max-consecutive-miss", type=int, default=2000)
     parser.add_argument("--grid-delta", type=float, default=0.04)
     parser.add_argument("--envelope-subdivisions", type=int, default=4)
@@ -457,6 +505,17 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--rrt-goal-bias", type=float, default=0.2)
     parser.add_argument("--intertree-goal-bias", type=float, default=0.25)
     parser.add_argument("--unexplored-prob", type=float, default=0.45)
+    parser.add_argument("--extra-random-roots", type=int, default=0)
+    parser.add_argument("--random-anchor-targets", type=int, default=0)
+    parser.add_argument("--anchor-target-prob", type=float, default=0.0)
+    parser.add_argument("--anchor-target-candidate-count", type=int, default=0)
+    parser.add_argument("--anchor-target-max-lca-depth", type=int, default=-1)
+    parser.add_argument("--anchor-wave-targets-per-batch", type=int, default=0)
+    parser.add_argument("--fixed-anchor-target-preset", choices=["none", "iris8"], default="none")
+    parser.add_argument("--root-seed-candidate-count", type=int, default=0)
+    parser.add_argument("--root-seed-min-normalized-linf", type=float, default=0.0)
+    parser.add_argument("--root-seed-max-lca-depth", type=int, default=-1)
+    parser.add_argument("--root-seed-include-user-seeds", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument(
         "--sample-categorical-allocation",
         action=argparse.BooleanOptionalAction,
@@ -473,8 +532,25 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--component-connect-prob", type=float, default=0.45)
     parser.add_argument("--component-connect-candidate-limit", type=int, default=4)
     parser.add_argument("--component-connect-stage-normalized-linf", type=float, default=0.35)
+    parser.add_argument("--component-connect-staged-growth", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--component-connect-neighbor-root-bias", type=float, default=0.0)
+    parser.add_argument("--component-connect-neighbor-root-window", type=int, default=0)
+    parser.add_argument("--component-connect-lateral-sample-prob", type=float, default=0.0)
+    parser.add_argument("--component-connect-lateral-sample-attempts", type=int, default=1)
+    parser.add_argument("--component-connect-require-target-direction", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--component-connect-ffb-depth-increment", type=int, default=40)
     parser.add_argument("--component-connect-ffb-max-depth", type=int, default=160)
+    parser.add_argument("--component-connect-chain-steps", type=int, default=0)
+    parser.add_argument("--component-connect-chain-max-boxes", type=int, default=0)
+    parser.add_argument("--frontier-face-memory", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--frontier-face-bins-per-dim", type=int, default=4)
+    parser.add_argument("--frontier-face-min-attempts", type=int, default=1)
+    parser.add_argument("--frontier-face-max-attempts", type=int, default=12)
+    parser.add_argument("--frontier-face-area-attempt-scale", type=float, default=16.0)
+    parser.add_argument("--frontier-face-candidate-limit", type=int, default=128)
+    parser.add_argument("--frontwave-bootstrap-boxes", type=int, default=0)
+    parser.add_argument("--frontwave-bootstrap-depth", type=int, default=0)
+    parser.add_argument("--frontwave-bootstrap-boundary-samples", type=int, default=14)
     parser.add_argument("--stop-after-connect", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--post-connect-extra-boxes", type=int, default=0)
     parser.add_argument("--quality-min-connected-boxes", type=int, default=64)
@@ -486,6 +562,7 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--no-strict-path-audit", dest="strict_path_audit", action="store_false")
     parser.add_argument("--audit-resolution", type=int, default=32)
     parser.add_argument("--audit-segment-step", type=float, default=0.01)
+    parser.add_argument("--audit-collision-tolerance", type=float, default=0.0)
     parser.add_argument("--repair-on-audit-failure", action="store_true", default=True)
     parser.add_argument("--no-repair-on-audit-failure", dest="repair_on_audit_failure", action="store_false")
     parser.add_argument("--repair-max-attempts", type=int, default=6)
@@ -527,6 +604,14 @@ def add_common_sbf_args(parser: ArgumentParser) -> None:
     parser.add_argument("--connector-pave-max-chain", type=int, default=0)
     parser.add_argument("--connector-pave-steps", type=int, default=12)
     parser.add_argument("--connector-pave-depth", type=int, default=120)
+    parser.add_argument("--connector-pave-fill-gaps", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--connector-pave-require-connected-chain", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--connector-pave-gap-fill-time-budget-ms", type=float, default=10.0)
+    parser.add_argument("--connector-pave-gap-fill-max-ffb-calls", type=int, default=32)
+    parser.add_argument("--connector-pave-gap-fill-sample-step", type=float, default=0.05)
+    parser.add_argument("--connector-pave-gap-fill-min-arc-gain", type=float, default=0.01)
+    parser.add_argument("--grower-mode", choices=["rrt", "frontwave"], default="rrt")
+    parser.add_argument("--grower-boundary-samples", type=int, default=1)
     parser.add_argument("--rbf-max-depth", type=int, default=40)
     parser.add_argument("--rbf-max-tree-depth", type=int, default=64)
     parser.add_argument("--rbf-ffb-start-depth", type=int, default=15)
@@ -638,7 +723,7 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     )
     set_if_available(cfg.validation, "enable_worker_shared_endpoint_cache", bool(args.worker_shared_endpoint_cache) and bool(args.endpoint_evidence_cache))
 
-    cfg.grower.mode = sbf.GrowerMode.RRT
+    cfg.grower.mode = sbf.GrowerMode.Frontwave if args.grower_mode == "frontwave" else sbf.GrowerMode.RRT
     cfg.grower.rng_seed = int(args.seed_base) + int(seed)
     cfg.grower.max_boxes = int(args.max_boxes)
     cfg.grower.timeout_ms = float(args.timeout_ms)
@@ -649,6 +734,10 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.grower.worker_local_ffb = bool(args.worker_local_ffb) and args.threads > 1
     cfg.grower.find_free_box.max_depth = int(args.ffb_depth)
     cfg.grower.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
+    depth_stages = parse_grower_depth_stages(args.grower_depth_stages)
+    if depth_stages:
+        cfg.grower.depth_stages = depth_stages
+    set_if_available(cfg.grower, "n_boundary_samples", max(1, int(args.grower_boundary_samples)))
     cfg.grower.find_free_box.split_reserved_leaf = True
     cfg.grower.find_free_box.split_unknown_leaf = True
     cfg.grower.find_free_box.reject_seed_collision = False
@@ -657,6 +746,18 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     set_if_available(cfg.grower, "sustained_goal_bias_cap", min(0.25, float(args.intertree_goal_bias)))
     set_if_available(cfg.grower, "rrt_step_ratio", float(args.step_ratio))
     set_if_available(cfg.grower, "unexplored_sample_prob", float(args.unexplored_prob))
+    set_if_available(cfg.grower, "extra_random_roots", max(0, int(args.extra_random_roots)))
+    set_if_available(cfg.grower, "random_anchor_targets", max(0, int(args.random_anchor_targets)))
+    set_if_available(cfg.grower, "anchor_target_prob", max(0.0, min(1.0, float(args.anchor_target_prob))))
+    set_if_available(cfg.grower, "anchor_target_candidate_count", max(0, int(args.anchor_target_candidate_count)))
+    set_if_available(cfg.grower, "anchor_target_max_lca_depth", int(args.anchor_target_max_lca_depth))
+    set_if_available(cfg.grower, "anchor_wave_targets_per_batch", max(0, int(args.anchor_wave_targets_per_batch)))
+    if str(args.fixed_anchor_target_preset) == "iris8" and hasattr(cfg.grower, "set_fixed_anchor_targets"):
+        cfg.grower.set_fixed_anchor_targets([list(anchor) for anchor in IRIS_GCS_SHELF_ANCHOR8])
+    set_if_available(cfg.grower, "root_seed_candidate_count", max(0, int(args.root_seed_candidate_count)))
+    set_if_available(cfg.grower, "root_seed_min_normalized_linf", max(0.0, float(args.root_seed_min_normalized_linf)))
+    set_if_available(cfg.grower, "root_seed_max_lca_depth", int(args.root_seed_max_lca_depth))
+    set_if_available(cfg.grower, "root_seed_include_user_seeds", bool(args.root_seed_include_user_seeds))
     if bool(args.sample_categorical_allocation):
         total_target_prob = (
             max(0.0, float(args.component_connect_prob))
@@ -678,11 +779,27 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     set_if_available(cfg.grower, "component_connect_candidate_limit", int(args.component_connect_candidate_limit))
     cfg.grower.component_connect_island_aware = True
     cfg.grower.component_connect_frontier_cache = True
-    cfg.grower.component_connect_staged_growth = True
+    cfg.grower.component_connect_staged_growth = bool(args.component_connect_staged_growth)
+    set_if_available(cfg.grower, "component_connect_neighbor_root_bias", max(0.0, float(args.component_connect_neighbor_root_bias)))
+    set_if_available(cfg.grower, "component_connect_neighbor_root_window", max(0, int(args.component_connect_neighbor_root_window)))
+    set_if_available(cfg.grower, "component_connect_lateral_sample_prob", max(0.0, min(1.0, float(args.component_connect_lateral_sample_prob))))
+    set_if_available(cfg.grower, "component_connect_lateral_sample_attempts", max(1, int(args.component_connect_lateral_sample_attempts)))
+    set_if_available(cfg.grower, "component_connect_require_target_direction", bool(args.component_connect_require_target_direction))
     set_if_available(cfg.grower, "component_connect_stage_normalized_linf", float(args.component_connect_stage_normalized_linf))
     set_if_available(cfg.grower, "component_connect_adaptive_ffb", True)
     set_if_available(cfg.grower, "component_connect_ffb_depth_increment", int(args.component_connect_ffb_depth_increment))
     set_if_available(cfg.grower, "component_connect_ffb_max_depth", int(args.component_connect_ffb_max_depth))
+    set_if_available(cfg.grower, "component_connect_chain_steps", max(0, int(args.component_connect_chain_steps)))
+    set_if_available(cfg.grower, "component_connect_chain_max_boxes", max(0, int(args.component_connect_chain_max_boxes)))
+    set_if_available(cfg.grower, "frontier_face_memory", bool(args.frontier_face_memory))
+    set_if_available(cfg.grower, "frontier_face_bins_per_dim", max(1, int(args.frontier_face_bins_per_dim)))
+    set_if_available(cfg.grower, "frontier_face_min_attempts", max(1, int(args.frontier_face_min_attempts)))
+    set_if_available(cfg.grower, "frontier_face_max_attempts", max(1, int(args.frontier_face_max_attempts)))
+    set_if_available(cfg.grower, "frontier_face_area_attempt_scale", max(0.0, float(args.frontier_face_area_attempt_scale)))
+    set_if_available(cfg.grower, "frontier_face_candidate_limit", max(1, int(args.frontier_face_candidate_limit)))
+    set_if_available(cfg.grower, "frontwave_bootstrap_boxes", max(0, int(args.frontwave_bootstrap_boxes)))
+    set_if_available(cfg.grower, "frontwave_bootstrap_depth", max(0, int(args.frontwave_bootstrap_depth)))
+    set_if_available(cfg.grower, "frontwave_bootstrap_boundary_samples", max(1, int(args.frontwave_bootstrap_boundary_samples)))
     set_if_available(cfg.grower, "stop_after_connect", bool(args.stop_after_connect))
     set_if_available(cfg.grower, "post_connect_extra_boxes", int(args.post_connect_extra_boxes))
     set_if_available(cfg.grower, "quality_min_connected_boxes", int(args.quality_min_connected_boxes))
@@ -698,6 +815,7 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.query.strict_path_audit = bool(args.strict_path_audit)
     cfg.query.audit_resolution = max(int(args.audit_resolution), bridge_segment_resolution)
     cfg.query.audit_segment_step = float(args.audit_segment_step)
+    set_if_available(cfg.query, "audit_collision_tolerance", float(args.audit_collision_tolerance))
     cfg.query.repair_on_audit_failure = bool(args.repair_on_audit_failure)
     cfg.query.repair_max_attempts = int(args.repair_max_attempts)
     cfg.query.repair_rrt_max_iters = int(args.repair_rrt_max_iters)
@@ -731,6 +849,12 @@ def configure_standalone_sbf(args: Namespace, seed: int, preset: str | None = No
     cfg.connector.pave.max_chain = int(args.connector_pave_max_chain)
     set_if_available(cfg.connector.pave, "max_steps_per_waypoint", int(args.connector_pave_steps))
     cfg.connector.pave.find_free_box.max_depth = int(args.connector_pave_depth)
+    set_if_available(cfg.connector.pave, "fill_gaps", bool(args.connector_pave_fill_gaps))
+    set_if_available(cfg.connector.pave, "require_connected_chain", bool(args.connector_pave_require_connected_chain))
+    set_if_available(cfg.connector.pave, "gap_fill_time_budget_ms", float(args.connector_pave_gap_fill_time_budget_ms))
+    set_if_available(cfg.connector.pave, "gap_fill_max_ffb_calls", int(args.connector_pave_gap_fill_max_ffb_calls))
+    set_if_available(cfg.connector.pave, "gap_fill_sample_step", float(args.connector_pave_gap_fill_sample_step))
+    set_if_available(cfg.connector.pave, "gap_fill_min_arc_gain", float(args.connector_pave_gap_fill_min_arc_gain))
     cfg.connector.pave.find_free_box.skip_to_depth = int(args.rbf_ffb_start_depth)
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True

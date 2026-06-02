@@ -14,8 +14,10 @@ queries.
 
 - C++ static library target `link_interval_envelope::core` (backed by the
   concrete target `link_interval_envelope_core`).
-- Low-level `sbf` types: `Robot`, `Interval`, `FKState`, `JointLimits`,
-  `EndpointSourceConfig`, `EnvelopeTypeConfig`, and `GcpcCache`.
+- Public facade headers under `include/link_interval_envelope/`, with
+  `api.h` as the one-stop include for new C++ callers.
+- Compatibility `sbf`/`rbf` types: `Robot`, `Interval`, `FKState`,
+  `JointLimits`, `EndpointSourceConfig`, `EnvelopeTypeConfig`, and `GcpcCache`.
 - Endpoint sources `IFK`, `CritSample`, `Analytical`, `GCPC`, and `MC`.
 - Envelope types `LinkIAABB`, `KDOP`, and `SupportHull`.
 - Stateful C++ helper `link_interval_envelope::IncrementalEnvelopeContext` for
@@ -28,8 +30,8 @@ queries.
 ## Layout
 
 ```text
-include/sbf/                         low-level FK, robot, interval, and envelope API
-include/link_interval_envelope/      package-level convenience API
+include/link_interval_envelope/      public facade and package-level API
+include/sbf/                         compatibility and implementation headers
 src/                                 standalone implementation
 python/link_interval_envelope/       Python facade, CLI, visualization helpers
 examples/data/                       example robot JSON files
@@ -164,19 +166,20 @@ multiple Python threads can continue making progress while C++ work is running.
 ## C++ Usage
 
 ```cpp
-#include <link_interval_envelope/batch.h>
-#include <link_interval_envelope/incremental_context.h>
+#include <link_interval_envelope/api.h>
 
-sbf::Robot robot = sbf::Robot::from_json("2dof_planar.json");
+namespace lie = link_interval_envelope;
 
-sbf::EndpointSourceConfig endpoint_config;
-endpoint_config.source = sbf::EndpointSource::IFK;
+lie::Robot robot = lie::Robot::from_json("2dof_planar.json");
 
-sbf::EnvelopeTypeConfig envelope_config;
-envelope_config.type = sbf::EnvelopeType::LinkIAABB;
+lie::EndpointSourceConfig endpoint_config;
+endpoint_config.source = lie::EndpointSource::IFK;
+
+lie::EnvelopeTypeConfig envelope_config;
+envelope_config.type = lie::EnvelopeType::LinkIAABB;
 envelope_config.n_subdivisions = 4;
 
-link_interval_envelope::IncrementalEnvelopeContext context(
+lie::IncrementalEnvelopeContext context(
     robot,
     endpoint_config,
     envelope_config);
@@ -184,7 +187,7 @@ link_interval_envelope::IncrementalEnvelopeContext context(
 context.compute({{-0.4, 0.4}, {-0.2, 0.2}});
 auto next = context.compute({{-0.4, 0.4}, {-0.1, 0.3}}, 1);
 
-auto batch = link_interval_envelope::compute_envelope_batch(
+auto batch = lie::compute_envelope_batch(
     robot,
     {{{-0.4, 0.4}, {-0.2, 0.2}}, {{-0.4, 0.4}, {-0.1, 0.3}}},
     endpoint_config,
@@ -192,11 +195,15 @@ auto batch = link_interval_envelope::compute_envelope_batch(
     4);
 ```
 
-The public `sbf::FKState` struct keeps the current v6 field layout, so code that
+The compatibility `rbf::FKState` struct keeps the current v6 field layout, so code that
 already targets v6 `FKState` fields remains source-compatible when compiled
 against this standalone package. Do not link this package and v6 as two
 independent libraries into the same target while including both copies of the
-same `sbf` symbols.
+same `rbf` symbols.
+
+New C++ integrations should include `link_interval_envelope/api.h` and avoid
+direct `sbf/*` includes unless they intentionally need a source-specific kernel,
+FK internals, or an existing LECT/SBF compatibility wrapper.
 
 ## CLI
 
@@ -264,4 +271,3 @@ Incremental calls add an `incremental` block with `changed_dim`,
 - `docs/OUTPUT_SCHEMA.md`: JSON result schema details.
 - `docs/TESTING.md`: test matrix and commands.
 - `DEVELOPMENT.md`: source boundary, Python ABI notes, and release checklist.
-

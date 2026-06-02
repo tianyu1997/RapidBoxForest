@@ -61,6 +61,11 @@ def main():
     assert removal.obstacles_after == 0
     assert removal.boxes_after == len(forest.boxes())
     assert hasattr(forest, "remove_obstacle_suffix_and_regrow")
+    sweep_config = sbf.LeafSweepConfig()
+    sweep = forest.build_leaf_sweep([], 1, 1, sweep_config)
+    assert len(sweep.free_boxes) == 2
+    assert len(sweep.collision_boxes) == 0
+    assert len(forest.boxes()) == len(sweep.free_boxes)
     print("SBF Python smoke test passed.")
 
 

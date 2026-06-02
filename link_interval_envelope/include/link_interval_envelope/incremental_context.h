@@ -2,13 +2,14 @@
 /// @file incremental_context.h
 /// @brief Stateful envelope computation with reusable source-local caches.
 
-#include <sbf/core/fk_state.h>
-#include <sbf/core/robot.h>
-#include <sbf/envelope/crit_source.h>
-#include <sbf/envelope/endpoint_source.h>
-#include <sbf/envelope/envelope_type.h>
-#include <sbf/envelope/ifk_aa_source.h>
+#include <link_interval_envelope/endpoint.h>
+#include <link_interval_envelope/envelope.h>
+#include <link_interval_envelope/robot.h>
+#include <link_interval_envelope/types.h>
 
+#include <sbf/core/fk_state.h>
+
+#include <memory>
 #include <vector>
 
 namespace link_interval_envelope {
@@ -38,6 +39,13 @@ public:
         rbf::Robot robot,
         rbf::EndpointSourceConfig endpoint_config = {},
         rbf::EnvelopeTypeConfig envelope_config = {});
+    ~IncrementalEnvelopeContext();
+
+    IncrementalEnvelopeContext(IncrementalEnvelopeContext&&) noexcept;
+    IncrementalEnvelopeContext& operator=(IncrementalEnvelopeContext&&) noexcept;
+
+    IncrementalEnvelopeContext(const IncrementalEnvelopeContext&) = delete;
+    IncrementalEnvelopeContext& operator=(const IncrementalEnvelopeContext&) = delete;
 
     IncrementalEnvelopeResult compute(
         const std::vector<rbf::Interval>& intervals,
@@ -58,10 +66,10 @@ private:
     rbf::EndpointSourceConfig endpoint_config_;
     rbf::EnvelopeTypeConfig envelope_config_;
     rbf::FKState fk_state_;
-    rbf::CritSampleState crit_state_;
-    rbf::AaFkPrefixState aa_fk_state_;
-    rbf::HifkAaState hifk_aa_state_;
     std::vector<rbf::Interval> last_intervals_;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 
     int infer_changed_dim(const std::vector<rbf::Interval>& intervals) const;
     rbf::EndpointIAABBResult endpoint_from_current_fk() const;

@@ -1,3 +1,3 @@
 #pragma once
 
-#include <sbf/envelope/envelope_collision.h>
+#include <link_interval_envelope/envelope.h>

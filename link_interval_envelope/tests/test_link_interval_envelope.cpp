@@ -4,12 +4,14 @@
 #include <sbf/envelope/ifk_aa_source.h>
 #include <sbf/envelope/support_hull.h>
 #include <sbf/envelope/envelope_type.h>
+#include <link_interval_envelope/api.h>
 #include <link_interval_envelope/batch.h>
 #include <link_interval_envelope/incremental_context.h>
 
 #include <cassert>
 #include <cmath>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -38,6 +40,12 @@ void assert_not_close(const std::vector<float>& a, const std::vector<float>& b) 
 int main() {
     const std::string robot_path = std::string(LIE_EXAMPLE_DATA_DIR) + "/2dof_planar.json";
     const rbf::Robot robot = rbf::Robot::from_json(robot_path);
+    const link_interval_envelope::Robot facade_robot =
+        link_interval_envelope::Robot::from_json(robot_path);
+    static_assert(std::is_same_v<link_interval_envelope::Interval, rbf::Interval>);
+    static_assert(std::is_same_v<link_interval_envelope::EndpointSourceConfig, rbf::EndpointSourceConfig>);
+    static_assert(std::is_same_v<link_interval_envelope::EnvelopeTypeConfig, rbf::EnvelopeTypeConfig>);
+    assert(facade_robot.n_joints() == robot.n_joints());
     assert(robot.n_joints() == 2);
     assert(robot.n_active_links() > 0);
 

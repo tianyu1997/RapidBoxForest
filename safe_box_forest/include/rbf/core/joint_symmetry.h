@@ -1,3 +1,3 @@
 #pragma once
 
-#include <sbf/core/joint_symmetry.h>
+#include <link_interval_envelope/joint_symmetry.h>

@@ -11,6 +11,7 @@
 #include <fstream>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <span>
 #include <sstream>
 #include <string_view>
@@ -598,6 +599,7 @@ struct LectReadSnapshot::Impl {
     std::span<const SnapshotEvidenceSlot> evidence_slots;
     // Populated lazily on endpoint/box exact lookups; avoids O(node_count) work at open.
     mutable std::unordered_map<SnapshotBoxIndexKey, NodeId, SnapshotBoxIndexKeyHash> exact_box_index;
+    mutable std::mutex exact_box_index_mutex;
 
     bool has_node(NodeId node_id) const noexcept {
         const auto index = static_cast<std::size_t>(node_id);
@@ -614,6 +616,7 @@ struct LectReadSnapshot::Impl {
     }
 
     std::optional<NodeId> cached_exact_box_node(const SnapshotBoxIndexKey& key) const {
+        std::lock_guard<std::mutex> lock(exact_box_index_mutex);
         const auto found = exact_box_index.find(key);
         if (found == exact_box_index.end() || !valid_cached_node(found->second)) {
             return std::nullopt;
@@ -625,6 +628,7 @@ struct LectReadSnapshot::Impl {
         if (!valid_cached_node(node_id)) {
             return;
         }
+        std::lock_guard<std::mutex> lock(exact_box_index_mutex);
         auto [it, inserted] = exact_box_index.emplace(key, node_id);
         if (!inserted && it->second != node_id) {
             it->second = kInvalidNodeId;

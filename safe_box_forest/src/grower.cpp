@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <iomanip>
 #include <limits>
+#include <memory>
 #include <queue>
 #include <sstream>
 #include <string>
@@ -269,6 +270,121 @@ Eigen::VectorXd make_face_seed(const BoxNode& box,
                                root[static_cast<std::size_t>(dim)].hi);
     }
     return seed;
+}
+
+std::uint64_t frontier_face_memory_key(int parent_box_id, int face_dim, int side) {
+    const std::uint64_t parent = static_cast<std::uint64_t>(static_cast<std::uint32_t>(parent_box_id));
+    const std::uint64_t dim = static_cast<std::uint64_t>(static_cast<std::uint32_t>(std::max(0, face_dim)));
+    const std::uint64_t side_bit = side == 1 ? 1ULL : 0ULL;
+    return (parent << 8) ^ (dim << 1) ^ side_bit;
+}
+
+std::uint64_t frontier_face_total_bins(int nd, int face_dim, int bins_per_dim) {
+    const int bins = std::max(1, bins_per_dim);
+    std::uint64_t total = 1;
+    for (int dim = 0; dim < nd; ++dim) {
+        if (dim == face_dim) {
+            continue;
+        }
+        if (total > std::numeric_limits<std::uint64_t>::max() / static_cast<std::uint64_t>(bins)) {
+            return std::numeric_limits<std::uint64_t>::max();
+        }
+        total *= static_cast<std::uint64_t>(bins);
+    }
+    return total;
+}
+
+std::uint64_t frontier_face_bin_for_seed(const BoxNode& box,
+                                         const Eigen::Ref<const Eigen::VectorXd>& seed,
+                                         int face_dim,
+                                         int bins_per_dim) {
+    const int bins = std::max(1, bins_per_dim);
+    std::uint64_t code = 0;
+    std::uint64_t stride = 1;
+    for (int dim = 0; dim < box.n_dims(); ++dim) {
+        if (dim == face_dim) {
+            continue;
+        }
+        const double lo = box.joint_intervals[static_cast<std::size_t>(dim)].lo;
+        const double width = std::max(box.joint_intervals[static_cast<std::size_t>(dim)].width(), 1e-12);
+        const double normalized = std::clamp((seed[dim] - lo) / width, 0.0, 1.0 - 1e-12);
+        const int bin = std::clamp(static_cast<int>(std::floor(normalized * bins)), 0, bins - 1);
+        code += static_cast<std::uint64_t>(bin) * stride;
+        stride *= static_cast<std::uint64_t>(bins);
+    }
+    return code;
+}
+
+Eigen::VectorXd make_face_seed_for_bin(const BoxNode& box,
+                                       const std::vector<Interval>& root,
+                                       int face_dim,
+                                       int side,
+                                       double epsilon,
+                                       int bins_per_dim,
+                                       std::uint64_t bin_code) {
+    const int nd = box.n_dims();
+    const int bins = std::max(1, bins_per_dim);
+    Eigen::VectorXd seed(nd);
+    for (int dim = 0; dim < nd; ++dim) {
+        if (dim == face_dim) {
+            seed[dim] = side == 1
+                ? box.joint_intervals[static_cast<std::size_t>(dim)].hi + epsilon
+                : box.joint_intervals[static_cast<std::size_t>(dim)].lo - epsilon;
+        } else {
+            const int bin = static_cast<int>(bin_code % static_cast<std::uint64_t>(bins));
+            bin_code /= static_cast<std::uint64_t>(bins);
+            const double lo = box.joint_intervals[static_cast<std::size_t>(dim)].lo;
+            const double hi = box.joint_intervals[static_cast<std::size_t>(dim)].hi;
+            const double width = std::max(hi - lo, 0.0);
+            seed[dim] = lo + (static_cast<double>(bin) + 0.5) * width / static_cast<double>(bins);
+        }
+        seed[dim] = std::clamp(seed[dim],
+                               root[static_cast<std::size_t>(dim)].lo,
+                               root[static_cast<std::size_t>(dim)].hi);
+    }
+    return seed;
+}
+
+Eigen::VectorXd clip_to_root_intervals(const Eigen::Ref<const Eigen::VectorXd>& q,
+                                       const std::vector<Interval>& root) {
+    Eigen::VectorXd clipped = q;
+    if (clipped.size() != static_cast<int>(root.size())) {
+        return clipped;
+    }
+    for (int dim = 0; dim < clipped.size(); ++dim) {
+        clipped[dim] = std::clamp(clipped[dim],
+                                  root[static_cast<std::size_t>(dim)].lo,
+                                  root[static_cast<std::size_t>(dim)].hi);
+    }
+    return clipped;
+}
+
+int frontier_face_attempt_budget(const GrowerConfig& config,
+                                 const BoxNode& box,
+                                 const std::vector<Interval>& root,
+                                 int face_dim) {
+    if (box.n_dims() <= 1) {
+        return std::max(1, config.frontier_face_min_attempts);
+    }
+    double log_span = 0.0;
+    int counted = 0;
+    for (int dim = 0; dim < box.n_dims(); ++dim) {
+        if (dim == face_dim) {
+            continue;
+        }
+        const double root_width = std::max(root[static_cast<std::size_t>(dim)].width(), 1e-12);
+        const double normalized_width = std::clamp(
+            box.joint_intervals[static_cast<std::size_t>(dim)].width() / root_width,
+            1e-12,
+            1.0);
+        log_span += std::log(normalized_width);
+        counted += 1;
+    }
+    const double geometric_span = counted > 0 ? std::exp(log_span / static_cast<double>(counted)) : 1.0;
+    const int area_budget = static_cast<int>(std::ceil(std::max(0.0, config.frontier_face_area_attempt_scale) *
+                                                       geometric_span));
+    const int raw_budget = std::max(std::max(1, config.frontier_face_min_attempts), area_budget);
+    return std::max(1, std::min(std::max(1, config.frontier_face_max_attempts), raw_budget));
 }
 
 struct FaceCandidate {
@@ -1202,6 +1318,7 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     FindFreeBoxService ffb(oracle_);
     open_trace();
     next_box_id_ = 0;
+    random_anchor_targets_.clear();
     component_parent_failures_.clear();
     failure_cooling_.clear();
     if (config_.boundary_epsilon > config_.adjacency_tolerance) {
@@ -1232,6 +1349,129 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     };
 
     std::vector<Eigen::VectorXd> roots = select_initial_roots(seeds, context);
+    const int n_anchor_targets = std::max(0, config_.random_anchor_targets);
+    random_anchor_targets_.reserve(config_.fixed_anchor_targets.size() + static_cast<std::size_t>(n_anchor_targets));
+    std::vector<Eigen::VectorXd> anchor_reference_points = roots;
+    if (anchor_reference_points.empty()) {
+        anchor_reference_points = seeds;
+    }
+    std::vector<OracleNodeId> anchor_reference_leaves;
+    anchor_reference_leaves.reserve(anchor_reference_points.size() + static_cast<std::size_t>(n_anchor_targets));
+    for (const auto& point : anchor_reference_points) {
+        anchor_reference_leaves.push_back(find_leaf_containing(oracle_, point));
+    }
+    for (const Eigen::VectorXd& anchor : config_.fixed_anchor_targets) {
+        const Eigen::VectorXd tree_anchor = anchor.size() == oracle_.n_dims()
+            ? oracle_.tree_configuration_for_query(anchor)
+            : anchor;
+        if (tree_anchor.size() != static_cast<int>(oracle_.root_intervals().size())) {
+            context.diagnostics().add_counter("grower.fixed_anchor_target_invalid");
+            continue;
+        }
+        if (oracle_.point_in_collision(anchor)) {
+            context.diagnostics().add_counter("grower.fixed_anchor_target_collision");
+            continue;
+        }
+        const Eigen::VectorXd clipped_anchor = clip_to_root_intervals(tree_anchor, oracle_.root_intervals());
+        const double clip_delta = (clipped_anchor - tree_anchor).cwiseAbs().maxCoeff();
+        if (clip_delta > 1e-12) {
+            context.diagnostics().add_counter("grower.fixed_anchor_target_clipped_to_root");
+            set_max_diagnostic(context,
+                               "grower.fixed_anchor_target_clip_delta_max",
+                               clip_delta);
+        }
+        if (oracle_.point_in_collision(clipped_anchor)) {
+            context.diagnostics().add_counter("grower.fixed_anchor_target_clipped_collision");
+            continue;
+        }
+        random_anchor_targets_.push_back(clipped_anchor);
+        if (oracle_.contains_point(oracle_.root_node(), clipped_anchor)) {
+            anchor_reference_points.push_back(clipped_anchor);
+            anchor_reference_leaves.push_back(find_leaf_containing(oracle_, clipped_anchor));
+        }
+        context.diagnostics().add_counter("grower.fixed_anchor_targets");
+    }
+    const int anchor_candidates_per_round = std::max(1, config_.anchor_target_candidate_count);
+    for (int anchor_index = 0; anchor_index < n_anchor_targets; ++anchor_index) {
+        Eigen::VectorXd best_anchor;
+        OracleNodeId best_leaf = kInvalidOracleNodeId;
+        int best_lca_depth = std::numeric_limits<int>::max();
+        double best_distance = -1.0;
+        bool found_anchor = false;
+        for (int candidate_index = 0; candidate_index < anchor_candidates_per_round; ++candidate_index) {
+            Eigen::VectorXd candidate = sample_uniform();
+            if (oracle_.point_in_collision(candidate)) {
+                context.diagnostics().add_counter("grower.anchor_target_candidate_collision");
+                continue;
+            }
+            const OracleNodeId leaf = find_leaf_containing(oracle_, candidate);
+            int max_lca_depth = 0;
+            bool lca_available = true;
+            for (OracleNodeId reference_leaf : anchor_reference_leaves) {
+                if (leaf < 0 || reference_leaf < 0) {
+                    lca_available = false;
+                    continue;
+                }
+                const int ancestor_depth = common_ancestor_depth(oracle_, leaf, reference_leaf);
+                if (ancestor_depth < 0) {
+                    lca_available = false;
+                    continue;
+                }
+                max_lca_depth = std::max(max_lca_depth, ancestor_depth);
+            }
+            if (!lca_available) {
+                context.diagnostics().add_counter("grower.anchor_target_lca_unavailable");
+            }
+            if (config_.anchor_target_max_lca_depth >= 0 &&
+                lca_available &&
+                max_lca_depth > config_.anchor_target_max_lca_depth) {
+                context.diagnostics().add_counter("grower.anchor_target_lca_rejected");
+                continue;
+            }
+            double min_distance = anchor_reference_points.empty() ? 1.0 : std::numeric_limits<double>::infinity();
+            for (const auto& reference : anchor_reference_points) {
+                min_distance = std::min(min_distance,
+                                        normalized_linf_distance(oracle_.root_intervals(), reference, candidate));
+            }
+            if (!found_anchor ||
+                max_lca_depth < best_lca_depth ||
+                (max_lca_depth == best_lca_depth && min_distance > best_distance)) {
+                best_anchor = std::move(candidate);
+                best_leaf = leaf;
+                best_lca_depth = max_lca_depth;
+                best_distance = min_distance;
+                found_anchor = true;
+            }
+        }
+        if (!found_anchor) {
+            best_anchor = sample_uniform();
+            best_leaf = find_leaf_containing(oracle_, best_anchor);
+            best_lca_depth = -1;
+            best_distance = 0.0;
+            context.diagnostics().add_counter("grower.anchor_target_fallback_uniform");
+        }
+        random_anchor_targets_.push_back(best_anchor);
+        anchor_reference_points.push_back(best_anchor);
+        anchor_reference_leaves.push_back(best_leaf);
+        set_max_diagnostic(context,
+                           "grower.anchor_target_lca_depth_max",
+                           static_cast<double>(best_lca_depth));
+        if (best_lca_depth >= 0) {
+            const double previous_min = context.diagnostics().value("grower.anchor_target_lca_depth_min");
+            context.diagnostics().set_value(
+                "grower.anchor_target_lca_depth_min",
+                previous_min == 0.0 && anchor_index == 0
+                    ? static_cast<double>(best_lca_depth)
+                    : std::min(previous_min, static_cast<double>(best_lca_depth)));
+        }
+        set_max_diagnostic(context,
+                           "grower.anchor_target_min_distance_max",
+                           best_distance);
+    }
+    if (!random_anchor_targets_.empty()) {
+        context.diagnostics().set_value("grower.random_anchor_targets",
+                                        static_cast<double>(random_anchor_targets_.size()));
+    }
     const FindFreeBoxOptions root_ffb_options = config_.find_free_box;
     context.diagnostics().set_value("grower.depth_stage_root_depth", static_cast<double>(root_ffb_options.max_depth));
     for (int i = 0; i < static_cast<int>(roots.size()) && static_cast<int>(result.boxes.size()) < config_.max_boxes; ++i) {
@@ -1253,6 +1493,114 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         } else {
             result.n_ffb_fail += 1;
         }
+    }
+
+    if (config_.frontwave_bootstrap_boxes > 0 && !result.boxes.empty() &&
+        static_cast<int>(result.boxes.size()) < config_.max_boxes) {
+        ScopedStageTimer bootstrap_timer(context.diagnostics(), "grower.rrt.frontwave_bootstrap");
+        FindFreeBoxOptions bootstrap_options = config_.find_free_box;
+        if (config_.frontwave_bootstrap_depth > 0) {
+            bootstrap_options.max_depth = config_.frontwave_bootstrap_depth;
+        }
+        const int bootstrap_target = std::min(config_.max_boxes,
+                                              std::max(static_cast<int>(result.boxes.size()),
+                                                       config_.frontwave_bootstrap_boxes));
+        const int samples_per_box = std::max(1, config_.frontwave_bootstrap_boundary_samples);
+        std::queue<int> bootstrap_frontier;
+        for (const BoxNode& box : result.boxes) {
+            bootstrap_frontier.push(box.id);
+        }
+        std::uniform_real_distribution<double> bootstrap_u01(0.0, 1.0);
+        int bootstrap_misses = 0;
+        while (!bootstrap_frontier.empty() &&
+               static_cast<int>(result.boxes.size()) < bootstrap_target &&
+               bootstrap_misses < config_.max_consecutive_miss) {
+            if (context.should_stop()) {
+                break;
+            }
+            if (config_.timeout_ms > 0.0 && Clock::now() >= deadline) {
+                break;
+            }
+            const int parent_id = bootstrap_frontier.front();
+            bootstrap_frontier.pop();
+            auto parent_it = std::find_if(result.boxes.begin(), result.boxes.end(), [&](const BoxNode& candidate) {
+                return candidate.id == parent_id;
+            });
+            if (parent_it == result.boxes.end()) {
+                continue;
+            }
+            const BoxNode parent = *parent_it;
+            const auto& root_intervals = oracle_.root_intervals();
+            struct BootstrapFace { int dim = -1; int side = 0; };
+            std::vector<BootstrapFace> faces;
+            faces.reserve(static_cast<std::size_t>(2 * parent.n_dims()));
+            for (int dim = 0; dim < parent.n_dims(); ++dim) {
+                if (parent.joint_intervals[static_cast<std::size_t>(dim)].lo >
+                    root_intervals[static_cast<std::size_t>(dim)].lo + config_.boundary_epsilon) {
+                    faces.push_back({dim, 0});
+                }
+                if (parent.joint_intervals[static_cast<std::size_t>(dim)].hi <
+                    root_intervals[static_cast<std::size_t>(dim)].hi - config_.boundary_epsilon) {
+                    faces.push_back({dim, 1});
+                }
+            }
+            std::shuffle(faces.begin(), faces.end(), rng_);
+            const int n_faces = std::min(samples_per_box, static_cast<int>(faces.size()));
+            for (int face_index = 0; face_index < n_faces &&
+                 static_cast<int>(result.boxes.size()) < bootstrap_target; ++face_index) {
+                const BootstrapFace& face = faces[static_cast<std::size_t>(face_index)];
+                Eigen::VectorXd seed(parent.n_dims());
+                for (int dim = 0; dim < parent.n_dims(); ++dim) {
+                    if (dim == face.dim) {
+                        seed[dim] = face.side == 1
+                            ? parent.joint_intervals[static_cast<std::size_t>(dim)].hi + config_.boundary_epsilon
+                            : parent.joint_intervals[static_cast<std::size_t>(dim)].lo - config_.boundary_epsilon;
+                    } else {
+                        seed[dim] = parent.joint_intervals[static_cast<std::size_t>(dim)].lo +
+                                    bootstrap_u01(rng_) *
+                                    parent.joint_intervals[static_cast<std::size_t>(dim)].width();
+                    }
+                    seed[dim] = std::clamp(seed[dim],
+                                           root_intervals[static_cast<std::size_t>(dim)].lo,
+                                           root_intervals[static_cast<std::size_t>(dim)].hi);
+                }
+                if (point_covered_by_existing_box(result.boxes, seed)) {
+                    context.diagnostics().add_counter("grower.frontwave_bootstrap_seed_covered");
+                    continue;
+                }
+                GrowTask bootstrap_task;
+                bootstrap_task.task_id = -2;
+                bootstrap_task.iteration = static_cast<int>(result.boxes.size());
+                bootstrap_task.seed = seed;
+                bootstrap_task.target = seed;
+                bootstrap_task.target_type = GrowTargetType::Unexplored;
+                bootstrap_task.parent_box_id = parent.id;
+                bootstrap_task.root_id = parent.root_id;
+                const int id = create_box(seed,
+                                          parent.id,
+                                          parent.root_id,
+                                          result.boxes,
+                                          ffb,
+                                          context,
+                                          &bootstrap_options,
+                                          &bootstrap_task);
+                context.diagnostics().add_counter("grower.frontwave_bootstrap_attempts");
+                if (id >= 0) {
+                    bootstrap_frontier.push(id);
+                    result.n_ffb_success += 1;
+                    bootstrap_misses = 0;
+                    context.diagnostics().add_counter("grower.frontwave_bootstrap_added");
+                } else {
+                    result.n_ffb_fail += 1;
+                    bootstrap_misses += 1;
+                    context.diagnostics().add_counter("grower.frontwave_bootstrap_failures");
+                }
+            }
+        }
+        context.diagnostics().set_value("grower.frontwave_bootstrap_box_count",
+                                        static_cast<double>(result.boxes.size()));
+        context.diagnostics().set_value("grower.frontwave_bootstrap_depth",
+                                        static_cast<double>(bootstrap_options.max_depth));
     }
 
     int consecutive_miss = 0;
@@ -1355,6 +1703,13 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                                                             true,
                                                             nullptr,
                                                             context);
+                            const int chain_added = grow_component_connect_chain(result.boxes,
+                                                                                 ffb,
+                                                                                 active_ffb_options,
+                                                                                 active_depth_stage_index,
+                                                                                 worker_result.source_root_id,
+                                                                                 context);
+                            result.n_ffb_success += chain_added;
                         }
                     } else {
                         if (!worker_result.free_box.found) {
@@ -1420,6 +1775,13 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                                                             true,
                                                             nullptr,
                                                             context);
+                            const int chain_added = grow_component_connect_chain(result.boxes,
+                                                                                 ffb,
+                                                                                 active_ffb_options,
+                                                                                 active_depth_stage_index,
+                                                                                 task.source_root_id,
+                                                                                 context);
+                            result.n_ffb_success += chain_added;
                         }
                     } else {
                         result.n_ffb_fail += 1;
@@ -1544,6 +1906,13 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                                                 true,
                                                 nullptr,
                                                 context);
+                const int chain_added = grow_component_connect_chain(result.boxes,
+                                                                     ffb,
+                                                                     active_ffb_options,
+                                                                     active_depth_stage_index,
+                                                                     trace_task.source_root_id >= 0 ? trace_task.source_root_id : trace_task.root_id,
+                                                                     context);
+                result.n_ffb_success += chain_added;
             }
             consecutive_miss = 0;
         } else {
@@ -1996,6 +2365,13 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
             target_type = GrowTargetType::QueryRoot;
             return roots[static_cast<std::size_t>(target_root_id)];
         }
+        if (!random_anchor_targets_.empty() &&
+            u01(rng_) < std::clamp(config_.anchor_target_prob, 0.0, 1.0)) {
+            std::uniform_int_distribution<int> pick_anchor(0, static_cast<int>(random_anchor_targets_.size()) - 1);
+            target_type = GrowTargetType::Uniform;
+            context.diagnostics().add_counter("grower.target_category.anchor");
+            return random_anchor_targets_[static_cast<std::size_t>(pick_anchor(rng_))];
+        }
         if (u01(rng_) < config_.unexplored_sample_prob) {
             target_type = GrowTargetType::Unexplored;
             return sample_unexplored();
@@ -2118,10 +2494,16 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         component_connect_seed_cache.reserve(active_groups.roots.size());
     }
 
-    auto make_request = [&](int source_root_id, int sample_index) {
+    auto make_request = [&](int source_root_id, int sample_index, const Eigen::VectorXd* shared_anchor_target = nullptr) {
         TaskRequest request;
         request.source_root_id = source_root_id;
         request.iteration = first_task_id + sample_index;
+        if (shared_anchor_target != nullptr) {
+            request.target = *shared_anchor_target;
+            request.target_type = GrowTargetType::Uniform;
+            context.diagnostics().add_counter("grower.target_category.shared_anchor");
+            return request;
+        }
         GrowTargetType chosen_category = GrowTargetType::Uniform;
         bool want_component_connect = false;
         if (config_.sample_categorical_allocation) {
@@ -2216,13 +2598,66 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
         return request;
     };
 
-    for (int sample_index = 0; sample_index < n_tasks; ++sample_index) {
-        if (config_.expand_all_roots_per_sample) {
-            for (int source_root_id : active_groups.roots) {
-                requests.push_back(make_request(source_root_id, sample_index));
+    {
+        ScopedStageTimer request_timer(context.diagnostics(), "grower.rrt.make_growth_tasks.request_generation");
+        for (int sample_index = 0; sample_index < n_tasks; ++sample_index) {
+            const Eigen::VectorXd* shared_anchor_target = nullptr;
+            if (config_.expand_all_roots_per_sample &&
+                active_groups.roots.size() > 1 &&
+                !random_anchor_targets_.empty() &&
+                u01(rng_) < std::clamp(config_.anchor_target_prob, 0.0, 1.0)) {
+                std::uniform_int_distribution<int> pick_anchor(0, static_cast<int>(random_anchor_targets_.size()) - 1);
+                shared_anchor_target = &random_anchor_targets_[static_cast<std::size_t>(pick_anchor(rng_))];
             }
-        } else {
-            requests.push_back(make_request(-1, sample_index));
+            if (config_.expand_all_roots_per_sample) {
+                for (int source_root_id : active_groups.roots) {
+                    requests.push_back(make_request(source_root_id, sample_index, shared_anchor_target));
+                }
+            } else {
+                requests.push_back(make_request(-1, sample_index));
+            }
+        }
+
+        if (config_.anchor_wave_targets_per_batch > 0 &&
+            config_.expand_all_roots_per_sample &&
+            active_groups.roots.size() > 1 &&
+            !random_anchor_targets_.empty()) {
+            const int wave_targets = std::min(std::max(0, config_.anchor_wave_targets_per_batch),
+                                              static_cast<int>(random_anchor_targets_.size()));
+            std::unordered_set<int> selected_anchor_indices;
+            selected_anchor_indices.reserve(static_cast<std::size_t>(wave_targets));
+            for (int wave_index = 0; wave_index < wave_targets; ++wave_index) {
+                int anchor_index = -1;
+                if (wave_targets >= static_cast<int>(random_anchor_targets_.size())) {
+                    anchor_index = wave_index;
+                } else {
+                    std::uniform_int_distribution<int> pick_anchor(0, static_cast<int>(random_anchor_targets_.size()) - 1);
+                    for (int attempt = 0; attempt < 8; ++attempt) {
+                        const int candidate = pick_anchor(rng_);
+                        if (selected_anchor_indices.insert(candidate).second) {
+                            anchor_index = candidate;
+                            break;
+                        }
+                    }
+                    if (anchor_index < 0) {
+                        for (int candidate = 0; candidate < static_cast<int>(random_anchor_targets_.size()); ++candidate) {
+                            if (selected_anchor_indices.insert(candidate).second) {
+                                anchor_index = candidate;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (anchor_index < 0 || anchor_index >= static_cast<int>(random_anchor_targets_.size())) {
+                    continue;
+                }
+                const Eigen::VectorXd& anchor = random_anchor_targets_[static_cast<std::size_t>(anchor_index)];
+                for (int source_root_id : active_groups.roots) {
+                    requests.push_back(make_request(source_root_id, n_tasks + wave_index, &anchor));
+                    context.diagnostics().add_counter("grower.anchor_wave_root_tasks");
+                }
+                context.diagnostics().add_counter("grower.anchor_wave_targets");
+            }
         }
     }
 
@@ -2279,109 +2714,115 @@ std::vector<GrowTask> RrtGrower::make_growth_tasks(const std::vector<BoxNode>& b
     }
 
     std::vector<GrowTask> tasks(requests.size());
-    context.executor().parallel_for(0, static_cast<int>(requests.size()), [&](int task_index) {
-        if (context.should_stop()) {
-            return;
-        }
-        const auto& request = requests[static_cast<std::size_t>(task_index)];
-        Eigen::VectorXd seed;
-        int parent_box_id = -1;
-        int root_id = -1;
-        GrowTraceFace selected_face = request.selected_face;
-        std::vector<GrowTraceFace> face_candidates = request.face_candidates;
-        bool made_seed = request.has_seed;
-        if (request.has_seed) {
-            seed = request.seed;
-            parent_box_id = request.parent_box_id;
-            root_id = request.root_id;
-        } else {
-            const bool target_seed = request.source_root_id >= 0
-                ? make_frontier_seed_for_root(boxes,
-                                              request.source_root_id,
-                                              request.target,
-                                              seed,
-                                              parent_box_id,
-                                              root_id,
-                                              nullptr,
-                                              &selected_face,
-                                              &face_candidates)
-                : make_frontier_seed(boxes,
-                                     request.target,
-                                     seed,
-                                     parent_box_id,
-                                     root_id,
-                                     nullptr,
-                                     &selected_face,
-                                     &face_candidates);
-            if (!target_seed) {
+    {
+        ScopedStageTimer seed_timer(context.diagnostics(), "grower.rrt.make_growth_tasks.frontier_seed_selection");
+        context.executor().parallel_for(0, static_cast<int>(requests.size()), [&](int task_index) {
+            if (context.should_stop()) {
                 return;
             }
-            made_seed = true;
-        }
-        if (!made_seed) {
-            return;
-        }
-        GrowTask task;
-        task.task_id = first_task_id + task_index;
-        task.iteration = request.iteration;
-        task.seed = std::move(seed);
-        task.target = request.target;
-        task.target_type = request.target_type;
-        task.parent_box_id = parent_box_id;
-        task.root_id = root_id;
-        task.source_root_id = request.source_root_id;
-        task.target_root_id = request.target_root_id;
-        task.intertree_goal_bias = request.intertree;
-        task.component_connect_target = request.component_connect;
-        task.component_pair_unknown_failures = request.component_pair_unknown_failures;
-        task.component_connect_staged_target = request.component_connect_staged_target;
-        task.component_connect_gap_sq = request.component_connect_gap_sq;
-        task.selected_face = selected_face;
-        task.face_candidates = std::move(face_candidates);
-        tasks[static_cast<std::size_t>(task_index)] = std::move(task);
-    });
+            const auto& request = requests[static_cast<std::size_t>(task_index)];
+            Eigen::VectorXd seed;
+            int parent_box_id = -1;
+            int root_id = -1;
+            GrowTraceFace selected_face = request.selected_face;
+            std::vector<GrowTraceFace> face_candidates = request.face_candidates;
+            bool made_seed = request.has_seed;
+            if (request.has_seed) {
+                seed = request.seed;
+                parent_box_id = request.parent_box_id;
+                root_id = request.root_id;
+            } else {
+                const bool target_seed = request.source_root_id >= 0
+                    ? make_frontier_seed_for_root(boxes,
+                                                  request.source_root_id,
+                                                  request.target,
+                                                  seed,
+                                                  parent_box_id,
+                                                  root_id,
+                                                  nullptr,
+                                                  &selected_face,
+                                                  &face_candidates)
+                    : make_frontier_seed(boxes,
+                                         request.target,
+                                         seed,
+                                         parent_box_id,
+                                         root_id,
+                                         nullptr,
+                                         &selected_face,
+                                         &face_candidates);
+                if (!target_seed) {
+                    return;
+                }
+                made_seed = true;
+            }
+            if (!made_seed) {
+                return;
+            }
+            GrowTask task;
+            task.task_id = first_task_id + task_index;
+            task.iteration = request.iteration;
+            task.seed = std::move(seed);
+            task.target = request.target;
+            task.target_type = request.target_type;
+            task.parent_box_id = parent_box_id;
+            task.root_id = root_id;
+            task.source_root_id = request.source_root_id;
+            task.target_root_id = request.target_root_id;
+            task.intertree_goal_bias = request.intertree;
+            task.component_connect_target = request.component_connect;
+            task.component_pair_unknown_failures = request.component_pair_unknown_failures;
+            task.component_connect_staged_target = request.component_connect_staged_target;
+            task.component_connect_gap_sq = request.component_connect_gap_sq;
+            task.selected_face = selected_face;
+            task.face_candidates = std::move(face_candidates);
+            tasks[static_cast<std::size_t>(task_index)] = std::move(task);
+        });
+    }
 
     std::vector<GrowTask> out;
     std::unordered_set<OracleNodeId> used_domains;
     const bool require_worker_domain = config_.worker_local_ffb && context.executor().n_threads() > 1;
     int skipped_frontier = 0;
     out.reserve(tasks.size());
-    for (auto& task : tasks) {
-        if (task.task_id < 0 || task.parent_box_id < 0) {
-            skipped_frontier += 1;
-            continue;
-        }
-        if (seed_covered_by_frontier_cache(boxes, task.seed, &context)) {
-            context.diagnostics().add_counter("grower.seed_already_covered");
-            continue;
-        }
-        const OracleNodeId domain_root = find_leaf_containing(oracle_, task.seed);
-        if (node_in_failure_cooling(domain_root,
-                                    base_options.max_depth,
-                                    static_cast<int>(boxes.size()),
-                                    context)) {
-            context.diagnostics().add_counter("grower.task_skipped_failure_cooling");
-            if (config_.coverage_first_stop_loss) {
-                context.diagnostics().add_counter("grower.hard_frontier_task_skips");
+    {
+        ScopedStageTimer filter_timer(context.diagnostics(), "grower.rrt.make_growth_tasks.filter_tasks");
+        for (auto& task : tasks) {
+            if (task.task_id < 0 || task.parent_box_id < 0) {
+                skipped_frontier += 1;
+                continue;
             }
-            continue;
+            if (seed_covered_by_frontier_cache(boxes, task.seed, &context)) {
+                context.diagnostics().add_counter("grower.seed_already_covered");
+                continue;
+            }
+            const OracleNodeId domain_root = find_leaf_containing(oracle_, task.seed);
+            if (node_in_failure_cooling(domain_root,
+                                        base_options.max_depth,
+                                        static_cast<int>(boxes.size()),
+                                        context)) {
+                context.diagnostics().add_counter("grower.task_skipped_failure_cooling");
+                if (config_.coverage_first_stop_loss) {
+                    context.diagnostics().add_counter("grower.hard_frontier_task_skips");
+                }
+                continue;
+            }
+            if (domain_root >= 0 && !oracle_.is_reserved(domain_root) &&
+                used_domains.find(domain_root) == used_domains.end()) {
+                task.domain_root_node = domain_root;
+                task.ffb_depth = base_options.max_depth;
+                used_domains.insert(domain_root);
+            } else if (domain_root >= 0 && oracle_.is_reserved(domain_root)) {
+                context.diagnostics().add_counter("grower.task_reserved_domain");
+            } else if (domain_root >= 0) {
+                context.diagnostics().add_counter("grower.task_duplicate_domain");
+            }
+            if (require_worker_domain && task.domain_root_node < 0) {
+                context.diagnostics().add_counter("grower.task_skipped_no_worker_domain");
+                continue;
+            }
+            trace_task_plan(task);
+            out.push_back(std::move(task));
         }
-        if (domain_root >= 0 && !oracle_.is_reserved(domain_root) &&
-            used_domains.find(domain_root) == used_domains.end()) {
-            task.domain_root_node = domain_root;
-            task.ffb_depth = base_options.max_depth;
-            used_domains.insert(domain_root);
-        } else if (domain_root >= 0 && oracle_.is_reserved(domain_root)) {
-            context.diagnostics().add_counter("grower.task_reserved_domain");
-        } else if (domain_root >= 0) {
-            context.diagnostics().add_counter("grower.task_duplicate_domain");
-        }
-        if (require_worker_domain && task.domain_root_node < 0) {
-            context.diagnostics().add_counter("grower.task_skipped_no_worker_domain");
-            continue;
-        }
-        trace_task_plan(task);
-        out.push_back(std::move(task));
     }
     if (skipped_frontier > 0) {
         context.diagnostics().add_counter("grower.frontier_no_uncovered_seed", skipped_frontier);
@@ -2523,6 +2964,134 @@ void RrtGrower::record_component_connect_result(int source_root_id,
                            "grower.component_connect_pair_unknown_failures_max",
                            static_cast<double>(failures));
     }
+}
+
+int RrtGrower::grow_component_connect_chain(std::vector<BoxNode>& boxes,
+                                            FindFreeBoxService& ffb,
+                                            const FindFreeBoxOptions& base_options,
+                                            int depth_stage_index,
+                                            int source_root_id,
+                                            StageContext& context) {
+    const int max_steps = std::max(0, config_.component_connect_chain_steps);
+    if (max_steps <= 0 || source_root_id < 0 || boxes.empty()) {
+        return 0;
+    }
+    const int max_added = config_.component_connect_chain_max_boxes > 0
+        ? std::min(max_steps, config_.component_connect_chain_max_boxes)
+        : max_steps;
+    int added = 0;
+    int failures = 0;
+    for (int step = 0;
+         step < max_steps && added < max_added &&
+         static_cast<int>(boxes.size()) < config_.max_boxes &&
+         !context.should_stop();
+         ++step) {
+        if (connected(boxes)) {
+            context.diagnostics().add_counter("grower.component_connect_chain_connected_stop");
+            break;
+        }
+
+        Eigen::VectorXd seed;
+        Eigen::VectorXd target;
+        int parent_box_id = -1;
+        int root_id = -1;
+        int target_root_id = -1;
+        int pair_unknown_failures = 0;
+        bool staged_target = false;
+        double component_gap_sq = 0.0;
+        GrowTraceFace selected_face;
+        std::vector<GrowTraceFace> face_candidates;
+        if (!make_component_connect_seed_for_root(boxes,
+                                                  source_root_id,
+                                                  seed,
+                                                  target,
+                                                  parent_box_id,
+                                                  root_id,
+                                                  target_root_id,
+                                                  pair_unknown_failures,
+                                                  staged_target,
+                                                  component_gap_sq,
+                                                  &selected_face,
+                                                  &face_candidates,
+                                                  context,
+                                                  nullptr)) {
+            context.diagnostics().add_counter("grower.component_connect_chain_no_seed");
+            break;
+        }
+
+        GrowTask task;
+        task.task_id = -1;
+        task.iteration = step;
+        task.seed = seed;
+        task.target = target;
+        task.target_type = GrowTargetType::ComponentConnect;
+        task.parent_box_id = parent_box_id;
+        task.root_id = root_id;
+        task.source_root_id = source_root_id;
+        task.target_root_id = target_root_id;
+        task.intertree_goal_bias = true;
+        task.component_connect_target = true;
+        task.component_pair_unknown_failures = pair_unknown_failures;
+        task.component_connect_staged_target = staged_target;
+        task.component_connect_gap_sq = component_gap_sq;
+        task.selected_face = selected_face;
+        task.face_candidates = std::move(face_candidates);
+
+        FindFreeBoxOptions task_options = component_connect_ffb_options(config_,
+                                                                        context,
+                                                                        base_options,
+                                                                        depth_stage_index,
+                                                                        pair_unknown_failures);
+        task.ffb_depth = task_options.max_depth;
+        FindFreeBoxResult observed_result;
+        context.diagnostics().add_counter("grower.component_connect_chain_attempts");
+        const int id = create_box(seed,
+                                  parent_box_id,
+                                  root_id,
+                                  boxes,
+                                  ffb,
+                                  context,
+                                  &task_options,
+                                  &task,
+                                  -1,
+                                  &observed_result);
+        if (id >= 0) {
+            added += 1;
+            failures = 0;
+            source_root_id = root_id;
+            context.diagnostics().add_counter("grower.component_connect_chain_added");
+            context.diagnostics().add_counter("grower.component_connect_successes");
+            component_parent_failures_.erase(parent_box_id);
+            record_component_connect_result(source_root_id,
+                                            target_root_id,
+                                            true,
+                                            nullptr,
+                                            context);
+            continue;
+        }
+
+        failures += 1;
+        context.diagnostics().add_counter("grower.component_connect_chain_failures");
+        const int parent_failures = ++component_parent_failures_[parent_box_id];
+        set_max_diagnostic(context,
+                           "grower.component_connect_parent_failure_max",
+                           static_cast<double>(parent_failures));
+        record_component_connect_result(source_root_id,
+                                        target_root_id,
+                                        false,
+                                        observed_result.found || observed_result.fail_code != 0 ? &observed_result : nullptr,
+                                        context);
+        if (failures >= 2) {
+            context.diagnostics().add_counter("grower.component_connect_chain_failure_stop");
+            break;
+        }
+    }
+    if (added > 0) {
+        set_max_diagnostic(context,
+                           "grower.component_connect_chain_added_max",
+                           static_cast<double>(added));
+    }
+    return added;
 }
 
 bool RrtGrower::make_component_connect_seed(const std::vector<BoxNode>& boxes,
@@ -2990,14 +3559,16 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
     if (best.pair_unknown_failures > 0) {
         context.diagnostics().add_counter("grower.component_connect_retried_unknown_pair");
     }
+    GrowTraceFace selected_face;
+    GrowTraceFace* selected_face_out = face != nullptr ? face : &selected_face;
     if (!make_frontier_seed_from_parent(boxes,
                                         best.parent,
                                         best.target_point,
                                         seed,
                                         parent_box_id,
                                         root_id,
-                                        true,
-                                        face,
+                                        config_.component_connect_require_target_direction,
+                                        selected_face_out,
                                         face_candidates,
                                         &context)) {
         context.diagnostics().add_counter("grower.component_connect_no_frontier_seed");
@@ -3006,6 +3577,50 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                            "grower.component_connect_parent_failure_max",
                            static_cast<double>(failures));
         return false;
+    }
+    const double lateral_prob = std::clamp(config_.component_connect_lateral_sample_prob, 0.0, 1.0);
+    if (lateral_prob > 0.0 && selected_face_out->valid) {
+        std::uniform_real_distribution<double> u01(0.0, 1.0);
+        if (u01(rng_) < lateral_prob) {
+            const auto& root = oracle_.root_intervals();
+            const double seed_epsilon = std::max(config_.boundary_epsilon, 0.25 * config_.adjacency_tolerance);
+            const int attempts = std::max(1, config_.component_connect_lateral_sample_attempts);
+            bool applied = false;
+            for (int attempt = 0; attempt < attempts; ++attempt) {
+                Eigen::VectorXd candidate_seed = seed;
+                for (int dim = 0; dim < parent.n_dims(); ++dim) {
+                    if (dim == selected_face_out->dim) {
+                        continue;
+                    }
+                    const double lo = parent.joint_intervals[static_cast<std::size_t>(dim)].lo;
+                    const double hi = parent.joint_intervals[static_cast<std::size_t>(dim)].hi;
+                    const double safe_lo = lo + seed_epsilon;
+                    const double safe_hi = hi - seed_epsilon;
+                    if (safe_lo <= safe_hi) {
+                        std::uniform_real_distribution<double> coord(safe_lo, safe_hi);
+                        candidate_seed[dim] = coord(rng_);
+                    } else {
+                        candidate_seed[dim] = 0.5 * (lo + hi);
+                    }
+                    candidate_seed[dim] = std::clamp(candidate_seed[dim],
+                                                     root[static_cast<std::size_t>(dim)].lo,
+                                                     root[static_cast<std::size_t>(dim)].hi);
+                }
+                if (!seed_covered_by_frontier_cache(boxes, candidate_seed, &context)) {
+                    seed = std::move(candidate_seed);
+                    context.diagnostics().add_counter("grower.component_connect_lateral_seed");
+                    set_max_diagnostic(context,
+                                       "grower.component_connect_lateral_attempt_max",
+                                       static_cast<double>(attempt + 1));
+                    applied = true;
+                    break;
+                }
+                context.diagnostics().add_counter("grower.component_connect_lateral_seed_covered");
+            }
+            if (!applied) {
+                context.diagnostics().add_counter("grower.component_connect_lateral_seed_fallback_direct");
+            }
+        }
     }
     target = best.target_point;
     target_root_id = best.target_root;
@@ -3184,6 +3799,87 @@ Eigen::VectorXd RrtGrower::sample_unexplored() {
     return q;
 }
 
+bool RrtGrower::prepare_frontier_seed_with_memory(const std::vector<BoxNode>& boxes,
+                                                  const BoxNode& parent,
+                                                  const Eigen::VectorXd& target,
+                                                  int face_dim,
+                                                  int side,
+                                                  Eigen::VectorXd& seed,
+                                                  StageContext* context) const {
+    const auto& root = oracle_.root_intervals();
+    if (parent.n_dims() != target.size() || target.size() != static_cast<int>(root.size())) {
+        return false;
+    }
+    const double seed_epsilon = std::max(config_.boundary_epsilon, 0.25 * config_.adjacency_tolerance);
+    seed = make_face_seed(parent, root, target, face_dim, side, seed_epsilon);
+    if (!config_.frontier_face_memory) {
+        return !seed_covered_by_frontier_cache(boxes, seed, context);
+    }
+
+    const int bins_per_dim = std::clamp(config_.frontier_face_bins_per_dim, 1, 16);
+    const std::uint64_t total_bins = frontier_face_total_bins(parent.n_dims(), face_dim, bins_per_dim);
+    int budget = frontier_face_attempt_budget(config_, parent, root, face_dim);
+    budget = static_cast<int>(std::min<std::uint64_t>(static_cast<std::uint64_t>(budget), total_bins));
+    if (context != nullptr) {
+        set_max_diagnostic(*context, "grower.frontier_face_attempt_budget_max", static_cast<double>(budget));
+        set_max_diagnostic(*context, "grower.frontier_face_total_bins_max", static_cast<double>(total_bins));
+    }
+
+    const std::uint64_t direct_bin = frontier_face_bin_for_seed(parent, seed, face_dim, bins_per_dim);
+    std::uint64_t chosen_bin = direct_bin;
+    bool direct_bin_reused = false;
+    {
+        std::lock_guard<std::mutex> lock(frontier_face_memory_mutex_);
+        auto& used_bins = frontier_face_bins_[frontier_face_memory_key(parent.id, face_dim, side)];
+        if (static_cast<int>(used_bins.size()) >= budget) {
+            if (context != nullptr) {
+                context->diagnostics().add_counter("grower.frontier_face_memory_exhausted");
+            }
+            return false;
+        }
+        if (used_bins.find(direct_bin) != used_bins.end()) {
+            direct_bin_reused = true;
+            const std::uint64_t start = (direct_bin + 2654435761ULL * static_cast<std::uint64_t>(used_bins.size() + 1)) %
+                                        std::max<std::uint64_t>(1, total_bins);
+            bool found = false;
+            for (std::uint64_t offset = 0; offset < total_bins; ++offset) {
+                const std::uint64_t candidate_bin = (start + offset) % total_bins;
+                if (used_bins.find(candidate_bin) == used_bins.end()) {
+                    chosen_bin = candidate_bin;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                if (context != nullptr) {
+                    context->diagnostics().add_counter("grower.frontier_face_memory_no_free_bin");
+                }
+                return false;
+            }
+        }
+        used_bins.insert(chosen_bin);
+    }
+
+    if (chosen_bin != direct_bin) {
+        seed = make_face_seed_for_bin(parent, root, face_dim, side, seed_epsilon, bins_per_dim, chosen_bin);
+        if (context != nullptr) {
+            context->diagnostics().add_counter("grower.frontier_face_memory_lateral_bin");
+        }
+    } else if (context != nullptr) {
+        context->diagnostics().add_counter("grower.frontier_face_memory_direct_bin");
+    }
+    if (direct_bin_reused && context != nullptr) {
+        context->diagnostics().add_counter("grower.frontier_face_memory_reused_direct_bin");
+    }
+    if (seed_covered_by_frontier_cache(boxes, seed, context)) {
+        if (context != nullptr) {
+            context->diagnostics().add_counter("grower.frontier_face_memory_seed_covered_after_claim");
+        }
+        return false;
+    }
+    return true;
+}
+
 bool RrtGrower::make_frontier_seed(const std::vector<BoxNode>& boxes,
                                    const Eigen::VectorXd& target,
                                    Eigen::VectorXd& seed,
@@ -3212,6 +3908,9 @@ bool RrtGrower::make_frontier_seed_for_root(const std::vector<BoxNode>& boxes,
                                             StageContext* context,
                                             GrowTraceFace* face,
                                             std::vector<GrowTraceFace>* face_candidates) const {
+    if (context != nullptr) {
+        context->diagnostics().add_counter("grower.frontier_seed_for_root_calls");
+    }
     if (boxes.empty()) {
         return false;
     }
@@ -3221,55 +3920,76 @@ bool RrtGrower::make_frontier_seed_for_root(const std::vector<BoxNode>& boxes,
     }
     const double seed_epsilon = std::max(config_.boundary_epsilon, 0.25 * config_.adjacency_tolerance);
 
-    constexpr int kCandidateLimit = 128;
+    const int candidate_limit = std::max(1, config_.frontier_face_candidate_limit);
     std::priority_queue<FaceCandidate, std::vector<FaceCandidate>, WorseFaceCandidateFirst> candidates;
     int scanned_boxes = 0;
     int scanned_faces = 0;
-    for (int parent_index = 0; parent_index < static_cast<int>(boxes.size()); ++parent_index) {
-        const BoxNode& box = boxes[static_cast<std::size_t>(parent_index)];
-        if (source_root_id >= 0 && box.root_id != source_root_id) {
-            continue;
+    {
+        std::unique_ptr<ScopedStageTimer> scan_timer;
+        if (context != nullptr) {
+            scan_timer = std::make_unique<ScopedStageTimer>(
+                context->diagnostics(),
+                "grower.rrt.make_frontier_seed_for_root.scan_faces");
         }
-        if (box.n_dims() != target.size()) {
-            continue;
-        }
-        scanned_boxes += 1;
-        for (int dim = 0; dim < box.n_dims(); ++dim) {
-            for (int side = 0; side <= 1; ++side) {
-                scanned_faces += 1;
-                const double score = face_seed_score(box, root, target, dim, side, seed_epsilon);
-                if (!std::isfinite(score)) {
-                    continue;
-                }
-                FaceCandidate candidate{parent_index, dim, side, score};
-                if (static_cast<int>(candidates.size()) < kCandidateLimit) {
-                    candidates.push(candidate);
-                } else if (candidate.score < candidates.top().score - 1e-18) {
-                    candidates.pop();
-                    candidates.push(candidate);
+        for (int parent_index = 0; parent_index < static_cast<int>(boxes.size()); ++parent_index) {
+            const BoxNode& box = boxes[static_cast<std::size_t>(parent_index)];
+            if (source_root_id >= 0 && box.root_id != source_root_id) {
+                continue;
+            }
+            if (box.n_dims() != target.size()) {
+                continue;
+            }
+            scanned_boxes += 1;
+            for (int dim = 0; dim < box.n_dims(); ++dim) {
+                for (int side = 0; side <= 1; ++side) {
+                    scanned_faces += 1;
+                    const double score = face_seed_score(box, root, target, dim, side, seed_epsilon);
+                    if (!std::isfinite(score)) {
+                        continue;
+                    }
+                    FaceCandidate candidate{parent_index, dim, side, score};
+                    if (static_cast<int>(candidates.size()) < candidate_limit) {
+                        candidates.push(candidate);
+                    } else if (candidate.score < candidates.top().score - 1e-18) {
+                        candidates.pop();
+                        candidates.push(candidate);
+                    }
                 }
             }
         }
     }
+    if (context != nullptr) {
+        context->diagnostics().add_counter("grower.frontier_seed_scanned_boxes", static_cast<double>(scanned_boxes));
+        context->diagnostics().add_counter("grower.frontier_seed_scanned_faces", static_cast<double>(scanned_faces));
+        context->diagnostics().add_counter("grower.frontier_seed_candidate_count", static_cast<double>(candidates.size()));
+    }
 
     std::vector<FaceCandidate> ordered;
     ordered.reserve(candidates.size());
-    while (!candidates.empty()) {
-        ordered.push_back(candidates.top());
-        candidates.pop();
+    {
+        std::unique_ptr<ScopedStageTimer> sort_timer;
+        if (context != nullptr) {
+            sort_timer = std::make_unique<ScopedStageTimer>(
+                context->diagnostics(),
+                "grower.rrt.make_frontier_seed_for_root.sort_candidates");
+        }
+        while (!candidates.empty()) {
+            ordered.push_back(candidates.top());
+            candidates.pop();
+        }
+        std::sort(ordered.begin(), ordered.end(), [](const FaceCandidate& lhs, const FaceCandidate& rhs) {
+            if (std::abs(lhs.score - rhs.score) > 1e-18) {
+                return lhs.score < rhs.score;
+            }
+            if (lhs.parent_index != rhs.parent_index) {
+                return lhs.parent_index < rhs.parent_index;
+            }
+            if (lhs.dim != rhs.dim) {
+                return lhs.dim < rhs.dim;
+            }
+            return lhs.side < rhs.side;
+        });
     }
-    std::sort(ordered.begin(), ordered.end(), [](const FaceCandidate& lhs, const FaceCandidate& rhs) {
-        if (std::abs(lhs.score - rhs.score) > 1e-18) {
-            return lhs.score < rhs.score;
-        }
-        if (lhs.parent_index != rhs.parent_index) {
-            return lhs.parent_index < rhs.parent_index;
-        }
-        if (lhs.dim != rhs.dim) {
-            return lhs.dim < rhs.dim;
-        }
-        return lhs.side < rhs.side;
-    });
 
     if (face_candidates != nullptr) {
         face_candidates->clear();
@@ -3296,41 +4016,53 @@ bool RrtGrower::make_frontier_seed_for_root(const std::vector<BoxNode>& boxes,
         }
     }
 
-    for (int rank = 0; rank < static_cast<int>(ordered.size()); ++rank) {
-        const FaceCandidate& candidate = ordered[static_cast<std::size_t>(rank)];
-        const BoxNode& parent = boxes[static_cast<std::size_t>(candidate.parent_index)];
-        Eigen::VectorXd candidate_seed = make_face_seed(parent,
-                                                        root,
-                                                        target,
-                                                        candidate.dim,
-                                                        candidate.side,
-                                                        seed_epsilon);
-        if (seed_covered_by_frontier_cache(boxes, candidate_seed, context)) {
-            continue;
+    {
+        std::unique_ptr<ScopedStageTimer> prepare_timer;
+        if (context != nullptr) {
+            prepare_timer = std::make_unique<ScopedStageTimer>(
+                context->diagnostics(),
+                "grower.rrt.make_frontier_seed_for_root.prepare_candidates");
         }
-        GrowTraceFace selected = make_trace_face(boxes,
-                                                 candidate,
-                                                 scanned_boxes,
-                                                 scanned_faces,
-                                                 rank,
-                                                 true,
-                                                 false);
-        if (face_candidates != nullptr) {
-            for (GrowTraceFace& traced : *face_candidates) {
-                if (traced.rank == rank) {
-                    traced.selected = true;
-                    traced.seed_covered = false;
-                    break;
+        for (int rank = 0; rank < static_cast<int>(ordered.size()); ++rank) {
+            const FaceCandidate& candidate = ordered[static_cast<std::size_t>(rank)];
+            const BoxNode& parent = boxes[static_cast<std::size_t>(candidate.parent_index)];
+            Eigen::VectorXd candidate_seed;
+            if (!prepare_frontier_seed_with_memory(boxes,
+                                                   parent,
+                                                   target,
+                                                   candidate.dim,
+                                                   candidate.side,
+                                                   candidate_seed,
+                                                   context)) {
+                continue;
+            }
+            GrowTraceFace selected = make_trace_face(boxes,
+                                                     candidate,
+                                                     scanned_boxes,
+                                                     scanned_faces,
+                                                     rank,
+                                                     true,
+                                                     false);
+            if (face_candidates != nullptr) {
+                for (GrowTraceFace& traced : *face_candidates) {
+                    if (traced.rank == rank) {
+                        traced.selected = true;
+                        traced.seed_covered = false;
+                        break;
+                    }
                 }
             }
+            seed = std::move(candidate_seed);
+            parent_box_id = parent.id;
+            root_id = parent.root_id;
+            if (face != nullptr) {
+                *face = selected;
+            }
+            if (context != nullptr) {
+                context->diagnostics().add_counter("grower.frontier_seed_selected_rank", static_cast<double>(rank));
+            }
+            return true;
         }
-        seed = std::move(candidate_seed);
-        parent_box_id = parent.id;
-        root_id = parent.root_id;
-        if (face != nullptr) {
-            *face = selected;
-        }
-        return true;
     }
     if (context != nullptr) {
         context->diagnostics().add_counter("grower.frontier_no_uncovered_seed");
@@ -3423,13 +4155,14 @@ bool RrtGrower::make_frontier_seed_from_parent(const std::vector<BoxNode>& boxes
 
     for (int rank = 0; rank < static_cast<int>(candidates.size()); ++rank) {
         const FaceCandidate& candidate = candidates[static_cast<std::size_t>(rank)];
-        Eigen::VectorXd candidate_seed = make_face_seed(parent,
-                                                        root,
-                                                        target,
-                                                        candidate.dim,
-                                                        candidate.side,
-                                                        seed_epsilon);
-        if (seed_covered_by_frontier_cache(boxes, candidate_seed, context)) {
+        Eigen::VectorXd candidate_seed;
+        if (!prepare_frontier_seed_with_memory(boxes,
+                                               parent,
+                                               target,
+                                               candidate.dim,
+                                               candidate.side,
+                                               candidate_seed,
+                                               context)) {
             continue;
         }
         GrowTraceFace selected = make_trace_face(boxes,

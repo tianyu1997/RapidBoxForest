@@ -17,6 +17,19 @@ bool allow_connector_box_commit(BoxOracle& oracle,
                                 FindFreeBoxResult& result,
                                 BoxCommitPolicy policy,
                                 StageContext& context) {
+    if (policy == BoxCommitPolicy::AuditBeforeCommit &&
+        (result.validation_detail.safety_status == BoxSafetyStatus::CertifiedFree ||
+         result.validation_detail.safety_status == BoxSafetyStatus::ProvisionalFree)) {
+        context.diagnostics().add_counter("connector.commit_audit_attempted");
+        if (oracle.validate_intervals(result.intervals)) {
+            result.validation_detail.safety_status = BoxSafetyStatus::CertifiedFree;
+            result.validation_detail.strict_audit_required = false;
+            context.diagnostics().add_counter("connector.commit_audit_success");
+            return true;
+        }
+        context.diagnostics().add_counter("connector.commit_audit_failed");
+        return false;
+    }
     if (result.validation_detail.safety_status == BoxSafetyStatus::CertifiedFree) {
         return true;
     }
@@ -32,18 +45,29 @@ bool allow_connector_box_commit(BoxOracle& oracle,
         context.diagnostics().add_counter("connector.commit_provisional_allowed");
         return true;
     }
-    if (policy == BoxCommitPolicy::AuditBeforeCommit) {
-        context.diagnostics().add_counter("connector.commit_audit_attempted");
-        if (oracle.validate_intervals(result.intervals)) {
-            result.validation_detail.safety_status = BoxSafetyStatus::CertifiedFree;
-            result.validation_detail.strict_audit_required = false;
-            context.diagnostics().add_counter("connector.commit_audit_success");
-            return true;
-        }
-        context.diagnostics().add_counter("connector.commit_audit_failed");
-        return false;
-    }
     return false;
+}
+
+RRTConnectConfig with_query_root_hull_domain(const RRTConnectConfig& config,
+                                             BoxOracle& oracle,
+                                             const Eigen::Ref<const Eigen::VectorXd>& start,
+                                             const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    RRTConnectConfig out = config;
+    auto lhs = oracle.query_intervals_for_node(
+        oracle.root_node(),
+        oracle.root_intervals(),
+        start);
+    auto rhs = oracle.query_intervals_for_node(
+        oracle.root_node(),
+        oracle.root_intervals(),
+        goal);
+    if (lhs.size() == rhs.size()) {
+        for (std::size_t i = 0; i < lhs.size(); ++i) {
+            lhs[i] = lhs[i].hull(rhs[i]);
+        }
+    }
+    out.domain_intervals = std::move(lhs);
+    return out;
 }
 
 struct RRTTree {
@@ -91,6 +115,32 @@ bool steer(const Eigen::VectorXd& from, const Eigen::VectorXd& to, double step_s
     }
     out = norm <= step_size ? to : from + (diff / norm) * step_size;
     return true;
+}
+
+bool graph_has_path(const AdjacencyGraph& graph, int source_box_id, int target_box_id) {
+    if (source_box_id == target_box_id) {
+        return true;
+    }
+    std::vector<int> stack{source_box_id};
+    std::unordered_set<int> visited;
+    visited.insert(source_box_id);
+    while (!stack.empty()) {
+        const int current = stack.back();
+        stack.pop_back();
+        const auto it = graph.find(current);
+        if (it == graph.end()) {
+            continue;
+        }
+        for (const int next : it->second) {
+            if (next == target_box_id) {
+                return true;
+            }
+            if (visited.insert(next).second) {
+                stack.push_back(next);
+            }
+        }
+    }
+    return false;
 }
 
 int add_rrt_node(RRTTree& tree, const Eigen::VectorXd& q, int parent) {
@@ -205,6 +255,29 @@ std::vector<Eigen::VectorXd> shortcut_collision_free_path(const std::vector<Eige
         }
         out.push_back(path[next]);
         current = next;
+    }
+    return out;
+}
+
+std::vector<Eigen::VectorXd> densify_path_by_step(const std::vector<Eigen::VectorXd>& path,
+                                                  double max_step) {
+    if (path.size() <= 1 || max_step <= 0.0) {
+        return path;
+    }
+    std::vector<Eigen::VectorXd> out;
+    out.push_back(path.front());
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        const Eigen::VectorXd& a = path[index - 1];
+        const Eigen::VectorXd& b = path[index];
+        const double length = (b - a).norm();
+        const int n = std::max(1, static_cast<int>(std::ceil(length / max_step)));
+        for (int sample = 1; sample <= n; ++sample) {
+            const double u = static_cast<double>(sample) / static_cast<double>(n);
+            Eigen::VectorXd point = a + u * (b - a);
+            if ((out.back() - point).norm() > 1e-12) {
+                out.push_back(std::move(point));
+            }
+        }
     }
     return out;
 }
@@ -951,6 +1024,9 @@ bool try_point_validated_gap_edge(const std::vector<BoxNode>& boxes,
             context.diagnostics().add_counter("connector.point_gap_collision_rejects");
             continue;
         }
+        if (config.segment_edges_fallback_only) {
+            continue;
+        }
         std::vector<Eigen::VectorXd> waypoints{source.center(), target.center()};
         if (segment_edges != nullptr && config.segment_edges_enabled && config.point_gap_segment_edges) {
             add_segment_edge(*segment_edges,
@@ -991,6 +1067,30 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
         outcome.stats.elapsed_ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
         return outcome;
     }
+    if (!config.domain_intervals.empty()) {
+        if (config.domain_intervals.size() != static_cast<std::size_t>(start.size())) {
+            outcome.stats.elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count();
+            return outcome;
+        }
+        for (int dim = 0; dim < start.size(); ++dim) {
+            const Interval& interval =
+                config.domain_intervals[static_cast<std::size_t>(dim)];
+            const double domain_tol = std::max(0.0, config.domain_tolerance);
+            if (start[dim] < interval.lo - domain_tol ||
+                start[dim] > interval.hi + domain_tol ||
+                goal[dim] < interval.lo - domain_tol ||
+                goal[dim] > interval.hi + domain_tol) {
+                outcome.stats.elapsed_ms =
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - t0)
+                        .count();
+                return outcome;
+            }
+        }
+    }
     if (!checker.check_segment(start, goal, config.segment_resolution)) {
         outcome.path = {start, goal};
         outcome.stats.direct = true;
@@ -1006,13 +1106,31 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
     Eigen::VectorXd lo(nd), hi(nd);
     const auto& limits = robot.joint_limits().limits;
     for (int dim = 0; dim < nd; ++dim) {
-        lo[dim] = limits[static_cast<std::size_t>(dim)].lo;
-        hi[dim] = limits[static_cast<std::size_t>(dim)].hi;
+        const bool use_domain =
+            config.domain_intervals.size() == static_cast<std::size_t>(nd);
+        const Interval& interval = use_domain
+                                       ? config.domain_intervals[static_cast<std::size_t>(dim)]
+                                       : limits[static_cast<std::size_t>(dim)];
+        lo[dim] = interval.lo;
+        hi[dim] = interval.hi;
         if (config.local_sampling_radius > 0.0) {
             const double local_lo = std::min(start[dim], goal[dim]) - config.local_sampling_radius;
             const double local_hi = std::max(start[dim], goal[dim]) + config.local_sampling_radius;
             lo[dim] = std::max(lo[dim], local_lo);
             hi[dim] = std::min(hi[dim], local_hi);
+        }
+        const double domain_tol = std::max(0.0, config.domain_tolerance);
+        if (start[dim] < lo[dim] - domain_tol || start[dim] > hi[dim] + domain_tol ||
+            goal[dim] < lo[dim] - domain_tol || goal[dim] > hi[dim] + domain_tol ||
+            hi[dim] < lo[dim]) {
+            outcome.stats.iterations = 0;
+            outcome.stats.raw_waypoints = 0;
+            outcome.stats.shortcut_waypoints = 0;
+            outcome.stats.elapsed_ms =
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - t0)
+                    .count();
+            return outcome;
         }
     }
 
@@ -1074,7 +1192,9 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
         }
         outcome.stats.merge_iteration = iter + 1;
         outcome.stats.raw_waypoints = static_cast<int>(raw_path.size());
-        outcome.path = shortcut_collision_free_path(raw_path, checker, config.segment_resolution);
+        outcome.path = config.shortcut_path
+                           ? shortcut_collision_free_path(raw_path, checker, config.segment_resolution)
+                           : std::move(raw_path);
         outcome.stats.shortcut_waypoints = static_cast<int>(outcome.path.size());
         finish_rrt_stats(outcome, start_tree, goal_tree, t0);
         return outcome;
@@ -1157,12 +1277,9 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
 
     // Commit a certified-free FFB result as a new box parented to `parent_id`.
     // Returns the new box id on success, or -1 if the result cannot be committed
-    // (already-committed node, commit-policy rejection, or -- when
-    // `require_adjacency` is set -- not adjacent to the parent). When
-    // `require_adjacency` is false the box is committed as a re-anchor even if it
-    // is not face-adjacent to the current chain tip; this keeps the connector
-    // segment fully *covered* across a hard gap (cross-component links are then
-    // repaired by the island connector that runs after chain_pave).
+    // (already-committed node, commit-policy rejection, or not adjacent to the
+    // parent). Connector boxes are never allowed to appear as isolated coverage
+    // boxes: every newly committed box must intersect the existing box graph.
     auto commit_box = [&](FindFreeBoxResult& result,
                           const Eigen::VectorXd& seed,
                           int parent_id,
@@ -1199,7 +1316,8 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         box.strict_audit_required = result.validation_detail.strict_audit_required;
         box.compute_volume();
         const bool adjacent = boxes_connected(*parent_box, box, config.adjacency_tolerance);
-        if (require_adjacency && !adjacent) {
+        (void)require_adjacency;
+        if (!adjacent) {
             return -1;
         }
         box.id = next_box_id++;
@@ -1262,6 +1380,9 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         box.compute_volume();
         const bool adjacent =
             boxes_connected(*parent_box, box, config.adjacency_tolerance);
+        if (!adjacent) {
+            return -1;
+        }
         box.id = next_box_id++;
         const int new_id = box.id;
         // Do not clobber the oracle's canonical node->box reservation: this is a
@@ -1304,7 +1425,12 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             } else {
                 const int owner = find_box_owning_node(result.node);
                 if (owner >= 0) {
-                    to_id = owner;
+                    BoxNode* owner_box = box_by_id(owner);
+                    BoxNode* from_box = box_by_id(from_id);
+                    if (owner_box != nullptr && from_box != nullptr &&
+                        boxes_connected(*from_box, *owner_box, config.adjacency_tolerance)) {
+                        to_id = owner;
+                    }
                 }
             }
         }
@@ -1373,12 +1499,18 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             const int owner = find_box_owning_node(result.node);
             if (owner >= 0) {
                 BoxNode* owner_box = box_by_id(owner);
-                if (owner_box != nullptr && owner_box->contains(p)) {
+                BoxNode* parent_box = box_by_id(parent_id);
+                const bool adjacent_owner =
+                    owner_box != nullptr && parent_box != nullptr &&
+                    boxes_connected(*parent_box, *owner_box,
+                                    config.adjacency_tolerance);
+                if (owner_box != nullptr && owner_box->contains(p) &&
+                    (!config.require_connected_chain || adjacent_owner)) {
                     committed = owner;
                 }
             }
         }
-        if (committed < 0) {
+        if (committed < 0 && !config.require_connected_chain) {
             committed = commit_box(result, p, parent_id,
                                    /*require_adjacency=*/false,
                                    /*allow_duplicate_node=*/true);
@@ -1402,7 +1534,10 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             }
         }
         for (const auto& box : boxes) {
-            if (box.contains(p)) {
+            BoxNode* preferred_box_again = box_by_id(preferred_id);
+            if (preferred_box_again != nullptr &&
+                boxes_connected(*preferred_box_again, box, config.adjacency_tolerance) &&
+                box.contains(p)) {
                 return box.id;
             }
         }
@@ -1495,6 +1630,85 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return std::max(u0, std::min(1.0, u_hi));
     };
 
+    auto boundary_seed_from_box = [&](const BoxNode& box,
+                                      const Eigen::VectorXd& from,
+                                      const Eigen::VectorXd& target,
+                                      double requested_step) -> Eigen::VectorXd {
+        const double seg_len = (target - from).norm();
+        if (seg_len < 1e-12) {
+            return target;
+        }
+        const double u_exit = segment_exit_param(box, from, target, 0.0);
+        const double u_step =
+            std::max(1e-9, std::max(requested_step, config.gap_fill_min_step) /
+                                  std::max(seg_len, 1e-12));
+        const double u_seed = std::min(1.0, u_exit + u_step);
+        return (from + u_seed * (target - from)).eval();
+    };
+
+    auto boundary_seed_candidates = [&](const BoxNode& box,
+                                        const Eigen::VectorXd& from,
+                                        const Eigen::VectorXd& target,
+                                        double requested_step)
+        -> std::vector<Eigen::VectorXd> {
+        std::vector<Eigen::VectorXd> seeds;
+        seeds.push_back(boundary_seed_from_box(box, from, target, requested_step));
+        if (from.size() != target.size() || box.n_dims() != from.size()) {
+            return seeds;
+        }
+        const Eigen::VectorXd delta = target - from;
+        const double distance = delta.norm();
+        if (distance < 1e-12) {
+            return seeds;
+        }
+
+        struct LateralDim {
+            int dim = -1;
+            double score = 0.0;
+            double width = 0.0;
+        };
+        std::vector<LateralDim> dims;
+        dims.reserve(static_cast<std::size_t>(from.size()));
+        for (int dim = 0; dim < from.size(); ++dim) {
+            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+            const double width = interval.width();
+            if (width <= 2.0 * config.adjacency_tolerance) {
+                continue;
+            }
+            const double alignment = std::abs(delta[dim]) / distance;
+            dims.push_back({dim, width * (1.0 - alignment), width});
+        }
+        std::sort(dims.begin(), dims.end(), [](const LateralDim& lhs,
+                                               const LateralDim& rhs) {
+            return lhs.score > rhs.score;
+        });
+
+        const double base_radius =
+            std::max(config.gap_fill_min_step,
+                     0.35 * std::max(requested_step, config.gap_fill_min_step));
+        const int max_lateral_dims = std::min<int>(2, static_cast<int>(dims.size()));
+        for (int rank = 0; rank < max_lateral_dims; ++rank) {
+            const int dim = dims[static_cast<std::size_t>(rank)].dim;
+            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+            const double radius =
+                std::min(base_radius,
+                         std::max(config.gap_fill_min_step,
+                                  0.45 * dims[static_cast<std::size_t>(rank)].width));
+            for (const double sign : {1.0, -1.0}) {
+                Eigen::VectorXd candidate = seeds.front();
+                candidate[dim] = std::clamp(candidate[dim] + sign * radius,
+                                            interval.lo + config.adjacency_tolerance,
+                                            interval.hi - config.adjacency_tolerance);
+                if ((candidate - from).norm() >=
+                    std::max(config.gap_fill_min_step, 1e-6) * 0.25 &&
+                    (candidate - seeds.front()).norm() > 1e-12) {
+                    seeds.push_back(std::move(candidate));
+                }
+            }
+        }
+        return seeds;
+    };
+
     struct ParamSpan {
         bool hit = false;
         double lo = 0.0;
@@ -1532,6 +1746,96 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
     const bool fast_gap_fill =
         config.gap_fill_time_budget_ms > 0.0 ||
         config.gap_fill_max_ffb_calls >= 0;
+
+    if (config.require_connected_chain && config.fill_gaps &&
+        waypoint_path.size() >= 2) {
+        int connected_segments = 0;
+        int connected_steps = 0;
+        int connected_reach_failures = 0;
+        int connected_target_hits = 0;
+        for (std::size_t seg = 1;
+             seg < waypoint_path.size() && added < config.max_chain &&
+             !context.should_stop();
+             ++seg) {
+            const Eigen::VectorXd& a = waypoint_path[seg - 1];
+            const Eigen::VectorXd& b = waypoint_path[seg];
+            const double seg_len = (b - a).norm();
+            if (seg_len < 1e-12) {
+                continue;
+            }
+            connected_segments += 1;
+            BoxNode* current_box = box_by_id(current_box_id);
+            if (current_box == nullptr) {
+                break;
+            }
+            Eigen::VectorXd cursor = current_box->contains(a) ? a : current_box->center();
+            const double front_step = std::max(
+                config.gap_fill_sample_step > 0.0 ? config.gap_fill_sample_step
+                                                  : config.gap_fill_min_step,
+                1e-6);
+            int guard = 0;
+            const int guard_max = std::max(
+                1,
+                static_cast<int>(std::ceil(seg_len / front_step)) + 2);
+            while (added < config.max_chain && !context.should_stop() &&
+                   guard++ < guard_max) {
+                current_box = box_by_id(current_box_id);
+                if (current_box == nullptr) {
+                    break;
+                }
+                if (current_box->contains(b)) {
+                    connected_target_hits += 1;
+                    break;
+                }
+                connected_steps += 1;
+                if (!current_box->contains(cursor)) {
+                    cursor = current_box->center();
+                }
+                int reached = current_box_id;
+                double attempt_step = front_step;
+                for (int attempt = 0; attempt < 8 && reached == current_box_id;
+                     ++attempt) {
+                    const auto seeds =
+                        boundary_seed_candidates(*current_box, cursor, b, attempt_step);
+                    if (seeds.empty() ||
+                        (seeds.front() - cursor).norm() <
+                            std::max(config.gap_fill_min_step, 1e-6) * 0.25) {
+                        break;
+                    }
+                    for (const auto& seed : seeds) {
+                        reached = cover(current_box_id, cursor, seed, 0);
+                        if (reached != current_box_id ||
+                            added >= config.max_chain || context.should_stop()) {
+                            break;
+                        }
+                    }
+                    attempt_step *= 0.5;
+                }
+                if (reached == current_box_id) {
+                    connected_reach_failures += 1;
+                    break;
+                }
+                current_box_id = reached;
+                if (BoxNode* reached_box = box_by_id(current_box_id)) {
+                    cursor = reached_box->center();
+                }
+            }
+        }
+        context.diagnostics().set_value("connector.chain_pave_connected_added",
+                                        static_cast<double>(added));
+        context.diagnostics().set_value("connector.chain_pave_connected_segments",
+                                        static_cast<double>(connected_segments));
+        context.diagnostics().set_value("connector.chain_pave_connected_steps",
+                                        static_cast<double>(connected_steps));
+        context.diagnostics().set_value("connector.chain_pave_connected_reach_failures",
+                                        static_cast<double>(connected_reach_failures));
+        context.diagnostics().set_value("connector.chain_pave_connected_target_hits",
+                                        static_cast<double>(connected_target_hits));
+        if (added >= config.max_chain) {
+            context.diagnostics().add_counter("connector.chain_pave_connected_max_chain_hits");
+        }
+        return added;
+    }
 
     if (config.fill_gaps && waypoint_path.size() >= 2 && fast_gap_fill) {
         using Clock = std::chrono::steady_clock;
@@ -1625,23 +1929,32 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                          static_cast<double>(n)) *
                         seg_len;
                     const int mid = (run_begin + run_end) / 2;
-                    const int ids[3] = {mid, run_begin, run_end};
-                    for (int rank = 0; rank < 3; ++rank) {
-                        const double u = static_cast<double>(ids[rank]) /
-                                         static_cast<double>(n);
-                        if (rejected_candidates.find(candidate_key(seg, u)) !=
-                            rejected_candidates.end()) {
-                            continue;
-                        }
-                        bool duplicate = false;
-                        for (const auto& c : candidates) {
-                            if (c.seg == seg && std::abs(c.u - u) < 1e-12) {
-                                duplicate = true;
-                                break;
+                    for (int offset = 0; offset <= run_end - run_begin; ++offset) {
+                        const int left = mid - offset;
+                        const int right = mid + offset;
+                        const int ids[2] = {left, right};
+                        for (int side = 0; side < 2; ++side) {
+                            const int sample_id = ids[side];
+                            if (sample_id < run_begin || sample_id > run_end ||
+                                (side == 1 && right == left)) {
+                                continue;
                             }
-                        }
-                        if (!duplicate) {
-                            candidates.push_back({seg, u, arc, rank});
+                            const double u = static_cast<double>(sample_id) /
+                                         static_cast<double>(n);
+                            if (rejected_candidates.find(candidate_key(seg, u)) !=
+                                rejected_candidates.end()) {
+                                continue;
+                            }
+                            bool duplicate = false;
+                            for (const auto& c : candidates) {
+                                if (c.seg == seg && std::abs(c.u - u) < 1e-12) {
+                                    duplicate = true;
+                                    break;
+                                }
+                            }
+                            if (!duplicate) {
+                                candidates.push_back({seg, u, arc, offset});
+                            }
                         }
                     }
                     run_begin = -1;
@@ -1751,11 +2064,18 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 if (committed < 0) {
                     const int owner = find_box_owning_node(evaluated.result.node);
                     BoxNode* owner_box = box_by_id(owner);
-                    if (owner_box != nullptr && owner_box->contains(evaluated.seed)) {
+                    BoxNode* current_box = box_by_id(current_box_id);
+                    const bool adjacent_owner =
+                        owner_box != nullptr && current_box != nullptr &&
+                        boxes_connected(*current_box, *owner_box,
+                                        config.adjacency_tolerance);
+                    if (owner_box != nullptr &&
+                        owner_box->contains(evaluated.seed) &&
+                        (!config.require_connected_chain || adjacent_owner)) {
                         committed = owner;
                     }
                 }
-                if (committed < 0) {
+                if (committed < 0 && !config.require_connected_chain) {
                     committed = commit_box(evaluated.result, evaluated.seed,
                                            current_box_id,
                                            /*require_adjacency=*/false,
@@ -2001,7 +2321,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
 
     while (islands.size() > 1 &&
            (result.bridge_boxes_added < config_.max_total_bridge_boxes ||
-            (config_.segment_edges_enabled && config_.rrt_segment_edges))) {
+            (config_.segment_edges_enabled && config_.rrt_segment_edges && !config_.segment_edges_fallback_only))) {
         if (context.should_stop()) {
             break;
         }
@@ -2009,10 +2329,12 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
         std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
             return lhs.size() > rhs.size();
         });
-        const auto& main_island = islands.front();
-        // E5: gather candidates between the main island and every other island in
-        // a single round so the parallel_for fills all worker threads (the gaps are
-        // independent). Commit is still serial + deterministic (see union-find below).
+        // E5: gather candidates between every island pair in a single round so
+        // the parallel_for fills all worker threads (the gaps are independent).
+        // This is intentionally not largest-island-only: in shelf-like scenes,
+        // two small query-anchor islands can be much closer to each other than
+        // either is to the largest component, and connecting them first gives the
+        // box connector a shorter, easier target.
         // box_id -> island index, used at commit time to merge distinct components.
         std::unordered_map<int, int> island_of;
         for (std::size_t isl = 0; isl < islands.size(); ++isl) {
@@ -2022,15 +2344,17 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
         }
         std::vector<BridgePairTask> candidates;
         const int per_gap_limit = std::max(1, config_.max_pairs_per_gap);
-        for (std::size_t isl = 1; isl < islands.size(); ++isl) {
+        for (std::size_t lhs_isl = 0; lhs_isl < islands.size(); ++lhs_isl) {
+            for (std::size_t rhs_isl = lhs_isl + 1; rhs_isl < islands.size(); ++rhs_isl) {
             std::vector<BridgePairTask> gap_candidates = broadphase_bridge_pairs(map,
-                                                                                 main_island,
-                                                                                 islands[isl],
+                                                                                 islands[lhs_isl],
+                                                                                 islands[rhs_isl],
                                                                                  per_gap_limit,
                                                                                  std::max(4, config_.max_pairs_per_gap));
             for (auto& task : gap_candidates) {
                 task.task_id = static_cast<int>(candidates.size());
                 candidates.push_back(std::move(task));
+            }
             }
         }
         context.diagnostics().add_counter("connector.bridge_broadphase_pairs", static_cast<double>(candidates.size()));
@@ -2056,7 +2380,13 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                 const BoxNode& target_box = *map.at(candidate.target_box_id);
                 const auto& source_center = source_box.center();
                 const auto& target_center = target_box.center();
-                auto path = closest_box_point_segment(source_box, target_box, checker_, pair_rrt.segment_resolution);
+                const RRTConnectConfig domain_rrt =
+                    with_query_root_hull_domain(pair_rrt, oracle_, source_center, target_center);
+                RRTConnectConfig box_rrt = domain_rrt;
+                if (config_.pave.require_connected_chain) {
+                    box_rrt.shortcut_path = true;
+                }
+                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution);
                 if (!path.empty()) {
                     context.diagnostics().add_counter("connector.direct_box_segment_successes");
                     context.diagnostics().add_counter("connector.rrt_successes");
@@ -2093,7 +2423,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     target_center,
                     checker_,
                     robot_,
-                    pair_rrt,
+                    box_rrt,
                     candidate.source_box_id + candidate.target_box_id + candidate.task_id,
                     local_cancel);
                 record_birrt_stats(context.diagnostics(), outcome.stats);
@@ -2129,7 +2459,13 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                 const BoxNode& target_box = *map.at(candidate.target_box_id);
                 const auto& source_center = source_box.center();
                 const auto& target_center = target_box.center();
-                auto path = closest_box_point_segment(source_box, target_box, checker_, pair_rrt.segment_resolution);
+                const RRTConnectConfig domain_rrt =
+                    with_query_root_hull_domain(pair_rrt, oracle_, source_center, target_center);
+                RRTConnectConfig box_rrt = domain_rrt;
+                if (config_.pave.require_connected_chain) {
+                    box_rrt.shortcut_path = true;
+                }
+                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution);
                 if (!path.empty()) {
                     context.diagnostics().add_counter("connector.direct_box_segment_successes");
                     context.diagnostics().add_counter("connector.rrt_successes");
@@ -2164,7 +2500,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     checker_,
                     robot_,
                     context,
-                    pair_rrt,
+                    box_rrt,
                     candidate.source_box_id + candidate.target_box_id + candidate.task_id);
                 if (path.empty()) {
                     context.diagnostics().add_counter("connector.rrt_failures");
@@ -2214,13 +2550,48 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                 // These two islands were already bridged earlier this round.
                 continue;
             }
+            std::vector<Eigen::VectorXd> bridge_path = chosen.waypoint_path;
+            if (config_.pave.require_connected_chain && bridge_path.size() > 2) {
+                const double pave_step =
+                    config_.pave.gap_fill_sample_step > 0.0
+                        ? std::max(0.05, config_.pave.gap_fill_sample_step * 2.0)
+                        : std::max(0.05, config_.rrt.step_size * 0.5);
+                bridge_path = densify_path_by_step(bridge_path, pave_step);
+                context.diagnostics().set_value("connector.box_shortcut_densified_last_waypoints",
+                                                static_cast<double>(bridge_path.size()));
+            }
+            int added = 0;
+            bool box_connected = false;
+            if (result.bridge_boxes_added < config_.max_total_bridge_boxes) {
+                context.diagnostics().add_counter("connector.chain_pave_attempts");
+                added = chain_pave_along_path(
+                    bridge_path,
+                    chosen.source_box_id,
+                    boxes,
+                    oracle_,
+                    graph,
+                    next_box_id,
+                    context,
+                    config_.pave);
+                if (added > 0) {
+                    graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+                    box_connected = graph_has_path(graph, chosen.source_box_id, chosen.target_box_id);
+                    if (box_connected) {
+                        context.diagnostics().add_counter("connector.chain_pave_box_connected");
+                    } else {
+                        context.diagnostics().add_counter("connector.chain_pave_partial_added");
+                    }
+                }
+            }
             bool added_segment_edge = false;
-            if (config_.segment_edges_enabled && config_.rrt_segment_edges) {
+            if (!box_connected &&
+                config_.segment_edges_enabled && config_.rrt_segment_edges &&
+                !config_.segment_edges_fallback_only) {
                 const int edge_id = add_segment_edge(segment_edges,
                                                      graph,
                                                      chosen.source_box_id,
                                                      chosen.target_box_id,
-                                                     chosen.waypoint_path,
+                                                     bridge_path,
                                                      SegmentEdgeType::RRTConnector,
                                                      config_.rrt.segment_resolution,
                                                      SegmentEdgeValidation::CollisionChecked,
@@ -2233,25 +2604,19 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     context.diagnostics().add_counter("connector.rrt_segment_edges_added");
                 }
             }
-            int added = 0;
-            if (result.bridge_boxes_added < config_.max_total_bridge_boxes) {
-                context.diagnostics().add_counter("connector.chain_pave_attempts");
-                added = chain_pave_along_path(
-                    chosen.waypoint_path,
-                    chosen.source_box_id,
-                    boxes,
-                    oracle_,
-                    graph,
-                    next_box_id,
-                    context,
-                    config_.pave);
-            }
-            if (added > 0) {
+            if (box_connected) {
                 context.diagnostics().add_counter("connector.chain_pave_successes");
                 result.bridge_boxes_added += added;
                 boxes_added_this_round = true;
                 uf[src_root] = tgt_root;
                 progressed = true;
+            } else if (added > 0) {
+                result.bridge_boxes_added += added;
+                boxes_added_this_round = true;
+                if (added_segment_edge) {
+                    uf[src_root] = tgt_root;
+                    progressed = true;
+                }
             } else if (added_segment_edge) {
                 uf[src_root] = tgt_root;
                 progressed = true;

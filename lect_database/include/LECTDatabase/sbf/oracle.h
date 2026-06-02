@@ -6,9 +6,8 @@
 #include <rbf/lect_database.h>
 #include <rbf/lect_database/evidence_source.h>
 
-#include <sbf/envelope/envelope_collision.h>
-#include <sbf/envelope/envelope_type.h>
-#include <sbf/envelope/ifk_aa_source.h>
+#include <link_interval_envelope/endpoint.h>
+#include <link_interval_envelope/envelope.h>
 
 #include <Eigen/Core>
 
@@ -292,6 +291,10 @@ public:
                       OracleValidationConfig validation_config = {},
                       const lect_database::LectExternalEvidenceSource* external_evidence_source = nullptr,
                       const lect_database::LectDatabase* direct_external_evidence_database = nullptr);
+    ~DatabaseBoxOracle() override;
+
+    DatabaseBoxOracle(const DatabaseBoxOracle&) = delete;
+    DatabaseBoxOracle& operator=(const DatabaseBoxOracle&) = delete;
     DatabaseBoxOracle(Robot robot,
                       lect_database::OnlineEnvelopeCacheTree& online_cache,
                       Scene scene = {},
@@ -409,14 +412,14 @@ private:
     OracleValidationDetail last_validation_detail_;
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;
-    // Incremental AA-backed endpoint state reused along a single-threaded
-    // parent->child descent. IFK reuses a single AA-FK chain prefix; HIFK
-    // reuses per-leaf AA-FK states when the split schedule is deterministic.
-    // Not shared across threads (each worker owns its own oracle).
-    AaFkPrefixState aa_fk_prefix_state_;
-    HifkAaState hifk_aa_state_;
     std::unordered_map<std::uint64_t, LinkEnvelope> envelope_cache_;
     mutable std::unordered_map<OracleNodeId, std::uint64_t> visit_counts_;
+    struct UnexploredLeafCacheEntry {
+        OracleNodeId node = kInvalidOracleNodeId;
+        double volume = 0.0;
+    };
+    mutable std::vector<UnexploredLeafCacheEntry> unexplored_leaf_cache_;
+    mutable bool unexplored_leaf_cache_dirty_ = true;
     std::vector<int> best_tighten_depth_dims_;
     std::vector<int> best_tighten_recent_dims_;
     std::vector<double> best_tighten_reference_volumes_;
@@ -424,6 +427,9 @@ private:
     // master lazily owns it via shared_endpoint_cache(); workers receive the same
     // instance via set_shared_endpoint_cache().
     std::shared_ptr<lect_database::SharedEndpointEvidenceCache> shared_endpoint_cache_;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 };
 
 class DatabaseBoxOracleSession final : public BoxOracleSession {

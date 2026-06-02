@@ -151,14 +151,59 @@ py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
     result["validation_cache_hits"] = counters.validation_cache_hits;
     result["validation_cache_misses"] = counters.validation_cache_misses;
     result["materializations"] = counters.materializations;
+    result["materialization_stored_endpoint"] = counters.materialization_stored_endpoint;
+    result["materialization_skipped_endpoint_cache"] = counters.materialization_skipped_endpoint_cache;
     result["materialization_endpoint_time_us"] = counters.materialization_endpoint_time_us;
+    result["materialization_endpoint_wall_time_us"] = counters.materialization_endpoint_wall_time_us;
     result["materialization_envelope_time_us"] = counters.materialization_envelope_time_us;
     result["validate_node_total_time_us"] = counters.validate_node_total_time_us;
+    result["validate_node_preamble_time_us"] = counters.validate_node_preamble_time_us;
     result["validate_node_endpoint_path_time_us"] = counters.validate_node_endpoint_path_time_us;
     result["validate_node_classify_time_us"] = counters.validate_node_classify_time_us;
+    result["validate_node_overhead_time_us"] = counters.validate_node_overhead_time_us;
+    result["materialization_cache_lookup_time_us"] = counters.materialization_cache_lookup_time_us;
+    result["materialization_cache_read_time_us"] = counters.materialization_cache_read_time_us;
+    result["materialization_external_lookup_time_us"] = counters.materialization_external_lookup_time_us;
+    result["materialization_external_read_time_us"] = counters.materialization_external_read_time_us;
+    result["materialization_envelope_compute_time_us"] = counters.materialization_envelope_compute_time_us;
+    result["materialization_envelope_read_time_us"] = counters.materialization_envelope_read_time_us;
+    result["materialization_envelope_collision_time_us"] = counters.materialization_envelope_collision_time_us;
+    result["materialization_incremental_fk"] = counters.materialization_incremental_fk;
+    result["materialization_source_incremental_state"] = counters.materialization_source_incremental_state;
+    result["materialization_reused_fk"] = counters.materialization_reused_fk;
+    result["materialization_reused_endpoint_cache"] = counters.materialization_reused_endpoint_cache;
+    result["materialization_reused_external_evidence"] = counters.materialization_reused_external_evidence;
+    result["materialization_reused_shared_endpoint_cache"] = counters.materialization_reused_shared_endpoint_cache;
+    result["materialization_stored_shared_endpoint_cache"] = counters.materialization_stored_shared_endpoint_cache;
+    result["materialization_reused_cached_envelope"] = counters.materialization_reused_cached_envelope;
+    result["materialization_candidate_dirty_count"] = counters.materialization_candidate_dirty_count;
+    result["materialization_predh_rebuild_count"] = counters.materialization_predh_rebuild_count;
+    result["scoring_evaluations"] = counters.scoring_evaluations;
+    result["scoring_changed_dim_inferred"] = counters.scoring_changed_dim_inferred;
+    result["scoring_incremental_fk"] = counters.scoring_incremental_fk;
+    result["scoring_source_incremental_state"] = counters.scoring_source_incremental_state;
+    result["scoring_reused_fk"] = counters.scoring_reused_fk;
+    result["scoring_reused_endpoint_cache"] = counters.scoring_reused_endpoint_cache;
+    result["scoring_reused_external_evidence"] = counters.scoring_reused_external_evidence;
+    result["scoring_endpoint_time_us"] = counters.scoring_endpoint_time_us;
+    result["scoring_envelope_time_us"] = counters.scoring_envelope_time_us;
+    result["scoring_candidate_dirty_count"] = counters.scoring_candidate_dirty_count;
+    result["scoring_predh_rebuild_count"] = counters.scoring_predh_rebuild_count;
     result["envelope_collision_queries"] = counters.envelope_collision_queries;
     result["envelope_collision_free"] = counters.envelope_collision_free;
     result["envelope_collision_maybe"] = counters.envelope_collision_maybe;
+    result["envelope_collision_envelope_aabb_tests"] = counters.envelope_collision_envelope_aabb_tests;
+    result["envelope_collision_envelope_aabb_rejects"] = counters.envelope_collision_envelope_aabb_rejects;
+    result["envelope_collision_link_union_aabb_tests"] = counters.envelope_collision_link_union_aabb_tests;
+    result["envelope_collision_link_union_aabb_rejects"] = counters.envelope_collision_link_union_aabb_rejects;
+    result["envelope_collision_link_aabb_tests"] = counters.envelope_collision_link_aabb_tests;
+    result["envelope_collision_link_aabb_rejects"] = counters.envelope_collision_link_aabb_rejects;
+    result["envelope_collision_kdop_tests"] = counters.envelope_collision_kdop_tests;
+    result["envelope_collision_kdop_rejects"] = counters.envelope_collision_kdop_rejects;
+    result["envelope_collision_kdop_axes_tested"] = counters.envelope_collision_kdop_axes_tested;
+    result["envelope_collision_gjk_tests"] = counters.envelope_collision_gjk_tests;
+    result["envelope_collision_gjk_rejects"] = counters.envelope_collision_gjk_rejects;
+    result["envelope_collision_gjk_iterations"] = counters.envelope_collision_gjk_iterations;
     return result;
 }
 
@@ -510,6 +555,23 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("robot"),
         py::arg("canonical_mode") = true,
         py::arg("symmetry_descriptor") = "joint_symmetry_native_v1");
+    module.def("canonicalize_configuration_for_robot",
+        [](const rbf::Robot& robot,
+           const std::vector<double>& values,
+           bool canonical_mode,
+           const std::string& symmetry_descriptor) {
+            std::vector<double> out = values;
+            rbf::lect_database::canonicalize_configuration_for_robot(
+                robot,
+                canonical_mode,
+                symmetry_descriptor,
+                std::span<double>(out.data(), out.size()));
+            return out;
+        },
+        py::arg("robot"),
+        py::arg("values"),
+        py::arg("canonical_mode") = true,
+        py::arg("symmetry_descriptor") = "joint_symmetry_native_v1");
 
     module.def("build_lect_snapshot_from_legacy",
         [](const std::string& legacy_root, const std::string& snapshot_path) {
@@ -683,6 +745,73 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("run_connector", &rbf::SubtractiveBuildOptions::run_connector)
         .def_readwrite("use_validation_obstacles_for_final_scene", &rbf::SubtractiveBuildOptions::use_validation_obstacles_for_final_scene);
 
+    py::class_<rbf::LeafSweepConfig>(module, "LeafSweepConfig")
+        .def(py::init<>())
+        .def_readwrite("obstacle_cluster_gap", &rbf::LeafSweepConfig::obstacle_cluster_gap)
+        .def_readwrite("n_threads", &rbf::LeafSweepConfig::n_threads)
+        .def_readwrite("validation_batch_size", &rbf::LeafSweepConfig::validation_batch_size)
+        .def_readwrite("timeout_ms", &rbf::LeafSweepConfig::timeout_ms)
+        .def_readwrite("store_group_results", &rbf::LeafSweepConfig::store_group_results)
+        .def_readwrite("pre_split_to_max_depth", &rbf::LeafSweepConfig::pre_split_to_max_depth)
+        .def_readwrite("use_virtual_topology", &rbf::LeafSweepConfig::use_virtual_topology)
+        .def_readwrite("parallel_virtual_validation", &rbf::LeafSweepConfig::parallel_virtual_validation);
+
+    py::class_<rbf::LeafSweepGroupResult>(module, "LeafSweepGroupResult")
+        .def_readonly("group_id", &rbf::LeafSweepGroupResult::group_id)
+        .def_readonly("obstacle_indices", &rbf::LeafSweepGroupResult::obstacle_indices)
+        .def_readonly("obstacles", &rbf::LeafSweepGroupResult::obstacles)
+        .def_readonly("aggregate_obstacle", &rbf::LeafSweepGroupResult::aggregate_obstacle)
+        .def_readonly("free_boxes", &rbf::LeafSweepGroupResult::free_boxes)
+        .def_readonly("collision_boxes", &rbf::LeafSweepGroupResult::collision_boxes);
+
+    py::class_<rbf::LeafSweepResult>(module, "LeafSweepResult")
+        .def_readonly("free_boxes", &rbf::LeafSweepResult::free_boxes)
+        .def_readonly("collision_boxes", &rbf::LeafSweepResult::collision_boxes)
+        .def_readonly("groups", &rbf::LeafSweepResult::groups)
+        .def_readonly("obstacle_group_ids", &rbf::LeafSweepResult::obstacle_group_ids)
+        .def_readonly("deadline_reached", &rbf::LeafSweepResult::deadline_reached)
+        .def_readonly("initialize_ms", &rbf::LeafSweepResult::initialize_ms)
+        .def_readonly("group_sweep_ms", &rbf::LeafSweepResult::group_sweep_ms)
+        .def_readonly("compose_ms", &rbf::LeafSweepResult::compose_ms)
+        .def_readonly("total_ms", &rbf::LeafSweepResult::total_ms)
+        .def_readonly("diagnostics", &rbf::LeafSweepResult::diagnostics);
+
+    py::class_<rbf::LeafSweepRefineConfig>(module, "LeafSweepRefineConfig")
+        .def(py::init<>())
+        .def_readwrite("leaf_start_depth", &rbf::LeafSweepRefineConfig::leaf_start_depth)
+        .def_readwrite("leaf_max_depth", &rbf::LeafSweepRefineConfig::leaf_max_depth)
+        .def_readwrite("obstacle_cluster_gap", &rbf::LeafSweepRefineConfig::obstacle_cluster_gap)
+        .def_readwrite("use_virtual_topology", &rbf::LeafSweepRefineConfig::use_virtual_topology)
+        .def_readwrite("store_group_results", &rbf::LeafSweepRefineConfig::store_group_results)
+        .def_readwrite("validation_batch_size", &rbf::LeafSweepRefineConfig::validation_batch_size)
+        .def_readwrite("leaf_threads", &rbf::LeafSweepRefineConfig::leaf_threads)
+        .def_readwrite("leaf_timeout_ms", &rbf::LeafSweepRefineConfig::leaf_timeout_ms)
+        .def_readwrite("deep_max_boxes", &rbf::LeafSweepRefineConfig::deep_max_boxes)
+        .def_readwrite("deep_ffb_depth", &rbf::LeafSweepRefineConfig::deep_ffb_depth)
+        .def_readwrite("domain_seed_cap", &rbf::LeafSweepRefineConfig::domain_seed_cap)
+        .def_readwrite("domain_success_cap", &rbf::LeafSweepRefineConfig::domain_success_cap)
+        .def_readwrite("domain_attempt_cap", &rbf::LeafSweepRefineConfig::domain_attempt_cap)
+        .def_readwrite("refine_timeout_ms", &rbf::LeafSweepRefineConfig::refine_timeout_ms);
+
+    py::class_<rbf::LeafSweepRefineResult>(module, "LeafSweepRefineResult")
+        .def_readonly("leaf_sweep", &rbf::LeafSweepRefineResult::leaf_sweep)
+        .def_readonly("profile", &rbf::LeafSweepRefineResult::profile)
+        .def_readonly("leaf_free_count", &rbf::LeafSweepRefineResult::leaf_free_count)
+        .def_readonly("leaf_collision_count", &rbf::LeafSweepRefineResult::leaf_collision_count)
+        .def_readonly("deep_boxes_added", &rbf::LeafSweepRefineResult::deep_boxes_added)
+        .def_readonly("deep_domain_attempts", &rbf::LeafSweepRefineResult::deep_domain_attempts)
+        .def_readonly("deep_ffb_success", &rbf::LeafSweepRefineResult::deep_ffb_success)
+        .def_readonly("deep_ffb_fail", &rbf::LeafSweepRefineResult::deep_ffb_fail)
+        .def_readonly("deep_commit_rejects", &rbf::LeafSweepRefineResult::deep_commit_rejects)
+        .def_readonly("deep_domain_rejects", &rbf::LeafSweepRefineResult::deep_domain_rejects)
+        .def_readonly("deep_contained_rejects", &rbf::LeafSweepRefineResult::deep_contained_rejects)
+        .def_readonly("deep_adjacency_rejects", &rbf::LeafSweepRefineResult::deep_adjacency_rejects)
+        .def_readonly("leaf_sweep_ms", &rbf::LeafSweepRefineResult::leaf_sweep_ms)
+        .def_readonly("deep_refine_ms", &rbf::LeafSweepRefineResult::deep_refine_ms)
+        .def_readonly("connector_ms", &rbf::LeafSweepRefineResult::connector_ms)
+        .def_readonly("total_ms", &rbf::LeafSweepRefineResult::total_ms)
+        .def_readonly("diagnostics", &rbf::LeafSweepRefineResult::diagnostics);
+
     py::class_<rbf::BestTightenOptions>(module, "BestTightenOptions")
         .def(py::init<>())
         .def_readwrite("depth_synchronous", &rbf::BestTightenOptions::depth_synchronous)
@@ -771,6 +900,15 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("sample_uniform_prob", &rbf::GrowerConfig::sample_uniform_prob)
         .def_readwrite("expand_all_roots_per_sample", &rbf::GrowerConfig::expand_all_roots_per_sample)
         .def_readwrite("extra_random_roots", &rbf::GrowerConfig::extra_random_roots)
+        .def_readwrite("random_anchor_targets", &rbf::GrowerConfig::random_anchor_targets)
+        .def_readwrite("anchor_target_prob", &rbf::GrowerConfig::anchor_target_prob)
+        .def_readwrite("anchor_target_candidate_count", &rbf::GrowerConfig::anchor_target_candidate_count)
+        .def_readwrite("anchor_target_max_lca_depth", &rbf::GrowerConfig::anchor_target_max_lca_depth)
+        .def_readwrite("anchor_wave_targets_per_batch", &rbf::GrowerConfig::anchor_wave_targets_per_batch)
+        .def("set_fixed_anchor_targets", [](rbf::GrowerConfig& config,
+                                            const std::vector<std::vector<double>>& anchors) {
+            config.fixed_anchor_targets = eigen_vectors_from_lists(anchors);
+        })
         .def_readwrite("root_seed_candidate_count", &rbf::GrowerConfig::root_seed_candidate_count)
         .def_readwrite("root_seed_min_normalized_linf", &rbf::GrowerConfig::root_seed_min_normalized_linf)
         .def_readwrite("root_seed_max_lca_depth", &rbf::GrowerConfig::root_seed_max_lca_depth)
@@ -785,10 +923,24 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("component_connect_stage_normalized_linf", &rbf::GrowerConfig::component_connect_stage_normalized_linf)
         .def_readwrite("component_connect_neighbor_root_bias", &rbf::GrowerConfig::component_connect_neighbor_root_bias)
         .def_readwrite("component_connect_neighbor_root_window", &rbf::GrowerConfig::component_connect_neighbor_root_window)
+        .def_readwrite("component_connect_lateral_sample_prob", &rbf::GrowerConfig::component_connect_lateral_sample_prob)
+        .def_readwrite("component_connect_lateral_sample_attempts", &rbf::GrowerConfig::component_connect_lateral_sample_attempts)
+        .def_readwrite("component_connect_require_target_direction", &rbf::GrowerConfig::component_connect_require_target_direction)
         .def_readwrite("component_connect_adaptive_ffb", &rbf::GrowerConfig::component_connect_adaptive_ffb)
         .def_readwrite("component_connect_ffb_depth_increment", &rbf::GrowerConfig::component_connect_ffb_depth_increment)
         .def_readwrite("component_connect_ffb_max_depth", &rbf::GrowerConfig::component_connect_ffb_max_depth)
         .def_readwrite("component_connect_depth_after_unknown_only", &rbf::GrowerConfig::component_connect_depth_after_unknown_only)
+        .def_readwrite("component_connect_chain_steps", &rbf::GrowerConfig::component_connect_chain_steps)
+        .def_readwrite("component_connect_chain_max_boxes", &rbf::GrowerConfig::component_connect_chain_max_boxes)
+        .def_readwrite("frontier_face_memory", &rbf::GrowerConfig::frontier_face_memory)
+        .def_readwrite("frontier_face_bins_per_dim", &rbf::GrowerConfig::frontier_face_bins_per_dim)
+        .def_readwrite("frontier_face_min_attempts", &rbf::GrowerConfig::frontier_face_min_attempts)
+        .def_readwrite("frontier_face_max_attempts", &rbf::GrowerConfig::frontier_face_max_attempts)
+        .def_readwrite("frontier_face_area_attempt_scale", &rbf::GrowerConfig::frontier_face_area_attempt_scale)
+        .def_readwrite("frontier_face_candidate_limit", &rbf::GrowerConfig::frontier_face_candidate_limit)
+        .def_readwrite("frontwave_bootstrap_boxes", &rbf::GrowerConfig::frontwave_bootstrap_boxes)
+        .def_readwrite("frontwave_bootstrap_depth", &rbf::GrowerConfig::frontwave_bootstrap_depth)
+        .def_readwrite("frontwave_bootstrap_boundary_samples", &rbf::GrowerConfig::frontwave_bootstrap_boundary_samples)
         .def_readwrite("stop_after_connect", &rbf::GrowerConfig::stop_after_connect)
         .def_readwrite("post_connect_extra_boxes", &rbf::GrowerConfig::post_connect_extra_boxes)
         .def_readwrite("quality_min_connected_boxes", &rbf::GrowerConfig::quality_min_connected_boxes)
@@ -831,7 +983,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("goal_bias", &rbf::RRTConnectConfig::goal_bias)
         .def_readwrite("timeout_ms", &rbf::RRTConnectConfig::timeout_ms)
         .def_readwrite("segment_resolution", &rbf::RRTConnectConfig::segment_resolution)
-        .def_readwrite("local_sampling_radius", &rbf::RRTConnectConfig::local_sampling_radius);
+        .def_readwrite("local_sampling_radius", &rbf::RRTConnectConfig::local_sampling_radius)
+        .def_readwrite("shortcut_path", &rbf::RRTConnectConfig::shortcut_path)
+        .def_readwrite("domain_tolerance", &rbf::RRTConnectConfig::domain_tolerance)
+        .def_readwrite("domain_intervals", &rbf::RRTConnectConfig::domain_intervals);
 
     py::class_<rbf::ChainPaveConfig>(module, "ChainPaveConfig")
         .def(py::init<>())
@@ -846,6 +1001,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("gap_fill_time_budget_ms", &rbf::ChainPaveConfig::gap_fill_time_budget_ms)
         .def_readwrite("gap_fill_max_ffb_calls", &rbf::ChainPaveConfig::gap_fill_max_ffb_calls)
         .def_readwrite("gap_fill_min_arc_gain", &rbf::ChainPaveConfig::gap_fill_min_arc_gain)
+        .def_readwrite("require_connected_chain", &rbf::ChainPaveConfig::require_connected_chain)
         .def_readwrite("find_free_box", &rbf::ChainPaveConfig::find_free_box)
         .def_readwrite("commit_policy", &rbf::ChainPaveConfig::commit_policy);
 
@@ -869,6 +1025,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("segment_edges_enabled", &rbf::IslandConnectorConfig::segment_edges_enabled)
         .def_readwrite("rrt_segment_edges", &rbf::IslandConnectorConfig::rrt_segment_edges)
         .def_readwrite("point_gap_segment_edges", &rbf::IslandConnectorConfig::point_gap_segment_edges)
+        .def_readwrite("segment_edges_fallback_only", &rbf::IslandConnectorConfig::segment_edges_fallback_only)
         .def_readwrite("n_threads", &rbf::IslandConnectorConfig::n_threads)
         .def_readwrite("pair_batch_size", &rbf::IslandConnectorConfig::pair_batch_size)
         .def_readwrite("parallel_threshold", &rbf::IslandConnectorConfig::parallel_threshold)
@@ -940,6 +1097,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("strict_path_audit", &rbf::QueryConfig::strict_path_audit)
         .def_readwrite("audit_resolution", &rbf::QueryConfig::audit_resolution)
         .def_readwrite("audit_segment_step", &rbf::QueryConfig::audit_segment_step)
+        .def_readwrite("audit_collision_tolerance", &rbf::QueryConfig::audit_collision_tolerance)
         .def_readwrite("repair_on_audit_failure", &rbf::QueryConfig::repair_on_audit_failure)
         .def_readwrite("repair_max_attempts", &rbf::QueryConfig::repair_max_attempts)
         .def_readwrite("repair_rrt_max_iters", &rbf::QueryConfig::repair_rrt_max_iters)
@@ -1048,6 +1206,26 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                   return forest.build_coverage(obstacles, eigen_vectors_from_lists(seeds));
              },
              py::arg("obstacles"), py::arg("seeds"))
+        .def("build_leaf_sweep",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<rbf::Obstacle>& obstacles,
+                int start_depth,
+                int max_depth,
+                const rbf::LeafSweepConfig& config) {
+                 return forest.build_leaf_sweep(obstacles, start_depth, max_depth, config);
+             },
+             py::arg("obstacles"),
+             py::arg("start_depth"),
+             py::arg("max_depth"),
+             py::arg("config") = rbf::LeafSweepConfig{})
+        .def("oracle_counters",
+             [](const rbf::RBFPlanningForest& forest) {
+                 const rbf::OracleCounters* counters = forest.oracle_counters();
+                 if (!counters) {
+                     return py::dict{};
+                 }
+                 return oracle_counters_to_python(*counters);
+             })
                      .def("build_subtractive",
                              [](rbf::RBFPlanningForest& forest,
                                     const std::vector<rbf::SubtractiveObstacleGroup>& obstacle_groups,
@@ -1069,12 +1247,29 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                                  [](rbf::RBFPlanningForest& forest,
                                                                 const std::vector<double>& start,
                                                                 const std::vector<double>& goal,
-                                                                int max_boxes_to_add) {
+                                                                int max_boxes_to_add,
+                                                                const std::string& mode,
+                                                                double long_path_ratio,
+                                                                double long_path_min_delta) {
+                                                                        rbf::CorridorRefineMode refine_mode = rbf::CorridorRefineMode::LegacyBridge;
+                                                                        if (mode == "box_only_long_path") {
+                                                                            refine_mode = rbf::CorridorRefineMode::BoxOnlyLongPath;
+                                                                        } else if (mode != "legacy_bridge") {
+                                                                            throw std::invalid_argument("unsupported corridor refine mode: " + mode);
+                                                                        }
                                                                         return forest.refine_query_corridor(eigen_vector_from_list(start),
                                                                                                                                              eigen_vector_from_list(goal),
-                                                                                                                                             max_boxes_to_add);
+                                                                                                                                             max_boxes_to_add,
+                                                                                                                                             refine_mode,
+                                                                                                                                             long_path_ratio,
+                                                                                                                                             long_path_min_delta);
                                                  },
-                                                 py::arg("start"), py::arg("goal"), py::arg("max_boxes_to_add"))
+                                                 py::arg("start"),
+                                                 py::arg("goal"),
+                                                 py::arg("max_boxes_to_add"),
+                                                 py::arg("mode") = "legacy_bridge",
+                                                 py::arg("long_path_ratio") = std::numeric_limits<double>::infinity(),
+                                                 py::arg("long_path_min_delta") = std::numeric_limits<double>::infinity())
                 .def("bridge_query",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<double>& start,
@@ -1838,6 +2033,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              py::arg("disable_caches") = true)
         .def("boxes", [](const rbf::RBFPlanningForest& forest) { return forest.boxes(); })
         .def("raw_boxes", [](const rbf::RBFPlanningForest& forest) { return forest.raw_boxes(); })
+        .def("audit_robot", &rbf::RBFPlanningForest::audit_robot, py::return_value_policy::reference_internal)
         .def("adjacency", [](const rbf::RBFPlanningForest& forest) { return forest.adjacency(); })
         .def("segment_edges", [](const rbf::RBFPlanningForest& forest) { return forest.segment_edges(); })
         .def("last_build_profile", &rbf::RBFPlanningForest::last_build_profile, py::return_value_policy::reference_internal);
@@ -2428,11 +2624,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
     module.def("check_config_collision",
         [](const rbf::Robot& robot,
            const std::vector<rbf::Obstacle>& obstacles,
-           const std::vector<double>& q) {
+           const std::vector<double>& q,
+           double collision_tolerance) {
             rbf::CollisionChecker checker(robot, rbf::Scene(obstacles));
+            checker.set_collision_tolerance(collision_tolerance);
             return checker.check_config(eigen_vector_from_list(q));
         },
         py::arg("robot"),
         py::arg("obstacles"),
-        py::arg("q"));
+        py::arg("q"),
+        py::arg("collision_tolerance") = 0.0);
 }

@@ -27,6 +27,13 @@ from experiments.common.anytime_defaults import (  # noqa: E402
     UNIFIED_SBF_ANYTIME_POST_CONNECT_TIME_BUDGET_MS,
     UNIFIED_SBF_ANYTIME_QUALITY_MIN_CONNECTED_BOXES,
     UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH,
+    UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB,
+    UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION,
+    UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB,
+    UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
+    UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
+    UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
     csv_floats,
     csv_ints,
     legacy_stage_spec,
@@ -199,6 +206,7 @@ def build_current_shelf_sbf_anytime_command(
     aafk_sample_nodes_per_depth: int = 8,
     ffb_auto_mask_inert: bool = True,
     rbf_ffb_start_depth: int = UNIFIED_SBF_ANYTIME_FFB_START_DEPTH,
+    segment_edge_policy: str = "fallback_only",
 ) -> list[str]:
     effective_rbf_max_depth = max(1, int(rbf_max_depth))
     effective_ffb_start_depth = min(max(1, int(rbf_ffb_start_depth)), effective_rbf_max_depth)
@@ -262,8 +270,22 @@ def build_current_shelf_sbf_anytime_command(
         csv_floats(UNIFIED_SBF_ANYTIME_POST_CONNECT_TIME_BUDGET_MS),
         "--connector-max-pairs-per-gap",
         "1",
+        "--component-connect-prob",
+        str(UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB),
+        "--rrt-goal-bias",
+        str(UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS),
+        "--intertree-goal-bias",
+        str(UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS),
+        "--unexplored-prob",
+        str(UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB),
+        "--anchor-target-prob",
+        str(UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB),
+        "--sample-uniform-prob",
+        str(UNIFIED_SBF_SAMPLING_UNIFORM_PROB),
         "--aafk-sample-nodes-per-depth",
         str(max(1, int(aafk_sample_nodes_per_depth))),
+        "--segment-edge-policy",
+        str(segment_edge_policy),
     ]
     if str(lect_root_intervals).strip():
         command.extend([
@@ -279,6 +301,11 @@ def build_current_shelf_sbf_anytime_command(
     command.append("--rbf-canonical-cache" if bool(canonical_cache) else "--no-rbf-canonical-cache")
     command.append("--require-no-repair" if bool(require_no_repair) else "--no-require-no-repair")
     command.append("--ffb-auto-mask-inert" if bool(ffb_auto_mask_inert) else "--no-ffb-auto-mask-inert")
+    command.append(
+        "--sample-categorical-allocation"
+        if bool(UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION)
+        else "--no-sample-categorical-allocation"
+    )
     return command
 
 

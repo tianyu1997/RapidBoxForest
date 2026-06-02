@@ -1,9 +1,11 @@
 # API Reference
 
-This package has two public layers:
+This package now exposes a narrow public facade and keeps the historical `sbf/*`
+headers available for compatibility:
 
-- low-level C++ types and compute kernels in namespace `sbf`
-- package-level helpers in namespace `link_interval_envelope`
+- package-level C++ facade in namespace `link_interval_envelope`
+- compatibility/implementation headers under `include/sbf/`, with symbols in
+  namespace `rbf`
 
 The Python package `link_interval_envelope` mirrors the common one-shot,
 incremental, batch, and endpoint-reuse workflows.
@@ -11,22 +13,59 @@ incremental, batch, and endpoint-reuse workflows.
 ## Public Entry Points
 
 - CMake target: `link_interval_envelope::core`
-- Low-level headers under `include/sbf/`
 - Package-level headers:
-  `include/link_interval_envelope/incremental_context.h` and
-  `include/link_interval_envelope/batch.h`
+  - `link_interval_envelope/api.h`: one-stop public include
+  - `link_interval_envelope/types.h`: `Interval`, `Obstacle`, `JointLimits`
+  - `link_interval_envelope/robot.h`: `Robot`, `DHParam`
+  - `link_interval_envelope/endpoint.h`: endpoint-source config/result and
+    one-shot endpoint computation
+  - `link_interval_envelope/envelope.h`: envelope config/result and collision
+    predicates
+  - `link_interval_envelope/incremental_context.h`: stateful repeated-box
+    computation
+  - `link_interval_envelope/batch.h`: independent-box batch computation
+- Compatibility headers under `include/sbf/`
 - Python package: `link_interval_envelope`
 
-## Low-Level C++ Types (`sbf`)
+## Public C++ Facade (`link_interval_envelope`)
 
-### `sbf::Interval`
+The facade re-exports the stable types and functions from namespace `rbf`, so
+new callers can include `link_interval_envelope/api.h` and avoid binding to the
+historical `sbf/*` include layout:
+
+```cpp
+#include <link_interval_envelope/api.h>
+
+namespace lie = link_interval_envelope;
+
+lie::Robot robot = lie::Robot::from_json("2dof_planar.json");
+std::vector<lie::Interval> intervals = {{-0.4, 0.4}, {-0.2, 0.2}};
+
+lie::EndpointSourceConfig endpoint_config;
+endpoint_config.source = lie::EndpointSource::IFK;
+
+lie::EnvelopeTypeConfig envelope_config;
+envelope_config.type = lie::EnvelopeType::LinkIAABB;
+envelope_config.n_subdivisions = 4;
+
+auto endpoint = lie::compute_endpoint_iaabb(robot, intervals, endpoint_config);
+auto envelope = lie::compute_link_envelope(
+    endpoint.endpoint_iaabbs.data(),
+    endpoint.n_active_links,
+    robot.active_link_radii(),
+    envelope_config);
+```
+
+## Core Types
+
+### `link_interval_envelope::Interval`
 
 Represents one joint interval with fields `lo` and `hi` plus helpers such as
 `width()`, `center()`, and `empty()`.
 
-### `sbf::Robot`
+### `link_interval_envelope::Robot`
 
-Loaded from JSON with `sbf::Robot::from_json(path)`. Important methods include:
+Loaded from JSON with `Robot::from_json(path)`. Important methods include:
 
 - `name()`
 - `n_joints()`
@@ -37,10 +76,12 @@ Loaded from JSON with `sbf::Robot::from_json(path)`. Important methods include:
 - `has_tool()`
 - `fingerprint()`
 
-### `sbf::FKState`
+### `rbf::FKState`
 
-Stores interval-FK prefix transforms and per-joint matrices. The public layout
-matches the current v6 field layout:
+`FKState` remains available through the compatibility layer because existing
+LECT/SBF integrations inspect its layout. It stores interval-FK prefix
+transforms and per-joint matrices. The public layout matches the current v6
+field layout:
 
 - `prefix_lo[MAX_TF][16]`, `prefix_hi[MAX_TF][16]`
 - `joints_lo[MAX_JOINTS][16]`, `joints_hi[MAX_JOINTS][16]`
@@ -56,7 +97,7 @@ Core FK helpers:
 
 ### Endpoint Sources
 
-Configure with `sbf::EndpointSourceConfig`:
+Configure with `link_interval_envelope::EndpointSourceConfig`:
 
 - `source`: `IFK`, `CritSample`, `Analytical`, `GCPC`, `MC`, or `HIFK`
 - `n_samples_crit`
@@ -73,9 +114,10 @@ Configure with `sbf::EndpointSourceConfig`:
 - `hifk_n_threads`
 - `hifk_vol_ratio_thresh`
 
-The standalone package also exposes `sbf::recommend_hifk_depth(intervals,
-max_depth_cap=5)` as a width-only fallback and
-`sbf::recommend_hifk_depth(robot, intervals, max_depth_cap=5)` as the
+The standalone package also exposes
+`link_interval_envelope::recommend_hifk_depth(intervals, max_depth_cap=5)` as a
+width-only fallback and
+`link_interval_envelope::recommend_hifk_depth(robot, intervals, max_depth_cap=5)` as the
 robot-aware schedule used by HIFK auto-depth. The Python facade mirrors this as
 `link_interval_envelope.recommend_hifk_depth(...)`: pass only intervals for the
 fallback rule, or pass `(robot, intervals)` to score the first split using the
@@ -89,11 +131,11 @@ Python bindings also expose `EndpointSourceConfig.set_gcpc_cache(cache)`.
 Compute entry point:
 
 ```cpp
-sbf::EndpointIAABBResult compute_endpoint_iaabb(
-    const sbf::Robot& robot,
-    const std::vector<sbf::Interval>& intervals,
-    const sbf::EndpointSourceConfig& config,
-    sbf::FKState* fk = nullptr,
+link_interval_envelope::EndpointIAABBResult compute_endpoint_iaabb(
+    const link_interval_envelope::Robot& robot,
+    const std::vector<link_interval_envelope::Interval>& intervals,
+    const link_interval_envelope::EndpointSourceConfig& config,
+    rbf::FKState* fk = nullptr,
     int changed_dim = -1);
 ```
 
@@ -108,7 +150,7 @@ endpoint cache was reused.
 
 ### Envelope Types
 
-Configure with `sbf::EnvelopeTypeConfig`:
+Configure with `link_interval_envelope::EnvelopeTypeConfig`:
 
 - `type`: `LinkIAABB`, `KDOP`, or `SupportHull`
 - `n_subdivisions`
@@ -116,11 +158,11 @@ Configure with `sbf::EnvelopeTypeConfig`:
 Compute entry point:
 
 ```cpp
-sbf::LinkEnvelope compute_link_envelope(
+link_interval_envelope::LinkEnvelope compute_link_envelope(
     const float* endpoint_iaabbs,
     int n_active_links,
     const double* link_radii,
-    const sbf::EnvelopeTypeConfig& config);
+    const link_interval_envelope::EnvelopeTypeConfig& config);
 ```
 
 `link_iaabbs` are the raw non-radius-inflated boxes. Grid modes use the active
@@ -128,7 +170,7 @@ link radii during envelope construction. `KDOP` and `SupportHull` select tighter
 no-grid predicates for downstream collision checks while preserving the same
 high-level entry point.
 
-### `sbf::GcpcCache`
+### `link_interval_envelope::GcpcCache`
 
 `GcpcCache` is the public container for the GCPC endpoint source. Python binds:
 
@@ -143,7 +185,8 @@ high-level entry point.
 ### Stateful incremental context
 
 `link_interval_envelope::IncrementalEnvelopeContext` stores a `Robot`, endpoint
-config, envelope config, last intervals, and current `sbf::FKState`.
+config, envelope config, last intervals, and current `rbf::FKState`. Source-local
+CritSample/AA-FK/HIFK caches are hidden behind the context implementation.
 
 ```cpp
 link_interval_envelope::IncrementalEnvelopeContext context(
@@ -196,6 +239,26 @@ The current batch entry point supports `EndpointSource::IFK`,
 `EndpointSource::CritSample`, and `EndpointSource::HIFK`. Only `CritSample`
 has a specialized reuse path; `IFK` and `HIFK` use the generic one-shot
 endpoint path.
+
+## Compatibility And Internal Headers
+
+The following `include/sbf/` groups should be treated as compatibility or
+implementation detail for new code:
+
+- `sbf/core/interval_math.h`, `aa_fk.h`, and `fk_state.h`: low-level interval FK
+  kernels. `FKState` remains exposed only for LECT/SBF compatibility.
+- `sbf/envelope/dh_enumerate.h`, `crit_source.h`, `ifk_aa_source.h`,
+  `analytical_source.h`, `gcpc_source.h`, and `mc_source.h`: source-specific
+  implementations. New callers should use `compute_endpoint_iaabb`.
+- `sbf/envelope/link_iaabb.h`, `kdop.h`, and `support_hull.h`: shape builders.
+  New callers should use `compute_link_envelope`.
+- `sbf/core/log*.h`, `ray_aabb.h`, and `union_find.h`: utilities that are not
+  part of the envelope facade.
+
+The current redundant public surface is mostly historical exposure rather than
+dead code. Keep it while LECT/SBF wrapper headers depend on it, but prefer the
+facade for new integrations and move implementation-only includes into `.cpp`
+files when touching those modules.
 
 ## Python Package: `link_interval_envelope`
 

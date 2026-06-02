@@ -49,13 +49,15 @@ void build_dh_point(double alpha, double a, double ct, double st, double d, doub
 bool segment_hits_inflated_aabb(const double origin[3],
                                 const double dir[3],
                                 const float* obstacle,
-                                double radius) {
-    const double lo[3] = {static_cast<double>(obstacle[0]) - radius,
-                          static_cast<double>(obstacle[1]) - radius,
-                          static_cast<double>(obstacle[2]) - radius};
-    const double hi[3] = {static_cast<double>(obstacle[3]) + radius,
-                          static_cast<double>(obstacle[4]) + radius,
-                          static_cast<double>(obstacle[5]) + radius};
+                                double radius,
+                                double tolerance) {
+    const double effective_radius = std::max(0.0, radius - std::max(0.0, tolerance));
+    const double lo[3] = {static_cast<double>(obstacle[0]) - effective_radius,
+                          static_cast<double>(obstacle[1]) - effective_radius,
+                          static_cast<double>(obstacle[2]) - effective_radius};
+    const double hi[3] = {static_cast<double>(obstacle[3]) + effective_radius,
+                          static_cast<double>(obstacle[4]) + effective_radius,
+                          static_cast<double>(obstacle[5]) + effective_radius};
     double enter = 0.0;
     double exit = 1.0;
     for (int axis = 0; axis < 3; ++axis) {
@@ -213,7 +215,11 @@ bool CollisionChecker::check_config(const Eigen::Ref<const Eigen::VectorXd>& q) 
         const double dir[3] = {target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]};
         const double radius = radii != nullptr ? radii[active] : 0.0;
         for (int obs = 0; obs < scene_.n_obstacles(); ++obs) {
-            if (segment_hits_inflated_aabb(origin, dir, scene_.obstacle_aabbs_data() + obs * 6, radius)) {
+            if (segment_hits_inflated_aabb(origin,
+                                           dir,
+                                           scene_.obstacle_aabbs_data() + obs * 6,
+                                           radius,
+                                           collision_tolerance_)) {
                 return true;
             }
         }

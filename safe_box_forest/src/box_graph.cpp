@@ -55,6 +55,41 @@ Eigen::VectorXd shared_face_center(const BoxNode& lhs, const BoxNode& rhs) {
     return face_dim >= 0 ? center : (lhs.center() + rhs.center()) * 0.5;
 }
 
+Eigen::VectorXd transition_waypoint_toward_goal(const BoxNode& lhs,
+                                                const BoxNode& rhs,
+                                                const Eigen::Ref<const Eigen::VectorXd>& from,
+                                                const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    if (lhs.n_dims() != rhs.n_dims() || from.size() != lhs.n_dims()) {
+        return shared_face_center(lhs, rhs);
+    }
+    Eigen::VectorXd target = rhs.center();
+    if (goal.size() == lhs.n_dims()) {
+        target = goal;
+    }
+    if (!boxes_connected(lhs, rhs)) {
+        return shared_face_center(lhs, rhs);
+    }
+    Eigen::VectorXd overlap_mid(lhs.n_dims());
+    Eigen::VectorXd overlap_lo(lhs.n_dims());
+    Eigen::VectorXd overlap_hi(lhs.n_dims());
+    for (int dim = 0; dim < lhs.n_dims(); ++dim) {
+        overlap_lo[dim] = std::max(lhs.joint_intervals[dim].lo, rhs.joint_intervals[dim].lo);
+        overlap_hi[dim] = std::min(lhs.joint_intervals[dim].hi, rhs.joint_intervals[dim].hi);
+        overlap_mid[dim] = 0.5 * (overlap_lo[dim] + overlap_hi[dim]);
+    }
+    const Eigen::VectorXd local_delta = target - from;
+    const double denom = local_delta.squaredNorm();
+    if (denom <= 1e-18) {
+        return overlap_mid;
+    }
+    const double t = std::min(1.0, std::max(0.0, (overlap_mid - from).dot(local_delta) / denom));
+    Eigen::VectorXd waypoint = from + t * local_delta;
+    for (int dim = 0; dim < lhs.n_dims(); ++dim) {
+        waypoint[dim] = std::min(overlap_hi[dim], std::max(overlap_lo[dim], waypoint[dim]));
+    }
+    return waypoint;
+}
+
 bool graph_has_edge(const AdjacencyGraph& graph, int lhs, int rhs) {
     auto it = graph.find(lhs);
     if (it == graph.end()) {
@@ -562,18 +597,27 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             if (current_box == nullptr || next_box == nullptr) {
                 continue;
             }
-            const Eigen::VectorXd face_center = shared_face_center(*current_box, *next_box);
-            double edge_cost = (representative.at(current) - face_center).norm() + 0.02;
+            const Eigen::VectorXd current_rep = representative.at(current);
+            Eigen::VectorXd next_rep = transition_waypoint_toward_goal(*current_box, *next_box, current_rep, goal_point);
+            double edge_cost = (current_rep - next_rep).norm() + 1e-6;
+            if (next == goal_box_id && goal_point.size() == next_box->n_dims()) {
+                edge_cost += (next_rep - goal_point).norm();
+                next_rep = goal_point;
+            }
             const SegmentEdge* edge = find_segment_edge(cache, current, next);
             if (edge != nullptr) {
                 edge_cost = edge->length > 0.0 ? edge->length : edge_cost;
+                if (edge->strict_audit_required && edge->type == SegmentEdgeType::QueryBridge) {
+                    edge_cost += 1.0e6;
+                }
+                next_rep = next_box->center();
             }
             const double alt = current_dist + edge_cost;
             auto dit = dist.find(next);
             if (dit == dist.end() || alt < dit->second) {
                 dist[next] = alt;
                 prev[next] = current;
-                representative[next] = edge != nullptr ? next_box->center() : face_center;
+                representative[next] = std::move(next_rep);
                 open.push({next, alt + heuristic(next)});
             }
         }
@@ -687,6 +731,23 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
         const auto it = cache.box_index_by_id.find(id);
         return it == cache.box_index_by_id.end() ? nullptr : &boxes[it->second];
     };
+    auto overlap_waypoint = [](const BoxNode& lhs, const BoxNode& rhs)
+        -> Eigen::VectorXd {
+        Eigen::VectorXd waypoint(lhs.n_dims());
+        for (int dim = 0; dim < lhs.n_dims(); ++dim) {
+            const double overlap_lo = std::max(lhs.joint_intervals[dim].lo,
+                                               rhs.joint_intervals[dim].lo);
+            const double overlap_hi = std::min(lhs.joint_intervals[dim].hi,
+                                               rhs.joint_intervals[dim].hi);
+            waypoint[dim] = 0.5 * (overlap_lo + overlap_hi);
+        }
+        return waypoint;
+    };
+    auto append_if_new = [&](const Eigen::VectorXd& waypoint) {
+        if (path.empty() || (path.back() - waypoint).norm() > 1e-12) {
+            path.push_back(waypoint);
+        }
+    };
     path.push_back(start);
     for (std::size_t i = 1; i < box_sequence.size(); ++i) {
         const BoxNode* lhs_ptr = box_ptr(box_sequence[i - 1]);
@@ -712,27 +773,20 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
             }
             continue;
         }
-        Eigen::VectorXd waypoint(lhs.n_dims());
+        if (lhs.parent_box_id == rhs.id && lhs.seed_config.size() == lhs.n_dims() &&
+            lhs.contains(lhs.seed_config) && boxes_connected(lhs, rhs)) {
+            append_if_new(lhs.seed_config);
+            append_if_new(overlap_waypoint(lhs, rhs));
+            continue;
+        }
+        if (rhs.parent_box_id == lhs.id && rhs.seed_config.size() == rhs.n_dims() &&
+            rhs.contains(rhs.seed_config) && boxes_connected(lhs, rhs)) {
+            append_if_new(overlap_waypoint(lhs, rhs));
+            append_if_new(rhs.seed_config);
+            continue;
+        }
         if (boxes_connected(lhs, rhs)) {
-            Eigen::VectorXd overlap_mid(lhs.n_dims());
-            Eigen::VectorXd overlap_lo(lhs.n_dims());
-            Eigen::VectorXd overlap_hi(lhs.n_dims());
-            for (int dim = 0; dim < lhs.n_dims(); ++dim) {
-                overlap_lo[dim] = std::max(lhs.joint_intervals[dim].lo, rhs.joint_intervals[dim].lo);
-                overlap_hi[dim] = std::min(lhs.joint_intervals[dim].hi, rhs.joint_intervals[dim].hi);
-                overlap_mid[dim] = 0.5 * (overlap_lo[dim] + overlap_hi[dim]);
-            }
-            const Eigen::VectorXd local_delta = goal - path.back();
-            const double denom = local_delta.squaredNorm();
-            if (denom > 1e-18) {
-                const double t = std::min(1.0, std::max(0.0, (overlap_mid - path.back()).dot(local_delta) / denom));
-                waypoint = path.back() + t * local_delta;
-                for (int dim = 0; dim < lhs.n_dims(); ++dim) {
-                    waypoint[dim] = std::min(overlap_hi[dim], std::max(overlap_lo[dim], waypoint[dim]));
-                }
-            } else {
-                waypoint = overlap_mid;
-            }
+            append_if_new(overlap_waypoint(lhs, rhs));
         } else {
             const Eigen::VectorXd lhs_center = lhs.center();
             const Eigen::VectorXd rhs_center = rhs.center();
@@ -742,7 +796,6 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
             path.push_back(rhs_center);
             continue;
         }
-        path.push_back(std::move(waypoint));
     }
     if (path.empty() || (path.back() - goal).norm() > 1e-12) {
         path.push_back(goal);

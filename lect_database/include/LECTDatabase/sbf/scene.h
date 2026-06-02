@@ -1,7 +1,7 @@
 #pragma once
 
-#include <sbf/core/robot.h>
-#include <sbf/core/types.h>
+#include <link_interval_envelope/robot.h>
+#include <link_interval_envelope/types.h>
 
 #include <Eigen/Core>
 
@@ -46,6 +46,8 @@ public:
 
     void set_scene(Scene scene) { scene_ = std::move(scene); }
     void set_obstacles(const Obstacle* obstacles, int n_obstacles);
+    void set_collision_tolerance(double tolerance) { collision_tolerance_ = tolerance > 0.0 ? tolerance : 0.0; }
+    double collision_tolerance() const { return collision_tolerance_; }
     const Robot& robot() const;
     const Scene& scene() const { return scene_; }
 
@@ -61,6 +63,7 @@ public:
 private:
     const Robot* robot_ = nullptr;
     Scene scene_;
+    double collision_tolerance_ = 0.0;
 };
 
 }  // namespace rbf

@@ -11,6 +11,7 @@
 #include <iostream>
 #include <optional>
 #include <set>
+#include <stdexcept>
 
 namespace {
 
@@ -279,6 +280,100 @@ void test_safe_box_forest_frontwave() {
     assert(profile.raw_boxes >= 1);
 }
 
+void test_leaf_sweep_empty_scene() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_empty");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::RBFPlanningForest forest(robot, config);
+    rbf::LeafSweepConfig sweep_config;
+    auto result = forest.build_leaf_sweep({}, 2, 2, sweep_config);
+    assert(result.free_boxes.size() == 4);
+    assert(result.collision_boxes.empty());
+    assert(forest.boxes().size() == result.free_boxes.size());
+    assert(result.diagnostics.at("leaf_sweep.start_depth") == 2.0);
+    bool threw = false;
+    try {
+        forest.build_leaf_sweep({}, 2, 1, sweep_config);
+    } catch (const std::invalid_argument&) {
+        threw = true;
+    }
+    assert(threw);
+}
+
+void test_leaf_sweep_single_obstacle_collision() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_collision");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::RBFPlanningForest forest(robot, config);
+    rbf::LeafSweepConfig sweep_config;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f),
+    };
+    auto result = forest.build_leaf_sweep(obstacles, 0, 1, sweep_config);
+    assert(!result.collision_boxes.empty());
+    assert(result.free_boxes.empty());
+    assert(result.groups.size() == 1);
+    assert(result.groups.front().collision_boxes.size() == result.collision_boxes.size());
+}
+
+void test_leaf_sweep_grouping_and_composition() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_grouping");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(100.0f, 100.0f, 100.0f, 101.0f, 101.0f, 101.0f),
+        rbf::Obstacle(100.5f, 100.5f, 100.5f, 101.5f, 101.5f, 101.5f),
+        rbf::Obstacle(110.0f, 110.0f, 110.0f, 111.0f, 111.0f, 111.0f),
+    };
+    rbf::LeafSweepConfig sweep_config;
+    sweep_config.obstacle_cluster_gap = 0.0;
+    rbf::RBFPlanningForest forest(robot, config);
+    auto result = forest.build_leaf_sweep(obstacles, 1, 1, sweep_config);
+    assert(result.groups.size() == 2);
+    assert(result.obstacle_group_ids.size() == obstacles.size());
+    assert(result.obstacle_group_ids[0] == result.obstacle_group_ids[1]);
+    assert(result.obstacle_group_ids[2] != result.obstacle_group_ids[0]);
+
+    rbf::LeafSweepConfig merged_config;
+    merged_config.obstacle_cluster_gap = 1000.0;
+    auto merged_base = base_config("sbf_leaf_sweep_grouping_merged");
+    merged_base.endpoint_source.source = rbf::EndpointSource::IFK;
+    merged_base.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::RBFPlanningForest merged_forest(robot, merged_base);
+    auto merged = merged_forest.build_leaf_sweep(obstacles, 1, 1, merged_config);
+    assert(merged.groups.size() == 1);
+    assert(result.free_boxes.size() == merged.free_boxes.size());
+    assert(result.collision_boxes.size() == merged.collision_boxes.size());
+}
+
+void test_leaf_sweep_thread_count_consistency() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_threads_a");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f),
+    };
+    rbf::LeafSweepConfig serial_config;
+    serial_config.n_threads = 1;
+    rbf::RBFPlanningForest serial_forest(robot, config);
+    auto serial = serial_forest.build_leaf_sweep(obstacles, 1, 2, serial_config);
+
+    auto parallel_base = base_config("sbf_leaf_sweep_threads_b");
+    parallel_base.endpoint_source.source = rbf::EndpointSource::IFK;
+    parallel_base.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::LeafSweepConfig parallel_config;
+    parallel_config.n_threads = 4;
+    rbf::RBFPlanningForest parallel_forest(robot, parallel_base);
+    auto parallel = parallel_forest.build_leaf_sweep(obstacles, 1, 2, parallel_config);
+
+    assert(serial.free_boxes.size() == parallel.free_boxes.size());
+    assert(serial.collision_boxes.size() == parallel.collision_boxes.size());
+}
+
 void test_obstacle_rebuild() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_obstacle_rebuild");
@@ -327,6 +422,10 @@ int main() {
     test_audit_segment_step_requires_finer_sampling_than_fixed_resolution();
     test_query_strict_path_audit();
     test_safe_box_forest_frontwave();
+    test_leaf_sweep_empty_scene();
+    test_leaf_sweep_single_obstacle_collision();
+    test_leaf_sweep_grouping_and_composition();
+    test_leaf_sweep_thread_count_consistency();
     test_obstacle_rebuild();
     test_query_audit_gated_repair_without_graph();
     std::cout << "SBF C++ tests passed.\n";

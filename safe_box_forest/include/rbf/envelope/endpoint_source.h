@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sbf/envelope/endpoint_source.h>
+#include <link_interval_envelope/endpoint.h>
 
 #include <cstdint>
 

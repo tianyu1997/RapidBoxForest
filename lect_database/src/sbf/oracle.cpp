@@ -14,15 +14,30 @@
 #include <cstdlib>
 #include <functional>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <system_error>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace rbf {
 namespace {
 
 using lect_database::NodeId;
 using Clock = std::chrono::steady_clock;
+
+std::mutex& external_exact_lookup_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
 
 double elapsed_us(Clock::time_point start) {
     return std::chrono::duration<double, std::micro>(Clock::now() - start).count();
@@ -710,6 +725,15 @@ bool intervals_straddle_sector_boundary(const JointSymmetry& symmetry,
 
 }  // namespace
 
+struct DatabaseBoxOracle::Impl {
+    // Incremental AA-backed endpoint state reused along a single-threaded
+    // parent->child descent. IFK reuses a single AA-FK chain prefix; HIFK
+    // reuses per-leaf AA-FK states when the split schedule is deterministic.
+    // Not shared across threads (each worker owns its own oracle).
+    AaFkPrefixState aa_fk_prefix_state;
+    HifkAaState hifk_aa_state;
+};
+
 DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
                                      lect_database::LectDatabase& database,
                                      Scene scene,
@@ -726,7 +750,8 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
       envelope_config_(std::move(envelope_config)),
       validation_config_(std::move(validation_config)),
       scene_(std::move(scene)),
-      checker_(robot_, scene_) {
+      checker_(robot_, scene_),
+      impl_(std::make_unique<Impl>()) {
     seed_best_tighten_schedule_from_policy();
 }
 
@@ -747,9 +772,12 @@ DatabaseBoxOracle::DatabaseBoxOracle(Robot robot,
     envelope_config_(std::move(envelope_config)),
     validation_config_(std::move(validation_config)),
     scene_(std::move(scene)),
-    checker_(robot_, scene_) {
+    checker_(robot_, scene_),
+    impl_(std::make_unique<Impl>()) {
     seed_best_tighten_schedule_from_policy();
 }
+
+DatabaseBoxOracle::~DatabaseBoxOracle() = default;
 
 void DatabaseBoxOracle::seed_best_tighten_schedule_from_policy() {
     // Pre-seed the per-depth best-tighten split dimensions from the canonical
@@ -978,6 +1006,7 @@ SplitNodeResult DatabaseBoxOracle::split_node(OracleNodeId node,
     result.right = from_database_node(children.second);
     result.split_dim = topology.split_dim;
     result.split_value = topology.split_value;
+    unexplored_leaf_cache_dirty_ = true;
     return result;
 }
 
@@ -994,6 +1023,7 @@ SplitNodeResult DatabaseBoxOracle::split_node_at(OracleNodeId node, int split_di
     result.right = from_database_node(children.second);
     result.split_dim = topology.split_dim;
     result.split_value = topology.split_value;
+    unexplored_leaf_cache_dirty_ = true;
     return result;
 }
 
@@ -1080,6 +1110,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             cached = direct_external_evidence_database_->evidence(key);
         }
         if (!cached) {
+            std::lock_guard<std::mutex> lock(external_exact_lookup_mutex());
             cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
         }
         counters_.materialization_external_lookup_time_us += elapsed_us(external_lookup_start);
@@ -1191,10 +1222,10 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     EndpointIAABBResult endpoint;
     if (materialization_config.source == EndpointSource::IFK) {
         endpoint = compute_endpoint_iaabb_ifk_aa_stateful(
-            robot_, evidence_frame.lookup_intervals, aa_fk_prefix_state_, &used_source_incremental_state);
+            robot_, evidence_frame.lookup_intervals, impl_->aa_fk_prefix_state, &used_source_incremental_state);
     } else if (materialization_config.source == EndpointSource::HIFK) {
         endpoint = compute_endpoint_iaabb_hifk_aa_stateful(
-            robot_, evidence_frame.lookup_intervals, materialization_config, hifk_aa_state_, &used_source_incremental_state);
+            robot_, evidence_frame.lookup_intervals, materialization_config, impl_->hifk_aa_state, &used_source_incremental_state);
     } else {
         endpoint = compute_endpoint_iaabb(
             robot_, evidence_frame.lookup_intervals, materialization_config, nullptr, changed_dim);
@@ -1457,20 +1488,30 @@ void DatabaseBoxOracle::record_visit(OracleNodeId node) {
 }
 
 OracleNodeId DatabaseBoxOracle::select_unexplored_node() const {
+    if (unexplored_leaf_cache_dirty_) {
+        unexplored_leaf_cache_.clear();
+        for (lect_database::NodeId node_id : database_.node_ids()) {
+            const auto topology = database_.topology(node_id);
+            if (!topology.leaf) {
+                continue;
+            }
+            const OracleNodeId node = from_database_node(node_id);
+            unexplored_leaf_cache_.push_back({node, interval_volume(node_intervals(node))});
+        }
+        unexplored_leaf_cache_dirty_ = false;
+    }
     OracleNodeId best_node = kInvalidOracleNodeId;
     double best_weight = -1.0;
-    for (lect_database::NodeId node_id : database_.node_ids()) {
-        const auto topology = database_.topology(node_id);
-        const OracleNodeId node = from_database_node(node_id);
-        if (!topology.leaf || is_reserved(node)) {
+    for (const auto& entry : unexplored_leaf_cache_) {
+        const OracleNodeId node = entry.node;
+        if (node < 0 || is_reserved(node) || !is_leaf(node)) {
             continue;
         }
-        const double volume = interval_volume(node_intervals(node));
         const auto visit_it = visit_counts_.find(node);
         const double visit_count = visit_it == visit_counts_.end()
             ? 0.0
             : static_cast<double>(visit_it->second);
-        const double weight = volume / (visit_count + 1.0);
+        const double weight = entry.volume / (visit_count + 1.0);
         if (weight > best_weight) {
             best_weight = weight;
             best_node = node;
@@ -1528,6 +1569,8 @@ DatabaseBoxOracleSession::DatabaseBoxOracleSession(DatabaseBoxOracle& master,
         throw std::runtime_error("LECTDatabase oracle session domain root has no intervals");
     }
     std::error_code ec;
+    std::filesystem::remove_all(temp_dir_, ec);
+    ec = {};
     std::filesystem::create_directories(temp_dir_, ec);
     if (ec) {
         throw std::runtime_error("LECTDatabase oracle session failed to create temp directory");
@@ -1655,8 +1698,14 @@ bool DatabaseBoxOracleSession::copy_worker_leaf_evidence() {
 }
 
 std::filesystem::path DatabaseBoxOracleSession::make_temp_dir() {
+    const auto process_id =
+#ifdef _WIN32
+        static_cast<unsigned long long>(::GetCurrentProcessId());
+#else
+        static_cast<unsigned long long>(::getpid());
+#endif
     return std::filesystem::temp_directory_path() /
-        ("lectdb_sbf_session_" + std::to_string(next_session_id()));
+        ("lectdb_sbf_session_" + std::to_string(process_id) + "_" + std::to_string(next_session_id()));
 }
 
 std::unique_ptr<BoxOracleSession> DatabaseBoxOracleFactory::make_session(const OracleSessionConfig& config) {

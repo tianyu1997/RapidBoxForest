@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Iterable
 
 
-ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = ROOT.parents[0]
-DEFAULT_OUT_DIR = REPO_ROOT / "paper" / "sbf_old" / "generated"
+ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = ROOT.parent
+DEFAULT_OUT_DIR = WORKSPACE_ROOT / "paper" / "sbf_old" / "generated"
 PAPER_OUTPUTS = ROOT / "outputs" / "paper"
 # Keep the paper-facing LECT reuse table pinned to the archived ~250-box artifact.
 # The mutable default JSON is reused by later reruns (for example 512-box studies)

@@ -2,6 +2,7 @@
 
 #include <SBF/connector.h>
 #include <SBF/grower.h>
+#include <SBF/leaf_sweep_grower.h>
 #include <SBF/merger.h>
 #include <SBF/oracle.h>
 #include <SBF/query.h>
@@ -11,6 +12,7 @@
 #include <LECTDatabase/online_cache.h>
 #include <rbf/lect_database.h>
 
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -43,6 +45,23 @@ struct SubtractiveObstacleGroup {
 struct SubtractiveBuildOptions {
 	bool run_connector = true;
 	bool use_validation_obstacles_for_final_scene = true;
+};
+
+struct LeafSweepRefineConfig {
+	int leaf_start_depth = 10;
+	int leaf_max_depth = 18;
+	double obstacle_cluster_gap = 1000.0;
+	bool use_virtual_topology = true;
+	bool store_group_results = false;
+	int validation_batch_size = 512;
+	int leaf_threads = 1;
+	double leaf_timeout_ms = 0.0;
+	int deep_max_boxes = 600;
+	int deep_ffb_depth = 34;
+	int domain_seed_cap = 8;
+	int domain_success_cap = 2;
+	int domain_attempt_cap = 8;
+	double refine_timeout_ms = 800.0;
 };
 
 struct LectDatabaseRuntimeConfig {
@@ -162,6 +181,31 @@ struct DebugChainPaveResult {
 	bool audit_passed = false;
 };
 
+struct LeafSweepRefineResult {
+	LeafSweepResult leaf_sweep;
+	BuildProfile profile;
+	int leaf_free_count = 0;
+	int leaf_collision_count = 0;
+	int deep_boxes_added = 0;
+	int deep_domain_attempts = 0;
+	int deep_ffb_success = 0;
+	int deep_ffb_fail = 0;
+	int deep_commit_rejects = 0;
+	int deep_domain_rejects = 0;
+	int deep_contained_rejects = 0;
+	int deep_adjacency_rejects = 0;
+	double leaf_sweep_ms = 0.0;
+	double deep_refine_ms = 0.0;
+	double connector_ms = 0.0;
+	double total_ms = 0.0;
+	std::unordered_map<std::string, double> diagnostics;
+};
+
+enum class CorridorRefineMode : std::uint8_t {
+	LegacyBridge = 0,
+	BoxOnlyLongPath = 1,
+};
+
 class RBFPlanningForest {
 public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
@@ -181,6 +225,19 @@ public:
 	BuildProfile build_subtractive(const std::vector<SubtractiveObstacleGroup>& obstacle_groups,
 								   const std::vector<Eigen::VectorXd>& seeds,
 								   const SubtractiveBuildOptions& options = {});
+	LeafSweepResult build_leaf_sweep(const std::vector<Obstacle>& obstacles,
+									 int start_depth,
+									 int max_depth,
+									 const LeafSweepConfig& leaf_sweep_config = {});
+	LeafSweepResult build_leaf_sweep(const std::vector<Obstacle>& obstacles,
+									 int start_depth,
+									 int max_depth,
+									 const LeafSweepConfig& leaf_sweep_config,
+									 StageContext& context);
+	LeafSweepRefineResult build_leaf_sweep_refined(
+		const std::vector<Obstacle>& obstacles,
+		const LeafSweepRefineConfig& refine_config = {},
+		const std::vector<Eigen::VectorXd>& priority_points = {});
 	/// Isolated FFB benchmark — no RRT, no grower, no adjacency.
 	/// Resets the oracle scene to @p obstacles, then calls ffb.find() once per
 	/// seed.  LECT evidence accumulates across repeated calls (same as build()).
@@ -208,12 +265,19 @@ public:
 	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
 							  const Eigen::Ref<const Eigen::VectorXd>& goal,
 							  int max_boxes_to_add);
+	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
+							  const Eigen::Ref<const Eigen::VectorXd>& goal,
+							  int max_boxes_to_add,
+							  CorridorRefineMode mode,
+							  double long_path_ratio,
+							  double long_path_min_delta);
 	RebuildProfile add_obstacle_and_rebuild(const Obstacle& obstacle);
 	RebuildProfile remove_obstacle_and_regrow(int obstacle_index);
 	RebuildProfile remove_obstacle_suffix_and_regrow(int target_obstacle_count);
 	void clear_forest();
 
 	const Robot& robot() const { return robot_; }
+	const Robot& audit_robot() const { return audit_robot_; }
 	const RBFPlanningConfig& config() const { return config_; }
 	const Scene& scene() const { return scene_; }
 	const std::vector<BoxNode>& boxes() const { return boxes_; }
@@ -242,6 +306,7 @@ private:
 	int next_box_id() const;
 
 	Robot robot_;
+	Robot audit_robot_;
 	RBFPlanningConfig config_;
 	Scene scene_;
 	std::unique_ptr<lect_database::LectDatabase> database_;

@@ -138,14 +138,34 @@ struct GrowerConfig {
 	int component_connect_max_parent_failures = 0;
 	double component_connect_neighbor_root_bias = 0.0;
 	int component_connect_neighbor_root_window = 0;
+	double component_connect_lateral_sample_prob = 0.0;
+	int component_connect_lateral_sample_attempts = 1;
+	bool component_connect_require_target_direction = true;
 	bool component_connect_adaptive_ffb = true;
 	bool component_connect_depth_after_unknown_only = true;
 	int component_connect_ffb_depth_increment = 2;
 	int component_connect_ffb_max_depth = 0;
+	int component_connect_chain_steps = 0;
+	int component_connect_chain_max_boxes = 0;
+	bool frontier_face_memory = false;
+	int frontier_face_bins_per_dim = 4;
+	int frontier_face_min_attempts = 1;
+	int frontier_face_max_attempts = 12;
+	double frontier_face_area_attempt_scale = 16.0;
+	int frontier_face_candidate_limit = 128;
+	int frontwave_bootstrap_boxes = 0;
+	int frontwave_bootstrap_depth = 0;
+	int frontwave_bootstrap_boundary_samples = 14;
 	int n_boundary_samples = 1;
 	double boundary_epsilon = 1e-9;
 	bool expand_all_roots_per_sample = false;
 	int extra_random_roots = 0;
+	int random_anchor_targets = 0;
+	double anchor_target_prob = 0.0;
+	int anchor_target_candidate_count = 0;
+	int anchor_target_max_lca_depth = -1;
+	int anchor_wave_targets_per_batch = 0;
+	std::vector<Eigen::VectorXd> fixed_anchor_targets;
 	bool root_seed_include_user_seeds = true;
 	int root_seed_candidate_count = 0;
 	double root_seed_min_normalized_linf = 0.0;
@@ -286,6 +306,12 @@ private:
 										 bool success,
 										 const FindFreeBoxResult* ffb_result,
 										 StageContext& context);
+	int grow_component_connect_chain(std::vector<BoxNode>& boxes,
+									 FindFreeBoxService& ffb,
+									 const FindFreeBoxOptions& base_options,
+									 int depth_stage_index,
+									 int source_root_id,
+									 StageContext& context);
 	bool make_component_connect_seed(const std::vector<BoxNode>& boxes,
 									 Eigen::VectorXd& seed,
 									 Eigen::VectorXd& target,
@@ -357,11 +383,19 @@ private:
 										GrowTraceFace* selected_face = nullptr,
 										std::vector<GrowTraceFace>* candidates = nullptr,
 										StageContext* context = nullptr) const;
+	bool prepare_frontier_seed_with_memory(const std::vector<BoxNode>& boxes,
+										   const BoxNode& parent,
+										   const Eigen::VectorXd& target,
+										   int face_dim,
+										   int side,
+										   Eigen::VectorXd& seed,
+										   StageContext* context = nullptr) const;
 	bool connected(const std::vector<BoxNode>& boxes) const;
 
 	BoxOracle& oracle_;
 	GrowerConfig config_;
 	std::mt19937 rng_;
+	std::vector<Eigen::VectorXd> random_anchor_targets_;
 	int next_box_id_ = 0;
 	mutable std::mutex trace_mutex_;
 	mutable std::ofstream trace_file_;
@@ -369,6 +403,8 @@ private:
 	mutable std::uint64_t trace_event_count_ = 0;
 	mutable std::mutex frontier_cache_mutex_;
 	mutable std::unordered_set<std::string> covered_frontier_seed_cache_;
+	mutable std::mutex frontier_face_memory_mutex_;
+	mutable std::unordered_map<std::uint64_t, std::unordered_set<std::uint64_t>> frontier_face_bins_;
 	std::unordered_map<std::uint64_t, int> component_pair_unknown_failures_;
 	std::unordered_map<int, int> component_parent_failures_;
 	std::unordered_map<OracleNodeId, FailureCoolingEntry> failure_cooling_;
