@@ -58,6 +58,11 @@ std::uint64_t make_envelope_cache_key(lect_database::NodeId node_id, int sector)
     return key;
 }
 
+std::uint64_t make_envelope_cache_key(const lect_database::EvidenceKey& key, int fallback_sector) {
+    const int sector = key.sector == lect_database::kPrimarySector ? fallback_sector : static_cast<int>(key.sector);
+    return make_envelope_cache_key(key.node_id, sector);
+}
+
 std::uint64_t next_session_id() {
     static std::atomic<std::uint64_t> counter{0};
     return counter.fetch_add(1, std::memory_order_relaxed);
@@ -1106,12 +1111,14 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             direct_external_evidence_database_ != nullptr &&
             database_.identity().root_domain_fingerprint == direct_external_evidence_database_->identity().root_domain_fingerprint &&
             database_.identity().split_policy_hash == direct_external_evidence_database_->identity().split_policy_hash;
-        if (direct_external_keys_match) {
-            cached = direct_external_evidence_database_->evidence(key);
-        }
-        if (!cached) {
+        {
             std::lock_guard<std::mutex> lock(external_exact_lookup_mutex());
-            cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
+            if (direct_external_keys_match) {
+                cached = direct_external_evidence_database_->evidence(key);
+            }
+            if (!cached) {
+                cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
+            }
         }
         counters_.materialization_external_lookup_time_us += elapsed_us(external_lookup_start);
         if (!cached) {
@@ -1136,7 +1143,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         payload.record_storage = cached->storage;
         payload.storage_owner = cached->storage_owner;
         payload.payload = cached->payload;
-        payload.envelope_cache_key = envelope_cache_key;
+        payload.envelope_cache_key = make_envelope_cache_key(cached->key, normalized_sector);
         payload.envelope_cacheable = true;
         counters_.materialization_external_read_time_us += elapsed_us(read_start);
         return reflect_payload(std::move(payload));
@@ -1159,7 +1166,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
                 EndpointPayload payload;
                 payload.owned_payload = std::move(cached->payload);
                 payload.payload = payload.owned_payload;
-                payload.envelope_cache_key = envelope_cache_key;
+                payload.envelope_cache_key = make_envelope_cache_key(cached->key, normalized_sector);
                 payload.envelope_cacheable = true;
                 counters_.materialization_cache_read_time_us += elapsed_us(read_start);
                 counters_.materialization_reused_endpoint_cache += 1;
@@ -1175,7 +1182,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             payload.record_storage = local_cached->storage;
             payload.storage_owner = local_cached->storage_owner;
             payload.payload = local_cached->payload;
-            payload.envelope_cache_key = envelope_cache_key;
+            payload.envelope_cache_key = make_envelope_cache_key(local_cached->key, normalized_sector);
             payload.envelope_cacheable = true;
             counters_.materialization_cache_read_time_us += elapsed_us(read_start);
             counters_.materialization_reused_endpoint_cache += 1;
@@ -1210,7 +1217,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             payload.record_storage = shared_cached->storage;
             payload.storage_owner = shared_cached->storage_owner;
             payload.payload = shared_cached->payload;
-            payload.envelope_cache_key = envelope_cache_key;
+            payload.envelope_cache_key = make_envelope_cache_key(shared_cached->key, normalized_sector);
             payload.envelope_cacheable = true;
             return reflect_payload(std::move(payload));
         }
@@ -1283,6 +1290,8 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     const auto envelope_read_start = Clock::now();
     const LinkEnvelope* envelope = nullptr;
     const bool use_envelope_cache = endpoint_payload.envelope_cacheable &&
+        enable_envelope_cache_ &&
+        !std::getenv("RBF_DISABLE_ENVELOPE_CACHE") &&
         !database_.bulk_prewarm_mode_enabled() &&
         !database_.streaming_prewarm_mode_enabled();
     if (use_envelope_cache) {

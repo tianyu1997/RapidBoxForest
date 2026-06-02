@@ -161,6 +161,25 @@ private:
 	std::vector<int> rank_;
 };
 
+class ScopedOracleEnvelopeCache {
+public:
+	ScopedOracleEnvelopeCache(DatabaseBoxOracle& oracle, bool enabled)
+		: oracle_(oracle), previous_(oracle.envelope_cache_enabled()) {
+		oracle_.set_envelope_cache_enabled(enabled);
+	}
+
+	~ScopedOracleEnvelopeCache() {
+		oracle_.set_envelope_cache_enabled(previous_);
+	}
+
+	ScopedOracleEnvelopeCache(const ScopedOracleEnvelopeCache&) = delete;
+	ScopedOracleEnvelopeCache& operator=(const ScopedOracleEnvelopeCache&) = delete;
+
+private:
+	DatabaseBoxOracle& oracle_;
+	bool previous_ = true;
+};
+
 }  // namespace
 
 LeafSweepGrower::LeafSweepGrower(DatabaseBoxOracle& oracle,
@@ -244,6 +263,7 @@ LeafSweepResult LeafSweepGrower::sweep(const std::vector<Obstacle>& obstacles,
 	}
 
 	LeafSweepResult result;
+	ScopedOracleEnvelopeCache envelope_cache_scope(oracle_, false);
 	const auto total_start = Clock::now();
 	oracle_.set_scene(Scene(obstacles));
 	set_value(result, context, "leaf_sweep.start_depth", static_cast<double>(start_depth));
@@ -471,16 +491,27 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			bool exception = false;
 		};
 		const int n_workers = std::max(1, context.executor().n_threads());
-		std::vector<std::unique_ptr<BoxOracleSession>> sessions;
-		sessions.reserve(static_cast<std::size_t>(n_workers));
+		std::vector<std::unique_ptr<DatabaseBoxOracle>> worker_oracles;
+		worker_oracles.reserve(static_cast<std::size_t>(n_workers));
 		for (int worker = 0; worker < n_workers; ++worker) {
-			OracleSessionConfig session_config;
-			session_config.worker_id = worker;
-			session_config.domain_root = oracle_.root_node();
-			session_config.read_only = true;
-			sessions.push_back(oracle_.make_session(session_config));
+			auto worker_validation_config = oracle_.validation_config();
+			worker_validation_config.store_endpoint_evidence_cache = false;
+			worker_validation_config.external_evidence_backfill_active = false;
+			auto worker_oracle = std::make_unique<DatabaseBoxOracle>(oracle_.robot(),
+																	 oracle_.database(),
+																	 oracle_.scene(),
+																	 oracle_.endpoint_config(),
+																	 oracle_.envelope_config(),
+																	 worker_validation_config,
+																	 oracle_.external_evidence_source(),
+																	 oracle_.direct_external_evidence_database());
+			worker_oracle->set_envelope_cache_enabled(oracle_.envelope_cache_enabled());
+			if (worker_validation_config.enable_worker_shared_endpoint_cache) {
+				worker_oracle->set_shared_endpoint_cache(oracle_.shared_endpoint_cache());
+			}
+			worker_oracles.push_back(std::move(worker_oracle));
 		}
-		add_counter(result, context, "leaf_sweep.parallel_validation_sessions", static_cast<double>(sessions.size()));
+		add_counter(result, context, "leaf_sweep.parallel_validation_sessions", static_cast<double>(worker_oracles.size()));
 		const std::size_t batch_size = static_cast<std::size_t>(std::max(1, config_.validation_batch_size));
 		while (index < pending.size()) {
 			if (context.should_stop()) {
@@ -505,8 +536,9 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			context.executor().parallel_for(0, static_cast<int>(outcomes.size()), [&](int local_index) {
 				const int worker_id = std::max(0, current_worker_id());
 				BoxOracle& worker_oracle =
-					worker_id < static_cast<int>(sessions.size()) && sessions[static_cast<std::size_t>(worker_id)]
-						? sessions[static_cast<std::size_t>(worker_id)]->oracle()
+					worker_id < static_cast<int>(worker_oracles.size()) &&
+						  worker_oracles[static_cast<std::size_t>(worker_id)]
+						? static_cast<BoxOracle&>(*worker_oracles[static_cast<std::size_t>(worker_id)])
 						: static_cast<BoxOracle&>(oracle_);
 				const PendingNode& item = pending[batch_begin + static_cast<std::size_t>(local_index)];
 				auto& outcome = outcomes[static_cast<std::size_t>(local_index)];
@@ -568,11 +600,11 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			}
 			index = batch_end;
 		}
-		for (const auto& session : sessions) {
-			if (!session) {
+		for (const auto& worker_oracle : worker_oracles) {
+			if (!worker_oracle) {
 				continue;
 			}
-			const auto& counters = session->oracle().counters();
+			const auto& counters = worker_oracle->counters();
 			add_counter(result,
 						context,
 						"leaf_sweep.worker_oracle.node_validations",

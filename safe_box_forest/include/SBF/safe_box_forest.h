@@ -52,15 +52,17 @@ struct LeafSweepRefineConfig {
 	int leaf_max_depth = 18;
 	double obstacle_cluster_gap = 1000.0;
 	bool use_virtual_topology = true;
+	bool parallel_virtual_validation = true;
 	bool store_group_results = false;
 	int validation_batch_size = 512;
-	int leaf_threads = 1;
+	int leaf_threads = 8;
 	double leaf_timeout_ms = 0.0;
 	int deep_max_boxes = 600;
 	int deep_ffb_depth = 34;
-	int domain_seed_cap = 8;
-	int domain_success_cap = 2;
-	int domain_attempt_cap = 8;
+	int domain_seed_cap = 24;
+	int domain_success_cap = 8;
+	int domain_attempt_cap = 24;
+	bool allow_anchor_roots = true;
 	double refine_timeout_ms = 800.0;
 };
 
@@ -194,6 +196,7 @@ struct LeafSweepRefineResult {
 	int deep_domain_rejects = 0;
 	int deep_contained_rejects = 0;
 	int deep_adjacency_rejects = 0;
+	int deep_anchor_roots_added = 0;
 	double leaf_sweep_ms = 0.0;
 	double deep_refine_ms = 0.0;
 	double connector_ms = 0.0;

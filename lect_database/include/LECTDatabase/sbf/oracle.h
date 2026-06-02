@@ -352,6 +352,8 @@ public:
     const lect_database::LectDatabase* direct_external_evidence_database() const { return direct_external_evidence_database_; }
     lect_database::LectDatabase& database() { return database_; }
     const lect_database::LectDatabase& database() const { return database_; }
+    bool envelope_cache_enabled() const { return enable_envelope_cache_; }
+    void set_envelope_cache_enabled(bool enabled) { enable_envelope_cache_ = enabled; }
 
     // Public accessor exposing the canonical endpoint EvidenceKey (channel /
     // source / primary sector / payload_kind) so prewarm can build a key
@@ -413,6 +415,7 @@ private:
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;
     std::unordered_map<std::uint64_t, LinkEnvelope> envelope_cache_;
+    bool enable_envelope_cache_ = true;
     mutable std::unordered_map<OracleNodeId, std::uint64_t> visit_counts_;
     struct UnexploredLeafCacheEntry {
         OracleNodeId node = kInvalidOracleNodeId;

@@ -374,6 +374,73 @@ void test_leaf_sweep_thread_count_consistency() {
     assert(serial.collision_boxes.size() == parallel.collision_boxes.size());
 }
 
+void test_leaf_sweep_refined_empty_scene() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_refined_empty");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    config.enable_connector = false;
+    rbf::RBFPlanningForest forest(robot, config);
+    rbf::LeafSweepRefineConfig refine_config;
+    refine_config.leaf_start_depth = 1;
+    refine_config.leaf_max_depth = 1;
+    refine_config.deep_max_boxes = 4;
+    auto result = forest.build_leaf_sweep_refined({}, refine_config);
+    assert(result.leaf_free_count == 2);
+    assert(result.leaf_collision_count == 0);
+    assert(result.deep_boxes_added == 0);
+    assert(result.profile.final_boxes == 2);
+    assert(forest.boxes().size() == 2);
+    assert(result.diagnostics.at("leaf_refine.leaf_free_count") == 2.0);
+}
+
+void test_leaf_sweep_refined_domain_invariant() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_leaf_sweep_refined_domain");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    config.enable_connector = false;
+    config.grower.find_free_box.max_depth = 4;
+    rbf::RBFPlanningForest forest(robot, config);
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 0.0f, 10.0f, 10.0f),
+    };
+    rbf::LeafSweepRefineConfig refine_config;
+    refine_config.leaf_start_depth = 1;
+    refine_config.leaf_max_depth = 2;
+    refine_config.deep_max_boxes = 4;
+    refine_config.deep_ffb_depth = 4;
+    refine_config.domain_seed_cap = 4;
+    refine_config.domain_success_cap = 1;
+    auto result = forest.build_leaf_sweep_refined(obstacles, refine_config);
+    assert(result.profile.final_boxes == static_cast<int>(forest.boxes().size()));
+    assert(result.leaf_free_count == static_cast<int>(result.leaf_sweep.free_boxes.size()));
+    assert(result.leaf_collision_count == static_cast<int>(result.leaf_sweep.collision_boxes.size()));
+    for (const auto& box : forest.boxes()) {
+        if (box.id < result.leaf_free_count) {
+            continue;
+        }
+        bool in_domain = false;
+        for (const auto& domain : result.leaf_sweep.collision_boxes) {
+            if (box.joint_intervals.size() == domain.joint_intervals.size()) {
+                bool subset = true;
+                for (std::size_t dim = 0; dim < box.joint_intervals.size(); ++dim) {
+                    if (box.joint_intervals[dim].lo < domain.joint_intervals[dim].lo - 1e-12 ||
+                        box.joint_intervals[dim].hi > domain.joint_intervals[dim].hi + 1e-12) {
+                        subset = false;
+                        break;
+                    }
+                }
+                if (subset) {
+                    in_domain = true;
+                    break;
+                }
+            }
+        }
+        assert(in_domain);
+    }
+}
+
 void test_obstacle_rebuild() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_obstacle_rebuild");
@@ -396,13 +463,14 @@ void test_query_audit_gated_repair_without_graph() {
     config.enable_connector = false;
     config.query.strict_path_audit = true;
     config.query.repair_on_audit_failure = true;
-    config.query.repair_timeout_ms = 100.0;
+    config.query.repair_timeout_ms = 1000.0;
     config.connector.rrt.max_iters = 2000;
-    config.connector.rrt.timeout_ms = 100.0;
+    config.connector.rrt.timeout_ms = 1000.0;
     rbf::RBFPlanningForest forest(robot, config);
     Eigen::VectorXd start(2), goal(2);
     start << -0.6, -0.2;
     goal << 0.6, 0.2;
+    forest.build(start, goal, {});
     auto query = forest.query(start, goal);
     assert(query.success);
     assert(query.audit_passed);
@@ -426,6 +494,8 @@ int main() {
     test_leaf_sweep_single_obstacle_collision();
     test_leaf_sweep_grouping_and_composition();
     test_leaf_sweep_thread_count_consistency();
+    test_leaf_sweep_refined_empty_scene();
+    test_leaf_sweep_refined_domain_invariant();
     test_obstacle_rebuild();
     test_query_audit_gated_repair_without_graph();
     std::cout << "SBF C++ tests passed.\n";

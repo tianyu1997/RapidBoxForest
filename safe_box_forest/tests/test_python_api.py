@@ -66,6 +66,16 @@ def main():
     assert len(sweep.free_boxes) == 2
     assert len(sweep.collision_boxes) == 0
     assert len(forest.boxes()) == len(sweep.free_boxes)
+    refine_config = sbf.LeafSweepRefineConfig()
+    refine_config.leaf_start_depth = 1
+    refine_config.leaf_max_depth = 1
+    refine_config.deep_max_boxes = 2
+    refined = forest.build_leaf_sweep_refined([], refine_config, [])
+    assert refined.leaf_free_count == 2
+    assert refined.leaf_collision_count == 0
+    assert refined.deep_boxes_added == 0
+    assert refined.profile.final_boxes == len(forest.boxes())
+    assert isinstance(refined.diagnostics, dict)
     print("SBF Python smoke test passed.")
 
 

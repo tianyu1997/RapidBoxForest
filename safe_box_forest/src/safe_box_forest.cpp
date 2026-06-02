@@ -424,6 +424,7 @@ struct LeafRefineSeedCandidate {
     int parent_box_id = -1;
     int root_id = -1;
     int domain_index = -1;
+    bool priority = false;
 };
 
 struct LeafRefineDomainRank {
@@ -501,22 +502,52 @@ std::vector<LeafRefineDomainRank> rank_leaf_refine_domains(
     const std::vector<BoxNode>& live_boxes,
     const std::vector<Eigen::VectorXd>& priority_points,
     double tolerance) {
+    (void)live_boxes;
+    (void)tolerance;
     std::vector<LeafRefineDomainRank> ranks;
     ranks.reserve(domains.size());
+    std::unordered_set<int> pinned;
+    for (const auto& point : priority_points) {
+        int best_index = -1;
+        double best_volume = std::numeric_limits<double>::infinity();
+        for (int index = 0; index < static_cast<int>(domains.size()); ++index) {
+            if (pinned.find(index) != pinned.end()) {
+                continue;
+            }
+            const auto& domain = domains[static_cast<std::size_t>(index)];
+            if (point.size() != domain.n_dims() ||
+                !intervals_contain_point_strict_local(domain.joint_intervals, point, 1e-9)) {
+                continue;
+            }
+            if (domain.volume < best_volume) {
+                best_volume = domain.volume;
+                best_index = index;
+            }
+        }
+        if (best_index >= 0) {
+            const auto& domain = domains[static_cast<std::size_t>(best_index)];
+            LeafRefineDomainRank rank;
+            rank.index = best_index;
+            rank.volume = domain.volume;
+            rank.priority_distance = 0.0;
+            ranks.push_back(rank);
+            pinned.insert(best_index);
+        }
+    }
+    std::vector<LeafRefineDomainRank> remaining;
+    remaining.reserve(domains.size());
     for (int index = 0; index < static_cast<int>(domains.size()); ++index) {
+        if (pinned.find(index) != pinned.end()) {
+            continue;
+        }
         const auto& domain = domains[static_cast<std::size_t>(index)];
         LeafRefineDomainRank rank;
         rank.index = index;
         rank.volume = domain.volume;
         rank.priority_distance = box_priority_point_distance(domain, priority_points);
-        for (const auto& live : live_boxes) {
-            if (boxes_connected(domain, live, tolerance)) {
-                rank.adjacent_count += 1;
-            }
-        }
-        ranks.push_back(rank);
+        remaining.push_back(rank);
     }
-    std::sort(ranks.begin(), ranks.end(), [](const auto& lhs, const auto& rhs) {
+    std::sort(remaining.begin(), remaining.end(), [](const auto& lhs, const auto& rhs) {
         if (lhs.adjacent_count != rhs.adjacent_count) {
             return lhs.adjacent_count > rhs.adjacent_count;
         }
@@ -528,6 +559,7 @@ std::vector<LeafRefineDomainRank> rank_leaf_refine_domains(
         }
         return lhs.index < rhs.index;
     });
+    ranks.insert(ranks.end(), remaining.begin(), remaining.end());
     return ranks;
 }
 
@@ -551,16 +583,20 @@ bool append_leaf_refine_seed(std::vector<LeafRefineSeedCandidate>& seeds,
                              int root_id,
                              int limit,
                              double epsilon,
-                             double dedup_tolerance) {
+                             double dedup_tolerance,
+                             bool priority = false) {
     if (static_cast<int>(seeds.size()) >= limit) {
         return false;
     }
-    Eigen::VectorXd seed = clamped_domain_seed(domain, raw_seed, epsilon);
+    Eigen::VectorXd seed = priority && raw_seed.size() == domain.n_dims() &&
+            intervals_contain_point_strict_local(domain.joint_intervals, raw_seed, 1e-12)
+        ? Eigen::VectorXd(raw_seed)
+        : clamped_domain_seed(domain, raw_seed, epsilon);
     if (point_covered_by_existing_box_local(live_boxes, seed) ||
         leaf_refine_seed_near_existing(seeds, seed, dedup_tolerance)) {
         return false;
     }
-    seeds.push_back(LeafRefineSeedCandidate{std::move(seed), parent_box_id, root_id, domain_index});
+    seeds.push_back(LeafRefineSeedCandidate{std::move(seed), parent_box_id, root_id, domain_index, priority});
     return true;
 }
 
@@ -590,6 +626,7 @@ std::vector<LeafRefineSeedCandidate> make_leaf_refine_domain_seeds(
     const BoxNode& domain,
     int domain_index,
     const std::vector<BoxNode>& live_boxes,
+    const std::vector<Eigen::VectorXd>& priority_points,
     int limit,
     double adjacency_tolerance,
     double boundary_epsilon) {
@@ -600,6 +637,26 @@ std::vector<LeafRefineSeedCandidate> make_leaf_refine_domain_seeds(
     seeds.reserve(static_cast<std::size_t>(std::min(limit, 16)));
     const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
     const double dedup_tolerance = std::max(1e-9, 4.0 * epsilon);
+    for (const auto& point : priority_points) {
+        if (static_cast<int>(seeds.size()) >= limit) {
+            return seeds;
+        }
+        if (point.size() != domain.n_dims() ||
+            !intervals_contain_point_strict_local(domain.joint_intervals, point, adjacency_tolerance)) {
+            continue;
+        }
+        append_leaf_refine_seed(seeds,
+                                live_boxes,
+                                domain,
+                                domain_index,
+                                point,
+                                -1,
+                                domain.root_id >= 0 ? domain.root_id : domain.id,
+                                limit,
+                                epsilon,
+                                dedup_tolerance,
+                                true);
+    }
     for (const auto& live : live_boxes) {
         if (!boxes_connected(domain, live, adjacency_tolerance)) {
             continue;
@@ -680,6 +737,42 @@ bool leaf_refine_has_adjacency(const std::vector<BoxNode>& boxes,
         }
     }
     return false;
+}
+
+bool append_leaf_refine_target_step_seed(std::vector<LeafRefineSeedCandidate>& seeds,
+                                         const std::vector<BoxNode>& live_boxes,
+                                         const BoxNode& domain,
+                                         int domain_index,
+                                         const BoxNode& parent,
+                                         const Eigen::VectorXd& target,
+                                         int limit,
+                                         double epsilon,
+                                         double dedup_tolerance) {
+    if (target.size() != domain.n_dims()) {
+        return false;
+    }
+    Eigen::VectorXd seed = target;
+    for (int dim = 0; dim < domain.n_dims(); ++dim) {
+        const auto& interval = parent.joint_intervals[static_cast<std::size_t>(dim)];
+        if (target[dim] < interval.lo) {
+            seed[dim] = interval.lo - epsilon;
+        } else if (target[dim] > interval.hi) {
+            seed[dim] = interval.hi + epsilon;
+        } else {
+            seed[dim] = target[dim];
+        }
+    }
+    return append_leaf_refine_seed(seeds,
+                                   live_boxes,
+                                   domain,
+                                   domain_index,
+                                   seed,
+                                   parent.id,
+                                   parent.root_id >= 0 ? parent.root_id : parent.id,
+                                   limit,
+                                   epsilon,
+                                   dedup_tolerance,
+                                   false);
 }
 
 int containing_domain_index(const std::vector<BoxNode>& domains,
@@ -1780,7 +1873,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     leaf_config.timeout_ms = refine_config.leaf_timeout_ms;
     leaf_config.store_group_results = refine_config.store_group_results;
     leaf_config.use_virtual_topology = refine_config.use_virtual_topology;
-    leaf_config.parallel_virtual_validation = false;
+    leaf_config.parallel_virtual_validation = refine_config.parallel_virtual_validation;
 
     out.leaf_sweep = build_leaf_sweep(obstacles,
                                       refine_config.leaf_start_depth,
@@ -1798,7 +1891,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     StageContext refine_context = StageContext::from_runtime(config_.runtime, refine_deadline);
     FindFreeBoxOptions refine_options = config_.grower.find_free_box;
     refine_options.max_depth = refine_config.deep_ffb_depth;
-    refine_options.reject_seed_collision = true;
+    refine_options.reject_seed_collision = false;
 
     const double adjacency_tolerance = config_.query.adjacency_tolerance;
     const double boundary_epsilon = std::max(1e-10, config_.grower.boundary_epsilon);
@@ -1819,14 +1912,50 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
             continue;
         }
         const BoxNode& domain = out.leaf_sweep.collision_boxes[static_cast<std::size_t>(rank.index)];
-        const auto seeds = make_leaf_refine_domain_seeds(domain,
-                                                         rank.index,
-                                                         boxes_,
-                                                         std::max(0, refine_config.domain_seed_cap),
-                                                         adjacency_tolerance,
-                                                         boundary_epsilon);
         int attempts_in_domain = 0;
-        for (const auto& candidate : seeds) {
+        while (!refine_context.should_stop() &&
+               out.deep_boxes_added < std::max(0, refine_config.deep_max_boxes) &&
+               attempts_in_domain < std::max(0, refine_config.domain_attempt_cap) &&
+               domain_successes[rank.index] < std::max(0, refine_config.domain_success_cap)) {
+            auto seeds = make_leaf_refine_domain_seeds(domain,
+                                                       rank.index,
+                                                       boxes_,
+                                                       priority_points,
+                                                       std::max(0, refine_config.domain_seed_cap),
+                                                       adjacency_tolerance,
+                                                       boundary_epsilon);
+            const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
+            const double dedup_tolerance = std::max(1e-9, 4.0 * epsilon);
+            for (const auto& parent : boxes_) {
+                if (!boxes_connected(domain, parent, adjacency_tolerance) &&
+                    !intervals_overlap_local(parent.joint_intervals, domain.joint_intervals, adjacency_tolerance)) {
+                    continue;
+                }
+                for (const auto& target : priority_points) {
+                    if (static_cast<int>(seeds.size()) >= std::max(0, refine_config.domain_seed_cap)) {
+                        break;
+                    }
+                    if (target.size() != domain.n_dims() ||
+                        !intervals_contain_point_strict_local(domain.joint_intervals, target, adjacency_tolerance) ||
+                        parent.contains(target, adjacency_tolerance)) {
+                        continue;
+                    }
+                    append_leaf_refine_target_step_seed(seeds,
+                                                        boxes_,
+                                                        domain,
+                                                        rank.index,
+                                                        parent,
+                                                        target,
+                                                        std::max(0, refine_config.domain_seed_cap),
+                                                        epsilon,
+                                                        dedup_tolerance);
+                }
+                if (static_cast<int>(seeds.size()) >= std::max(0, refine_config.domain_seed_cap)) {
+                    break;
+                }
+            }
+            bool committed_in_round = false;
+            for (const auto& candidate : seeds) {
             if (refine_context.should_stop() ||
                 out.deep_boxes_added >= std::max(0, refine_config.deep_max_boxes) ||
                 attempts_in_domain >= std::max(0, refine_config.domain_attempt_cap) ||
@@ -1886,13 +2015,18 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
                     adjacent_parent = -1;
                 }
             }
-            if (adjacent_parent < 0 &&
-                !leaf_refine_has_adjacency(boxes_, box, adjacency_tolerance, &adjacent_parent)) {
-                out.deep_adjacency_rejects += 1;
-                continue;
-            }
-            box.parent_box_id = adjacent_parent;
-            if (box.root_id < 0 && adjacent_parent >= 0) {
+            const bool adjacent_to_forest = adjacent_parent >= 0 ||
+                leaf_refine_has_adjacency(boxes_, box, adjacency_tolerance, &adjacent_parent);
+            if (!adjacent_to_forest) {
+                if (!candidate.priority || !refine_config.allow_anchor_roots) {
+                    out.deep_adjacency_rejects += 1;
+                    continue;
+                }
+                box.parent_box_id = -1;
+                box.root_id = box.id;
+                out.deep_anchor_roots_added += 1;
+            } else {
+                box.parent_box_id = adjacent_parent;
                 const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
                 box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : adjacent_parent;
             }
@@ -1901,6 +2035,12 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
             raw_boxes_.push_back(box);
             domain_successes[rank.index] += 1;
             out.deep_boxes_added += 1;
+            committed_in_round = true;
+            break;
+            }
+            if (!committed_in_round) {
+                break;
+            }
         }
     }
     out.deep_refine_ms = std::chrono::duration<double, std::milli>(Clock::now() - refine_start).count();
@@ -1964,6 +2104,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.diagnostics["leaf_refine.deep_domain_rejects"] = static_cast<double>(out.deep_domain_rejects);
     out.profile.diagnostics["leaf_refine.deep_contained_rejects"] = static_cast<double>(out.deep_contained_rejects);
     out.profile.diagnostics["leaf_refine.deep_adjacency_rejects"] = static_cast<double>(out.deep_adjacency_rejects);
+    out.profile.diagnostics["leaf_refine.deep_anchor_roots_added"] = static_cast<double>(out.deep_anchor_roots_added);
     out.profile.diagnostics["leaf_refine.connector_ms"] = out.connector_ms;
     out.profile.diagnostics["leaf_refine.total_ms"] = out.total_ms;
     out.diagnostics = out.profile.diagnostics;
@@ -2493,9 +2634,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     if (!result.success && query_config.strict_path_audit && query_config.repair_on_audit_failure) {
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, query_config);
         const auto repair_t0 = Clock::now();
-        RRTConnectConfig repair_config = oracle_
-            ? with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal)
-            : config_.connector.rrt;
+        RRTConnectConfig repair_config = config_.connector.rrt;
         repair_config.max_iters = std::max(repair_config.max_iters, query_config.repair_rrt_max_iters);
         if (query_config.repair_timeout_ms > 0.0) {
             repair_config.timeout_ms = query_config.repair_timeout_ms;

@@ -782,6 +782,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("leaf_max_depth", &rbf::LeafSweepRefineConfig::leaf_max_depth)
         .def_readwrite("obstacle_cluster_gap", &rbf::LeafSweepRefineConfig::obstacle_cluster_gap)
         .def_readwrite("use_virtual_topology", &rbf::LeafSweepRefineConfig::use_virtual_topology)
+        .def_readwrite("parallel_virtual_validation", &rbf::LeafSweepRefineConfig::parallel_virtual_validation)
         .def_readwrite("store_group_results", &rbf::LeafSweepRefineConfig::store_group_results)
         .def_readwrite("validation_batch_size", &rbf::LeafSweepRefineConfig::validation_batch_size)
         .def_readwrite("leaf_threads", &rbf::LeafSweepRefineConfig::leaf_threads)
@@ -791,6 +792,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("domain_seed_cap", &rbf::LeafSweepRefineConfig::domain_seed_cap)
         .def_readwrite("domain_success_cap", &rbf::LeafSweepRefineConfig::domain_success_cap)
         .def_readwrite("domain_attempt_cap", &rbf::LeafSweepRefineConfig::domain_attempt_cap)
+        .def_readwrite("allow_anchor_roots", &rbf::LeafSweepRefineConfig::allow_anchor_roots)
         .def_readwrite("refine_timeout_ms", &rbf::LeafSweepRefineConfig::refine_timeout_ms);
 
     py::class_<rbf::LeafSweepRefineResult>(module, "LeafSweepRefineResult")
@@ -806,6 +808,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("deep_domain_rejects", &rbf::LeafSweepRefineResult::deep_domain_rejects)
         .def_readonly("deep_contained_rejects", &rbf::LeafSweepRefineResult::deep_contained_rejects)
         .def_readonly("deep_adjacency_rejects", &rbf::LeafSweepRefineResult::deep_adjacency_rejects)
+        .def_readonly("deep_anchor_roots_added", &rbf::LeafSweepRefineResult::deep_anchor_roots_added)
         .def_readonly("leaf_sweep_ms", &rbf::LeafSweepRefineResult::leaf_sweep_ms)
         .def_readonly("deep_refine_ms", &rbf::LeafSweepRefineResult::deep_refine_ms)
         .def_readonly("connector_ms", &rbf::LeafSweepRefineResult::connector_ms)
@@ -1218,6 +1221,19 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              py::arg("start_depth"),
              py::arg("max_depth"),
              py::arg("config") = rbf::LeafSweepConfig{})
+        .def("build_leaf_sweep_refined",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<rbf::Obstacle>& obstacles,
+                const rbf::LeafSweepRefineConfig& config,
+                const std::vector<std::vector<double>>& priority_points) {
+                 return forest.build_leaf_sweep_refined(
+                     obstacles,
+                     config,
+                     eigen_vectors_from_lists(priority_points));
+             },
+             py::arg("obstacles"),
+             py::arg("config") = rbf::LeafSweepRefineConfig{},
+             py::arg("priority_points") = std::vector<std::vector<double>>{})
         .def("oracle_counters",
              [](const rbf::RBFPlanningForest& forest) {
                  const rbf::OracleCounters* counters = forest.oracle_counters();
