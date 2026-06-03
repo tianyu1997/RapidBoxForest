@@ -226,6 +226,9 @@ public:
 	RrtGrower(BoxOracle& oracle, GrowerConfig config = {});
 	GrowerResult grow(const std::vector<Eigen::VectorXd>& seeds) override;
 	GrowerResult grow(const std::vector<Eigen::VectorXd>& seeds, StageContext& context) override;
+	GrowerResult grow_from_existing(const std::vector<BoxNode>& initial_boxes,
+									const std::vector<Eigen::VectorXd>& seeds,
+									StageContext& context);
 
 private:
 	void open_trace();
@@ -395,6 +398,7 @@ private:
 	BoxOracle& oracle_;
 	GrowerConfig config_;
 	std::mt19937 rng_;
+	std::vector<BoxNode> initial_boxes_;
 	std::vector<Eigen::VectorXd> random_anchor_targets_;
 	int next_box_id_ = 0;
 	mutable std::mutex trace_mutex_;

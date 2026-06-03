@@ -34,9 +34,18 @@ from experiments.common.anytime_defaults import (  # noqa: E402
     UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS,
     UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB,
     UNIFIED_SBF_SAMPLING_UNIFORM_PROB,
+    UNIFIED_RANDOM_SBF_ANCHOR_TARGET_CANDIDATE_COUNT,
+    UNIFIED_RANDOM_SBF_ANCHOR_TARGET_MAX_LCA_DEPTH,
+    UNIFIED_RANDOM_SBF_ANCHOR_WAVE_TARGETS_PER_BATCH,
+    UNIFIED_RANDOM_SBF_EXTRA_RANDOM_ROOTS,
+    UNIFIED_RANDOM_SBF_RANDOM_ANCHOR_TARGETS,
+    UNIFIED_RANDOM_SBF_ROOT_SEED_CANDIDATE_COUNT,
+    UNIFIED_RANDOM_SBF_ROOT_SEED_MAX_LCA_DEPTH,
+    UNIFIED_RANDOM_SBF_ROOT_SEED_MIN_NORMALIZED_LINF,
     csv_floats,
     csv_ints,
     legacy_stage_spec,
+    random_scene_stage_spec,
 )
 
 
@@ -316,6 +325,11 @@ def build_legacy_shelf_anytime_command(
     methods: str,
     threads: int,
     seeds: int,
+    prm_build_grid_s: str = "2,5,10,20,40,80",
+    prm_query_budget_s: float = 2.0,
+    bitstar_timeout_s: float = 120.0,
+    bitstar_checkpoint_interval_s: float = 2.0,
+    rrt_timeout_ms: float = 120000.0,
 ) -> list[str]:
     return [
         python_executable,
@@ -328,6 +342,16 @@ def build_legacy_shelf_anytime_command(
         str(max(1, int(threads))),
         "--task-batch-size",
         str(max(1, int(threads))),
+        "--prm-build-grid-s",
+        str(prm_build_grid_s),
+        "--prm-query-budget-s",
+        str(float(prm_query_budget_s)),
+        "--bitstar-timeout-s",
+        str(float(bitstar_timeout_s)),
+        "--bitstar-checkpoint-interval-s",
+        str(float(bitstar_checkpoint_interval_s)),
+        "--rrt-timeout-ms",
+        str(float(rrt_timeout_ms)),
         "--segment-step",
         str(UNIFIED_SBF_ANYTIME_AUDIT_SEGMENT_STEP),
         "--audit-segment-step",
@@ -345,8 +369,15 @@ def build_shelf_iris_anytime_command(
     out_json: Path,
     seeds: int,
     threads: int,
+    gcs_repo: Path | None = None,
+    budget_s: float | None = None,
+    stage_region_counts: str | None = None,
+    iteration_limit: int | None = None,
+    query_time_limit_s: float | None = None,
+    rounding_max_paths: int | None = None,
+    rounding_max_trials: int | None = None,
 ) -> list[str]:
-    return [
+    command = [
         python_executable,
         str(SHELF_IRIS_ANYTIME),
         "--seeds",
@@ -360,6 +391,21 @@ def build_shelf_iris_anytime_command(
         "--out-json",
         str(out_json),
     ]
+    if gcs_repo is not None:
+        command.extend(["--gcs-repo", str(gcs_repo)])
+    if budget_s is not None:
+        command.extend(["--budget-s", str(float(budget_s))])
+    if stage_region_counts is not None:
+        command.extend(["--stage-region-counts", str(stage_region_counts)])
+    if iteration_limit is not None:
+        command.extend(["--iteration-limit", str(int(iteration_limit))])
+    if query_time_limit_s is not None:
+        command.extend(["--query-time-limit-s", str(float(query_time_limit_s))])
+    if rounding_max_paths is not None:
+        command.extend(["--rounding-max-paths", str(int(rounding_max_paths))])
+    if rounding_max_trials is not None:
+        command.extend(["--rounding-max-trials", str(int(rounding_max_trials))])
+    return command
 
 
 def build_random_anytime_command(
@@ -377,6 +423,14 @@ def build_random_anytime_command(
     cache_root: Path,
     cache_run_id: str,
     clear_cache: bool,
+    prewarm_depth: int = 20,
+    prm_build_grid_s: str = "2,5,10,20,40,80",
+    prm_query_budget_s: float = 1.0,
+    bitstar_timeout_s: float = 120.0,
+    bitstar_checkpoint_interval_s: float = 2.0,
+    rrt_timeout_ms: float = 120000.0,
+    scene_catalog: Path | None = None,
+    scene_catalog_mode: str = "auto",
 ) -> list[str]:
     command = [
         python_executable,
@@ -395,14 +449,44 @@ def build_random_anytime_command(
         str(baseline_methods),
         "--baseline-trials",
         str(max(1, int(trials))),
+        "--prm-build-grid-s",
+        str(prm_build_grid_s),
+        "--prm-query-budget-s",
+        str(float(prm_query_budget_s)),
+        "--bitstar-timeout-s",
+        str(float(bitstar_timeout_s)),
+        "--bitstar-checkpoint-interval-s",
+        str(float(bitstar_checkpoint_interval_s)),
+        "--rrt-timeout-ms",
+        str(float(rrt_timeout_ms)),
+        "--grower-mode",
+        "rrt",
         "--threads",
         str(max(1, int(threads))),
         "--task-batch-size",
         str(max(1, int(threads))),
         "--sbf-stages",
-        legacy_stage_spec(),
+        random_scene_stage_spec(),
+        "--sbf-build-backend",
+        "leaf_refine",
+        "--leaf-start-depth",
+        "8",
+        "--leaf-max-depth",
+        "14",
+        "--leaf-threads",
+        str(max(1, int(threads))),
+        "--leaf-validation-batch-size",
+        "512",
+        "--leaf-obstacle-cluster-gap",
+        "1000.0",
+        "--leaf-virtual-topology",
+        "--leaf-parallel-virtual-validation",
+        "--no-leaf-store-group-results",
         "--cache-run-id",
         str(cache_run_id),
+        "--random-prewarm-depth",
+        str(max(1, int(prewarm_depth))),
+        "--sbf-use-external-prewarm",
         "--rbf-max-depth",
         str(UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH),
         "--ffb-depth",
@@ -413,6 +497,36 @@ def build_random_anytime_command(
         str(UNIFIED_SBF_ANYTIME_RBF_MAX_DEPTH),
         "--rbf-ffb-start-depth",
         str(UNIFIED_SBF_ANYTIME_FFB_START_DEPTH),
+        "--extra-random-roots",
+        str(UNIFIED_RANDOM_SBF_EXTRA_RANDOM_ROOTS),
+        "--root-seed-candidate-count",
+        str(UNIFIED_RANDOM_SBF_ROOT_SEED_CANDIDATE_COUNT),
+        "--root-seed-min-normalized-linf",
+        str(UNIFIED_RANDOM_SBF_ROOT_SEED_MIN_NORMALIZED_LINF),
+        "--root-seed-max-lca-depth",
+        str(UNIFIED_RANDOM_SBF_ROOT_SEED_MAX_LCA_DEPTH),
+        "--random-anchor-targets",
+        str(UNIFIED_RANDOM_SBF_RANDOM_ANCHOR_TARGETS),
+        "--anchor-target-candidate-count",
+        str(UNIFIED_RANDOM_SBF_ANCHOR_TARGET_CANDIDATE_COUNT),
+        "--anchor-target-max-lca-depth",
+        str(UNIFIED_RANDOM_SBF_ANCHOR_TARGET_MAX_LCA_DEPTH),
+        "--anchor-target-prob",
+        str(UNIFIED_SBF_SAMPLING_ANCHOR_TARGET_PROB),
+        "--anchor-wave-targets-per-batch",
+        str(UNIFIED_RANDOM_SBF_ANCHOR_WAVE_TARGETS_PER_BATCH),
+        "--fixed-anchor-target-preset",
+        "none",
+        "--component-connect-prob",
+        str(UNIFIED_SBF_SAMPLING_COMPONENT_CONNECT_PROB),
+        "--rrt-goal-bias",
+        str(UNIFIED_SBF_SAMPLING_RRT_GOAL_BIAS),
+        "--intertree-goal-bias",
+        str(UNIFIED_SBF_SAMPLING_INTERTREE_GOAL_BIAS),
+        "--unexplored-prob",
+        str(UNIFIED_SBF_SAMPLING_UNEXPLORED_PROB),
+        "--sample-uniform-prob",
+        str(UNIFIED_SBF_SAMPLING_UNIFORM_PROB),
         "--rbf-canonical-cache",
         "--segment-step",
         str(UNIFIED_SBF_ANYTIME_AUDIT_SEGMENT_STEP),
@@ -427,6 +541,15 @@ def build_random_anytime_command(
         "--out-json",
         str(out_json),
     ]
+    command.append(
+        "--sample-categorical-allocation"
+        if bool(UNIFIED_SBF_SAMPLING_CATEGORICAL_ALLOCATION)
+        else "--no-sample-categorical-allocation"
+    )
+    if scene_catalog is not None:
+        command.extend(["--scene-catalog", str(scene_catalog)])
+    if scene_catalog_mode:
+        command.extend(["--scene-catalog-mode", str(scene_catalog_mode)])
     command.append("--clear-cache" if clear_cache else "--no-clear-cache")
     return command
 
@@ -441,8 +564,14 @@ def build_random_iris_anytime_command(
     scene_profile: str,
     threads: int,
     trials: int,
+    budget_s: float | None = None,
+    stage_region_counts: str | None = None,
+    iteration_limit: int | None = None,
+    query_time_limit_s: float | None = None,
+    rounding_max_paths: int | None = None,
+    rounding_max_trials: int | None = None,
 ) -> list[str]:
-    return [
+    command = [
         python_executable,
         str(RANDOM_IRIS_ANYTIME),
         "--robots",
@@ -466,3 +595,16 @@ def build_random_iris_anytime_command(
         "--out-json",
         str(out_json),
     ]
+    if budget_s is not None:
+        command.extend(["--budget-s", str(float(budget_s))])
+    if stage_region_counts is not None:
+        command.extend(["--stage-region-counts", str(stage_region_counts)])
+    if iteration_limit is not None:
+        command.extend(["--iteration-limit", str(int(iteration_limit))])
+    if query_time_limit_s is not None:
+        command.extend(["--query-time-limit-s", str(float(query_time_limit_s))])
+    if rounding_max_paths is not None:
+        command.extend(["--rounding-max-paths", str(int(rounding_max_paths))])
+    if rounding_max_trials is not None:
+        command.extend(["--rounding-max-trials", str(int(rounding_max_trials))])
+    return command

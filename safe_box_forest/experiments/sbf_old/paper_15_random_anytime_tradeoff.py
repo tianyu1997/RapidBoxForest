@@ -24,8 +24,19 @@ from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_anytime_tradeoff 
     update_incumbents,
 )
 from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_rrt_connect import segment_free  # noqa: E402
-from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, add_common_sbf_args, configure_standalone_sbf, query_result_payload, sbf, write_json  # noqa: E402
-from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import DEFAULT_RANDOM_DIFFICULTIES, DEFAULT_RANDOM_ROBOTS, DEFAULT_RANDOM_SCENE_SEEDS, ENDPOINT_CLEARANCE_MARGIN_M, FIXED_ROBOT_CLEARANCE_MARGIN_M, SEGMENT_RESOLUTION, make_random_scene, make_robot, scene_profile_requires_balanced_probe  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_sbf_config import ROOT, RBF_LIFELONG_PRESET, add_common_sbf_args, configure_external_evidence_reuse, configure_standalone_sbf, query_result_payload, sbf, write_json  # noqa: E402
+from RapidBoxForest.safe_box_forest.experiments.sbf_old.common_scene_sampling import (  # noqa: E402
+    DEFAULT_RANDOM_DIFFICULTIES,
+    DEFAULT_RANDOM_ROBOTS,
+    DEFAULT_RANDOM_SCENE_SEEDS,
+    ENDPOINT_CLEARANCE_MARGIN_M,
+    FIXED_ROBOT_CLEARANCE_MARGIN_M,
+    SEGMENT_RESOLUTION,
+    SceneSpec,
+    make_random_scene,
+    make_robot,
+    scene_profile_requires_balanced_probe,
+)  # noqa: E402
 
 
 DEFAULT_SBF_STAGES = "seed:2:0:0:2:48,fast:16:0:0:2500:80,balanced:64:256:450:5000:120,quality:128:1024:1500:8000:160,high:512:2000:5000:20000:200"
@@ -44,6 +55,182 @@ LEGACY_SBF_STAGE_SEED_OFFSETS = {
 
 def parse_csv(raw: str) -> list[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def _obstacle_bounds_from_obj(obstacle: Any) -> list[float]:
+    if hasattr(obstacle, "bounds"):
+        return [float(v) for v in list(getattr(obstacle, "bounds"))]
+    if hasattr(obstacle, "__iter__"):
+        values = list(obstacle)
+        if len(values) >= 6:
+            return [float(v) for v in values[:6]]
+    raise TypeError("unsupported obstacle representation")
+
+
+def _obstacle_from_bounds(item: Any) -> Any:
+    if not isinstance(item, (list, tuple)) or len(item) < 6:
+        raise ValueError(f"invalid obstacle record: {item!r}")
+    return sbf.Obstacle(*[float(v) for v in item[:6]])
+
+
+def _scene_cache_key(robot_name: str, difficulty: str, scene_seed: int) -> str:
+    return f"{robot_name}:{difficulty}:{int(scene_seed)}"
+
+
+def scene_to_record(
+    *,
+    robot_name: str,
+    difficulty: str,
+    scene_seed: int,
+    scene: Any,
+    scene_profile: str,
+    seed_base: int,
+) -> dict[str, Any]:
+    return {
+        "schema": 1,
+        "robot_name": str(robot_name),
+        "difficulty": str(difficulty),
+        "scene_seed": int(scene_seed),
+        "scene_profile": str(scene_profile),
+        "seed_base": int(seed_base),
+        "scene_valid": True,
+        "start": [float(value) for value in list(scene.start)],
+        "goal": [float(value) for value in list(scene.goal)],
+        "obstacles": [_obstacle_bounds_from_obj(obstacle) for obstacle in list(scene.obstacles)],
+        "endpoint_clearance_margin_m": float(scene.endpoint_clearance_margin_m),
+        "fixed_robot_clearance_margin_m": float(scene.fixed_robot_clearance_margin_m),
+        "direct_segment_blocked": bool(scene.direct_segment_blocked),
+        "segment_resolution": int(scene.segment_resolution),
+        "robot_joint_limits_hash": int(hash(str(scene.robot_name))),
+    }
+
+
+def scene_from_record(record: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> Any:
+    if not bool(record.get("scene_valid", False)):
+        raise RuntimeError(f"scene cache entry invalid for {robot_name}:{difficulty}:{scene_seed}")
+    return SceneSpec(
+        robot_name=str(record.get("robot_name", robot_name)),
+        difficulty=str(record.get("difficulty", difficulty)),
+        obstacles=[_obstacle_from_bounds(bounds) for bounds in list(record.get("obstacles", []))],
+        start=[float(value) for value in list(record.get("start", []))],
+        goal=[float(value) for value in list(record.get("goal", []))],
+        endpoint_clearance_margin_m=float(record.get("endpoint_clearance_margin_m", ENDPOINT_CLEARANCE_MARGIN_M)),
+        fixed_robot_clearance_margin_m=float(record.get("fixed_robot_clearance_margin_m", FIXED_ROBOT_CLEARANCE_MARGIN_M)),
+        direct_segment_blocked=bool(record.get("direct_segment_blocked", True)),
+        segment_resolution=int(record.get("segment_resolution", SEGMENT_RESOLUTION)),
+    )
+
+
+def load_or_build_scene_catalog(
+    *,
+    scene_catalog_path: Path | None,
+    robots: list[str],
+    difficulties: list[str],
+    scene_seeds: int,
+    scene_profile: str,
+    seed_base: int,
+    cache_mode: str = "auto",
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    requested = int(scene_seeds)
+    keys = [
+        _scene_cache_key(robot, difficulty, int(seed))
+        for robot in robots
+        for difficulty in difficulties
+        for seed in range(max(1, requested))
+    ]
+    if scene_catalog_path is None:
+        cache: dict[str, Any] = {}
+        for key in keys:
+            robot_name, difficulty, scene_seed = key.split(":")
+            scene = make_random_scene(
+                robot_name,
+                difficulty,
+                int(seed_base) + 1009 * int(scene_seed),
+                scene_profile=scene_profile,
+            )
+            cache[key] = scene_to_record(
+                robot_name=robot_name,
+                difficulty=difficulty,
+                scene_seed=int(scene_seed),
+                scene=scene,
+                scene_profile=scene_profile,
+                seed_base=int(seed_base),
+            )
+        return cache, {
+            "schema": 1,
+            "mode": "generate_no_cache",
+            "scene_profile": str(scene_profile),
+            "seed_base": int(seed_base),
+            "request": {"robots": robots, "difficulties": difficulties, "scene_seeds": int(requested)},
+            "records": list(cache.values()),
+            "record_count": len(cache),
+        }
+
+    existing: dict[str, dict[str, Any]] = {}
+    catalog_path = Path(scene_catalog_path)
+    for _ in range(2):
+        if cache_mode == "generate":
+            break
+        if catalog_path.exists():
+            payload = json.loads(catalog_path.read_text(encoding="utf-8", errors="replace"))
+            if (
+                str(payload.get("scene_profile", "")) != str(scene_profile)
+                or int(payload.get("seed_base", -1)) != int(seed_base)
+            ):
+                break
+            if int(payload.get("schema", -1)) != 1:
+                break
+            for item in payload.get("records", []):
+                if not isinstance(item, dict):
+                    continue
+                record_key = _scene_cache_key(
+                    str(item.get("robot_name")),
+                    str(item.get("difficulty")),
+                    int(item.get("scene_seed", -1)),
+                )
+                existing[record_key] = item
+            if len(existing) == len(list(keys)):
+                return existing, payload
+            if cache_mode == "reuse":
+                raise RuntimeError(
+                    f"scene catalog reuse requested but incomplete/invalid: missing {len(keys) - len(existing)} entries from {catalog_path}"
+                )
+            break
+    # regenerate (auto mode or missing incomplete cache)
+    generated: dict[str, Any] = {}
+    for key in keys:
+        robot_name, difficulty, scene_seed = key.split(":")
+        if cache_mode != "generate" and key in existing:
+            generated[key] = existing[key]
+            continue
+        if cache_mode == "reuse":
+            raise RuntimeError(f"scene catalog reuse missing entry {key} in {catalog_path}")
+        scene = make_random_scene(
+            robot_name,
+            difficulty,
+            int(seed_base) + 1009 * int(scene_seed),
+            scene_profile=scene_profile,
+        )
+        generated[key] = scene_to_record(
+            robot_name=robot_name,
+            difficulty=difficulty,
+            scene_seed=int(scene_seed),
+            scene=scene,
+            scene_profile=scene_profile,
+            seed_base=int(seed_base),
+        )
+    payload = {
+        "schema": 1,
+        "mode": "reused" if cache_mode == "reuse" else "auto_regen",
+        "scene_profile": str(scene_profile),
+        "seed_base": int(seed_base),
+        "request": {"robots": robots, "difficulties": difficulties, "scene_seeds": int(requested)},
+        "records": list(generated.values()),
+        "record_count": len(generated),
+    }
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    catalog_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return generated, payload
 
 
 def parse_sbf_stages(raw: str) -> list[dict[str, Any]]:
@@ -99,11 +286,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-root", type=Path, default=ROOT / "outputs" / "paper" / "lect_cache_random_anytime")
     parser.add_argument("--cache-run-id", default="tro2026_random_anytime")
     parser.add_argument("--sbf-cache-scope", choices=["scene_stage", "disjoint_warm"], default="scene_stage")
+    parser.add_argument("--random-prewarm-depth", type=int, default=20)
+    parser.add_argument("--sbf-use-external-prewarm", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--clear-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prewarm-scene-seeds", type=int, default=0)
     parser.add_argument("--prewarm-seed-base", type=int, default=20270504)
     parser.add_argument("--segment-step", type=float, default=0.01)
-    parser.add_argument("--audit-segment-step", type=float, default=0.01, help="Independent dense post-hoc path audit step in joint-space radians. Use <=0 to reuse --segment-step.")
     parser.add_argument("--prm-build-grid-s", default=DEFAULT_PRM_BUILD_GRID)
     parser.add_argument("--prm-query-budget-s", type=float, default=1.0)
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=64)
@@ -125,6 +313,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sbf-query-shortcut-passes", type=int, default=3)
     parser.add_argument("--sbf-query-shortcut-samples", type=int, default=32)
     parser.add_argument("--sbf-stage-restarts", type=int, default=1, help="Independent SBF build/query restarts per stage; all time is charged and the shortest audited stage path is retained.")
+    parser.add_argument("--sbf-build-backend", choices=["coverage", "leaf_refine"], default="leaf_refine")
+    parser.add_argument("--leaf-start-depth", type=int, default=8)
+    parser.add_argument("--leaf-max-depth", type=int, default=14)
+    parser.add_argument("--leaf-obstacle-cluster-gap", type=float, default=1000.0)
+    parser.add_argument("--leaf-virtual-topology", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--leaf-parallel-virtual-validation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--leaf-store-group-results", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--leaf-validation-batch-size", type=int, default=512)
+    parser.add_argument("--leaf-threads", type=int, default=0)
+    parser.add_argument("--leaf-timeout-ms", type=float, default=0.0)
+    parser.add_argument("--leaf-domain-seed-cap", type=int, default=8)
+    parser.add_argument("--leaf-domain-success-cap", type=int, default=2)
+    parser.add_argument("--leaf-domain-attempt-cap", type=int, default=8)
+    parser.add_argument("--leaf-allow-anchor-roots", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--sbf-bridge-failed-queries", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--sbf-bridge-repaired-queries", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--sbf-post-audit-local-repair", action=argparse.BooleanOptionalAction, default=True)
@@ -132,6 +334,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sbf-post-audit-repair-trials", type=int, default=4)
     parser.add_argument("--sbf-post-audit-repair-simplify-time-s", type=float, default=0.02)
     parser.add_argument("--sbf-corridor-refine", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--scene-catalog", type=Path, default=None)
+    parser.add_argument(
+        "--scene-catalog-mode",
+        choices=["auto", "generate", "reuse"],
+        default="auto",
+        help="auto=load matching catalog if possible, otherwise regenerate; reuse=only load existing matching catalog; generate=always regenerate.",
+    )
     parser.add_argument("--sbf-corridor-refine-budget-ms", type=float, default=250.0)
     parser.add_argument("--sbf-corridor-refine-max-boxes", type=int, default=48)
     parser.add_argument("--sbf-corridor-refine-boxes-per-query", type=int, default=12)
@@ -348,6 +557,17 @@ def apply_stage(args: argparse.Namespace, stage: dict[str, Any]) -> argparse.Nam
     args.quality_min_connected_boxes = int(stage["quality_min_connected_boxes"])
     args.post_connect_extra_boxes = int(stage["post_connect_extra_boxes"])
     args.post_connect_time_budget_ms = float(stage["post_connect_time_budget_ms"])
+    if str(stage.get("stage_id", "")) == "seed":
+        # The random-scene seed row is a minimal endpoint-certificate design
+        # point. Random roots/anchors are useful for later coverage stages, but
+        # generating them here adds hundreds of collision checks before the
+        # grower can stop after the start/goal boxes.
+        args.extra_random_roots = 0
+        args.random_anchor_targets = 0
+        args.anchor_target_prob = 0.0
+        args.anchor_wave_targets_per_batch = 0
+        args.root_seed_candidate_count = 0
+        args.anchor_target_candidate_count = 0
     return args
 
 
@@ -359,13 +579,128 @@ def stage_seed_offset(stage: dict[str, Any]) -> int:
 
 
 def configure_warm(args: argparse.Namespace, seed: int, preset: str, namespace: str, robot: Any | None = None) -> Any:
-    cfg = configure_standalone_sbf(args, seed, preset=preset, robot=robot)
+    config_preset = RBF_LIFELONG_PRESET if str(preset) == "support_hull_coverage" else preset
+    cfg = configure_standalone_sbf(args, seed, preset=config_preset, robot=robot)
     cfg.database.path = str(args.cache_root / namespace)
     cfg.database.create_if_missing = True
     cfg.database.verify_identity = True
     if unified_final_simplify_enabled(args):
         cfg.query.collision_shortcut = False
     return cfg
+
+
+def random_prewarm_cache_label(args: argparse.Namespace, robot_name: str) -> str:
+    return (
+        f"exp06_{robot_name}_p{int(args.random_prewarm_depth)}_"
+        f"{str(args.rbf_envelope)}_d{int(args.rbf_max_depth)}_canonical_native"
+    )
+
+
+def maybe_bind_random_external_prewarm(args: argparse.Namespace,
+                                       cfg: Any,
+                                       *,
+                                       robot_name: str) -> dict[str, Any]:
+    if not bool(getattr(args, "sbf_use_external_prewarm", True)):
+        return {"external_prewarm_enabled": False}
+    source = Path(args.cache_root) / random_prewarm_cache_label(args, robot_name)
+    info = configure_external_evidence_reuse(
+        cfg,
+        source,
+        args,
+        materialization=True,
+        scoring=True,
+        backfill_active=False,
+    )
+    return {
+        "external_prewarm_enabled": True,
+        "external_prewarm_label": source.name,
+        "external_prewarm_path": str(source),
+        "external_prewarm_mode": info.get("mode"),
+        "external_prewarm_snapshot_path": info.get("snapshot_path"),
+    }
+
+
+def canonical_point(robot: Any, point: list[float]) -> list[float]:
+    if hasattr(sbf, "canonicalize_configuration_for_robot"):
+        return [float(value) for value in sbf.canonicalize_configuration_for_robot(robot, list(point))]
+    return [float(value) for value in point]
+
+
+def random_leaf_refine_priority_points(robot: Any, start: list[float], goal: list[float]) -> list[list[float]]:
+    points: list[list[float]] = []
+    for fraction in (0.0, 0.25, 0.5, 0.75, 1.0):
+        point = [
+            (1.0 - fraction) * float(a) + fraction * float(b)
+            for a, b in zip(start, goal)
+        ]
+        points.append(canonical_point(robot, point))
+    return points
+
+
+def make_leaf_refine_config(args: argparse.Namespace) -> Any:
+    refine_cfg = sbf.LeafSweepRefineConfig()
+    refine_cfg.leaf_start_depth = int(args.leaf_start_depth)
+    refine_cfg.leaf_max_depth = int(args.leaf_max_depth)
+    refine_cfg.obstacle_cluster_gap = float(args.leaf_obstacle_cluster_gap)
+    refine_cfg.use_virtual_topology = bool(args.leaf_virtual_topology)
+    refine_cfg.parallel_virtual_validation = bool(args.leaf_parallel_virtual_validation)
+    refine_cfg.store_group_results = bool(args.leaf_store_group_results)
+    refine_cfg.validation_batch_size = max(1, int(args.leaf_validation_batch_size))
+    refine_cfg.leaf_threads = max(1, int(args.leaf_threads) if int(args.leaf_threads) > 0 else int(args.threads))
+    refine_cfg.leaf_timeout_ms = max(0.0, float(args.leaf_timeout_ms))
+    refine_cfg.deep_max_boxes = max(0, int(args.max_boxes))
+    refine_cfg.deep_ffb_depth = max(1, int(args.ffb_depth))
+    refine_cfg.domain_seed_cap = max(0, int(args.leaf_domain_seed_cap))
+    refine_cfg.domain_success_cap = max(0, int(args.leaf_domain_success_cap))
+    refine_cfg.domain_attempt_cap = max(0, int(args.leaf_domain_attempt_cap))
+    refine_cfg.allow_anchor_roots = bool(args.leaf_allow_anchor_roots)
+    refine_cfg.refine_timeout_ms = max(0.0, float(args.post_connect_time_budget_ms))
+    return refine_cfg
+
+
+def run_sbf_build_backend(
+    args: argparse.Namespace,
+    forest: Any,
+    robot: Any,
+    scene: Any,
+) -> tuple[Any, dict[str, Any]]:
+    if str(args.sbf_build_backend) == "coverage":
+        profile = forest.build_coverage(scene.obstacles, [scene.start, scene.goal])
+        diagnostics = dict(getattr(profile, "diagnostics", {}) or {})
+        return profile, {
+            "sbf_build_backend": "coverage",
+            "oracle_materialization_reused_external_evidence": float(diagnostics.get("oracle.materialization_reused_external_evidence", 0.0)),
+            "oracle_node_validations": float(diagnostics.get("oracle.node_validations", 0.0)),
+        }
+    refine_cfg = make_leaf_refine_config(args)
+    priority = random_leaf_refine_priority_points(robot, list(scene.start), list(scene.goal))
+    result = forest.build_leaf_sweep_refined(scene.obstacles, refine_cfg, priority)
+    diagnostics = dict(getattr(result.profile, "diagnostics", {}) or {})
+    return result.profile, {
+        "sbf_build_backend": "leaf_refine",
+        "leaf_start_depth": int(refine_cfg.leaf_start_depth),
+        "leaf_max_depth": int(refine_cfg.leaf_max_depth),
+        "leaf_threads": int(refine_cfg.leaf_threads),
+        "leaf_sweep_ms": float(result.leaf_sweep_ms),
+        "leaf_free_count": int(result.leaf_free_count),
+        "leaf_collision_count": int(result.leaf_collision_count),
+        "deep_refine_ms": float(result.deep_refine_ms),
+        "deep_boxes_added": int(result.deep_boxes_added),
+        "deep_domain_attempts": int(result.deep_domain_attempts),
+        "deep_ffb_success": int(result.deep_ffb_success),
+        "deep_ffb_fail": int(result.deep_ffb_fail),
+        "deep_commit_rejects": int(result.deep_commit_rejects),
+        "deep_domain_rejects": int(result.deep_domain_rejects),
+        "deep_contained_rejects": int(result.deep_contained_rejects),
+        "deep_adjacency_rejects": int(result.deep_adjacency_rejects),
+        "deep_anchor_roots_added": int(result.deep_anchor_roots_added),
+        "connector_ms": float(result.connector_ms),
+        "leaf_refine_total_ms": float(result.total_ms),
+        "oracle_materialization_reused_external_evidence": float(diagnostics.get("oracle.materialization_reused_external_evidence", 0.0)),
+        "oracle_node_validations": float(diagnostics.get("oracle.node_validations", 0.0)),
+        "leaf_sweep_external_hits": float(diagnostics.get("leaf_sweep.worker_oracle.materialization_reused_external_evidence", 0.0)),
+        "leaf_sweep_node_validations": float(diagnostics.get("leaf_sweep.worker_oracle.node_validations", 0.0)),
+    }
 
 
 def refine_random_corridor(forest: Any, start: list[float], goal: list[float], args: argparse.Namespace) -> tuple[float, int, int]:
@@ -396,7 +731,11 @@ def refine_random_corridor(forest: Any, start: list[float], goal: list[float], a
 
 
 def attach_sbf_path(payload: dict[str, Any], result: Any) -> dict[str, Any]:
-    waypoints = [[float(value) for value in waypoint] for waypoint in getattr(result, "path", [])]
+    if hasattr(result, "path_as_lists"):
+        raw_waypoints = result.path_as_lists()
+    else:
+        raw_waypoints = getattr(result, "path", [])
+    waypoints = [[float(value) for value in waypoint] for waypoint in raw_waypoints]
     payload["waypoints"] = waypoints
     payload["waypoint_count"] = len(waypoints)
     return payload
@@ -534,9 +873,10 @@ def prewarm_cache(args: argparse.Namespace, robot_name: str, method: str, stages
                 print(f"[random-anytime] prewarm robot={robot_name} difficulty={difficulty} method={method} stage={stage['stage_id']} scene_seed={seed}", flush=True)
                 scene = make_random_scene(robot_name, difficulty, int(args.prewarm_seed_base) + 1009 * seed, scene_profile=args.scene_profile)
                 cfg = configure_warm(stage_args, seed, method, namespace, robot=robot)
+                maybe_bind_random_external_prewarm(stage_args, cfg, robot_name=robot_name)
                 forest = sbf.SafeBoxForest(robot, cfg)
                 t0 = time.perf_counter()
-                forest.build_coverage(scene.obstacles, [scene.start, scene.goal])
+                run_sbf_build_backend(stage_args, forest, robot, scene)
                 total_build_s += time.perf_counter() - t0
                 success_count += 1
             metrics = cache_metrics(args.cache_root, namespace)
@@ -566,8 +906,7 @@ def run_scene_trace(
     scene_seed: int,
     stages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    robot = make_robot(robot_name)
-    scene = make_random_scene(robot_name, difficulty, int(args.seed_base) + 1009 * scene_seed, scene_profile=args.scene_profile)
+    robot, scene = scene_and_robot(args, robot_name, difficulty, scene_seed)
     incumbents: dict[str, dict[str, Any]] = {}
     cumulative_build_s = 0.0
     cumulative_query_s = 0.0
@@ -735,6 +1074,7 @@ def run_scene_trace(
         box_counts: list[int] = []
         segment_edge_counts: list[int] = []
         profile_total_ms = 0.0
+        build_metric_totals: dict[str, float] = {}
         restart_count = max(1, int(getattr(args, "sbf_stage_restarts", 1)))
         for restart in range(restart_count):
             namespace = base_namespace if restart_count == 1 else f"{base_namespace}_r{restart}"
@@ -743,11 +1083,15 @@ def run_scene_trace(
             seed_offset = stage_seed_offset(stage)
             restart_seed = int(scene_seed) + 1000003 * int(restart) + int(seed_offset)
             cfg = configure_warm(stage_args, restart_seed, method, namespace, robot=robot)
+            external_prewarm_info = maybe_bind_random_external_prewarm(stage_args, cfg, robot_name=robot_name)
             forest = sbf.SafeBoxForest(robot, cfg)
             build_t0 = time.perf_counter()
-            profile = forest.build_coverage(scene.obstacles, [scene.start, scene.goal])
+            profile, build_metrics = run_sbf_build_backend(stage_args, forest, robot, scene)
             refine_s, refine_added, refine_attempts = refine_random_corridor(forest, scene.start, scene.goal, stage_args)
             restart_build_s = time.perf_counter() - build_t0
+            for metric_key, metric_value in build_metrics.items():
+                if isinstance(metric_value, (int, float)):
+                    build_metric_totals[metric_key] = build_metric_totals.get(metric_key, 0.0) + float(metric_value)
             query_payload = run_sbf_query_with_bridge(stage_args, forest, task_name, scene.start, scene.goal)
             query_payload["stage_restart"] = int(restart)
             query_payload["restart_seed"] = int(restart_seed)
@@ -836,6 +1180,9 @@ def run_scene_trace(
                 "corridor_refine_attempts": int(refine_attempts_total),
                 "bridge_failed_queries": bool(args.sbf_bridge_failed_queries),
                 "bridge_repaired_queries": bool(args.sbf_bridge_repaired_queries),
+                "sbf_build_backend": str(args.sbf_build_backend),
+                **build_metric_totals,
+                **external_prewarm_info,
                 **prefixed_cache_metrics(args.cache_root, base_namespace, "eval_cache"),
             },
             protocol=f"{args.sbf_cache_scope}_cumulative_attempts",
@@ -844,6 +1191,18 @@ def run_scene_trace(
 
 
 def scene_and_robot(args: argparse.Namespace, robot_name: str, difficulty: str, scene_seed: int) -> tuple[Any, Any]:
+    scene_cache = getattr(args, "scene_cache", None)
+    if isinstance(scene_cache, dict):
+        key = _scene_cache_key(robot_name, difficulty, int(scene_seed))
+        if key in scene_cache:
+            scene_record = scene_cache[key]
+            if isinstance(scene_record, dict):
+                return make_robot(robot_name), scene_from_record(
+                    scene_record,
+                    robot_name=robot_name,
+                    difficulty=difficulty,
+                    scene_seed=int(scene_seed),
+                )
     robot = make_robot(robot_name)
     scene = make_random_scene(robot_name, difficulty, int(args.seed_base) + 1009 * scene_seed, scene_profile=args.scene_profile)
     return robot, scene
@@ -1164,6 +1523,17 @@ def aggregate_panels(records: list[dict[str, Any]], epsilon_path: float) -> dict
 
 def main() -> int:
     args = parse_args()
+    if args.scene_catalog is None:
+        args.scene_catalog = args.out_json.parent / "random_scene_catalog.json"
+    args.scene_cache, args.scene_catalog_metadata = load_or_build_scene_catalog(
+        scene_catalog_path=Path(args.scene_catalog),
+        robots=parse_csv(args.robots),
+        difficulties=parse_csv(args.difficulties),
+        scene_seeds=max(1, int(args.scene_seeds)),
+        scene_profile=str(args.scene_profile),
+        seed_base=int(args.seed_base),
+        cache_mode=str(args.scene_catalog_mode),
+    )
     stages = parse_sbf_stages(args.sbf_stages)
     robots = parse_csv(args.robots)
     difficulties = parse_csv(args.difficulties)
@@ -1210,7 +1580,14 @@ def main() -> int:
         "source_script": str(Path(__file__).resolve()),
         "source_protocol": "scene_stage_cache_isolated_anytime_incumbent" if args.sbf_cache_scope == "scene_stage" else "warm_disjoint_cache_anytime_incumbent",
         "note": "SBF evaluation uses per-scene, per-stage cache namespaces to prevent disjoint random scenes from inflating charged build time." if args.sbf_cache_scope == "scene_stage" else "SBF cache is prewarmed on disjoint calibration random scenes, then evaluation scenes run warm staged builds while retaining audited incumbents. Prewarm cost is reported separately and is not included in per-scene warm charged time.",
-        "params": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
+        "params": {
+            key: str(value) if isinstance(value, Path) else value
+            for key, value in vars(args).items()
+            if key not in {"scene_cache"}
+        },
+        "scene_catalog": str(args.scene_catalog),
+        "scene_catalog_mode": str(args.scene_catalog_mode),
+        "scene_catalog_metadata": args.scene_catalog_metadata,
         "scene_filter_protocol": {
             "fixed_robot_exclusion_margin_m": float(FIXED_ROBOT_CLEARANCE_MARGIN_M),
             "endpoint_clearance_margin_m": float(ENDPOINT_CLEARANCE_MARGIN_M),

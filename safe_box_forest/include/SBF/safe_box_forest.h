@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace rbf {
@@ -28,6 +29,8 @@ struct DynamicUpdateConfig {
 	int dirty_anchor_limit = 64;
 	int local_regrow_box_limit = 0;
 	double local_regrow_timeout_ms = 0.0;
+	int insertion_leaf_sweep_max_depth = 28;
+	int insertion_leaf_sweep_relative_depth = -1;
 	bool enable_warm_rebuild_fallback = true;
 	bool warm_rebuild_on_empty_forest = true;
 	bool warm_rebuild_on_empty_dirty_region = true;
@@ -137,6 +140,13 @@ struct RebuildProfile {
 	int rrt_segment_edges_added = 0;
 	int point_gap_segment_edges_added = 0;
 	int adjacency_islands = 0;
+	int collision_cache_boxes_before = 0;
+	int collision_cache_boxes_after = 0;
+	int collision_cache_candidates = 0;
+	int collision_cache_promoted = 0;
+	int collision_cache_rejected_collision = 0;
+	int collision_cache_rejected_contained = 0;
+	int collision_cache_rejected_disconnected = 0;
 	bool used_spatial_dirty_region = false;
 	bool used_warm_rebuild = false;
 	std::string fallback_reason;
@@ -275,6 +285,10 @@ public:
 							  double long_path_ratio,
 							  double long_path_min_delta);
 	RebuildProfile add_obstacle_and_rebuild(const Obstacle& obstacle);
+	RebuildProfile add_obstacles_and_rebuild(const std::vector<Obstacle>& obstacles);
+	RebuildProfile connect_update_segment_fallback();
+	RebuildProfile connect_update_endpoint_segment_fallback(const Eigen::Ref<const Eigen::VectorXd>& start,
+															const Eigen::Ref<const Eigen::VectorXd>& goal);
 	RebuildProfile remove_obstacle_and_regrow(int obstacle_index);
 	RebuildProfile remove_obstacle_suffix_and_regrow(int target_obstacle_count);
 	void clear_forest();
@@ -294,6 +308,11 @@ public:
 	const lect_database::OnlineEnvelopeCacheTree& online_cache() const { return *online_cache_; }
 
 private:
+	struct CachedCollisionBox {
+		BoxNode box;
+		std::vector<int> blocking_obstacle_indices;
+	};
+
 	FindFreeBoxResult find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
 											  const std::vector<Interval>& domain,
 											  StageContext& context,
@@ -307,6 +326,17 @@ private:
 	void invalidate_query_cache() const;
 	const QueryGraphCache& query_cache() const;
 	int next_box_id() const;
+	void populate_dynamic_collision_cache(const LeafSweepResult& result,
+										  int obstacle_count);
+	void add_dynamic_collision_cache_box(const BoxNode& box,
+										 std::vector<int> blocking_obstacle_indices);
+	int promote_unblocked_collision_cache(const std::unordered_set<int>& removed_obstacle_indices,
+										  RebuildProfile& profile);
+	int refill_removed_box_with_leaf_sweep(const BoxNode& removed_box,
+										   int new_obstacle_index,
+										   int max_depth,
+										   int& next_id,
+										   RebuildProfile& profile);
 
 	Robot robot_;
 	Robot audit_robot_;
@@ -329,6 +359,7 @@ private:
 	std::vector<BoxNode> raw_boxes_;
 	AdjacencyGraph adjacency_;
 	SegmentEdgeList segment_edges_;
+	std::vector<CachedCollisionBox> dynamic_collision_box_cache_;
 	BuildProfile last_build_;
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;

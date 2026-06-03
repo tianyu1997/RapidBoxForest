@@ -37,6 +37,7 @@ def main():
     config.grower.failure_cooling_box_horizon = 8
     config.endpoint_source.source = sbf.EndpointSource.IFK
     config.envelope_type.type = sbf.EnvelopeType.LinkIAABB
+    config.database.canonical_mode = False
     config.database.path = tempfile.mkdtemp(prefix="sbf-python-smoke-")
     config.database.checkpoint_after_build = False
     config.dynamic_update.dirty_region_padding = 100.0
@@ -60,11 +61,14 @@ def main():
     removal = forest.remove_obstacle_and_regrow(0)
     assert removal.obstacles_after == 0
     assert removal.boxes_after == len(forest.boxes())
+    assert hasattr(removal, "collision_cache_promoted")
+    assert hasattr(removal, "collision_cache_candidates")
     assert hasattr(forest, "remove_obstacle_suffix_and_regrow")
     sweep_config = sbf.LeafSweepConfig()
     sweep = forest.build_leaf_sweep([], 1, 1, sweep_config)
     assert len(sweep.free_boxes) == 2
     assert len(sweep.collision_boxes) == 0
+    assert len(sweep.collision_box_obstacle_indices) == 0
     assert len(forest.boxes()) == len(sweep.free_boxes)
     refine_config = sbf.LeafSweepRefineConfig()
     refine_config.leaf_start_depth = 1

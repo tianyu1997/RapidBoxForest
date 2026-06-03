@@ -313,6 +313,11 @@ void test_leaf_sweep_single_obstacle_collision() {
     };
     auto result = forest.build_leaf_sweep(obstacles, 0, 1, sweep_config);
     assert(!result.collision_boxes.empty());
+    assert(result.collision_box_obstacle_indices.size() == result.collision_boxes.size());
+    for (const auto& blockers : result.collision_box_obstacle_indices) {
+        assert(blockers.size() == 1);
+        assert(blockers.front() == 0);
+    }
     assert(result.free_boxes.empty());
     assert(result.groups.size() == 1);
     assert(result.groups.front().collision_boxes.size() == result.collision_boxes.size());
@@ -336,6 +341,7 @@ void test_leaf_sweep_grouping_and_composition() {
     assert(result.obstacle_group_ids.size() == obstacles.size());
     assert(result.obstacle_group_ids[0] == result.obstacle_group_ids[1]);
     assert(result.obstacle_group_ids[2] != result.obstacle_group_ids[0]);
+    assert(result.collision_box_obstacle_indices.size() == result.collision_boxes.size());
 
     rbf::LeafSweepConfig merged_config;
     merged_config.obstacle_cluster_gap = 1000.0;

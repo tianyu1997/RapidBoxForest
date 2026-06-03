@@ -34,7 +34,7 @@ namespace {
 using lect_database::NodeId;
 using Clock = std::chrono::steady_clock;
 
-std::mutex& external_exact_lookup_mutex() {
+std::mutex& external_direct_lookup_mutex() {
     static std::mutex mutex;
     return mutex;
 }
@@ -1111,14 +1111,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
             direct_external_evidence_database_ != nullptr &&
             database_.identity().root_domain_fingerprint == direct_external_evidence_database_->identity().root_domain_fingerprint &&
             database_.identity().split_policy_hash == direct_external_evidence_database_->identity().split_policy_hash;
-        {
-            std::lock_guard<std::mutex> lock(external_exact_lookup_mutex());
-            if (direct_external_keys_match) {
-                cached = direct_external_evidence_database_->evidence(key);
-            }
-            if (!cached) {
-                cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
-            }
+        if (direct_external_keys_match) {
+            std::lock_guard<std::mutex> lock(external_direct_lookup_mutex());
+            cached = direct_external_evidence_database_->evidence(key);
+        }
+        if (!cached) {
+            cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
         }
         counters_.materialization_external_lookup_time_us += elapsed_us(external_lookup_start);
         if (!cached) {

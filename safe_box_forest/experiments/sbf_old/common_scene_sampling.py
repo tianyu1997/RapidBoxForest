@@ -26,6 +26,7 @@ RANDOM_OBSTACLE_COUNTS = {"easy": 4, "medium": 8, "hard": 12}
 RANDOM_OBSTACLE_SCALES = {"easy": 0.12, "medium": 0.16, "hard": 0.20}
 RANDOM_WORKSPACE_Z_MIN = 0.05
 RANDOM_WORKSPACE_Z_MAX = 0.90
+CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
 
 @dataclass(frozen=True)
@@ -187,8 +188,31 @@ def obstacle_prefix(obstacles: list[sbf.Obstacle], difficulty: str) -> list[sbf.
     return list(obstacles[:random_obstacle_count(difficulty)])
 
 
-def sample_q(robot: sbf.Robot, rng: random.Random) -> list[float]:
-    return [rng.uniform(interval.lo, interval.hi) for interval in robot.joint_limits().limits]
+def canonical_root_intervals(robot: sbf.Robot) -> list[sbf.Interval]:
+    if hasattr(sbf, "canonical_root_intervals_for_robot"):
+        return list(sbf.canonical_root_intervals_for_robot(robot, True, CANONICAL_SYMMETRY_DESCRIPTOR))
+    return list(robot.joint_limits().limits)
+
+
+def canonicalize_q(robot: sbf.Robot, q: list[float]) -> list[float]:
+    if hasattr(sbf, "canonicalize_configuration_for_robot"):
+        return [
+            float(value)
+            for value in sbf.canonicalize_configuration_for_robot(
+                robot,
+                list(q),
+                True,
+                CANONICAL_SYMMETRY_DESCRIPTOR,
+            )
+        ]
+    return [float(value) for value in q]
+
+
+def sample_q(robot: sbf.Robot, rng: random.Random, *, canonical: bool = True) -> list[float]:
+    intervals = canonical_root_intervals(robot) if canonical else list(robot.joint_limits().limits)
+    return canonicalize_q(robot, [rng.uniform(interval.lo, interval.hi) for interval in intervals]) if canonical else [
+        rng.uniform(interval.lo, interval.hi) for interval in intervals
+    ]
 
 
 def config_has_clearance(robot: sbf.Robot, obstacles: list[sbf.Obstacle], q: list[float], margin: float) -> bool:
@@ -297,17 +321,18 @@ def sample_free_pair(robot: sbf.Robot,
                      rng: random.Random,
                      min_l2: float = 0.8,
                      clearance_margin_m: float = ENDPOINT_CLEARANCE_MARGIN_M,
-                     max_tries: int = 2000) -> tuple[list[float], list[float]]:
+                     max_tries: int = 2000,
+                     canonical: bool = True) -> tuple[list[float], list[float]]:
     start: list[float] | None = None
     for _ in range(max_tries):
-        q = sample_q(robot, rng)
+        q = sample_q(robot, rng, canonical=canonical)
         if not sbf.check_config_collision(robot, obstacles, q) and config_has_clearance(robot, obstacles, q, clearance_margin_m):
             start = q
             break
     if start is None:
         raise RuntimeError("could not sample a collision-free start")
     for _ in range(max_tries):
-        goal = sample_q(robot, rng)
+        goal = sample_q(robot, rng, canonical=canonical)
         if sbf.check_config_collision(robot, obstacles, goal):
             continue
         if not config_has_clearance(robot, obstacles, goal, clearance_margin_m):

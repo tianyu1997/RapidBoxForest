@@ -94,7 +94,7 @@ leaf_cfg.obstacle_cluster_gap = 0.0
 leaf_cfg.use_virtual_topology = True
 leaf_cfg.parallel_virtual_validation = True
 leaf_cfg.n_threads = 8
-leaf_cfg.validation_batch_size = 65536
+leaf_cfg.validation_batch_size = 512
 leaf_cfg.store_group_results = False
 leaf_cfg.obstacle_cluster_gap = 1000.0
 ```
@@ -105,6 +105,7 @@ leaf_cfg.obstacle_cluster_gap = 1000.0
 - 直接按 d23 split schedule 在内存中生成 virtual topology。
 - 通过 d23 external evidence 做 exact lookup。
 - parallel batch validation 使用独立 read-only oracle worker，并共享 master LECT topology 视图。
+- parallel worker 会绕开 direct external database 快路径，改走 thread-safe external evidence source exact lookup，避免并发读取 `LectDatabase::evidence()` 的 stats/cache 状态。
 - LeafSweep sweep 期间会关闭 oracle envelope cache，以保证 serial/parallel/cold/warm 验证口径一致；该 cache 在 exp04 中命中很少，关闭后结果稳定且更快。
 
 推荐命令：
@@ -116,7 +117,7 @@ python3 experiments/exp04_shelf_ablation/leaf_sweep_d23_probe.py \
   --start-depth 10 \
   --max-depth 18 \
   --threads 8 \
-  --validation-batch-size 65536 \
+  --validation-batch-size 512 \
   --obstacle-cluster-gap 1000 \
   --no-store-group-results \
   --no-endpoint-evidence-cache \
@@ -128,7 +129,7 @@ python3 experiments/exp04_shelf_ablation/leaf_sweep_d23_probe.py \
 当前 exp04 shelf d10-d18 验证结果：
 
 - serial virtual warm: `free_boxes=16795`, `collision_boxes=126924`, wall 约 `1.08s`
-- parallel virtual warm, 8 threads, batch 65536: `free_boxes=16795`, `collision_boxes=126924`, wall 约 `0.52s`
+- parallel virtual warm, 8 threads: `free_boxes=16795`, `collision_boxes=126924`, wall 约 `0.32-0.34s`
 
 ## 配置字段
 
@@ -142,11 +143,11 @@ leaf_cfg = sbf.LeafSweepConfig()
 
 `n_threads`
 
-执行线程数。`0` 会由 facade clamp 到至少 1。warm virtual parallel 模式建议从 `8` 和 `validation_batch_size=65536` 开始。当前 exp04 d10-d18 下，`16` threads 会因为 external lookup mutex contention 和线程调度成本变慢。
+执行线程数。`0` 会由 facade clamp 到至少 1。warm virtual parallel 模式建议从 `8` 和 `validation_batch_size=512` 开始。当前 exp04 d10-d18 下，`16` threads 仍会因为内存/lookup contention 变慢。
 
 `validation_batch_size`
 
-并行 virtual validation 的 batch 粒度。过小会增加调度开销，因为当前 `ThreadPoolExecutor::parallel_for` 每个 batch 都会创建 worker threads。exp04 d10-d18 下推荐 `65536`；`512` 明显偏小。
+并行 virtual validation 的 batch 粒度。当前 `ThreadPoolExecutor` 使用 persistent thread pool，batch 创建线程的开销已消除。exp04 d10-d18 下 `512` 和 `65536` 结果接近，默认推荐 `512`，便于负载均衡。
 
 `timeout_ms`
 
@@ -174,7 +175,7 @@ warm/d23 推荐项。需要 `use_virtual_topology=True` 且 `n_threads > 1`。�
 
 ```text
 threads=8
-validation_batch_size=65536
+validation_batch_size=512
 store_group_results=False
 endpoint_evidence_cache=False
 use_virtual_topology=True
@@ -184,22 +185,22 @@ parallel_virtual_validation=True
 该配置下典型结果：
 
 ```text
-wall ~= 0.52s
+wall ~= 0.32-0.34s
 free_boxes = 16795
 collision_boxes = 126924
 node_validations = 286414
 ```
 
-线程数扫描，batch 65536：
+线程数扫描，batch 512：
 
 ```text
-threads=2   wall ~= 0.639s
-threads=4   wall ~= 0.566s
-threads=8   wall ~= 0.521s
-threads=16  wall ~= 0.652s
+threads=2   wall ~= 0.621s
+threads=4   wall ~= 0.41s
+threads=8   wall ~= 0.317-0.341s
+threads=16  wall ~= 0.37s
 ```
 
-batch size 扫描，threads 8：
+优化前 batch size 扫描，threads 8：
 
 ```text
 512      wall ~= 0.726s
@@ -213,19 +214,37 @@ batch size 扫描，threads 8：
 131000   wall ~= 0.561s
 ```
 
+优化后 `ThreadPoolExecutor` 为 persistent thread pool，batch 调度不再是主要瓶颈：
+
+```text
+threads=8, batch=512      wall ~= 0.33s
+threads=8, batch=65536    wall ~= 0.33s
+```
+
+当前 `threads=8, batch=512` 的 worker 累计耗时示例：
+
+```text
+worker validate total          ~= 1846ms  (6.45us/node)
+worker external lookup         ~= 895ms   (3.13us/node)
+worker envelope compute        ~= 603ms   (2.10us/node)
+worker envelope collision      ~= 82ms    (0.29us/node)
+external evidence hits         = 271302
+```
+
+注意：worker 累计时间是所有 worker 的 sum，不等于 wall time。wall time 约为 `0.33s`。
+
 主要瓶颈：
 
-- external evidence lookup 是最大瓶颈。parallel worker 累计 external lookup time 很高，主要包含全局 mutex 等待。
-- batch 调度成本明显。batch 从 `512` 增大到 `65536` 可将 wall 从约 `0.72s` 降到约 `0.53s`。
+- external evidence lookup 仍是主要成本之一，但 LeafSweep parallel worker 已绕开 direct external database 快路径，改走 thread-safe external evidence source exact lookup，避免全局 direct DB mutex 成为主瓶颈。
+- batch 调度成本已显著降低。persistent thread pool 后，`batch=512` 与 `batch=65536` 的 wall time 接近。
 - envelope compute 是第二类实算成本，但并行后已被摊薄。
-- collision check 不是瓶颈，累计约 `88ms` worker time。
+- collision check 不是瓶颈，累计约 `80-90ms` worker time。
 - initialize 和 compose 都是亚毫秒级，可以忽略。
 
 后续可优化方向：
 
-- 去掉或细化 external evidence lookup 的全局 mutex。理想状态是只锁必要的 shared exact-box index，或者给每个 worker 独立 read snapshot。
 - 在 virtual topology 下直接构造 d23 evidence key，避免 `endpoint_for_box_exact(intervals)` 的 exact-box tree lookup。
-- 将 `ThreadPoolExecutor` 改成 persistent thread pool，避免每个 batch 创建线程。
+- 对 envelope compute 做 SIMD/批量化，或复用更轻量的 envelope representation。
 
 ## 读取统计信息
 

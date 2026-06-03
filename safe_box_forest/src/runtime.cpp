@@ -4,8 +4,6 @@
 #include <exception>
 #include <mutex>
 #include <stdexcept>
-#include <thread>
-#include <vector>
 
 namespace rbf {
 
@@ -84,48 +82,99 @@ void InlineExecutor::parallel_for(int begin,
 }
 
 ThreadPoolExecutor::ThreadPoolExecutor(int n_threads)
-    : n_threads_(std::max(1, n_threads))
-{}
+    : n_threads_(std::max(1, n_threads)) {
+    threads_.reserve(static_cast<std::size_t>(n_threads_));
+    for (int worker_id = 0; worker_id < n_threads_; ++worker_id) {
+        threads_.emplace_back([this, worker_id]() { worker_loop(worker_id); });
+    }
+}
+
+ThreadPoolExecutor::~ThreadPoolExecutor() {
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        stop_ = true;
+        has_work_ = false;
+    }
+    work_cv_.notify_all();
+    for (auto& thread : threads_) {
+        if (thread.joinable()) {
+            thread.join();
+        }
+    }
+}
 
 void ThreadPoolExecutor::parallel_for(int begin,
                                       int end,
                                       const std::function<void(int)>& fn) {
     if (end <= begin) return;
     const int n_items = end - begin;
-    const int workers = std::max(1, std::min(n_threads_, n_items));
-    if (workers == 1) {
+    if (n_threads_ <= 1 || n_items == 1) {
         InlineExecutor inline_executor;
         inline_executor.parallel_for(begin, end, fn);
         return;
     }
 
-    std::atomic<int> next{begin};
-    std::exception_ptr first_error;
-    std::mutex error_mutex;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (has_work_ || remaining_.load(std::memory_order_acquire) != 0) {
+            throw std::logic_error("ThreadPoolExecutor does not support nested parallel_for calls");
+        }
+        begin_ = begin;
+        end_ = end;
+        fn_ = fn;
+        first_error_ = nullptr;
+        next_.store(begin_, std::memory_order_release);
+        remaining_.store(n_items, std::memory_order_release);
+        has_work_ = true;
+    }
+    work_cv_.notify_all();
 
-    auto worker = [&](int worker_id) {
-        WorkerIdScope worker_scope(worker_id);
-        while (true) {
-            const int item = next.fetch_add(1, std::memory_order_relaxed);
-            if (item >= end) break;
-            try {
-                fn(item);
-            } catch (...) {
-                std::lock_guard<std::mutex> lock(error_mutex);
-                if (!first_error) first_error = std::current_exception();
+    std::unique_lock<std::mutex> lock(mutex_);
+    done_cv_.wait(lock, [this]() {
+        return remaining_.load(std::memory_order_acquire) == 0;
+    });
+    fn_ = {};
+    has_work_ = false;
+    if (first_error_) {
+        std::exception_ptr error = first_error_;
+        first_error_ = nullptr;
+        std::rethrow_exception(error);
+    }
+}
+
+void ThreadPoolExecutor::worker_loop(int worker_id) {
+    WorkerIdScope worker_scope(worker_id);
+    while (true) {
+        {
+            std::unique_lock<std::mutex> lock(mutex_);
+            work_cv_.wait(lock, [this]() { return stop_ || has_work_; });
+            if (stop_) {
+                return;
             }
         }
-    };
 
-    std::vector<std::thread> threads;
-    threads.reserve(static_cast<std::size_t>(workers));
-    for (int worker_id = 0; worker_id < workers; ++worker_id) {
-        threads.emplace_back(worker, worker_id);
+        while (true) {
+            const int item = next_.fetch_add(1, std::memory_order_relaxed);
+            if (item >= end_) {
+                break;
+            }
+            try {
+                fn_(item);
+            } catch (...) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (!first_error_) {
+                    first_error_ = std::current_exception();
+                }
+            }
+            if (remaining_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                has_work_ = false;
+                done_cv_.notify_one();
+                work_cv_.notify_all();
+                break;
+            }
+        }
     }
-    for (auto& thread : threads) {
-        thread.join();
-    }
-    if (first_error) std::rethrow_exception(first_error);
 }
 
 std::shared_ptr<TaskExecutor> make_executor(const RuntimeConfig& config) {

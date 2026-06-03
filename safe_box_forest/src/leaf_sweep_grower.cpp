@@ -318,6 +318,8 @@ LeafSweepResult LeafSweepGrower::sweep(const std::vector<Obstacle>& obstacles,
 			result.free_boxes = std::move(groups.front().result.free_boxes);
 			result.collision_boxes = std::move(groups.front().result.collision_boxes);
 		}
+		result.collision_box_obstacle_indices.assign(result.collision_boxes.size(),
+													 groups.front().result.obstacle_indices);
 		set_value(result, context, "leaf_sweep.single_group_compose_fast_path", 1.0);
 	} else {
 		compose_final_sets(groups, start_depth, effective_max_depth, context, result);
@@ -504,7 +506,7 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 																	 oracle_.envelope_config(),
 																	 worker_validation_config,
 																	 oracle_.external_evidence_source(),
-																	 oracle_.direct_external_evidence_database());
+																	 nullptr);
 			worker_oracle->set_envelope_cache_enabled(oracle_.envelope_cache_enabled());
 			if (worker_validation_config.enable_worker_shared_endpoint_cache) {
 				worker_oracle->set_shared_endpoint_cache(oracle_.shared_endpoint_cache());
@@ -791,6 +793,24 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 	const std::uint64_t all_free_mask =
 		groups.size() == 64 ? ~std::uint64_t{0}
 							: ((std::uint64_t{1} << groups.size()) - std::uint64_t{1});
+	auto obstacle_indices_for_mask = [&](std::uint64_t mask) {
+		std::vector<int> indices;
+		for (std::size_t group_index = 0; group_index < groups.size(); ++group_index) {
+			const std::uint64_t bit = std::uint64_t{1} << group_index;
+			if ((mask & bit) == 0) {
+				continue;
+			}
+			const auto& group_indices = groups[group_index].result.obstacle_indices;
+			indices.insert(indices.end(), group_indices.begin(), group_indices.end());
+		}
+		std::sort(indices.begin(), indices.end());
+		indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+		return indices;
+	};
+	auto push_collision_box = [&](const BoxNode& box, std::uint64_t blocker_mask) {
+		result.collision_boxes.push_back(box);
+		result.collision_box_obstacle_indices.push_back(obstacle_indices_for_mask(blocker_mask));
+	};
 
 	struct ComposeNode {
 		OracleNodeId node = kInvalidOracleNodeId;
@@ -829,8 +849,10 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 		if (depth < start_depth) {
 			if (oracle_.is_leaf(item.node)) {
 				add_counter(result, context, "leaf_sweep.compose_shallow_leaf_collision");
-				result.collision_boxes.push_back(
-					make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied));
+				const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
+				push_collision_box(
+					make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
+					blocker_mask);
 				continue;
 			}
 			const int split_dim = oracle_.split_dim(item.node);
@@ -840,8 +862,9 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 		}
 
 		if (item.collision_mask != 0) {
-			result.collision_boxes.push_back(
-				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied));
+			push_collision_box(
+				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
+				item.collision_mask);
 			continue;
 		}
 
@@ -853,8 +876,10 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 
 		if (depth >= max_depth || oracle_.is_leaf(item.node)) {
 			add_counter(result, context, "leaf_sweep.compose_unclassified_collision");
-			result.collision_boxes.push_back(
-				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied));
+			const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
+			push_collision_box(
+				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
+				blocker_mask);
 			continue;
 		}
 

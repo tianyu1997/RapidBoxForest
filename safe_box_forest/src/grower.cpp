@@ -1164,6 +1164,15 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds) {
     return grow(seeds, context);
 }
 
+GrowerResult RrtGrower::grow_from_existing(const std::vector<BoxNode>& initial_boxes,
+                                           const std::vector<Eigen::VectorXd>& seeds,
+                                           StageContext& context) {
+    initial_boxes_ = initial_boxes;
+    GrowerResult result = grow(seeds, context);
+    initial_boxes_.clear();
+    return result;
+}
+
 std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<Eigen::VectorXd>& seeds,
                                                              StageContext& context) {
     const auto& root = oracle_.root_intervals();
@@ -1317,7 +1326,23 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     GrowerResult result;
     FindFreeBoxService ffb(oracle_);
     open_trace();
-    next_box_id_ = 0;
+    const bool has_initial_boxes = !initial_boxes_.empty();
+    if (has_initial_boxes) {
+        result.boxes = initial_boxes_;
+        next_box_id_ = 0;
+        int max_root_id = -1;
+        for (const BoxNode& box : result.boxes) {
+            next_box_id_ = std::max(next_box_id_, box.id + 1);
+            max_root_id = std::max(max_root_id, box.root_id);
+        }
+        result.n_roots = static_cast<int>(group_boxes_by_root(result.boxes).roots.size());
+        context.diagnostics().set_value("grower.initial_boxes", static_cast<double>(result.boxes.size()));
+        context.diagnostics().set_value("grower.initial_roots", static_cast<double>(result.n_roots));
+        context.diagnostics().set_value("grower.initial_next_box_id", static_cast<double>(next_box_id_));
+        context.diagnostics().set_value("grower.initial_root_id_base", static_cast<double>(max_root_id + 1));
+    } else {
+        next_box_id_ = 0;
+    }
     random_anchor_targets_.clear();
     component_parent_failures_.clear();
     failure_cooling_.clear();
@@ -1474,8 +1499,18 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     }
     const FindFreeBoxOptions root_ffb_options = config_.find_free_box;
     context.diagnostics().set_value("grower.depth_stage_root_depth", static_cast<double>(root_ffb_options.max_depth));
+    int root_id_base = 0;
+    if (has_initial_boxes) {
+        for (const BoxNode& box : result.boxes) {
+            root_id_base = std::max(root_id_base, box.root_id + 1);
+        }
+    }
     for (int i = 0; i < static_cast<int>(roots.size()) && static_cast<int>(result.boxes.size()) < config_.max_boxes; ++i) {
         if (context.should_stop()) break;
+        if (has_initial_boxes && point_covered_by_existing_box(result.boxes, roots[static_cast<std::size_t>(i)])) {
+            context.diagnostics().add_counter("grower.initial_root_seed_already_covered");
+            continue;
+        }
         refresh_depth_stage(static_cast<int>(result.boxes.size()));
         GrowTask root_task;
         root_task.task_id = -1;
@@ -1484,9 +1519,9 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         root_task.target = root_task.seed;
         root_task.target_type = GrowTargetType::RootSeed;
         root_task.parent_box_id = -1;
-        root_task.root_id = i;
-        trace_root_seed(i, i, root_task.seed);
-        const int id = create_box(root_task.seed, -1, i, result.boxes, ffb, context, &root_ffb_options, &root_task);
+        root_task.root_id = root_id_base + i;
+        trace_root_seed(i, root_task.root_id, root_task.seed);
+        const int id = create_box(root_task.seed, -1, root_task.root_id, result.boxes, ffb, context, &root_ffb_options, &root_task);
         if (id >= 0) {
             result.n_roots += 1;
             result.n_ffb_success += 1;

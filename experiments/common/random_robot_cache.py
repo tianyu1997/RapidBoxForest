@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -24,7 +25,7 @@ from safe_box_forest.experiments.sbf_old.common_scene_sampling import make_robot
 import sbf  # noqa: E402
 
 
-DEFAULT_RANDOM_P18_PREWARM_DEPTH = 18
+DEFAULT_RANDOM_P18_PREWARM_DEPTH = 20
 DEFAULT_RANDOM_P18_THREADS = 8
 DEFAULT_RANDOM_P18_MAX_DEPTH = 40
 DEFAULT_RANDOM_P18_ENVELOPE = "support_hull"
@@ -69,7 +70,7 @@ def _manifest_lines(path: Path) -> dict[str, str]:
     return values
 
 
-def _matches_random_p18_manifest(path: Path, *, envelope: str) -> bool:
+def _matches_random_p18_manifest(path: Path, *, envelope: str, expected_metadata: dict[str, Any]) -> bool:
     manifest = _manifest_lines(path / "manifest.json")
     if not manifest:
         return False
@@ -79,6 +80,12 @@ def _matches_random_p18_manifest(path: Path, *, envelope: str) -> bool:
         return False
     envelope_descriptor = str(manifest.get("envelope_descriptor", ""))
     if envelope == "support_hull" and "type=2" not in envelope_descriptor:
+        return False
+    expected_hash = str(expected_metadata.get("dimension_schedule_hash", ""))
+    if expected_hash and str(manifest.get("split_dimension_schedule_hash", "")) != expected_hash:
+        return False
+    expected_policy_hash = str(expected_metadata.get("split_policy_hash", ""))
+    if expected_policy_hash and str(manifest.get("split_policy_hash", "")) != expected_policy_hash:
         return False
     return True
 
@@ -135,17 +142,6 @@ def ensure_random_robot_p18_cache(
             "cache_label": cache_label,
             "cache_path": str(cache_path),
         }
-    if _matches_random_p18_manifest(cache_path, envelope=str(envelope)):
-        return {
-            "ok": True,
-            "dry_run": False,
-            "robot": robot_name,
-            "cache_label": cache_label,
-            "cache_path": str(cache_path),
-            "reused_existing": True,
-            "metadata": {},
-        }
-    cache_root.mkdir(parents=True, exist_ok=True)
     args = _make_prewarm_args(
         cache_root,
         cache_label,
@@ -156,6 +152,20 @@ def ensure_random_robot_p18_cache(
     )
     robot = make_robot(robot_name)
     cfg = configure_standalone_sbf(args, seed=0, preset=RBF_LIFELONG_PRESET, robot=robot)
+    expected_metadata = rbf_lifelong_config_metadata(cfg, args)
+    if _matches_random_p18_manifest(cache_path, envelope=str(envelope), expected_metadata=expected_metadata):
+        return {
+            "ok": True,
+            "dry_run": False,
+            "robot": robot_name,
+            "cache_label": cache_label,
+            "cache_path": str(cache_path),
+            "reused_existing": True,
+            "metadata": {},
+        }
+    cache_root.mkdir(parents=True, exist_ok=True)
+    if cache_path.exists():
+        shutil.rmtree(cache_path)
     set_online_cache_backfill(cfg, True)
     forest = sbf.SafeBoxForest(robot, cfg)
     t0 = time.perf_counter()

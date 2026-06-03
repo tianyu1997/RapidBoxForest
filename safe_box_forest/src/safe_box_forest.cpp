@@ -975,6 +975,52 @@ void append_local_edge(AdjacencyGraph& graph, int lhs, int rhs) {
     append_one(graph[rhs], lhs);
 }
 
+void remove_local_edge(AdjacencyGraph& graph, int lhs, int rhs) {
+    auto erase_one = [&](int from, int to) {
+        auto it = graph.find(from);
+        if (it == graph.end()) {
+            return;
+        }
+        auto& neighbors = it->second;
+        neighbors.erase(std::remove(neighbors.begin(), neighbors.end(), to), neighbors.end());
+    };
+    erase_one(lhs, rhs);
+    erase_one(rhs, lhs);
+}
+
+void remove_adjacency_nodes(AdjacencyGraph& graph, const std::unordered_set<int>& removed_ids) {
+    for (int id : removed_ids) {
+        graph.erase(id);
+    }
+    if (removed_ids.empty()) {
+        return;
+    }
+    for (auto& [_, neighbors] : graph) {
+        neighbors.erase(std::remove_if(neighbors.begin(), neighbors.end(), [&](int id) {
+            return removed_ids.find(id) != removed_ids.end();
+        }), neighbors.end());
+    }
+}
+
+void connect_incremental_boxes(AdjacencyGraph& graph,
+                               const std::vector<BoxNode>& boxes,
+                               std::size_t first_new_index,
+                               double tolerance) {
+    if (first_new_index >= boxes.size()) {
+        return;
+    }
+    for (const auto& box : boxes) {
+        graph[box.id];
+    }
+    for (std::size_t i = first_new_index; i < boxes.size(); ++i) {
+        for (std::size_t j = 0; j < i; ++j) {
+            if (boxes_connected(boxes[j], boxes[i], tolerance)) {
+                append_local_edge(graph, boxes[j].id, boxes[i].id);
+            }
+        }
+    }
+}
+
 std::unordered_set<int> collect_local_adjacency_ids(const std::vector<BoxNode>& live_boxes,
                                                     const std::vector<BoxNode>& local_domains,
                                                     double tolerance) {
@@ -1662,6 +1708,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     raw_boxes_.clear();
     adjacency_.clear();
     segment_edges_.clear();
+    dynamic_collision_box_cache_.clear();
     invalidate_query_cache();
 
     const auto grow_t0 = Clock::now();
@@ -1828,6 +1875,7 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
     raw_boxes_.clear();
     adjacency_.clear();
     segment_edges_.clear();
+    dynamic_collision_box_cache_.clear();
     invalidate_query_cache();
 
     LeafSweepConfig active_config = leaf_sweep_config;
@@ -1841,6 +1889,7 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
     oracle_->set_scene(scene_);
     boxes_ = result.free_boxes;
     raw_boxes_ = boxes_;
+    populate_dynamic_collision_cache(result, static_cast<int>(obstacles.size()));
     reserve_existing_boxes();
     adjacency_.clear();
     segment_edges_.clear();
@@ -2095,6 +2144,8 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.diagnostics["leaf_refine.leaf_sweep_ms"] = out.leaf_sweep_ms;
     out.profile.diagnostics["leaf_refine.leaf_free_count"] = static_cast<double>(out.leaf_free_count);
     out.profile.diagnostics["leaf_refine.leaf_collision_count"] = static_cast<double>(out.leaf_collision_count);
+    out.profile.diagnostics["leaf_refine.collision_cache_boxes"] =
+        static_cast<double>(dynamic_collision_box_cache_.size());
     out.profile.diagnostics["leaf_refine.deep_refine_ms"] = out.deep_refine_ms;
     out.profile.diagnostics["leaf_refine.deep_boxes_added"] = static_cast<double>(out.deep_boxes_added);
     out.profile.diagnostics["leaf_refine.deep_domain_attempts"] = static_cast<double>(out.deep_domain_attempts);
@@ -2289,6 +2340,283 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
     return result;
 }
 
+void RBFPlanningForest::populate_dynamic_collision_cache(const LeafSweepResult& result,
+                                                         int obstacle_count) {
+    dynamic_collision_box_cache_.clear();
+    dynamic_collision_box_cache_.reserve(result.collision_boxes.size());
+    std::vector<int> all_obstacles;
+    all_obstacles.reserve(static_cast<std::size_t>(std::max(0, obstacle_count)));
+    for (int index = 0; index < obstacle_count; ++index) {
+        all_obstacles.push_back(index);
+    }
+    for (std::size_t index = 0; index < result.collision_boxes.size(); ++index) {
+        std::vector<int> blockers = all_obstacles;
+        if (index < result.collision_box_obstacle_indices.size() &&
+            !result.collision_box_obstacle_indices[index].empty()) {
+            blockers = result.collision_box_obstacle_indices[index];
+        }
+        add_dynamic_collision_cache_box(result.collision_boxes[index], std::move(blockers));
+    }
+}
+
+void RBFPlanningForest::add_dynamic_collision_cache_box(const BoxNode& box,
+                                                        std::vector<int> blocking_obstacle_indices) {
+    blocking_obstacle_indices.erase(
+        std::remove_if(blocking_obstacle_indices.begin(),
+                       blocking_obstacle_indices.end(),
+                       [](int index) { return index < 0; }),
+        blocking_obstacle_indices.end());
+    std::sort(blocking_obstacle_indices.begin(), blocking_obstacle_indices.end());
+    blocking_obstacle_indices.erase(
+        std::unique(blocking_obstacle_indices.begin(), blocking_obstacle_indices.end()),
+        blocking_obstacle_indices.end());
+    if (blocking_obstacle_indices.empty()) {
+        return;
+    }
+    CachedCollisionBox cached;
+    cached.box = box;
+    cached.blocking_obstacle_indices = std::move(blocking_obstacle_indices);
+    dynamic_collision_box_cache_.push_back(std::move(cached));
+}
+
+int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_set<int>& removed_obstacle_indices,
+                                                         RebuildProfile& profile) {
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    if (removed_obstacle_indices.empty() || dynamic_collision_box_cache_.empty()) {
+        profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
+        return 0;
+    }
+
+    auto remap_obstacle_index = [&](int old_index, int& new_index) {
+        if (removed_obstacle_indices.find(old_index) != removed_obstacle_indices.end()) {
+            return false;
+        }
+        int shift = 0;
+        for (int removed : removed_obstacle_indices) {
+            if (removed < old_index) {
+                shift += 1;
+            }
+        }
+        new_index = old_index - shift;
+        return new_index >= 0 && new_index < scene_.n_obstacles();
+    };
+
+    std::vector<CachedCollisionBox> retained;
+    retained.reserve(dynamic_collision_box_cache_.size());
+    int promoted = 0;
+    int next_id = next_box_id();
+    const double adjacency_tolerance = config_.query.adjacency_tolerance;
+    const auto cache_scan_t0 = std::chrono::steady_clock::now();
+    for (auto& cached : dynamic_collision_box_cache_) {
+        profile.diagnostics["delete.cache_entries_scanned"] += 1.0;
+        bool touched = false;
+        std::vector<int> remaining_blockers;
+        remaining_blockers.reserve(cached.blocking_obstacle_indices.size());
+        for (int old_index : cached.blocking_obstacle_indices) {
+            profile.diagnostics["delete.blocker_index_checks"] += 1.0;
+            if (removed_obstacle_indices.find(old_index) != removed_obstacle_indices.end()) {
+                touched = true;
+                continue;
+            }
+            int new_index = -1;
+            if (remap_obstacle_index(old_index, new_index)) {
+                remaining_blockers.push_back(new_index);
+            }
+        }
+        std::sort(remaining_blockers.begin(), remaining_blockers.end());
+        remaining_blockers.erase(std::unique(remaining_blockers.begin(), remaining_blockers.end()),
+                                 remaining_blockers.end());
+
+        if (!touched) {
+            cached.blocking_obstacle_indices = std::move(remaining_blockers);
+            retained.push_back(std::move(cached));
+            continue;
+        }
+        profile.collision_cache_candidates += 1;
+        if (!remaining_blockers.empty()) {
+            cached.blocking_obstacle_indices = std::move(remaining_blockers);
+            retained.push_back(std::move(cached));
+            continue;
+        }
+
+        BoxNode box = cached.box;
+        box.id = next_id;
+        bool contained = false;
+        const auto contained_t0 = std::chrono::steady_clock::now();
+        for (const auto& existing : boxes_) {
+            profile.diagnostics["delete.containment_checks"] += 1.0;
+            if (box_contains_box_exact_local(existing, box)) {
+                contained = true;
+                break;
+            }
+        }
+        profile.diagnostics["delete.containment_check_ms"] +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - contained_t0).count();
+        if (contained) {
+            profile.collision_cache_rejected_contained += 1;
+            continue;
+        }
+        int adjacent_parent = -1;
+        const auto adjacency_t0 = std::chrono::steady_clock::now();
+        if (!boxes_.empty() && !leaf_refine_has_adjacency(boxes_, box, adjacency_tolerance, &adjacent_parent)) {
+            profile.diagnostics["delete.adjacency_check_ms"] +=
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - adjacency_t0).count();
+            profile.collision_cache_rejected_disconnected += 1;
+            cached.blocking_obstacle_indices.clear();
+            retained.push_back(std::move(cached));
+            continue;
+        }
+        profile.diagnostics["delete.adjacency_check_ms"] +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - adjacency_t0).count();
+        profile.diagnostics["delete.adjacency_checks"] += 1.0;
+        box.parent_box_id = adjacent_parent;
+        const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
+        box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : box.id;
+        box.safety_status = BoxSafetyStatus::CertifiedFree;
+        box.strict_audit_required = false;
+        box.compute_volume();
+        if (oracle_ && box.tree_id >= 0) {
+            oracle_->reserve_node(box.tree_id, box.id);
+        }
+        boxes_.push_back(box);
+        raw_boxes_.push_back(box);
+        next_id += 1;
+        promoted += 1;
+        profile.collision_cache_promoted += 1;
+        profile.boxes_added += 1;
+        profile.raw_boxes_added += 1;
+    }
+    profile.diagnostics["delete.cache_scan_ms"] +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cache_scan_t0).count();
+    dynamic_collision_box_cache_ = std::move(retained);
+    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
+    return promoted;
+}
+
+int RBFPlanningForest::refill_removed_box_with_leaf_sweep(const BoxNode& removed_box,
+                                                          int new_obstacle_index,
+                                                          int max_depth,
+                                                          int& next_id,
+                                                          RebuildProfile& profile) {
+    if (!oracle_ || removed_box.tree_id < 0 || removed_box.joint_intervals.empty()) {
+        return 0;
+    }
+    const int effective_max_depth = std::max(0, std::min(max_depth, oracle_->max_tree_depth() - 1));
+    struct Item {
+        OracleNodeId node = kInvalidOracleNodeId;
+        int changed_dim = -1;
+    };
+    std::vector<Item> stack;
+    stack.push_back(Item{removed_box.tree_id, -1});
+    int added = 0;
+    const OracleSplitOptions split_options = config_.grower.find_free_box.split;
+
+    auto cache_collision_leaf = [&](OracleNodeId node, const std::vector<Interval>& intervals) {
+        profile.diagnostics["insert.refill_cached_collision_leaves"] += 1.0;
+        BoxNode cached_box;
+        cached_box.id = -1;
+        cached_box.joint_intervals = intervals;
+        cached_box.seed_config = cached_box.center();
+        cached_box.tree_id = node;
+        cached_box.parent_box_id = removed_box.parent_box_id;
+        cached_box.root_id = removed_box.root_id;
+        cached_box.safety_status = BoxSafetyStatus::Unknown;
+        cached_box.strict_audit_required = true;
+        cached_box.compute_volume();
+        add_dynamic_collision_cache_box(cached_box, {new_obstacle_index});
+    };
+
+    while (!stack.empty()) {
+        profile.diagnostics["insert.refill_stack_pops"] += 1.0;
+        const Item item = stack.back();
+        stack.pop_back();
+        if (item.node < 0) {
+            continue;
+        }
+        std::vector<Interval> intervals = oracle_->node_intervals(item.node);
+        if (!intervals_subset_local(intervals, removed_box.joint_intervals, 1e-12)) {
+            continue;
+        }
+        if (oracle_->is_reserved(item.node)) {
+            profile.diagnostics["insert.refill_reserved_skips"] += 1.0;
+            continue;
+        }
+        profile.regrow_attempts += 1;
+        const auto validate_t0 = std::chrono::steady_clock::now();
+        const BoxValidation validation = oracle_->validate_node(item.node, intervals, item.changed_dim);
+        profile.diagnostics["insert.refill_validate_node_calls"] += 1.0;
+        profile.diagnostics["insert.refill_validate_node_ms"] +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - validate_t0).count();
+        OracleValidationDetail detail = oracle_->last_validation_detail();
+        if (validation == BoxValidation::Free) {
+            profile.diagnostics["insert.refill_free_leaves"] += 1.0;
+            BoxNode box;
+            box.id = next_id++;
+            box.joint_intervals = std::move(intervals);
+            box.seed_config = box.center();
+            box.tree_id = item.node;
+            box.parent_box_id = removed_box.parent_box_id;
+            box.root_id = removed_box.root_id >= 0 ? removed_box.root_id : box.id;
+            box.safety_status = detail.safety_status;
+            box.strict_audit_required = detail.strict_audit_required;
+            box.compute_volume();
+
+            FindFreeBoxResult commit_probe;
+            commit_probe.found = true;
+            commit_probe.node = item.node;
+            commit_probe.intervals = box.joint_intervals;
+            commit_probe.validation_detail = detail;
+            if (!allow_dynamic_commit(*oracle_, commit_probe, config_.grower.commit_policy)) {
+                profile.diagnostics["insert.refill_commit_rejects"] += 1.0;
+                continue;
+            }
+            bool contained = false;
+            const auto contained_t0 = std::chrono::steady_clock::now();
+            for (const auto& existing : boxes_) {
+                profile.diagnostics["insert.refill_containment_checks"] += 1.0;
+                if (box_contains_box_exact_local(existing, box)) {
+                    contained = true;
+                    break;
+                }
+            }
+            profile.diagnostics["insert.refill_containment_check_ms"] +=
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - contained_t0).count();
+            if (contained) {
+                profile.collision_cache_rejected_contained += 1;
+                profile.diagnostics["insert.refill_contained_rejects"] += 1.0;
+                continue;
+            }
+            oracle_->reserve_node(box.tree_id, box.id);
+            boxes_.push_back(box);
+            raw_boxes_.push_back(std::move(box));
+            profile.boxes_added += 1;
+            profile.raw_boxes_added += 1;
+            added += 1;
+            continue;
+        }
+
+        if (oracle_->depth(item.node) >= effective_max_depth) {
+            profile.diagnostics["insert.refill_depth_cap_hits"] += 1.0;
+            cache_collision_leaf(item.node, intervals);
+            continue;
+        }
+        const auto split_t0 = std::chrono::steady_clock::now();
+        const auto split = oracle_->split_node(item.node, intervals, item.changed_dim, split_options);
+        profile.diagnostics["insert.refill_split_node_calls"] += 1.0;
+        profile.diagnostics["insert.refill_split_node_ms"] +=
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - split_t0).count();
+        if (!split.split) {
+            profile.diagnostics["insert.refill_split_failures"] += 1.0;
+            cache_collision_leaf(item.node, intervals);
+            continue;
+        }
+        profile.diagnostics["insert.refill_split_success"] += 1.0;
+        stack.push_back(Item{split.right, split.split_dim});
+        stack.push_back(Item{split.left, split.split_dim});
+    }
+    return added;
+}
+
 BuildProfile RBFPlanningForest::build_subtractive(
     const std::vector<SubtractiveObstacleGroup>& obstacle_groups,
     const std::vector<Eigen::VectorXd>& seeds,
@@ -2311,6 +2639,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
         raw_boxes_.clear();
         adjacency_.clear();
         segment_edges_.clear();
+        dynamic_collision_box_cache_.clear();
         invalidate_query_cache();
         reset_oracle(Scene{});
         profile.diagnostics["subtractive.bootstrap_boxes"] = 0.0;
@@ -3061,20 +3390,22 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
     profile.boxes_before = static_cast<int>(boxes_.size());
     profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
     profile.obstacles_before = scene_.n_obstacles();
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
 
     Scene added_scene(std::vector<Obstacle>{obstacle});
     CollisionChecker added_checker(robot_, added_scene);
     Scene updated_scene = scene_;
     updated_scene.add_obstacle(obstacle);
     CollisionChecker updated_checker(robot_, updated_scene);
-    const AdjacencyGraph previous_adjacency = adjacency_;
     std::vector<BoxNode> removed_boxes;
     std::unordered_set<int> removed_box_ids;
     const auto check_t0 = Clock::now();
     profile.used_spatial_dirty_region = config_.dynamic_update.enable_spatial_dirty_region;
     std::vector<int> dirty_indices;
     if (config_.dynamic_update.enable_spatial_dirty_region) {
+        const auto dirty_t0 = Clock::now();
         dirty_indices = spatial_dirty_all_box_indices(robot_, boxes_, obstacle, config_.dynamic_update, profile.dirty_boxes);
+        profile.dirty_region_ms = std::chrono::duration<double, std::milli>(Clock::now() - dirty_t0).count();
         profile.dirty_boxes_used = static_cast<int>(dirty_indices.size());
     } else {
         dirty_indices.reserve(boxes_.size());
@@ -3089,7 +3420,12 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
             continue;
         }
         const BoxNode& box = boxes_[static_cast<std::size_t>(index)];
-        if (added_checker.check_box(box.joint_intervals)) {
+        const auto box_check_t0 = Clock::now();
+        const bool collides = added_checker.check_box(box.joint_intervals);
+        profile.diagnostics["insert.free_box_check_box_calls"] += 1.0;
+        profile.diagnostics["insert.free_box_check_box_ms"] +=
+            std::chrono::duration<double, std::milli>(Clock::now() - box_check_t0).count();
+        if (collides) {
             removed_box_ids.insert(box.id);
             removed_boxes.push_back(box);
         }
@@ -3106,7 +3442,15 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
         }
     }
     for (std::size_t i = 0; i < raw_boxes_.size();) {
-        if (removed_box_ids.find(raw_boxes_[i].id) != removed_box_ids.end() || added_checker.check_box(raw_boxes_[i].joint_intervals)) {
+        bool remove_raw = removed_box_ids.find(raw_boxes_[i].id) != removed_box_ids.end();
+        if (!remove_raw) {
+            const auto raw_check_t0 = Clock::now();
+            remove_raw = added_checker.check_box(raw_boxes_[i].joint_intervals);
+            profile.diagnostics["insert.raw_box_check_box_calls"] += 1.0;
+            profile.diagnostics["insert.raw_box_check_box_ms"] +=
+                std::chrono::duration<double, std::milli>(Clock::now() - raw_check_t0).count();
+        }
+        if (remove_raw) {
             raw_boxes_.erase(raw_boxes_.begin() + static_cast<std::ptrdiff_t>(i));
             profile.raw_boxes_removed += 1;
         } else {
@@ -3118,101 +3462,451 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
     for (const auto& box : boxes_) {
         live_box_ids.insert(box.id);
     }
+    const int segment_edges_before = static_cast<int>(segment_edges_.size());
+    int segment_edges_removed_dead_endpoint = 0;
+    int segment_edges_audited = 0;
+    int segment_edges_removed_audit = 0;
+    double segment_edge_audit_ms = 0.0;
     segment_edges_.erase(std::remove_if(segment_edges_.begin(), segment_edges_.end(), [&](const SegmentEdge& edge) {
         if (live_box_ids.find(edge.source_box_id) == live_box_ids.end() ||
             live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
+            segment_edges_removed_dead_endpoint += 1;
             return true;
         }
-        return !segment_edge_survives_scene(
+        const auto edge_t0 = Clock::now();
+        segment_edges_audited += 1;
+        const bool survives = segment_edge_survives_scene(
             edge, updated_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
+        segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
+        if (!survives) {
+            segment_edges_removed_audit += 1;
+            const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+            const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
+            if (source_box == nullptr || target_box == nullptr ||
+                !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
+                remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+            }
+        }
+        return !survives;
     }), segment_edges_.end());
+    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_edges_before);
+    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] = static_cast<double>(segment_edges_removed_dead_endpoint);
+    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_edges_audited);
+    profile.diagnostics["insert.segment_edges_removed_audit"] = static_cast<double>(segment_edges_removed_audit);
+    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_edge_audit_ms;
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 
     scene_ = std::move(updated_scene);
+    const auto reset_t0 = Clock::now();
     reset_oracle(scene_);
+    profile.diagnostics["insert.reset_oracle_ms"] =
+        std::chrono::duration<double, std::milli>(Clock::now() - reset_t0).count();
+    const auto reserve_t0 = Clock::now();
     reserve_existing_boxes();
+    profile.diagnostics["insert.reserve_existing_boxes_ms"] =
+        std::chrono::duration<double, std::milli>(Clock::now() - reserve_t0).count();
 
     const auto regrow_t0 = Clock::now();
-    const auto seed_candidates = make_insertion_regrow_seeds(boxes_,
-                                                             removed_boxes,
-                                                             removed_box_ids,
-                                                             previous_adjacency,
-                                                             last_build_seeds_,
-                                                             oracle_->root_intervals(),
-                                                             config_.dynamic_update,
-                                                             config_.query.adjacency_tolerance,
-                                                             config_.grower.boundary_epsilon);
-    profile.dirty_seed_count = static_cast<int>(seed_candidates.size());
-    if (!seed_candidates.empty() && config_.dynamic_update.local_regrow_box_limit > 0) {
-        const Deadline deadline = config_.dynamic_update.local_regrow_timeout_ms > 0.0
-            ? Deadline::after_ms(config_.dynamic_update.local_regrow_timeout_ms)
-            : Deadline{};
-        StageContext context = StageContext::from_runtime(config_.runtime, deadline);
-        FindFreeBoxService ffb(*oracle_);
-        FindFreeBoxOptions options = config_.grower.find_free_box;
-        int next_id = next_box_id();
-        for (const auto& candidate : seed_candidates) {
-            if (context.should_stop() || profile.boxes_added >= config_.dynamic_update.local_regrow_box_limit) {
-                break;
-            }
-            if (point_covered_by_existing_box_local(boxes_, candidate.seed) || updated_checker.check_config(candidate.seed)) {
-                continue;
-            }
-            profile.regrow_attempts += 1;
-            auto result = ffb.find(candidate.seed, context, options);
-            if (!result.found || !intervals_contain_point_local(result.intervals, candidate.seed, config_.query.adjacency_tolerance)) {
-                continue;
-            }
-            if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
-                continue;
-            }
-            BoxNode box;
-            box.id = next_id++;
-            box.joint_intervals = std::move(result.intervals);
-            box.seed_config = candidate.seed;
-            box.tree_id = result.node;
-            box.parent_box_id = candidate.parent_box_id;
-            box.root_id = candidate.root_id >= 0 ? candidate.root_id : box.id;
-            box.safety_status = result.validation_detail.safety_status;
-            box.strict_audit_required = result.validation_detail.strict_audit_required;
-            box.compute_volume();
-            bool contained = false;
-            for (const auto& existing : boxes_) {
-                if (box_contains_box_exact_local(existing, box)) {
-                    contained = true;
-                    break;
-                }
-            }
-            if (contained) {
-                continue;
-            }
-            if (candidate.parent_box_id >= 0) {
-                const BoxNode* parent = find_box_by_id(boxes_, candidate.parent_box_id);
-                if (parent != nullptr && !boxes_connected(*parent, box, config_.query.adjacency_tolerance)) {
-                    const double gap = std::sqrt(interval_bounds_gap_squared_local(parent->joint_intervals, box.joint_intervals));
-                    if (gap > config_.grower.boundary_epsilon + config_.query.adjacency_tolerance) {
-                        continue;
-                    }
-                }
-            }
-            oracle_->reserve_node(box.tree_id, box.id);
-            boxes_.push_back(box);
-            raw_boxes_.push_back(std::move(box));
-            profile.boxes_added += 1;
-            profile.raw_boxes_added += 1;
+    profile.dirty_seed_count = static_cast<int>(removed_boxes.size());
+    int next_id = next_box_id();
+    const std::size_t first_new_box_index = boxes_.size();
+    for (const auto& removed_box : removed_boxes) {
+        profile.diagnostics["insert.refill_domains"] += 1.0;
+        int sweep_max_depth = config_.dynamic_update.insertion_leaf_sweep_max_depth;
+        if (oracle_ && config_.dynamic_update.insertion_leaf_sweep_relative_depth >= 0 && removed_box.tree_id >= 0) {
+            sweep_max_depth = std::min(
+                sweep_max_depth,
+                oracle_->depth(removed_box.tree_id) + config_.dynamic_update.insertion_leaf_sweep_relative_depth);
         }
+        refill_removed_box_with_leaf_sweep(removed_box,
+                                           profile.obstacles_before,
+                                           sweep_max_depth,
+                                           next_id,
+                                           profile);
     }
     profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
 
     const auto adj_t0 = Clock::now();
-    rebuild_adjacency();
+    remove_adjacency_nodes(adjacency_, removed_box_ids);
+    connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+    invalidate_query_cache();
     profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
     profile.boxes_after = static_cast<int>(boxes_.size());
     profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
     profile.obstacles_after = scene_.n_obstacles();
     profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
+    return profile;
+}
+
+RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Obstacle>& obstacles) {
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
+    RebuildProfile profile;
+    profile.boxes_before = static_cast<int>(boxes_.size());
+    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
+    profile.obstacles_before = scene_.n_obstacles();
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    if (obstacles.empty()) {
+        profile.boxes_after = profile.boxes_before;
+        profile.raw_boxes_after = profile.raw_boxes_before;
+        profile.obstacles_after = profile.obstacles_before;
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return profile;
+    }
+
+    Scene added_scene(obstacles);
+    CollisionChecker added_checker(robot_, added_scene);
+    Scene updated_scene = scene_;
+    for (const auto& obstacle : obstacles) {
+        updated_scene.add_obstacle(obstacle);
+    }
+    CollisionChecker updated_checker(robot_, updated_scene);
+
+    std::vector<BoxNode> removed_boxes;
+    std::unordered_set<int> removed_box_ids;
+    const auto check_t0 = Clock::now();
+    profile.used_spatial_dirty_region = config_.dynamic_update.enable_spatial_dirty_region;
+    std::vector<int> dirty_indices;
+    if (config_.dynamic_update.enable_spatial_dirty_region) {
+        const auto dirty_t0 = Clock::now();
+        dirty_indices.reserve(boxes_.size());
+        std::unordered_set<int> dirty_set;
+        for (const auto& obstacle : obstacles) {
+            int obstacle_dirty_count = 0;
+            auto current = spatial_dirty_all_box_indices(robot_, boxes_, obstacle, config_.dynamic_update, obstacle_dirty_count);
+            profile.dirty_boxes += obstacle_dirty_count;
+            for (int index : current) {
+                if (dirty_set.insert(index).second) {
+                    dirty_indices.push_back(index);
+                }
+            }
+        }
+        profile.dirty_region_ms = std::chrono::duration<double, std::milli>(Clock::now() - dirty_t0).count();
+        profile.dirty_boxes_used = static_cast<int>(dirty_indices.size());
+    } else {
+        dirty_indices.reserve(boxes_.size());
+        for (int index = 0; index < static_cast<int>(boxes_.size()); ++index) {
+            dirty_indices.push_back(index);
+        }
+        profile.dirty_boxes = static_cast<int>(dirty_indices.size());
+        profile.dirty_boxes_used = profile.dirty_boxes;
+    }
+
+    for (int index : dirty_indices) {
+        if (index < 0 || index >= static_cast<int>(boxes_.size())) {
+            continue;
+        }
+        const BoxNode& box = boxes_[static_cast<std::size_t>(index)];
+        const auto box_check_t0 = Clock::now();
+        const bool collides = added_checker.check_box(box.joint_intervals);
+        profile.diagnostics["insert.free_box_check_box_calls"] += 1.0;
+        profile.diagnostics["insert.free_box_check_box_ms"] +=
+            std::chrono::duration<double, std::milli>(Clock::now() - box_check_t0).count();
+        if (collides) {
+            removed_box_ids.insert(box.id);
+            removed_boxes.push_back(box);
+        }
+    }
+    for (std::size_t i = 0; i < boxes_.size();) {
+        if (removed_box_ids.find(boxes_[i].id) != removed_box_ids.end()) {
+            if (oracle_) {
+                oracle_->release_box(boxes_[i].id);
+            }
+            boxes_.erase(boxes_.begin() + static_cast<std::ptrdiff_t>(i));
+            profile.boxes_removed += 1;
+        } else {
+            ++i;
+        }
+    }
+    for (std::size_t i = 0; i < raw_boxes_.size();) {
+        bool remove_raw = removed_box_ids.find(raw_boxes_[i].id) != removed_box_ids.end();
+        if (!remove_raw) {
+            const auto raw_check_t0 = Clock::now();
+            remove_raw = added_checker.check_box(raw_boxes_[i].joint_intervals);
+            profile.diagnostics["insert.raw_box_check_box_calls"] += 1.0;
+            profile.diagnostics["insert.raw_box_check_box_ms"] +=
+                std::chrono::duration<double, std::milli>(Clock::now() - raw_check_t0).count();
+        }
+        if (remove_raw) {
+            raw_boxes_.erase(raw_boxes_.begin() + static_cast<std::ptrdiff_t>(i));
+            profile.raw_boxes_removed += 1;
+        } else {
+            ++i;
+        }
+    }
+
+    std::unordered_set<int> live_box_ids;
+    live_box_ids.reserve(boxes_.size());
+    for (const auto& box : boxes_) {
+        live_box_ids.insert(box.id);
+    }
+    const int segment_edges_before = static_cast<int>(segment_edges_.size());
+    int segment_edges_removed_dead_endpoint = 0;
+    int segment_edges_audited = 0;
+    int segment_edges_removed_audit = 0;
+    double segment_edge_audit_ms = 0.0;
+    segment_edges_.erase(std::remove_if(segment_edges_.begin(), segment_edges_.end(), [&](const SegmentEdge& edge) {
+        if (live_box_ids.find(edge.source_box_id) == live_box_ids.end() ||
+            live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
+            segment_edges_removed_dead_endpoint += 1;
+            return true;
+        }
+        const auto edge_t0 = Clock::now();
+        segment_edges_audited += 1;
+        const bool survives = segment_edge_survives_scene(
+            edge, updated_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
+        segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
+        if (!survives) {
+            segment_edges_removed_audit += 1;
+            const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+            const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
+            if (source_box == nullptr || target_box == nullptr ||
+                !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
+                remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+            }
+        }
+        return !survives;
+    }), segment_edges_.end());
+    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_edges_before);
+    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] = static_cast<double>(segment_edges_removed_dead_endpoint);
+    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_edges_audited);
+    profile.diagnostics["insert.segment_edges_removed_audit"] = static_cast<double>(segment_edges_removed_audit);
+    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_edge_audit_ms;
+    profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
+
+    scene_ = std::move(updated_scene);
+    const auto reset_t0 = Clock::now();
+    reset_oracle(scene_);
+    profile.diagnostics["insert.reset_oracle_ms"] =
+        std::chrono::duration<double, std::milli>(Clock::now() - reset_t0).count();
+    const auto reserve_t0 = Clock::now();
+    reserve_existing_boxes();
+    profile.diagnostics["insert.reserve_existing_boxes_ms"] =
+        std::chrono::duration<double, std::milli>(Clock::now() - reserve_t0).count();
+
+    const auto regrow_t0 = Clock::now();
+    profile.dirty_seed_count = static_cast<int>(removed_boxes.size());
+    int next_id = next_box_id();
+    const std::size_t first_new_box_index = boxes_.size();
+    for (const auto& removed_box : removed_boxes) {
+        profile.diagnostics["insert.refill_domains"] += 1.0;
+        int sweep_max_depth = config_.dynamic_update.insertion_leaf_sweep_max_depth;
+        if (oracle_ && config_.dynamic_update.insertion_leaf_sweep_relative_depth >= 0 && removed_box.tree_id >= 0) {
+            sweep_max_depth = std::min(
+                sweep_max_depth,
+                oracle_->depth(removed_box.tree_id) + config_.dynamic_update.insertion_leaf_sweep_relative_depth);
+        }
+        refill_removed_box_with_leaf_sweep(removed_box,
+                                           profile.obstacles_before,
+                                           sweep_max_depth,
+                                           next_id,
+                                           profile);
+    }
+    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
+
+    const auto adj_t0 = Clock::now();
+    remove_adjacency_nodes(adjacency_, removed_box_ids);
+    connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+    invalidate_query_cache();
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.obstacles_after = scene_.n_obstacles();
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    invalidate_query_cache();
+    return profile;
+}
+
+RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
+    RebuildProfile profile;
+    profile.boxes_before = static_cast<int>(boxes_.size());
+    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
+    profile.obstacles_before = scene_.n_obstacles();
+    profile.obstacles_after = profile.obstacles_before;
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
+    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(find_islands(adjacency_).size());
+
+    if (!oracle_ || boxes_.empty()) {
+        profile.boxes_after = profile.boxes_before;
+        profile.raw_boxes_after = profile.raw_boxes_before;
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.fallback_reason = boxes_.empty() ? "empty_forest" : "missing_oracle";
+        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return profile;
+    }
+
+    const auto connector_t0 = Clock::now();
+    StageContext context = StageContext::from_runtime(config_.runtime);
+    CollisionChecker checker(robot_, scene_);
+    IslandConnectorConfig connector_config = config_.connector;
+    connector_config.segment_edges_enabled = true;
+    connector_config.rrt_segment_edges = true;
+    connector_config.point_gap_segment_edges = true;
+    if (connector_config.n_threads <= 1 && config_.runtime.n_threads > 1) {
+        connector_config.n_threads = config_.runtime.n_threads;
+    }
+    IslandConnector connector(*oracle_, robot_, checker, connector_config);
+    int connector_next_id = next_box_id();
+    const auto connector_result =
+        connector.connect_all(boxes_, adjacency_, segment_edges_, connector_next_id, context);
+    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - connector_t0).count();
+
+    profile.bridge_boxes_added = connector_result.bridge_boxes_added;
+    profile.segment_edges_added = connector_result.segment_edges_added;
+    profile.rrt_segment_edges_added = connector_result.rrt_segment_edges_added;
+    profile.point_gap_segment_edges_added = connector_result.point_gap_segment_edges_added;
+    profile.boxes_added = std::max(0, static_cast<int>(boxes_.size()) - profile.boxes_before);
+    profile.raw_boxes_added = std::max(0, static_cast<int>(raw_boxes_.size()) - profile.raw_boxes_before);
+    profile.diagnostics["segment_fallback.attempted_pairs"] = static_cast<double>(connector_result.attempted_pairs);
+    profile.diagnostics["segment_fallback.connected"] = connector_result.connected ? 1.0 : 0.0;
+    profile.diagnostics["segment_fallback.segment_edges_after"] = static_cast<double>(segment_edges_.size());
+
+    const auto adj_t0 = Clock::now();
+    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+    invalidate_query_cache();
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.diagnostics["segment_fallback.islands_after"] = static_cast<double>(profile.adjacency_islands);
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    return profile;
+}
+
+RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
+    RebuildProfile profile;
+    profile.boxes_before = static_cast<int>(boxes_.size());
+    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
+    profile.obstacles_before = scene_.n_obstacles();
+    profile.obstacles_after = profile.obstacles_before;
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
+    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(find_islands(adjacency_).size());
+
+    if (!oracle_ || boxes_.empty() || start.size() != oracle_->n_dims() || goal.size() != oracle_->n_dims()) {
+        profile.boxes_after = profile.boxes_before;
+        profile.raw_boxes_after = profile.raw_boxes_before;
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.fallback_reason = boxes_.empty() ? "empty_forest" : !oracle_ ? "missing_oracle" : "bad_endpoint_dimension";
+        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return profile;
+    }
+
+    const auto endpoint_t0 = Clock::now();
+    const std::size_t first_new_box_index = boxes_.size();
+    StageContext context = StageContext::from_runtime(config_.runtime);
+    FindFreeBoxService ffb(*oracle_);
+    FindFreeBoxOptions endpoint_options = config_.grower.find_free_box;
+    endpoint_options.reject_seed_collision = true;
+    int next_id = next_box_id();
+    auto try_endpoint = [&](const Eigen::Ref<const Eigen::VectorXd>& point, const char* label) {
+        profile.diagnostics[std::string("segment_fallback.") + label + "_attempts"] += 1.0;
+        if (point_covered_by_existing_box_local(boxes_, point)) {
+            profile.diagnostics[std::string("segment_fallback.") + label + "_already_covered"] += 1.0;
+            return;
+        }
+        auto result = ffb.find(point, context, endpoint_options);
+        profile.regrow_attempts += 1;
+        if (!result.found || !intervals_contain_point_local(result.intervals, point, config_.query.adjacency_tolerance)) {
+            profile.diagnostics[std::string("segment_fallback.") + label + "_ffb_failed"] += 1.0;
+            return;
+        }
+        if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
+            profile.diagnostics[std::string("segment_fallback.") + label + "_commit_rejected"] += 1.0;
+            return;
+        }
+        BoxNode box;
+        box.id = next_id++;
+        box.joint_intervals = std::move(result.intervals);
+        box.seed_config = point;
+        box.tree_id = result.node;
+        box.parent_box_id = -1;
+        box.root_id = box.id;
+        box.safety_status = result.validation_detail.safety_status;
+        box.strict_audit_required = result.validation_detail.strict_audit_required;
+        box.compute_volume();
+        for (const auto& existing : boxes_) {
+            if (box_contains_box_exact_local(existing, box)) {
+                profile.diagnostics[std::string("segment_fallback.") + label + "_contained_rejected"] += 1.0;
+                return;
+            }
+        }
+        int adjacent_parent = -1;
+        if (!leaf_refine_has_adjacency(boxes_, box, config_.query.adjacency_tolerance, &adjacent_parent)) {
+            profile.diagnostics[std::string("segment_fallback.") + label + "_disconnected_rejected"] += 1.0;
+            return;
+        }
+        box.parent_box_id = adjacent_parent;
+        const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
+        box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : adjacent_parent;
+        oracle_->reserve_node(box.tree_id, box.id);
+        boxes_.push_back(box);
+        raw_boxes_.push_back(box);
+        profile.boxes_added += 1;
+        profile.raw_boxes_added += 1;
+        profile.diagnostics[std::string("segment_fallback.") + label + "_boxes_added"] += 1.0;
+    };
+    try_endpoint(start, "start");
+    try_endpoint(goal, "goal");
+    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - endpoint_t0).count();
+
+    const auto pre_connector_adj_t0 = Clock::now();
+    if (boxes_.size() > first_new_box_index) {
+        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+    }
+    profile.adjacency_ms += std::chrono::duration<double, std::milli>(Clock::now() - pre_connector_adj_t0).count();
+
+    const auto connector_t0 = Clock::now();
+    IslandConnectorConfig connector_config = config_.connector;
+    connector_config.segment_edges_enabled = true;
+    connector_config.rrt_segment_edges = true;
+    connector_config.point_gap_segment_edges = true;
+    if (connector_config.n_threads <= 1 && config_.runtime.n_threads > 1) {
+        connector_config.n_threads = config_.runtime.n_threads;
+    }
+    CollisionChecker checker(robot_, scene_);
+    IslandConnector connector(*oracle_, robot_, checker, connector_config);
+    const auto connector_result =
+        connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
+    profile.diagnostics["segment_fallback.connector_ms"] =
+        std::chrono::duration<double, std::milli>(Clock::now() - connector_t0).count();
+
+    profile.bridge_boxes_added += connector_result.bridge_boxes_added;
+    profile.segment_edges_added += connector_result.segment_edges_added;
+    profile.rrt_segment_edges_added += connector_result.rrt_segment_edges_added;
+    profile.point_gap_segment_edges_added += connector_result.point_gap_segment_edges_added;
+    profile.boxes_added = std::max(0, static_cast<int>(boxes_.size()) - profile.boxes_before);
+    profile.raw_boxes_added = std::max(0, static_cast<int>(raw_boxes_.size()) - profile.raw_boxes_before);
+    profile.diagnostics["segment_fallback.attempted_pairs"] = static_cast<double>(connector_result.attempted_pairs);
+    profile.diagnostics["segment_fallback.connected"] = connector_result.connected ? 1.0 : 0.0;
+    profile.diagnostics["segment_fallback.segment_edges_after"] = static_cast<double>(segment_edges_.size());
+
+    const auto adj_t0 = Clock::now();
+    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+    invalidate_query_cache();
+    profile.adjacency_ms += std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.diagnostics["segment_fallback.islands_after"] = static_cast<double>(profile.adjacency_islands);
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     return profile;
 }
 
@@ -3237,6 +3931,23 @@ RebuildProfile RBFPlanningForest::remove_obstacle_and_regrow(int obstacle_index)
     profile.obstacles_after = scene_.n_obstacles();
     reset_oracle(scene_);
     reserve_existing_boxes();
+    const std::unordered_set<int> removed_indices{obstacle_index};
+    const std::size_t first_new_box_index = boxes_.size();
+    promote_unblocked_collision_cache(removed_indices, profile);
+
+    const auto adj_t0_delete = Clock::now();
+    if (profile.boxes_added > 0) {
+        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+        invalidate_query_cache();
+    }
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0_delete).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    invalidate_query_cache();
+    return profile;
 
     const auto dirty_t0 = Clock::now();
     std::vector<int> dirty_indices;
@@ -3282,6 +3993,7 @@ RebuildProfile RBFPlanningForest::remove_obstacle_and_regrow(int obstacle_index)
         profile.raw_boxes_added = std::max(0, profile.raw_boxes_after - profile.raw_boxes_before);
         profile.boxes_removed = std::max(0, before_build - profile.boxes_after);
         profile.raw_boxes_removed = std::max(0, profile.raw_boxes_before - profile.raw_boxes_after);
+        profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
         profile.adjacency_islands = last_build_.adjacency_islands;
         return true;
     };
@@ -3427,6 +4139,26 @@ RebuildProfile RBFPlanningForest::remove_obstacle_suffix_and_regrow(int target_o
     profile.obstacles_after = scene_.n_obstacles();
     reset_oracle(scene_);
     reserve_existing_boxes();
+    std::unordered_set<int> removed_indices;
+    for (int index = target_count; index < profile.obstacles_before; ++index) {
+        removed_indices.insert(index);
+    }
+    const std::size_t first_new_box_index = boxes_.size();
+    promote_unblocked_collision_cache(removed_indices, profile);
+
+    const auto adj_t0_delete = Clock::now();
+    if (profile.boxes_added > 0) {
+        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+        invalidate_query_cache();
+    }
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0_delete).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    invalidate_query_cache();
+    return profile;
 
     const auto dirty_t0 = Clock::now();
     std::vector<int> dirty_indices;
@@ -3472,6 +4204,7 @@ RebuildProfile RBFPlanningForest::remove_obstacle_suffix_and_regrow(int target_o
         profile.raw_boxes_added = std::max(0, profile.raw_boxes_after - profile.raw_boxes_before);
         profile.boxes_removed = std::max(0, before_build - profile.boxes_after);
         profile.raw_boxes_removed = std::max(0, profile.raw_boxes_before - profile.raw_boxes_after);
+        profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
         profile.adjacency_islands = last_build_.adjacency_islands;
         return true;
     };
@@ -3594,6 +4327,7 @@ void RBFPlanningForest::clear_forest() {
     raw_boxes_.clear();
     adjacency_.clear();
     segment_edges_.clear();
+    dynamic_collision_box_cache_.clear();
     if (oracle_) {
         oracle_->clear_reservations();
     }

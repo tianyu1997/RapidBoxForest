@@ -1,7 +1,7 @@
 % ==============================================================================
 % RapidBoxForest (RBF) — IEEE Transactions on Robotics submission source (EN).
-% Standalone-compilable from paper/sbf_rbf_only/ while reusing generated assets
-% and figures from paper/sbf_old/.
+% Standalone-compilable from paper/ while reusing generated assets and figures
+% from paper/sbf_old/.
 % ==============================================================================
 \documentclass[journal]{IEEEtran}
 
@@ -81,9 +81,9 @@
 \newtheorem{corollary}{Corollary}
 \newtheorem{assumption}{Assumption}
 
-\input{../sbf_old/generated/macros.tex}
-\IfFileExists{../sbf_old/generated/macros_sbf.tex}{\input{../sbf_old/generated/macros_sbf.tex}}{}
-\IfFileExists{../sbf_old/generated/tro_macros.tex}{\input{../sbf_old/generated/tro_macros.tex}}{}
+\input{sbf_old/generated/macros.tex}
+\IfFileExists{sbf_old/generated/macros_sbf.tex}{\input{sbf_old/generated/macros_sbf.tex}}{}
+\IfFileExists{sbf_old/generated/tro_macros.tex}{\input{sbf_old/generated/tro_macros.tex}}{}
 
 \newcommand{\rbf}{\textsc{RBF}}
 \newcommand{\iAABB}{\ensuremath{\mathrm{iAABB}}}
@@ -139,8 +139,9 @@ reported experiments evaluate strict-audit Shelf+IIWA planning, the
 link-envelope representation trade-off, persistent evidence replay, and local
 dynamic-scene updates. On Shelf+IIWA, warm external-evidence rows preserve
 strict-audit success, while wall time remains dominated by scene-specific growth
-and validation in the inexpensive LinkIAABB setting. A dynamic-update study
-further shows speedups over warm rebuild on matched obstacle-edit paths. This
+and validation in the inexpensive LinkIAABB setting. The dynamic-update study
+reports the accounting needed to exploit the leaf-sweep obstacle relation cache
+under matched obstacle-edit paths. This
 paper keeps the original planning formulation and title, but limits its
 quantitative claims to results regenerated from the current RapidBoxForest
 implementation.
@@ -207,12 +208,13 @@ an acceleration layer for repeated materialization, not a separate planning
 claim.
 
 The evaluation therefore asks what the current implementation can support under
-the adopted protocol. The main axes are cache prewarm and replay cost, Shelf+IIWA
-cold-versus-warm build and query time, strict-audit success,
-envelope-representation trade-offs across the link-envelope families including
-staged AABB/KDOP26/SupportHull cascades, and
-dynamic update speedup over warm rebuild. Broader cross-planner baselines and
-full multi-robot generalization remain future work.
+the adopted protocol. The main axes are Shelf+IIWA strict-audit performance,
+evidence replay in the active leaf-refine ablation, envelope-representation
+trade-offs across the link-envelope families including staged
+AABB/KDOP26/SupportHull cascades, and dynamic-update accounting for the
+leaf-sweep--RRT planner.
+Broader cross-planner baselines and full multi-robot generalization remain
+future work.
 
 We therefore position the paper as a planning-systems contribution enabled by a
 geometry primitive. The endpoint-to-link envelope is the main geometric idea;
@@ -245,8 +247,8 @@ three concrete elements:}
   (\cref{sec:lect,sec:forest,sec:exp_mechanisms}).
 
   \item \emph{An implementation-aligned evaluation.}
-  Shelf+IIWA, cache-mechanism, envelope sweep, and dynamic-update studies are
-  evaluated under the strict audit protocol adopted in this paper. The
+  Shelf+IIWA, envelope sweep, reduced random-scene, and dynamic-update studies
+  are evaluated under the strict audit protocol adopted in this paper. The
   reported rows are generated from the current implementation and do not carry
   forward the older cross-planner comparison tables
   (\cref{sec:exp_shelf_iiwa,sec:exp_mechanisms,sec:exp_dynamic_updates}).
@@ -261,7 +263,7 @@ cache-reuse, and dynamic-update behavior under the adopted protocol.
 
 \begin{figure*}[t]
   \centering
-  \includegraphics[width=0.97\textwidth]{../sbf_old/figures/framework.png}
+  \includegraphics[width=0.97\textwidth]{sbf_old/figures/framework.png}
   \caption{\rbf{} pipeline for link-envelope-guided multi-query planning. Top: endpoint interval envelopes induce link interval envelopes over a $C$-space box. Middle: LECT optionally reuses kinematics-keyed endpoint and link-envelope records across repeated builds. Bottom: scene filtering and an RRT-inspired grower expand a connected box-region forest for lightweight corridor queries and final audit.}
   \label{fig:linkiaabb}
 \end{figure*}
@@ -765,7 +767,7 @@ adjacency bookkeeping, and regrowth reactions to changing $\mathcal{O}$ remain
 inside the box-region forest routines. For the Shelf+IIWA protocol, the external
 d23 cache is treated as read-only during evaluation: warm shelf rows disable
 active-database backfill and therefore cannot silently accumulate new online
-envelope evidence while being measured. Other cache studies state their own
+envelope evidence while being measured. Other experiments state their own
 writeback policy when they measure cache growth rather than fixed held-out
 replay.
 
@@ -775,15 +777,15 @@ replay.
 \begin{figure*}[t]
 \centering
 \begin{tabular}{@{}c@{\hspace{4pt}}c@{\hspace{4pt}}c@{}}
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_1.png} &
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_3.png} &
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_5.png} \\
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_1.png} &
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_3.png} &
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_5.png} \\
 {\footnotesize (a) C-space cells \& box $Q$} &
 {\footnotesize (c) C-space path} &
 {\footnotesize (e) Invalidated boxes} \\[4pt]
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_2.png} &
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_4.png} &
-\includegraphics[width=0.325\textwidth]{../sbf_old/figures/sbf_grow_6.png} \\
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_2.png} &
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_4.png} &
+\includegraphics[width=0.325\textwidth]{sbf_old/figures/sbf_grow_6.png} \\
 {\footnotesize (b) Workspace AABBs of $Q$} &
 {\footnotesize (d) Workspace path} &
 {\footnotesize (f) After regrowth} \\
@@ -791,7 +793,7 @@ replay.
 \caption{Illustrative \rbf{} build, query, and obstacle-update cycle on a planar 2-link manipulator.
   (a,\,b)~Adaptive $C$-space cells and workspace AABB envelopes of the highlighted box~$Q$.
   (c,\,d)~Box-corridor path in $C$-space and its workspace trajectory.
-  (e,\,f)~After obstacle insertion, intersecting boxes are invalidated (red), and localized repair/regrowth updates the explicit forest without requiring a full rebuild.}
+  (e,\,f)~After obstacle insertion, intersecting boxes are invalidated (red), and localized refill plus graph repair updates the explicit forest without requiring a full rebuild.}
 \label{fig:overview}
 \end{figure*}
 
@@ -814,13 +816,15 @@ planning experiments, paths that leave this union through repair, smoothing, or
 external composition are charged where used and passed through the same final
 scene audit.
 
-Conceptually, the build process has three stages. First, a seed-guided local
+Conceptually, the build process has four stages. First, a seed-guided local
 oracle adaptively refines and classifies a $C$-space cell around a selected
-configuration. Second, repeated frontier expansion grows these cells into a
-connected forest, giving the method its region-valued RRT/PRM character. Third,
-consolidation coarsens redundant boxes before the structure is exported as a
-query graph. The consolidation pass is part of the reusable build phase and its
-time is included in reported build measurements.
+configuration. Second, the leaf-sweep mode constructs a shallow, reusable
+partition of the current scene and identifies conservative refinement domains.
+Third, repeated frontier expansion or restricted refinement grows validated
+cells into a connected forest, giving the method its region-valued RRT/PRM
+character. Fourth, consolidation coarsens redundant boxes before the structure
+is exported as a query graph. The consolidation pass is part of the reusable
+build phase and its time is included in reported build measurements.
 
 \subsection{Construction Objective}\label{sec:forest_objective}
 
@@ -922,6 +926,76 @@ conservative mode, any returned interval has passed envelope disjointness
 against $\calO$; in performance-oriented modes, the returned interval is a
 validated planning region that remains subject to the common final audit used
 for reported paths.
+
+\subsection{Leaf Sweep and Restricted Refinement}
+\label{sec:leaf_sweep_method}
+
+The reported fast configuration uses \textsc{FindFreeBox} inside a two-stage
+leaf-sweep construction. Rather than asking the RRT-like grower to discover all
+useful coarse regions by random frontier proposals, \rbf{} first enumerates a
+fixed-depth set of LECT leaves and classifies them with the current obstacle set.
+Let $\mathcal{L}_{d_0:d_1}$ denote the virtual leaf layer obtained by expanding
+the tree from start depth $d_0$ to maximum sweep depth $d_1$. Each leaf
+$C\in\mathcal{L}_{d_0:d_1}$ is tested by the same link-envelope scene oracle
+used by \textsc{FindFreeBox}. A leaf that is certified free is inserted into
+the initial forest. A leaf that cannot be certified free is retained as a
+conservative \emph{collision domain}. This domain is not an occupied proof; it
+is a bounded region in which the shallow test was inconclusive and where deeper
+refinement may still expose valid free boxes.
+
+During this sweep, \rbf{} also records a blocker set
+\[
+  \beta(C) \subseteq \{1,\ldots,|\calO|\}
+\]
+for each non-free collision domain, containing the obstacles whose workspace
+AABBs participate in the conservative overlap test. The blocker set is used only
+as update metadata. It is not used to certify free space, and it does not change
+the envelope validation rule for boxes that enter the forest.
+
+After the shallow sweep, restricted refinement is performed only inside selected
+collision domains. Domains are ranked by their adjacency to already certified
+free boxes, volume, and proximity to query-priority configurations. Candidate
+seeds are placed at interfaces between a collision domain and neighboring free
+boxes, with additional center and boundary seeds to avoid depending on a single
+contact point. For a domain $C$, every accepted refined box $B$ must satisfy
+\[
+  B \subseteq C
+\]
+and must be adjacent either to an existing forest box or to a box already
+accepted from the same domain. Thus the refinement stage can fill narrow
+passages revealed inside a shallow collision domain without spending its budget
+on unrelated regions of $\Q$. The connector stage may subsequently add
+collision-checked segment witnesses between remaining islands, but these
+witnesses are recorded separately from box-overlap edges.
+
+\begin{algorithm}[t]
+\caption{LeafSweepRefine: shallow coverage with restricted deep refinement.}
+\label{alg:leaf_sweep_refine}
+\footnotesize
+\begin{algorithmic}[1]
+\REQUIRE LECT $T$, obstacle set $\calO$, sweep depths $d_0,d_1$, refinement budget $N_r$
+\ENSURE Validated forest $\mathcal{F}$ and collision-domain cache $\mathcal{C}$
+\STATE $\mathcal{F}\gets\emptyset$; $\mathcal{C}\gets\emptyset$
+\FORALL{virtual leaves $C\in\mathcal{L}_{d_0:d_1}$}
+  \IF{$C$ is certified free by the link-envelope scene oracle}
+    \STATE insert $C$ into $\mathcal{F}$
+  \ELSE
+    \STATE record $C$ and its blocker set $\beta(C)$ in $\mathcal{C}$
+  \ENDIF
+\ENDFOR
+\STATE build adjacency among boxes in $\mathcal{F}$
+\FORALL{collision domains $C\in\mathcal{C}$ in priority order}
+  \STATE generate interface, center, and boundary seeds inside $C$
+  \FORALL{seed $q$ while budget remains}
+    \STATE $B\gets\procname{FindFreeBoxInDomain}(q,T,\calO,C)$
+    \IF{$B\neq\emptyset$, $B\subseteq C$, and $B$ is adjacent to $\mathcal{F}$ or to a prior box from $C$}
+      \STATE insert $B$ into $\mathcal{F}$ and update local adjacency
+    \ENDIF
+  \ENDFOR
+\ENDFOR
+\RETURN $\mathcal{F},\mathcal{C}$
+\end{algorithmic}
+\end{algorithm}
 
 \subsection{Forest Growth}\label{sec:forest_growth}
 
@@ -1136,44 +1210,74 @@ used for the baselines. The main performance curves should therefore be read as
 post-processed, fixed-audit planning results rather than as evidence that every
 reported path satisfies the box-corridor containment hypothesis.
 
-For dynamic scenes, the same explicit forest representation supports local
-graph maintenance without compulsory rebuilds. Each accepted box records the
-obstacle evidence that blocked or validated its envelope tests; obstacle
-deletions cannot invalidate existing boxes accepted under the same validation
-policy, because free space only grows. Deletion triggers only a spatial dirty-region pass around the removed
-obstacle to choose local regrowth seeds, after which any new box is validated by
-the same oracle as in the original build. Obstacle insertion is stricter: the
-new obstacle is inflated by the dirty-region padding, all overlapping boxes are
-rechecked exactly, invalid boxes and incident graph edges are removed, and every
-surviving segment edge is re-audited in the edited scene. The repair stage then
-regrows from deleted-box centers, live neighbours, original task seeds, and
-component-boundary candidates; each committed box must pass the active
-validation policy before it enters the forest. Finally, query failure can trigger a
-bounded local repair search, again filtered by the same final audit. Warm
-rebuild remains available as a measured baseline and fallback policy.
+\subsection{Dynamic Obstacle Updates}
+\label{sec:dynamic_update_method}
 
-% \begin{algorithm}[t]
-% \caption{\textsc{IncrementalUpdate}---localized certificate invalidation and graph repair}
-% \label{alg:incremental_update}
-% \footnotesize
-% \begin{algorithmic}[1]
-% \REQUIRE Conservative forest $\mathcal{F}$, graph $G$, edited obstacles $\Delta\calO$, LECT $T$
-% \ENSURE Repaired forest and adjacency graph, or failure
-% \STATE $\mathcal{I} \gets \emptyset$
-% \FORALL{$B \in \mathcal{F}$}
-%   \IF{the link envelope of $B$ intersects any obstacle in $\Delta\calO$}
-%     \STATE add $B$ to invalidated set $\mathcal{I}$
-%   \ENDIF
-% \ENDFOR
-% \STATE remove $\mathcal{I}$ from $\mathcal{F}$ and delete incident graph edges from $G$
-% \STATE rebuild connected-box edges among surviving neighbouring boxes
-% \IF{localized regrowth is enabled}
-%   \STATE seed \textsc{GrowForest} near frontier boxes adjacent to removed regions
-%   \STATE accept only boxes conservatively collision-free under the edited scene
-% \ENDIF
-% \STATE \textbf{return} repaired $(\mathcal{F},G)$ if queried components remain connected; otherwise failure
-% \end{algorithmic}
-% \end{algorithm}
+The explicit forest representation also supports local graph maintenance under
+obstacle edits. The update procedure assumes fixed robot kinematics and a fixed
+LECT topology/evidence cache; only the scene obstacle set and the
+scene-dependent forest labels change. The key distinction is asymmetric:
+removing obstacles can only make previously blocked regions easier to certify,
+whereas inserting obstacles may invalidate boxes that were previously accepted.
+
+For obstacle deletion, the blocker sets $\beta(C)$ recorded during the
+leaf-sweep stage provide a conservative promotion rule. When obstacle indices
+$R$ are removed, each cached collision domain $C$ updates its blocker set to
+$\beta(C)\setminus R$ with the remaining obstacle indices shifted accordingly.
+If this set becomes empty, $C$ is promoted to the forest without a new envelope
+or collision-validation query. This is sound with respect to the information
+recorded by the shallow sweep: the only recorded reasons for rejecting $C$ have
+been removed. The promoted box is still subject to the same graph-adjacency rule
+as any other forest box, and adjacency is updated incrementally rather than by
+rebuilding the full graph.
+
+Obstacle insertion uses the dual operation. Each added obstacle is first tested
+against the current free boxes. Boxes whose link envelopes intersect the new
+obstacle are removed together with incident graph edges and segment witnesses
+that no longer survive an edited-scene audit. Each invalidated box then becomes
+a bounded refill domain. The reported update path performs a local leaf sweep
+inside this domain for at most $k$ relative LECT levels, capped by the original
+global maximum depth. Free leaves found by this local sweep are reinserted into
+the forest; still-blocked leaves are cached with a blocker set containing the
+new obstacle index. The insertion update deliberately does not run a bounded
+RRT/FFB regrow stage, so the measured cost reflects invalidation, local
+leaf-sweep refill, and graph maintenance. If the edited graph still cannot
+answer the query, a final endpoint recovery and segment connector may add
+collision-checked witnesses; this fallback is reported explicitly in
+\cref{tab:tro_dynamic_rebuild}.
+
+\begin{algorithm}[t]
+\caption{DynamicUpdate: obstacle deletion promotion and insertion refill.}
+\label{alg:dynamic_update}
+\footnotesize
+\begin{algorithmic}[1]
+\REQUIRE Forest $\mathcal{F}$, graph $G$, collision-domain cache $\mathcal{C}$, edit $(\Delta^{-},\Delta^{+})$
+\ENSURE Updated forest, graph, and collision-domain cache
+\IF{$\Delta^{-}\neq\emptyset$}
+  \FORALL{$C\in\mathcal{C}$}
+    \STATE remove deleted obstacle indices from $\beta(C)$ and remap surviving indices
+    \IF{$\beta(C)=\emptyset$}
+      \STATE promote $C$ to $\mathcal{F}$ if it is not contained in an existing box
+    \ENDIF
+  \ENDFOR
+  \STATE incrementally connect promoted boxes to overlapping or touching forest boxes
+\ENDIF
+\IF{$\Delta^{+}\neq\emptyset$}
+  \STATE $\mathcal{I}\gets\{B\in\mathcal{F}:B\text{ conflicts with some obstacle in }\Delta^{+}\}$
+  \STATE remove $\mathcal{I}$ and incident graph/segment edges from $(\mathcal{F},G)$
+  \FORALL{$B\in\mathcal{I}$}
+    \STATE sweep leaves inside $B$ for at most $k$ relative levels, capped by $D_{\max}$
+    \STATE insert free swept leaves that are adjacent to the surviving forest
+    \STATE cache still-blocked leaves with blockers in $\Delta^{+}$
+  \ENDFOR
+  \STATE incrementally connect newly inserted boxes and re-audit surviving segment edges
+\ENDIF
+\IF{the requested query is still disconnected}
+  \STATE optionally run endpoint recovery and collision-checked segment fallback
+\ENDIF
+\RETURN updated $(\mathcal{F},G,\mathcal{C})$
+\end{algorithmic}
+\end{algorithm}
 
 If no contained conservative corridor is recovered, no box-corridor guarantee
 attaches to that query. The construction still exports a concrete box-region
@@ -1189,10 +1293,10 @@ implemented query pipeline has completed its own post-processing and strict
 final audit.
 
 \paragraph{Scope.}
-The main evidence consists of the Gate 0 configuration smoke, the E5
-lifelong-cache mechanism study, the E1 envelope sweep, the E2/E3 Shelf+IIWA
-cold-versus-warm rows, and the dynamic-update capability comparison. A warm
-random-scene study across IIWA, UR5, and Panda is also reported for
+The main evidence consists of the current Shelf+IIWA leaf-refine ablation, the
+link-envelope representation sweep, and the dynamic-update capability
+comparison. A reduced random-scene study across IIWA, UR5, and Panda and a
+compact Shelf+IIWA cross-algorithm sanity check are also reported for
 completeness.
 
 \paragraph{Reporting Protocol.}
@@ -1204,56 +1308,121 @@ baseline warm rows, the external d23 cache is read-only during evaluation and
 active-database backfill is disabled.
 
 \paragraph{Fixed Configuration.}
-The RBF planning rows use the configuration
-\texttt{rbf\_ifk\_aa\_aafkvol\_d40\_s15\_canonical\_lifelong}: the public API
-spelling \texttt{EndpointSource.IFK} for the IFK\_AA-backed certified endpoint
-source, an AAFKVolumeMin split schedule through depth 40, find-free-box start
-depth 15, the reported validation and final-audit policy, a default LECT
-tree-depth cap of 64, and the adopted link-envelope family
-\{LinkIAABB, KDOP26, SupportHull\}. In the Shelf+IIWA ablation, the baseline
-warm row uses the d23 external cache, while non-baseline comparison rows are run
-without external cache replay unless explicitly stated.
+The RBF planning rows use canonical IFK\_AA endpoint evidence, the reported
+validation and final-audit policy, and the adopted link-envelope family
+\{LinkIAABB, KDOP26, SupportHull\}. The Shelf+IIWA ablation uses the current
+leaf-refine protocol: a virtual leaf sweep from depth 8 to 14 followed by
+restricted depth-28 refinement. Its baseline warm rows use the read-only d23
+external cache, while non-baseline comparison rows are run without external
+cache replay or active endpoint-evidence caching unless explicitly stated.
 
 \paragraph{Platform and Scenes.}
-Planner rows were generated with one worker thread; the standalone
-link-envelope representation microbenchmark uses the batch parallelism recorded
-in its result artifact.
+Planner rows use the worker count recorded in each result artifact. The
+Shelf+IIWA leaf-refine baseline uses eight worker threads and reports an
+explicit single-thread ablation row; the standalone link-envelope representation
+microbenchmark uses the batch parallelism recorded in its result artifact.
 Shelf+IIWA uses the canonical Marcucci scene with five fixed query pairs. The
 random-scene benchmark uses balanced easy/medium/hard scenes for IIWA,
-UR5, and Panda at five scene seeds per setting.
+UR5, and Panda under the staged random-scene anytime protocol.
 
 \subsection{Shelf+IIWA Efficiency and Path Quality}\label{sec:exp_shelf_iiwa}
 
 \begin{figure}[t]
   \centering
-  \includegraphics[width=\columnwidth]{../sbf_old/figures/Marcucci_scene.png}
+  \includegraphics[width=\columnwidth]{sbf_old/figures/Marcucci_scene.png}
   \caption{Canonical Shelf+IIWA scene used in the experiments. The E3 main run
   evaluates five fixed query pairs on this scene under the strict audit
   protocol.}
   \label{fig:marcucci_scene}
 \end{figure}
 
-\input{../sbf_old/generated/tab_tro_rbf_only_warm_reuse.tex}
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{sbf_old/generated/fig_tro_leaf_refine_tradeoff.pdf}
+  \caption{Shelf+IIWA leaf-refine trade-off from the current Exp.~4 artifact.
+  (a) Planning time versus final audited path length. (b) Stage-level planning
+  time decomposition into virtual leaf sweep, restricted deep refinement, and
+  connector. (c) Planning time versus raw segment-edge fraction before final
+  OMPL simplification. The fast reported baseline is the d23 SupportHull
+  box200/d28 point; the box500/d24 point is the zero-segment quality point.}
+  \label{fig:tro_leaf_refine_tradeoff}
+\end{figure*}
 
-\Cref{fig:marcucci_scene,tab:tro_appendix_rbf_only_warm_reuse} summarize the
-Shelf+IIWA rows. Both the single-query and five-query settings preserve
-strict-audit success in cold and warm modes. The warm rows replay external
-kinematic evidence but do not reuse persisted free-space labels, so they should
-be read as a validation of the evidence-replay semantics rather than as a claim
-of large wall-time speedup. In this inexpensive LinkIAABB setting, scene-specific
-box growth, obstacle validation, and query post-processing dominate the measured
-wall time once endpoint evidence replay is enabled.
+\input{sbf_old/generated/tab_tro_leaf_refine_ablation.tex}
+
+\Cref{fig:marcucci_scene,fig:tro_leaf_refine_tradeoff,tab:tro_leaf_refine_ablation}
+summarize the Shelf+IIWA leaf-refine ablation. The d23 SupportHull baseline at
+the box200 point is the fastest audited row, while the box500/d24 point removes
+all segment-edge contribution and shortens the audited route at higher planning
+cost. The time decomposition shows that this trade-off is dominated by the
+restricted refinement budget after the leaf sweep; the connector is significant
+but no longer the primary source of path quality. The no-cache SupportHull row
+remains strict-audit successful but is slower and produces a longer route under
+the same box200 refinement budget. The no-cache AABB row is close in runtime
+and path length, but uses slightly more segment length; the defensible
+representation conclusion from this optimized shelf row is therefore not
+universal SupportHull dominance over AABB. The robust mechanism evidence is d23
+evidence replay, anchor-guided restricted refinement, and parallel virtual leaf
+validation. Disabling priority-anchor roots fails the two shelf transitions
+that cross the narrowest region, identifying anchor-root refinement as a
+required mechanism rather than a cosmetic tuning parameter.
+
+\input{sbf_old/generated/tab_tro_shelf_cross_algorithm.tex}
+
+\Cref{tab:tro_shelf_cross_algorithm} gives a compact cross-algorithm check on
+the same Shelf+IIWA task set. The updated SBF leaf-refine row succeeds on all
+15 audited queries and is far faster than the PRM and BIT* incumbent traces under
+their cumulative accounting. RRTConnect also succeeds on all queries and is
+slightly faster as a one-shot query planner, while the common per-query length
+column favors the SBF leaf-refine row on this shelf slice. This table is
+therefore not used to claim one-shot latency dominance over RRTConnect; its role
+is to separate the explicit audited box-region graph behavior from single-query
+sampling baselines. A reduced one-seed Shelf+IIWA IRIS-NP+GCS diagnostic with an
+eight-region prefix took 121.2~s and produced no audited solution on the five
+queries, so it is not treated as a competitive shelf row under the current
+configuration.
 
 \subsection{Balanced Random-Scene Pipeline Study}\label{sec:exp_generalization}
 
-The multi-robot random-scene benchmark reports the same fixed protocol on
-IIWA, UR5, and Panda across easy, medium, and hard settings. IIWA and Panda
-remain strict-audit safe across the three difficulties, while UR5 is the
-limiting case in the present data.
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{sbf_old/generated/fig_tro_random_reduced_tradeoff.pdf}
+  \caption{Reduced balanced random-scene trade-off by difficulty. Each panel
+  overlays IIWA, UR5, and Panda on one easy/medium/hard scene seed. SBF is shown
+  as a cumulative staged curve from seed to high; PRM and BIT* are checkpoint
+  curves; IRIS-NP+GCS and RRTConnect are single reported points in this reduced
+  run. Points farther right on the SBF curve are additional quality-budget
+  stages, not the selected fast baseline row in
+  \cref{tab:tro_random_reduced}.}
+  \label{fig:tro_random_reduced_tradeoff}
+\end{figure*}
 
-\subsection{Mechanism Studies: Envelopes and Cache}\label{sec:exp_mechanisms}
+\input{sbf_old/generated/tab_tro_random_reduced.tex}
 
-\input{../sbf_old/generated/tab_tro_link_envelopes.tex}
+The multi-robot random-scene benchmark is a staged anytime generalization study,
+not the Shelf+IIWA leaf-refine protocol. It reports IIWA, UR5, and Panda across
+easy, medium, and hard settings using per-robot p18 warm caches and
+scene-specific staged SBF builds. This experiment is used to check that the
+audit and cache machinery run across robots and random scenes, while preserving
+the anytime structure of the older paper presentation. In
+\cref{fig:tro_random_reduced_tradeoff}, SBF high-budget points are curve
+endpoints: they charge all preceding stages and mainly diagnose whether more
+box-forest budget buys path quality. They are not the fast random-scene
+baseline. Accordingly, \cref{tab:tro_random_reduced} reports the first
+strict-audit-successful SBF seed stage by difficulty; this removes the
+misleading impression that the 34~s high-stage endpoint is the baseline
+configuration. The reduced run passes strict audit across all nine
+robot--difficulty tasks for every reported row, but PRM, BIT*, and RRTConnect
+solve these one-shot random queries at much lower charged time than the staged
+SBF protocol, and the reduced IRIS-NP+GCS prefix is also faster than the SBF
+seed stage on this small random slice. The result should therefore not be read
+as a direct runtime extrapolation of the Shelf+IIWA leaf-refine baseline or as a
+claim that staged SBF dominates single-query sampling planners on random
+scenes.
+
+\subsection{Mechanism Studies: Link Envelopes}\label{sec:exp_mechanisms}
+
+\input{sbf_old/generated/tab_tro_link_envelopes.tex}
 
 \paragraph{Link-envelope chain modes.}
 \Cref{tab:tro_link_envelopes} extends the standalone link-envelope
@@ -1267,21 +1436,11 @@ AABB--KDOP26 and AABB--SupportHull chains average 1.27~$\mu$s and
 cascade averages 1.85~$\mu$s per box. \Cref{tab:tro_appendix_rbf_only_sweep}
 compresses the same artifact into one aggregate summary view.
 
-\input{../sbf_old/generated/tab_tro_rbf_only_cache_mechanism.tex}
-
-\input{../sbf_old/generated/tab_tro_rbf_only_sweep.tex}
-
-\paragraph{LECT mechanism.}
-\Cref{tab:tro_appendix_rbf_only_cache_mechanism} summarizes the cache semantics.
-The prewarm phase materializes the target leaf layer and stores reusable
-kinematic evidence; reopening a compatible cache replays those leaf records
-without recomputing FK at the replayed leaves. This is the paper's main
-cache-mechanism result: the current implementation performs persistent evidence
-replay, but the reported rows do not claim a stronger symmetry-transfer speedup.
+\input{sbf_old/generated/tab_tro_rbf_only_sweep.tex}
 
 \paragraph{Envelope sweep.}
 \Cref{tab:tro_appendix_rbf_only_sweep} gives a compact cross-width summary of
-the same E2 representation study. LinkIAABB remains the cheapest standalone
+the representation study. LinkIAABB remains the cheapest standalone
 representation at 0.68~$\mu$s per box and 384~B payload. Standalone KDOP26 and
 SupportHull increase cost to 1.94~$\mu$s and 1.77~$\mu$s, respectively. The
 AABB-first chains recover much of that overhead: AABB--KDOP26 averages
@@ -1292,26 +1451,31 @@ of the boxes in the fixed-width corpus.
 
 \subsection{Dynamic-Update Capability Study}\label{sec:exp_dynamic_updates}
 
-\Cref{tab:tro_dynamic_rebuild} summarizes the local update procedure on the
-random-scene edit protocol. It creates two matched edit
-paths: insertion from easy to medium to hard, and deletion from hard to medium
-to easy. The warm baseline is measured per transition, not as a cumulative
-path: the source scene first populates an isolated cache namespace,
-and the reported warm time is then a fresh target-scene
-\texttt{build\_coverage} call from that cache.
+\Cref{tab:tro_dynamic_rebuild} reports the revised dynamic-update accounting
+for the leaf-sweep--RRT planner. The protocol uses saved constrained random
+AABB scenes sampled inside the Exp.~4 d23 canonical inverse-root domain, so the
+same scenes can be replayed for both incremental updates and warm target-scene
+rebuilds. Insertions scan the live free-box forest against the added obstacles
+and record invalidated boxes under those obstacles. Deletions query the shallow
+leaf-sweep collision-domain cache, promote domains whose blocker set
+disappears, and do not re-run envelope validation for those promoted domains.
+Insertions use a local relative-depth leaf-sweep refill inside invalidated boxes
+instead of a bounded RRT/FFB repair stage; Table~VIII uses $k=0$, i.e., it
+rechecks the invalidated leaf without descending deeper.
 
-\input{../sbf_old/generated/tab_tro_dynamic_rebuild.tex}
+\input{sbf_old/generated/tab_tro_dynamic_rebuild.tex}
 
-The incremental update is consistently faster than this cache-warm rebuild
-baseline on the five-seed IIWA dynamic protocol. Insertion medians are
-9.5~ms for easy$\rightarrow$medium and 36.4~ms for
-medium$\rightarrow$hard, compared with 90.2~ms and 70.2~ms for warm rebuilds.
-Deletion is cheaper still because previously accepted boxes remain valid when
-obstacles are removed: hard$\rightarrow$medium takes 1.4~ms and
-medium$\rightarrow$easy takes 0.33~ms, versus 58.1~ms and 46.4~ms warm target
-rebuilds. This remains a capability study rather than a broad dynamic-scene
-claim, but it confirms that the explicit forest representation and local regrow
-interfaces are operational in the current code.
+The result separates two qualitatively different regimes. For obstacle
+deletions, no accepted free box is invalidated; the blocker cache exposes about
+7.1--8.1k candidate shallow domains per transition and the incremental update is
+about 79--97$\times$ faster than a fresh warm rebuild while preserving all
+eight queries. For obstacle insertions, the method correctly invalidates
+hundreds of free boxes and locally sweeps the invalidated domains. Four of
+eight insertion runs per transition require the final endpoint/segment fallback,
+but the total incremental update remains about 17--19$\times$ faster than a warm
+rebuild and all audited queries succeed. This supports the intended use of
+segment connectivity as a last-resort recovery mechanism rather than the
+primary update operator.
 
 \section{Conclusion}\label{sec:conclusion}
 
@@ -1321,10 +1485,10 @@ envelopes to link interval envelopes via capsule Minkowski decomposition and
 convex-hull generator bounding; an RRT-inspired grower builds a scene-specific
 box forest into a corridor graph queried by graph search and local refinement;
 LECT optionally caches kinematic envelope records to reduce repeated
-materialization cost. The experiments show correct Shelf+IIWA external-evidence
-replay, a leaf-only cache-prewarm mechanism, a strong LinkIAABB setting with
-useful AABB-first chain modes, and a working dynamic-update path that
-outperforms warm rebuild on the reported edit protocol.
+materialization cost. The experiments show strict-audit Shelf+IIWA performance
+under the leaf-refine protocol, useful AABB-first link-envelope chain modes, and
+a cache-aware dynamic-update path with explicit invalidation and promotion
+accounting.
 
 \paragraph{Limitations.}
 The box-corridor guarantee (\cref{thm:corridor_certificate}) is conditional on
@@ -1336,11 +1500,12 @@ supports persistent evidence replay, but the reported results do not imply that
 replay produces wall-time speedup in every envelope setting.
 
 \paragraph{Scope and Future Work.}
-The empirical scope covers Shelf+IIWA, the cache/update studies, and the
-balanced random-scene benchmark. Broader generalization studies, stronger cache
-transfer, and additional cross-planner comparisons remain natural next steps.
+The empirical scope covers Shelf+IIWA, link-envelope mechanisms, dynamic
+updates, and a reduced balanced random-scene pipeline check. Broader random-scene
+seed counts, stronger cache transfer, and dependency-complete IRIS/GCS
+comparisons remain natural next steps.
 
 \bibliographystyle{IEEEtran}
-\bibliography{../sbf_old/references}
+\bibliography{sbf_old/references}
 
 \end{document}

@@ -4,12 +4,16 @@
 
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
+#include <exception>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 namespace rbf {
 
@@ -55,11 +59,26 @@ public:
 class ThreadPoolExecutor final : public TaskExecutor {
 public:
 	explicit ThreadPoolExecutor(int n_threads);
+	~ThreadPoolExecutor() override;
 	void parallel_for(int begin, int end, const std::function<void(int)>& fn) override;
 	int n_threads() const override { return n_threads_; }
 
 private:
+	void worker_loop(int worker_id);
+
 	int n_threads_ = 1;
+	std::vector<std::thread> threads_;
+	std::mutex mutex_;
+	std::condition_variable work_cv_;
+	std::condition_variable done_cv_;
+	std::function<void(int)> fn_;
+	std::atomic<int> next_{0};
+	std::atomic<int> remaining_{0};
+	int begin_ = 0;
+	int end_ = 0;
+	bool has_work_ = false;
+	bool stop_ = false;
+	std::exception_ptr first_error_;
 };
 
 std::shared_ptr<TaskExecutor> make_executor(const RuntimeConfig& config);

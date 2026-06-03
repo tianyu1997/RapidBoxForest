@@ -87,6 +87,15 @@ std::vector<double> vector_to_list(const Eigen::VectorXd& values) {
     return result;
 }
 
+std::vector<std::vector<double>> eigen_path_to_lists(const std::vector<Eigen::VectorXd>& path) {
+    std::vector<std::vector<double>> result;
+    result.reserve(path.size());
+    for (const auto& waypoint : path) {
+        result.push_back(vector_to_list(waypoint));
+    }
+    return result;
+}
+
 std::vector<rbf::Interval> intervals_from_pairs(const std::vector<std::vector<double>>& pairs) {
     std::vector<rbf::Interval> intervals;
     intervals.reserve(pairs.size());
@@ -727,6 +736,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("dirty_seed_limit", &rbf::DynamicUpdateConfig::dirty_seed_limit)
         .def_readwrite("local_regrow_box_limit", &rbf::DynamicUpdateConfig::local_regrow_box_limit)
         .def_readwrite("local_regrow_timeout_ms", &rbf::DynamicUpdateConfig::local_regrow_timeout_ms)
+        .def_readwrite("insertion_leaf_sweep_max_depth", &rbf::DynamicUpdateConfig::insertion_leaf_sweep_max_depth)
+        .def_readwrite("insertion_leaf_sweep_relative_depth", &rbf::DynamicUpdateConfig::insertion_leaf_sweep_relative_depth)
         .def_readwrite("enable_warm_rebuild_fallback", &rbf::DynamicUpdateConfig::enable_warm_rebuild_fallback)
         .def_readwrite("warm_rebuild_on_empty_forest", &rbf::DynamicUpdateConfig::warm_rebuild_on_empty_forest)
         .def_readwrite("warm_rebuild_on_empty_dirty_region", &rbf::DynamicUpdateConfig::warm_rebuild_on_empty_dirty_region)
@@ -767,6 +778,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
     py::class_<rbf::LeafSweepResult>(module, "LeafSweepResult")
         .def_readonly("free_boxes", &rbf::LeafSweepResult::free_boxes)
         .def_readonly("collision_boxes", &rbf::LeafSweepResult::collision_boxes)
+        .def_readonly("collision_box_obstacle_indices", &rbf::LeafSweepResult::collision_box_obstacle_indices)
         .def_readonly("groups", &rbf::LeafSweepResult::groups)
         .def_readonly("obstacle_group_ids", &rbf::LeafSweepResult::obstacle_group_ids)
         .def_readonly("deadline_reached", &rbf::LeafSweepResult::deadline_reached)
@@ -1161,6 +1173,17 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("regrow_attempts", &rbf::RebuildProfile::regrow_attempts)
         .def_readonly("boxes_added", &rbf::RebuildProfile::boxes_added)
         .def_readonly("raw_boxes_added", &rbf::RebuildProfile::raw_boxes_added)
+        .def_readonly("bridge_boxes_added", &rbf::RebuildProfile::bridge_boxes_added)
+        .def_readonly("segment_edges_added", &rbf::RebuildProfile::segment_edges_added)
+        .def_readonly("rrt_segment_edges_added", &rbf::RebuildProfile::rrt_segment_edges_added)
+        .def_readonly("point_gap_segment_edges_added", &rbf::RebuildProfile::point_gap_segment_edges_added)
+        .def_readonly("collision_cache_boxes_before", &rbf::RebuildProfile::collision_cache_boxes_before)
+        .def_readonly("collision_cache_boxes_after", &rbf::RebuildProfile::collision_cache_boxes_after)
+        .def_readonly("collision_cache_candidates", &rbf::RebuildProfile::collision_cache_candidates)
+        .def_readonly("collision_cache_promoted", &rbf::RebuildProfile::collision_cache_promoted)
+        .def_readonly("collision_cache_rejected_collision", &rbf::RebuildProfile::collision_cache_rejected_collision)
+        .def_readonly("collision_cache_rejected_contained", &rbf::RebuildProfile::collision_cache_rejected_contained)
+        .def_readonly("collision_cache_rejected_disconnected", &rbf::RebuildProfile::collision_cache_rejected_disconnected)
         .def_readonly("used_spatial_dirty_region", &rbf::RebuildProfile::used_spatial_dirty_region)
         .def_readonly("used_warm_rebuild", &rbf::RebuildProfile::used_warm_rebuild)
         .def_readonly("fallback_reason", &rbf::RebuildProfile::fallback_reason)
@@ -1169,7 +1192,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("warm_rebuild_ms", &rbf::RebuildProfile::warm_rebuild_ms)
         .def_readonly("collision_check_ms", &rbf::RebuildProfile::collision_check_ms)
         .def_readonly("adjacency_ms", &rbf::RebuildProfile::adjacency_ms)
-        .def_readonly("total_ms", &rbf::RebuildProfile::total_ms);
+        .def_readonly("total_ms", &rbf::RebuildProfile::total_ms)
+        .def_readonly("diagnostics", &rbf::RebuildProfile::diagnostics);
 
     py::class_<rbf::QueryResult>(module, "QueryResult")
         .def_readonly("success", &rbf::QueryResult::success)
@@ -1178,6 +1202,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("box_sequence", &rbf::QueryResult::box_sequence)
         .def_readonly("segment_edge_sequence", &rbf::QueryResult::segment_edge_sequence)
         .def_readonly("path", &rbf::QueryResult::path)
+        .def("path_as_lists", [](const rbf::QueryResult& result) {
+            return eigen_path_to_lists(result.path);
+        })
         .def_readonly("path_length", &rbf::QueryResult::path_length)
         .def_readonly("query_time_ms", &rbf::QueryResult::query_time_ms)
         .def_readonly("segment_edges_used", &rbf::QueryResult::segment_edges_used)
@@ -1387,6 +1414,16 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          py::arg("gap_fill_max_ffb_calls") = 32,
                          py::arg("gap_fill_min_arc_gain") = 0.01)
         .def("add_obstacle_and_rebuild", &rbf::RBFPlanningForest::add_obstacle_and_rebuild, py::arg("obstacle"))
+        .def("add_obstacles_and_rebuild", &rbf::RBFPlanningForest::add_obstacles_and_rebuild, py::arg("obstacles"))
+        .def("connect_update_segment_fallback", &rbf::RBFPlanningForest::connect_update_segment_fallback)
+        .def("connect_update_endpoint_segment_fallback",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<double>& start,
+                const std::vector<double>& goal) {
+                 return forest.connect_update_endpoint_segment_fallback(eigen_vector_from_list(start),
+                                                                        eigen_vector_from_list(goal));
+             },
+             py::arg("start"), py::arg("goal"))
         .def("remove_obstacle_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_and_regrow, py::arg("obstacle_index"))
         .def("remove_obstacle_suffix_and_regrow", &rbf::RBFPlanningForest::remove_obstacle_suffix_and_regrow, py::arg("target_obstacle_count"))
         .def("clear_forest", &rbf::RBFPlanningForest::clear_forest)

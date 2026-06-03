@@ -35,6 +35,7 @@ struct LeafSweepGroupResult {
 struct LeafSweepResult {
 	std::vector<BoxNode> free_boxes;
 	std::vector<BoxNode> collision_boxes;
+	std::vector<std::vector<int>> collision_box_obstacle_indices;
 	std::vector<LeafSweepGroupResult> groups;
 	std::vector<int> obstacle_group_ids;
 	bool deadline_reached = false;

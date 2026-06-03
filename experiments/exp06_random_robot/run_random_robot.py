@@ -2,14 +2,17 @@
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+for candidate in (REPO_ROOT, REPO_ROOT.parent):
+    if str(candidate) not in sys.path:
+        sys.path.insert(0, str(candidate))
 
 from experiments.common.experiment_io import (  # noqa: E402
     DEFAULT_OUTPUT_ROOT,
@@ -38,6 +41,47 @@ from experiments.common.random_robot_cache import (  # noqa: E402
 )
 
 
+LOCAL_IRIS_PYTHON = Path("/home/tian/miniconda3/envs/sbf/bin/python")
+
+
+def default_iris_python() -> str:
+    return str(LOCAL_IRIS_PYTHON if LOCAL_IRIS_PYTHON.exists() else Path(sys.executable))
+
+
+def iris_dependency_status(python_executable: str) -> dict[str, Any]:
+    missing: list[str] = []
+    if not Path(python_executable).exists():
+        missing.append(str(python_executable))
+    env = os.environ.copy()
+    pythonpath_entries = [
+        str(REPO_ROOT / "build-exp04" / "python"),
+        str(REPO_ROOT.parent),
+    ]
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        pythonpath_entries.append(existing)
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
+    probe = None
+    if not missing:
+        probe = subprocess.run(
+            [str(python_executable), "-c", "import numpy, pydrake, sbf"],
+            cwd=str(REPO_ROOT),
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode != 0:
+            missing.append("iris_import_probe_failed")
+    return {
+        "ok": not missing,
+        "missing": missing,
+        "python": str(python_executable),
+        "stdout_tail": (probe.stdout[-2000:] if probe is not None else ""),
+        "stderr_tail": (probe.stderr[-2000:] if probe is not None else ""),
+    }
+
+
 def parse_args() -> argparse.Namespace:
     output_dir = DEFAULT_OUTPUT_ROOT / "exp06_random_robot"
     parser = argparse.ArgumentParser(description="Run Experiment 6 as a random-scene anytime trade-off dispatcher.")
@@ -50,7 +94,26 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trials", type=int, default=3)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--scene-profile", choices=["balanced", "legacy"], default="balanced")
+    parser.add_argument("--prm-build-grid-s", default="0.25,0.5,1,2,5")
+    parser.add_argument("--prm-query-budget-s", type=float, default=1.0)
+    parser.add_argument("--bitstar-timeout-s", type=float, default=5.0)
+    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=1.0)
+    parser.add_argument("--rrt-timeout-ms", type=float, default=10000.0)
+    parser.add_argument("--iris-python", default=default_iris_python())
+    parser.add_argument("--iris-budget-s", type=float, default=420.0)
+    parser.add_argument("--iris-stage-region-counts", default="3,5,7,9,12,16,20")
+    parser.add_argument("--iris-iteration-limit", type=int, default=8)
+    parser.add_argument("--iris-query-time-limit-s", type=float, default=90.0)
+    parser.add_argument("--iris-rounding-max-paths", type=int, default=24)
+    parser.add_argument("--iris-rounding-max-trials", type=int, default=240)
     parser.add_argument("--rbf-cache-root", type=Path, default=output_dir / "cache")
+    parser.add_argument("--scene-catalog", type=Path, default=None)
+    parser.add_argument(
+        "--scene-catalog-mode",
+        choices=["auto", "generate", "reuse"],
+        default="auto",
+        help="random scene catalog lifecycle: auto=generate if needed, generate=always regenerate, reuse=require existing catalog.",
+    )
     parser.add_argument("--clean-cache", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--cache-run-id", default=DEFAULT_RANDOM_CACHE_RUN_ID)
     parser.add_argument("--prewarm-depth", type=int, default=DEFAULT_RANDOM_P18_PREWARM_DEPTH)
@@ -63,38 +126,82 @@ def parse_args() -> argparse.Namespace:
 def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     methods = set(csv_list(args.methods))
     rows: list[dict[str, Any]] = []
+    scene_catalog = args.scene_catalog if args.scene_catalog is not None else args.out_dir / "random_scene_catalog.json"
+
     anytime_baselines = [method for method in ("prm", "bitstar", "rrtconnect") if method in methods]
-    anytime_sbf_methods = "support_hull_coverage" if "sbf" in methods else ""
-    if "sbf" in methods or anytime_baselines:
+    if "sbf" in methods:
         rows.append({
-            "name": "random_anytime_tradeoff",
-            "methods": (["sbf"] if "sbf" in methods else []) + anytime_baselines,
+            "name": "random_sbf_anytime",
+            "methods": ["sbf"],
             "kind": "random_anytime",
-            "description": "Random-scene anytime trade-off artifact for SBF, PRM, BIT*, and/or RRTConnect under the unified d40 SBF schedule.",
+            "description": "Random-scene staged SBF anytime artifact under the unified d40 SBF schedule.",
             "command": build_random_anytime_command(
                 python_executable=sys.executable,
-                out_json=args.out_dir / "random_anytime_tradeoff.json",
+                out_json=args.out_dir / "random_sbf_anytime.json",
                 robots=str(args.robots),
                 difficulties=str(args.difficulties),
                 scene_seeds=int(args.scene_seeds),
                 scene_profile=str(args.scene_profile),
                 threads=int(args.threads),
                 trials=int(args.trials),
-                methods=anytime_sbf_methods,
-                baseline_methods=",".join("rrt" if method == "rrtconnect" else method for method in anytime_baselines),
+                methods="support_hull_coverage",
+                baseline_methods="",
                 cache_root=args.rbf_cache_root,
                 cache_run_id=str(args.cache_run_id),
                 clear_cache=False,
+                prewarm_depth=int(args.prewarm_depth),
+                scene_catalog=scene_catalog,
+                scene_catalog_mode=str(args.scene_catalog_mode),
+                prm_build_grid_s=str(args.prm_build_grid_s),
+                prm_query_budget_s=float(args.prm_query_budget_s),
+                bitstar_timeout_s=float(args.bitstar_timeout_s),
+                bitstar_checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+                rrt_timeout_ms=float(args.rrt_timeout_ms),
+            ),
+        })
+    for method in anytime_baselines:
+        legacy_name = "rrt" if method == "rrtconnect" else method
+        rows.append({
+            "name": f"random_{method}_anytime",
+            "methods": [method],
+            "kind": "random_anytime",
+            "description": f"Random-scene {method} anytime artifact.",
+            "command": build_random_anytime_command(
+                python_executable=sys.executable,
+                out_json=args.out_dir / f"random_{method}_anytime.json",
+                robots=str(args.robots),
+                difficulties=str(args.difficulties),
+                scene_seeds=int(args.scene_seeds),
+                scene_profile=str(args.scene_profile),
+                threads=int(args.threads),
+                trials=int(args.trials),
+                methods="",
+                baseline_methods=legacy_name,
+                cache_root=args.rbf_cache_root,
+                cache_run_id=str(args.cache_run_id),
+                clear_cache=False,
+                prewarm_depth=int(args.prewarm_depth),
+                scene_catalog=scene_catalog,
+                scene_catalog_mode=str(args.scene_catalog_mode),
+                prm_build_grid_s=str(args.prm_build_grid_s),
+                prm_query_budget_s=float(args.prm_query_budget_s),
+                bitstar_timeout_s=float(args.bitstar_timeout_s),
+                bitstar_checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+                rrt_timeout_ms=float(args.rrt_timeout_ms),
             ),
         })
     if "iris_np" in methods:
-        rows.append({
+        deps = iris_dependency_status(str(args.iris_python))
+        row = {
             "name": "iris_np_gcs_random_anytime",
             "methods": ["iris_np"],
-            "kind": "random_iris_anytime",
+            "kind": "random_iris_anytime" if deps["ok"] else "skipped_dependency",
             "description": "IRIS-NP+GCS random-scene prefix anytime artifact.",
-            "command": build_random_iris_anytime_command(
-                python_executable=sys.executable,
+            "dependency_status": deps,
+        }
+        if deps["ok"]:
+            row["command"] = build_random_iris_anytime_command(
+                python_executable=str(args.iris_python),
                 out_json=args.out_dir / "iris_np_gcs_random_anytime.json",
                 robots=str(args.robots),
                 difficulties=str(args.difficulties),
@@ -102,8 +209,14 @@ def command_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
                 scene_profile=str(args.scene_profile),
                 threads=int(args.threads),
                 trials=int(args.trials),
-            ),
-        })
+                budget_s=float(args.iris_budget_s),
+                stage_region_counts=str(args.iris_stage_region_counts),
+                iteration_limit=int(args.iris_iteration_limit),
+                query_time_limit_s=float(args.iris_query_time_limit_s),
+                rounding_max_paths=int(args.iris_rounding_max_paths),
+                rounding_max_trials=int(args.iris_rounding_max_trials),
+            )
+        rows.append(row)
     return rows
 
 
@@ -147,17 +260,12 @@ def prepare_random_sbf_caches(args: argparse.Namespace) -> dict[str, Any]:
     }
     if args.execute and not args.dry_run:
         prune_summary = prune_directory_children(args.rbf_cache_root, keep_names)
-    seed_eval = seed_scene_stage_eval_caches_from_p18(
-        cache_root=args.rbf_cache_root,
-        cache_run_id=str(args.cache_run_id),
-        robot_names=robot_names,
-        method_names=["support_hull_coverage"],
-        stage_ids=UNIFIED_SBF_ANYTIME_STAGE_IDS,
-        difficulties=difficulty_names,
-        scene_seeds=int(args.scene_seeds),
-        p18_cache_labels={str(row["robot"]): str(row["cache_label"]) for row in p18_rows},
-        dry_run=bool(args.dry_run or not args.execute),
-    )
+    seed_eval = {
+        "dry_run": bool(args.dry_run or not args.execute),
+        "seeded_namespace_count": 0,
+        "seeded_namespaces": [],
+        "mode": "external_read_only_prewarm",
+    }
     return {
         "enabled": True,
         "root": str(args.rbf_cache_root),
@@ -177,6 +285,18 @@ def main() -> int:
     extra_env = default_sbf_subprocess_env()
     if args.execute:
         for row in rows:
+            if row.get("kind") == "skipped_dependency":
+                run_records.append({
+                    "name": row["name"],
+                    "measurement": {
+                        "dry_run": bool(args.dry_run),
+                        "returncode": None,
+                        "skipped": True,
+                        "reason": "missing_dependency",
+                        "dependency_status": row.get("dependency_status", {}),
+                    },
+                })
+                continue
             run_records.append({
                 "name": row["name"],
                 "measurement": run_command(row["command"], dry_run=bool(args.dry_run), extra_env=extra_env),
@@ -193,10 +313,10 @@ def main() -> int:
         "commands": rows,
         "runs": run_records,
         "notes": [
-            "Experiment 6 now dispatches random-scene anytime artifacts instead of separate one-shot baseline scripts.",
-            "The random anytime backend uses the unified d40 SBF schedule for its SBF method and keeps PRM/BIT*/RRTConnect in the same anytime artifact when requested.",
+            "Experiment 6 dispatches random-scene anytime artifacts instead of separate one-shot baseline scripts.",
+            "The random anytime backend uses the unified d40 SBF schedule for its SBF method and writes PRM/BIT*/RRTConnect into separate artifacts when requested.",
             "IRIS-NP+GCS remains a separate random prefix-anytime artifact because it uses a different backend and accounting model.",
-            "Random SBF runs seed every scene-stage namespace from a canonical native p18 cache per robot, then write subsequent warm updates into the evaluation cache namespaces.",
+            "Random SBF runs seed every scene-stage namespace from a canonical native p20 cache per robot, then writes warm planning updates into the evaluation cache namespaces.",
         ],
     }
     write_json(out_json, payload)
