@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
+#include <sbf/core/joint_symmetry.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -155,6 +157,8 @@ RBFPlanningConfig::RBFPlanningConfig() {
     connector.rrt.step_size = 0.25;
     connector.rrt.goal_bias = 0.4;
     connector.rrt.segment_resolution = 16;
+    connector.rrt.segment_step = query.audit_segment_step;
+    connector.point_validated_gap_step = query.audit_segment_step;
     connector.max_total_bridge_boxes = 0;
     connector.frontier_bridge = false;
 
@@ -1555,8 +1559,14 @@ std::vector<Interval> database_root_intervals_for(const Robot& robot,
             << " dims, expected " << root_intervals.size();
         throw std::runtime_error(out.str());
     }
+    const std::vector<Interval>& joint_limits = robot.joint_limits().limits;
     for (std::size_t dim = 0; dim < override_intervals.size(); ++dim) {
-        const Interval& allowed = root_intervals[dim];
+        const Interval& allowed = (canonical_mode && !override_intervals.empty() &&
+                                   dim < joint_limits.size() &&
+                                   (override_intervals[dim].lo + 1e-12 < root_intervals[dim].lo ||
+                                    override_intervals[dim].hi - 1e-12 > root_intervals[dim].hi))
+            ? joint_limits[dim]
+            : root_intervals[dim];
         const Interval& requested = override_intervals[dim];
         if (requested.lo > requested.hi) {
             std::ostringstream out;
@@ -1567,12 +1577,89 @@ std::vector<Interval> database_root_intervals_for(const Robot& robot,
         if (requested.lo + 1e-12 < allowed.lo || requested.hi - 1e-12 > allowed.hi) {
             std::ostringstream out;
             out << "database root_intervals_override[" << dim << "]=["
-                << requested.lo << ", " << requested.hi << "] exceeds canonical root ["
+                << requested.lo << ", " << requested.hi << "] exceeds allowed root ["
                 << allowed.lo << ", " << allowed.hi << "]";
             throw std::runtime_error(out.str());
         }
     }
     return override_intervals;
+}
+
+std::vector<Interval> database_coverage_intervals_for(const Robot& robot,
+                                                      const RBFPlanningConfig& config,
+                                                      const std::vector<Interval>& root_intervals) {
+    const auto& override_intervals = config.database.coverage_intervals_override;
+    const std::vector<Interval>& joint_limits = robot.joint_limits().limits;
+    if (!override_intervals.empty()) {
+        if (override_intervals.size() != root_intervals.size()) {
+            std::ostringstream out;
+            out << "database coverage_intervals_override has " << override_intervals.size()
+                << " dims, expected " << root_intervals.size();
+            throw std::runtime_error(out.str());
+        }
+        for (std::size_t dim = 0; dim < override_intervals.size(); ++dim) {
+            const Interval& requested = override_intervals[dim];
+            if (requested.lo > requested.hi) {
+                std::ostringstream out;
+                out << "database coverage_intervals_override[" << dim << "] is invalid: ["
+                    << requested.lo << ", " << requested.hi << "]";
+                throw std::runtime_error(out.str());
+            }
+            if (dim < joint_limits.size() &&
+                (requested.lo + 1e-12 < joint_limits[dim].lo ||
+                 requested.hi - 1e-12 > joint_limits[dim].hi)) {
+                std::ostringstream out;
+                out << "database coverage_intervals_override[" << dim << "]=["
+                    << requested.lo << ", " << requested.hi << "] exceeds joint limit ["
+                    << joint_limits[dim].lo << ", " << joint_limits[dim].hi << "]";
+                throw std::runtime_error(out.str());
+            }
+        }
+        return override_intervals;
+    }
+
+    const bool canonical_mode = config.database.canonical_mode;
+    const std::string symmetry_descriptor = effective_symmetry_descriptor(config);
+    if (!canonical_mode || !lect_database::uses_joint_symmetry_native(symmetry_descriptor)) {
+        return root_intervals;
+    }
+    auto symmetries = detect_joint_symmetries(robot);
+    if (symmetries.empty()) {
+        return root_intervals;
+    }
+    const JointSymmetry& symmetry = symmetries.front();
+    if (symmetry.type == JointSymmetryType::NONE || symmetry.period <= 0.0 ||
+        symmetry.joint_index < 0 ||
+        static_cast<std::size_t>(symmetry.joint_index) >= root_intervals.size() ||
+        static_cast<std::size_t>(symmetry.joint_index) >= joint_limits.size()) {
+        return root_intervals;
+    }
+
+    const std::size_t dim = static_cast<std::size_t>(symmetry.joint_index);
+    const Interval& root = root_intervals[dim];
+    if (root.lo + 1e-12 < symmetry.canonical_lo || root.hi - 1e-12 > symmetry.canonical_hi) {
+        return root_intervals;
+    }
+
+    const Interval& limit = joint_limits[dim];
+    std::vector<Interval> coverage = root_intervals;
+    bool found = false;
+    double lo = std::numeric_limits<double>::infinity();
+    double hi = -std::numeric_limits<double>::infinity();
+    for (int shift = -16; shift <= 16; ++shift) {
+        const double shifted_lo = root.lo + static_cast<double>(shift) * symmetry.period;
+        const double shifted_hi = root.hi + static_cast<double>(shift) * symmetry.period;
+        if (shifted_hi < limit.lo - 1e-12 || shifted_lo > limit.hi + 1e-12) {
+            continue;
+        }
+        lo = std::min(lo, std::max(shifted_lo, limit.lo));
+        hi = std::max(hi, std::min(shifted_hi, limit.hi));
+        found = true;
+    }
+    if (found && lo <= hi) {
+        coverage[dim] = {lo, hi};
+    }
+    return coverage;
 }
 
 lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
@@ -1584,6 +1671,10 @@ lect_database::LectDatabaseConfig make_database_config(const Robot& robot,
         ? default_database_path(robot)
         : config.database.path;
     database_config.root_intervals = database_root_intervals_for(robot, config);
+    database_config.coverage_intervals = database_coverage_intervals_for(
+        robot,
+        config,
+        database_config.root_intervals);
     database_config.split_policy = config.database.split_policy;
     database_config.open.read_only = config.database.read_only;
     database_config.open.create_if_missing = config.database.create_if_missing;
@@ -1870,6 +1961,10 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
     ScopedStageTimer function_timer(context.diagnostics(), "forest.build_leaf_sweep");
     last_build_seeds_.clear();
     scene_.set_obstacles(obstacles);
+    const bool previous_stateless_materialization = config_.validation.stateless_materialization_context;
+    if (leaf_sweep_config.use_virtual_topology) {
+        config_.validation.stateless_materialization_context = true;
+    }
     reset_oracle(scene_);
     boxes_.clear();
     raw_boxes_.clear();
@@ -1886,6 +1981,7 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
     LeafSweepResult result = grower.sweep(obstacles, start_depth, max_depth, context);
 
     scene_.set_obstacles(obstacles);
+    config_.validation.stateless_materialization_context = previous_stateless_materialization;
     oracle_->set_scene(scene_);
     boxes_ = result.free_boxes;
     raw_boxes_ = boxes_;
@@ -2094,6 +2190,45 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     }
     out.deep_refine_ms = std::chrono::duration<double, std::milli>(Clock::now() - refine_start).count();
 
+    const auto rrt_grower_start = Clock::now();
+    bool rrt_grower_deadline_reached = false;
+    int rrt_grower_initial_boxes = static_cast<int>(boxes_.size());
+    if (refine_config.run_rrt_grower &&
+        refine_config.rrt_grower_extra_boxes > 0 &&
+        !boxes_.empty() &&
+        !priority_points.empty()) {
+        StageContext rrt_context = StageContext::from_runtime(
+            config_.runtime,
+            refine_config.rrt_grower_timeout_ms > 0.0
+                ? Deadline::after_ms(refine_config.rrt_grower_timeout_ms)
+                : Deadline{});
+        GrowerConfig rrt_config = config_.grower;
+        rrt_config.mode = GrowerConfig::Mode::RRT;
+        rrt_config.max_boxes = static_cast<int>(boxes_.size()) +
+            std::max(0, refine_config.rrt_grower_extra_boxes);
+        if (refine_config.rrt_grower_timeout_ms > 0.0) {
+            rrt_config.timeout_ms = refine_config.rrt_grower_timeout_ms;
+        }
+        rrt_config.stop_after_connect = false;
+        rrt_config.root_seed_include_user_seeds = true;
+        RrtGrower grower(*oracle_, rrt_config);
+        const auto before_count = static_cast<int>(boxes_.size());
+        rrt_grower_initial_boxes = before_count;
+        auto grow = grower.grow_from_existing(boxes_, priority_points, rrt_context);
+        if (!grow.boxes.empty()) {
+            boxes_ = std::move(grow.boxes);
+            raw_boxes_ = boxes_;
+            adjacency_ = std::move(grow.adjacency);
+        }
+        out.rrt_grower_boxes_added =
+            std::max(0, static_cast<int>(boxes_.size()) - before_count);
+        out.rrt_grower_ffb_success = grow.n_ffb_success;
+        out.rrt_grower_ffb_fail = grow.n_ffb_fail;
+        rrt_grower_deadline_reached = grow.deadline_reached;
+    }
+    out.rrt_grower_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - rrt_grower_start).count();
+
     const auto connector_start = Clock::now();
     bool connector_ran = false;
     rebuild_adjacency();
@@ -2130,7 +2265,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adjacency_start).count();
     out.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
     out.profile.final_boxes = static_cast<int>(boxes_.size());
-    out.profile.grow_ms = out.leaf_sweep_ms + out.deep_refine_ms;
+    out.profile.grow_ms = out.leaf_sweep_ms + out.deep_refine_ms + out.rrt_grower_ms;
     out.profile.grow_adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     out.profile.grow_largest_island = 0;
     for (const auto& island : find_islands(adjacency_)) {
@@ -2156,6 +2291,14 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.diagnostics["leaf_refine.deep_contained_rejects"] = static_cast<double>(out.deep_contained_rejects);
     out.profile.diagnostics["leaf_refine.deep_adjacency_rejects"] = static_cast<double>(out.deep_adjacency_rejects);
     out.profile.diagnostics["leaf_refine.deep_anchor_roots_added"] = static_cast<double>(out.deep_anchor_roots_added);
+    out.profile.diagnostics["leaf_refine.rrt_grower_ms"] = out.rrt_grower_ms;
+    out.profile.diagnostics["leaf_refine.rrt_grower_initial_boxes"] =
+        static_cast<double>(rrt_grower_initial_boxes);
+    out.profile.diagnostics["leaf_refine.rrt_grower_boxes_added"] = static_cast<double>(out.rrt_grower_boxes_added);
+    out.profile.diagnostics["leaf_refine.rrt_grower_ffb_success"] = static_cast<double>(out.rrt_grower_ffb_success);
+    out.profile.diagnostics["leaf_refine.rrt_grower_ffb_fail"] = static_cast<double>(out.rrt_grower_ffb_fail);
+    out.profile.diagnostics["leaf_refine.rrt_grower_deadline_reached"] =
+        rrt_grower_deadline_reached ? 1.0 : 0.0;
     out.profile.diagnostics["leaf_refine.connector_ms"] = out.connector_ms;
     out.profile.diagnostics["leaf_refine.total_ms"] = out.total_ms;
     out.diagnostics = out.profile.diagnostics;

@@ -1,0 +1,21 @@
+\begin{table}[t]
+\centering
+\caption{LECT read-snapshot microbenchmark on a persisted cache (UR5 d20 SupportHull cache; 2,097,151 nodes, 2,097,151 evidence records).}
+\label{tab:tro-lect-performance}
+\scriptsize
+\setlength{\tabcolsep}{2.2pt}
+\begin{tabular}{lrrr}
+\toprule
+Operation & Ops & Avg. ($\mu$s) & Throughput (Mops/s) \\
+\midrule
+Open snapshot & 1 & 86.22 & 0.01 \\
+Node box & 20000 & 1.08 & 0.92 \\
+Exact lookup & 20000 & 0.85 & 1.18 \\
+Endpoint lookup & 20000 & 1.86 & 0.54 \\
+Endpoint lookup (hot) & 20000 & 0.58 & 1.73 \\
+Range query & 20000 & 22.60 & 0.04 \\
+Evidence read & 20000 & 1.26 & 0.79 \\
+Evidence read (hot) & 20000 & 0.13 & 7.56 \\
+\bottomrule
+\end{tabular}
+\end{table}

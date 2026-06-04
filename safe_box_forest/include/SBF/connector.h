@@ -25,6 +25,11 @@ struct RRTConnectConfig {
 	double step_size = 0.5;
 	double goal_bias = 0.2;
 	int segment_resolution = 32;
+	// When > 0, validate every RRT/shortcut segment with spacing no larger than
+	// this joint-space step. This must match the final audit spacing for paper
+	// experiments so build-stage segment witnesses cannot be looser than query
+	// audit.
+	double segment_step = 0.0;
 	double local_sampling_radius = 0.0;
 	bool shortcut_path = true;
 	double domain_tolerance = 1e-3;
@@ -93,6 +98,7 @@ struct IslandConnectorConfig {
 	bool segment_edges_fallback_only = false;
 	double point_validated_gap_tolerance = 0.0;
 	int point_validated_gap_resolution = 16;
+	double point_validated_gap_step = 0.0;
 	int n_threads = 1;
 	int pair_batch_size = 0;
 	int parallel_threshold = 0;

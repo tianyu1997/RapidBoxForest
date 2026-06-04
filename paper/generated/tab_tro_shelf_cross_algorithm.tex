@@ -1,0 +1,22 @@
+% Auto-generated from current trade-off artifacts.
+\begingroup
+\centering
+\captionof{table}{Common-rule tabulated Shelf+IIWA rows from Fig.~\ref{fig:tro_shelf_cross_tradeoff}, reported by query. Gold rings in the figure mark these rows only to expose detailed numeric values; the full curves remain the primary evidence. RBF uses the current leaf-sweep--RRT grower profile. PRM, RRTConnect, and BIT* are current reruns with old TRO baseline budgets; the IRIS-NP+GCS per-query entries are the audited old TRO artifact. OMPL planning, final simplify, and fixed-resolution final audit use the same 0.01 joint-space segment step.}
+\label{tab:tro-shelf-cross-algorithm}
+\footnotesize
+\setlength{\tabcolsep}{1.55pt}
+\renewcommand{\arraystretch}{0.96}
+\begin{tabular}{@{}lrr|rr|rr|rr|rr@{}}
+\toprule
+  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.356\,s; SR 8/8}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 753.000\,s; SR 1/1}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 6.764\,s; SR 8/8}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.006\,s; SR 8/8}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.007\,s; SR 8/8}}}} \\
+\cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
+Query & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path \\
+\midrule
+AS$\rightarrow$TS & 0.074 & 2.43 & 0.558 & 2.38 & 0.409 & 3.22 & 0.001 & 2.30 & 0.001 & 4.59 \\
+TS$\rightarrow$CS & 0.004 & 1.10 & 0.463 & 1.99 & 0.410 & 0.69 & 0.001 & 1.18 & 0.001 & 0.69 \\
+CS$\rightarrow$LB & 0.004 & 2.27 & 0.533 & 2.63 & 0.411 & 2.02 & 0.001 & 2.74 & 0.001 & 4.82 \\
+LB$\rightarrow$RB & 0.042 & 3.09 & 0.825 & 3.26 & 0.345 & 4.32 & 0.001 & 2.55 & 0.001 & 6.03 \\
+RB$\rightarrow$AS & 0.028 & 3.69 & 0.765 & 1.84 & 0.407 & 4.80 & 0.001 & 4.59 & 0.001 & 5.33 \\
+\bottomrule
+\end{tabular}
+\par\endgroup

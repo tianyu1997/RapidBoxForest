@@ -39,6 +39,7 @@ struct LectDatabaseConfig {
     std::filesystem::path path;
     LectDatabaseIdentity identity;
     std::vector<Interval> root_intervals;
+    std::vector<Interval> coverage_intervals;
     SplitPolicyDescriptor split_policy;
     LectDbOpenOptions open;
     bool propagate_parent_hulls = true;
@@ -94,6 +95,7 @@ public:
     const LectDatabaseIdentity& identity() const noexcept { return identity_; }
     const SplitPolicyDescriptor& split_policy_descriptor() const noexcept { return split_policy_.descriptor(); }
     const std::vector<Interval>& root_intervals() const noexcept { return root_intervals_; }
+    const std::vector<Interval>& coverage_intervals() const noexcept { return coverage_intervals_; }
     const LectDatabaseStats& stats() const noexcept { return stats_; }
     std::uint64_t generation() const noexcept { return generation_; }
     std::size_t node_count() const noexcept { return static_cast<std::size_t>(node_count_); }
@@ -312,6 +314,7 @@ private:
     LectDatabaseConfig config_;
     LectDatabaseIdentity identity_;
     std::vector<Interval> root_intervals_;
+    std::vector<Interval> coverage_intervals_;
     SplitPolicy split_policy_;
     NodeId node_count_ = 0;
     NodeId max_node_id_ = 0;

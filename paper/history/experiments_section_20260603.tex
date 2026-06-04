@@ -1,0 +1,192 @@
+\section{Experiments}\label{sec:exp}
+
+This section evaluates \rbf{} as a multi-query planning system under the
+current evaluation protocol. Returned paths are compared only after the
+implemented query pipeline has completed its own post-processing and strict
+final audit.
+
+\paragraph{Scope.}
+The main evidence consists of the current Shelf+IIWA leaf-refine ablation, the
+link-envelope representation sweep, and the dynamic-update capability
+comparison. A reduced random-scene study across IIWA, UR5, and Panda and a
+compact Shelf+IIWA cross-algorithm sanity check are also reported for
+completeness.
+
+\paragraph{Reporting Protocol.}
+Planner success in this paper means strict path-audit success under the current
+query pipeline. Cache reuse is allowed only at the envelope-materialization
+layer: target builds still regrow and revalidate scene-specific boxes, and warm
+rows are never credited for persisted free-space labels. For the Shelf+IIWA
+baseline warm rows, the external d23 cache is read-only during evaluation and
+active-database backfill is disabled.
+
+\paragraph{Fixed Configuration.}
+The RBF planning rows use canonical IFK\_AA endpoint evidence, the reported
+validation and final-audit policy, and the adopted link-envelope family
+\{LinkIAABB, KDOP26, SupportHull\}. The Shelf+IIWA ablation uses the current
+leaf-refine protocol: a virtual leaf sweep from depth 8 to 14 followed by
+restricted depth-28 refinement. Its baseline warm rows use the read-only d23
+external cache, while non-baseline comparison rows are run without external
+cache replay or active endpoint-evidence caching unless explicitly stated.
+
+\paragraph{Platform and Scenes.}
+Planner rows use the worker count recorded in each result artifact. The
+Shelf+IIWA leaf-refine baseline uses eight worker threads and reports an
+explicit single-thread ablation row; the standalone link-envelope representation
+microbenchmark uses the batch parallelism recorded in its result artifact.
+Shelf+IIWA uses the canonical Marcucci scene with five fixed query pairs. The
+random-scene benchmark uses balanced easy/medium/hard scenes for IIWA,
+UR5, and Panda under the staged random-scene anytime protocol.
+
+\subsection{Shelf+IIWA Efficiency and Path Quality}\label{sec:exp_shelf_iiwa}
+
+\begin{figure}[t]
+  \centering
+  \includegraphics[width=\columnwidth]{sbf_old/figures/Marcucci_scene.png}
+  \caption{Canonical Shelf+IIWA scene used in the experiments. The E3 main run
+  evaluates five fixed query pairs on this scene under the strict audit
+  protocol.}
+  \label{fig:marcucci_scene}
+\end{figure}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{sbf_old/generated/fig_tro_leaf_refine_tradeoff.pdf}
+  \caption{Shelf+IIWA leaf-refine trade-off from the current Exp.~4 artifact.
+  (a) Planning time versus final audited path length. (b) Stage-level planning
+  time decomposition into virtual leaf sweep, restricted deep refinement, and
+  connector. (c) Planning time versus raw segment-edge fraction before final
+  OMPL simplification. The fast reported baseline is the d23 SupportHull
+  box200/d28 point; the box500/d24 point is the zero-segment quality point.}
+  \label{fig:tro_leaf_refine_tradeoff}
+\end{figure*}
+
+\input{sbf_old/generated/tab_tro_leaf_refine_ablation.tex}
+
+\Cref{fig:marcucci_scene,fig:tro_leaf_refine_tradeoff,tab:tro_leaf_refine_ablation}
+summarize the Shelf+IIWA leaf-refine ablation. The d23 SupportHull baseline at
+the box200 point is the fastest audited row, while the box500/d24 point removes
+all segment-edge contribution and shortens the audited route at higher planning
+cost. The time decomposition shows that this trade-off is dominated by the
+restricted refinement budget after the leaf sweep; the connector is significant
+but no longer the primary source of path quality. The no-cache SupportHull row
+remains strict-audit successful but is slower and produces a longer route under
+the same box200 refinement budget. The no-cache AABB row is close in runtime
+and path length, but uses slightly more segment length; the defensible
+representation conclusion from this optimized shelf row is therefore not
+universal SupportHull dominance over AABB. The robust mechanism evidence is d23
+evidence replay, anchor-guided restricted refinement, and parallel virtual leaf
+validation. Disabling priority-anchor roots fails the two shelf transitions
+that cross the narrowest region, identifying anchor-root refinement as a
+required mechanism rather than a cosmetic tuning parameter.
+
+\input{sbf_old/generated/tab_tro_shelf_cross_algorithm.tex}
+
+\Cref{tab:tro_shelf_cross_algorithm} gives a compact cross-algorithm check on
+the same Shelf+IIWA task set. The updated SBF leaf-refine row succeeds on all
+15 audited queries and is far faster than the PRM and BIT* incumbent traces under
+their cumulative accounting. RRTConnect also succeeds on all queries and is
+slightly faster as a one-shot query planner, while the common per-query length
+column favors the SBF leaf-refine row on this shelf slice. This table is
+therefore not used to claim one-shot latency dominance over RRTConnect; its role
+is to separate the explicit audited box-region graph behavior from single-query
+sampling baselines. A reduced one-seed Shelf+IIWA IRIS-NP+GCS diagnostic with an
+eight-region prefix took 121.2~s and produced no audited solution on the five
+queries, so it is not treated as a competitive shelf row under the current
+configuration.
+
+\subsection{Balanced Random-Scene Pipeline Study}\label{sec:exp_generalization}
+
+\begin{figure*}[t]
+  \centering
+  \includegraphics[width=\textwidth]{sbf_old/generated/fig_tro_random_reduced_tradeoff.pdf}
+  \caption{Reduced balanced random-scene trade-off by difficulty. Each panel
+  overlays IIWA, UR5, and Panda on one easy/medium/hard scene seed. SBF is shown
+  as a cumulative staged curve from seed to high; PRM and BIT* are checkpoint
+  curves; IRIS-NP+GCS and RRTConnect are single reported points in this reduced
+  run. Points farther right on the SBF curve are additional quality-budget
+  stages, not the selected fast baseline row in
+  \cref{tab:tro_random_reduced}.}
+  \label{fig:tro_random_reduced_tradeoff}
+\end{figure*}
+
+\input{sbf_old/generated/tab_tro_random_reduced.tex}
+
+The multi-robot random-scene benchmark is a staged anytime generalization study,
+not the Shelf+IIWA leaf-refine protocol. It reports IIWA, UR5, and Panda across
+easy, medium, and hard settings using per-robot p18 warm caches and
+scene-specific staged SBF builds. This experiment is used to check that the
+audit and cache machinery run across robots and random scenes, while preserving
+the anytime structure of the older paper presentation. In
+\cref{fig:tro_random_reduced_tradeoff}, SBF high-budget points are curve
+endpoints: they charge all preceding stages and mainly diagnose whether more
+box-forest budget buys path quality. They are not the fast random-scene
+baseline. Accordingly, \cref{tab:tro_random_reduced} reports the first
+strict-audit-successful SBF seed stage by difficulty; this removes the
+misleading impression that the 34~s high-stage endpoint is the baseline
+configuration. The reduced run passes strict audit across all nine
+robot--difficulty tasks for every reported row, but PRM, BIT*, and RRTConnect
+solve these one-shot random queries at much lower charged time than the staged
+SBF protocol, and the reduced IRIS-NP+GCS prefix is also faster than the SBF
+seed stage on this small random slice. The result should therefore not be read
+as a direct runtime extrapolation of the Shelf+IIWA leaf-refine baseline or as a
+claim that staged SBF dominates single-query sampling planners on random
+scenes.
+
+\subsection{Mechanism Studies: Link Envelopes}\label{sec:exp_mechanisms}
+
+\input{sbf_old/generated/tab_tro_link_envelopes.tex}
+
+\paragraph{Link-envelope chain modes.}
+\Cref{tab:tro_link_envelopes} extends the standalone link-envelope
+microbenchmark beyond independently built LinkIAABB, KDOP26, and SupportHull
+records. The staged chains run the cheap AABB filter first and invoke KDOP26 or
+SupportHull only for boxes that survive the earlier stage. Across the 2400-box
+fixed-width corpus, only 28.3\% of boxes reach the tighter second stage, so the
+AABB--KDOP26 and AABB--SupportHull chains average 1.27~$\mu$s and
+1.25~$\mu$s per box, compared with 1.94~$\mu$s for standalone KDOP26 and
+1.77~$\mu$s for standalone SupportHull. The full AABB--KDOP26--SupportHull
+cascade averages 1.85~$\mu$s per box. \Cref{tab:tro_appendix_rbf_only_sweep}
+compresses the same artifact into one aggregate summary view.
+
+\input{sbf_old/generated/tab_tro_rbf_only_sweep.tex}
+
+\paragraph{Envelope sweep.}
+\Cref{tab:tro_appendix_rbf_only_sweep} gives a compact cross-width summary of
+the representation study. LinkIAABB remains the cheapest standalone
+representation at 0.68~$\mu$s per box and 384~B payload. Standalone KDOP26 and
+SupportHull increase cost to 1.94~$\mu$s and 1.77~$\mu$s, respectively. The
+AABB-first chains recover much of that overhead: AABB--KDOP26 averages
+1.27~$\mu$s per box at 854.8~B, AABB--SupportHull averages 1.25~$\mu$s at
+619.4~B, and all three chain rows escalate beyond the AABB stage on only 28.3\%
+of the boxes in the fixed-width corpus.
+
+
+\subsection{Dynamic-Update Capability Study}\label{sec:exp_dynamic_updates}
+
+\Cref{tab:tro_dynamic_rebuild} reports the revised dynamic-update accounting
+for the leaf-sweep--RRT planner. The protocol uses saved constrained random
+AABB scenes sampled inside the Exp.~4 d23 canonical inverse-root domain, so the
+same scenes can be replayed for both incremental updates and warm target-scene
+rebuilds. Insertions scan the live free-box forest against the added obstacles
+and record invalidated boxes under those obstacles. Deletions query the shallow
+leaf-sweep collision-domain cache, promote domains whose blocker set
+disappears, and do not re-run envelope validation for those promoted domains.
+Insertions use a local relative-depth leaf-sweep refill inside invalidated boxes
+instead of a bounded RRT/FFB repair stage; Table~VIII uses $k=0$, i.e., it
+rechecks the invalidated leaf without descending deeper.
+
+\input{sbf_old/generated/tab_tro_dynamic_rebuild.tex}
+
+The result separates two qualitatively different regimes. For obstacle
+deletions, no accepted free box is invalidated; the blocker cache exposes about
+7.1--8.1k candidate shallow domains per transition and the incremental update is
+about 79--97$\times$ faster than a fresh warm rebuild while preserving all
+eight queries. For obstacle insertions, the method correctly invalidates
+hundreds of free boxes and locally sweeps the invalidated domains. Four of
+eight insertion runs per transition require the final endpoint/segment fallback,
+but the total incremental update remains about 17--19$\times$ faster than a warm
+rebuild and all audited queries succeed. This supports the intended use of
+segment connectivity as a last-resort recovery mechanism rather than the
+primary update operator.
+

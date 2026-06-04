@@ -7,6 +7,7 @@
 #include <sbf/core/fk_state.h>
 #include <sbf/core/robot.h>
 #include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/envelope_collision.h>
 #include <sbf/envelope/envelope_type.h>
 #include <sbf/envelope/gcpc_source.h>
 
@@ -79,6 +80,15 @@ std::vector<float> inflate_link_iaabbs(
     return out;
 }
 
+rbf::EnvelopeCollisionMode parse_collision_mode(const std::string& mode) {
+    if (mode == "auto") return rbf::EnvelopeCollisionMode::Auto;
+    if (mode == "aabb_only" || mode == "link_aabb") return rbf::EnvelopeCollisionMode::LinkAABB;
+    if (mode == "support_hull_only" || mode == "gjk") return rbf::EnvelopeCollisionMode::GJK;
+    if (mode == "kdop") return rbf::EnvelopeCollisionMode::KDOP;
+    if (mode == "kdop_then_gjk") return rbf::EnvelopeCollisionMode::KDOPThenGJK;
+    throw std::invalid_argument("collision_mode must be one of: auto, aabb_only, support_hull_only, kdop, kdop_then_gjk");
+}
+
 std::vector<double> midpoint_endpoint_positions(
     const rbf::Robot& robot,
     const std::vector<rbf::Interval>& intervals)
@@ -148,6 +158,7 @@ py::dict envelope_to_dict(
     result["link_shape"] = py::make_tuple(envelope.n_active_links, envelope.n_subdivisions, 6);
     if (output.include_arrays) {
         result["link_iaabbs"] = envelope.link_iaabbs;
+        result["support_hulls"] = envelope.support_hulls;
     }
     if (output.include_inflated) {
         result["inflated_link_iaabbs"] = inflate_link_iaabbs(
@@ -206,6 +217,7 @@ py::dict batch_result_to_dict(
         6);
     if (output.include_arrays) {
         result["link_iaabbs"] = item.envelope.link_iaabbs;
+        result["support_hulls"] = item.envelope.support_hulls;
     }
     if (output.include_inflated) {
         result["inflated_link_iaabbs"] = inflate_link_iaabbs(
@@ -302,6 +314,7 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
 
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
+        .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
         .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
 
     py::class_<rbf::EnvelopeTypeConfig>(module, "EnvelopeTypeConfig")
@@ -413,6 +426,7 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         result["link_shape"] = py::make_tuple(n_active, envelope.n_subdivisions, 6);
         if (output.include_arrays) {
             result["link_iaabbs"] = envelope.link_iaabbs;
+            result["support_hulls"] = envelope.support_hulls;
         }
         if (output.include_inflated) {
             result["inflated_link_iaabbs"] = inflate_link_iaabbs(
@@ -469,6 +483,99 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
     }, py::arg("robot"), py::arg("intervals"), py::arg("endpoint_config"),
        py::arg("envelope_config"), py::arg("gcpc_cache") = nullptr,
              py::arg("output_mode") = "full");
+
+    module.def("compute_envelope_collision_info", [](
+        const rbf::Robot& robot,
+        const std::vector<rbf::Interval>& intervals,
+        rbf::EndpointSourceConfig endpoint_config,
+        const rbf::EnvelopeTypeConfig& envelope_config,
+        const std::vector<float>& obstacle_aabbs,
+        const std::string& collision_mode,
+        const std::string& output_mode,
+        bool use_link_aabb_broadphase,
+        bool count_all_pairs) {
+        if (obstacle_aabbs.size() % 6u != 0u) {
+            throw std::invalid_argument("obstacle_aabbs must contain 6 floats per obstacle");
+        }
+        std::vector<rbf::Obstacle> obstacles;
+        obstacles.reserve(obstacle_aabbs.size() / 6u);
+        for (std::size_t offset = 0; offset < obstacle_aabbs.size(); offset += 6u) {
+            obstacles.emplace_back(
+                obstacle_aabbs[offset + 0u],
+                obstacle_aabbs[offset + 1u],
+                obstacle_aabbs[offset + 2u],
+                obstacle_aabbs[offset + 3u],
+                obstacle_aabbs[offset + 4u],
+                obstacle_aabbs[offset + 5u]);
+        }
+
+        rbf::EndpointIAABBResult endpoint_result;
+        rbf::LinkEnvelope envelope;
+        rbf::EnvelopeCollisionStats stats;
+        rbf::CollisionResultKind collision;
+        Clock::time_point endpoint_start;
+        Clock::time_point endpoint_stop;
+        Clock::time_point envelope_start;
+        Clock::time_point envelope_stop;
+        Clock::time_point collision_start;
+        Clock::time_point collision_stop;
+        {
+            py::gil_scoped_release release;
+            endpoint_start = Clock::now();
+            endpoint_result = rbf::compute_endpoint_iaabb(robot, intervals, endpoint_config);
+            endpoint_stop = Clock::now();
+
+            envelope_start = Clock::now();
+            envelope = rbf::compute_link_envelope(
+                endpoint_result.endpoint_iaabbs.data(),
+                endpoint_result.n_active_links,
+                robot.active_link_radii(),
+                envelope_config);
+            envelope_stop = Clock::now();
+
+            rbf::EnvelopeCollisionOptions options;
+            options.mode = parse_collision_mode(collision_mode);
+            options.use_link_aabb_broadphase = use_link_aabb_broadphase;
+            options.count_all_pairs = count_all_pairs;
+            collision_start = Clock::now();
+            collision = rbf::collide_envelope_aabbs(
+                envelope,
+                obstacles.empty() ? nullptr : obstacles.data(),
+                static_cast<int>(obstacles.size()),
+                options,
+                &stats);
+            collision_stop = Clock::now();
+        }
+
+        py::dict result;
+        result["endpoint_time_us"] = std::chrono::duration<double, std::micro>(endpoint_stop - endpoint_start).count();
+        result["envelope_time_us"] = std::chrono::duration<double, std::micro>(envelope_stop - envelope_start).count();
+        result["collision_time_us"] = std::chrono::duration<double, std::micro>(collision_stop - collision_start).count();
+        result["total_time_us"] = result["endpoint_time_us"].cast<double>()
+            + result["envelope_time_us"].cast<double>()
+            + result["collision_time_us"].cast<double>();
+        result["is_definitely_free"] = collision == rbf::CollisionResultKind::DefinitelyFree;
+        result["collision_mode"] = collision_mode;
+        result["maybe_pairs"] = stats.maybe_pairs;
+        result["link_aabb_tests"] = stats.link_aabb_tests;
+        result["link_aabb_rejects"] = stats.link_aabb_rejects;
+        result["gjk_tests"] = stats.gjk_tests;
+        result["gjk_rejects"] = stats.gjk_rejects;
+        result["gjk_iterations"] = stats.gjk_iterations;
+        result["kdop_tests"] = stats.kdop_tests;
+        if (output_mode == "full") {
+            result["endpoint_is_safe"] = endpoint_result.is_safe;
+            result["n_active_links"] = endpoint_result.n_active_links;
+            result["n_subdivisions"] = envelope.n_subdivisions;
+        } else if (output_mode != "summary" && output_mode != "metadata" && output_mode != "compact") {
+            throw std::invalid_argument("output_mode must be one of: full, summary, metadata, compact");
+        }
+        return result;
+    }, py::arg("robot"), py::arg("intervals"), py::arg("endpoint_config"),
+       py::arg("envelope_config"), py::arg("obstacle_aabbs"),
+       py::arg("collision_mode") = "auto", py::arg("output_mode") = "summary",
+       py::arg("use_link_aabb_broadphase") = true,
+       py::arg("count_all_pairs") = false);
 
     module.def("compute_envelope_batch_info", [](
         const rbf::Robot& robot,

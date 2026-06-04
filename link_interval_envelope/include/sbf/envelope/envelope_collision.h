@@ -484,10 +484,12 @@ inline CollisionResultKind collide_envelope_aabbs(
             const float* link_box = envelope.link_iaabbs.data() + box * 6;
             const float pad = detail::link_radius_for_box(envelope, box) +
                 static_cast<float>(std::max(0.0, options.safety_epsilon));
-            s.link_aabb_tests += 1;
-            if (!detail::aabb_overlap_padded(link_box, obstacle, pad)) {
-                s.link_aabb_rejects += 1;
-                continue;
+            if (options.use_link_aabb_broadphase) {
+                s.link_aabb_tests += 1;
+                if (!detail::aabb_overlap_padded(link_box, obstacle, pad)) {
+                    s.link_aabb_rejects += 1;
+                    continue;
+                }
             }
 
             bool separated = false;

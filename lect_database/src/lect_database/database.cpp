@@ -1197,6 +1197,11 @@ bool LectDatabase::open(LectDatabaseConfig config, std::string* reason) {
     }
 
     root_intervals_ = config_.root_intervals;
+    coverage_intervals_ = config_.coverage_intervals.empty() ? root_intervals_ : config_.coverage_intervals;
+    if (coverage_intervals_.size() != root_intervals_.size()) {
+        if (reason) *reason = "coverage intervals must have the same dimensionality as root intervals";
+        return false;
+    }
     split_policy_ = SplitPolicy(config_.split_policy);
     identity_ = config_.identity;
     identity_.schema_version = std::max(identity_.schema_version, kLectDatabaseSchemaVersion);
@@ -2565,7 +2570,28 @@ bool LectDatabase::load_manifest(std::string* reason) {
         root_intervals_.push_back({get_double(values, "root_" + std::to_string(dim) + "_lo"),
                                    get_double(values, "root_" + std::to_string(dim) + "_hi")});
     }
+    const int coverage_dims = get_int(values, "coverage_dims", dims);
+    coverage_intervals_.clear();
+    coverage_intervals_.reserve(static_cast<std::size_t>(std::max(0, coverage_dims)));
+    for (int dim = 0; dim < coverage_dims; ++dim) {
+        const std::string lo_key = "coverage_" + std::to_string(dim) + "_lo";
+        const std::string hi_key = "coverage_" + std::to_string(dim) + "_hi";
+        if (values.find(lo_key) == values.end() || values.find(hi_key) == values.end()) {
+            coverage_intervals_.clear();
+            break;
+        }
+        coverage_intervals_.push_back({get_double(values, lo_key),
+                                       get_double(values, hi_key)});
+    }
+    if (coverage_intervals_.empty()) {
+        coverage_intervals_ = root_intervals_;
+    }
+    if (coverage_intervals_.size() != root_intervals_.size()) {
+        if (reason) *reason = "manifest coverage intervals have incompatible dimensionality";
+        return false;
+    }
     config_.root_intervals = root_intervals_;
+    config_.coverage_intervals = coverage_intervals_;
     config_.split_policy = descriptor;
     return true;
 }
@@ -2600,6 +2626,7 @@ bool LectDatabase::save_manifest() const {
         << "split_dimension_schedule_hash=" << descriptor.dimension_schedule_hash << '\n'
         << "split_depth_dimensions=" << serialize_depth_dimensions(descriptor.depth_dimensions) << '\n'
         << "root_dims=" << root_intervals_.size() << '\n'
+        << "coverage_dims=" << coverage_intervals_.size() << '\n'
         << "page_size_bytes=" << config_.page_size_bytes << '\n'
         << "max_resident_pages=" << config_.max_resident_pages << '\n'
         << "root_depth=" << config_.root_depth << '\n'
@@ -2610,6 +2637,10 @@ bool LectDatabase::save_manifest() const {
     for (std::size_t dim = 0; dim < root_intervals_.size(); ++dim) {
         out << "root_" << dim << "_lo=" << std::setprecision(17) << root_intervals_[dim].lo << '\n'
             << "root_" << dim << "_hi=" << std::setprecision(17) << root_intervals_[dim].hi << '\n';
+    }
+    for (std::size_t dim = 0; dim < coverage_intervals_.size(); ++dim) {
+        out << "coverage_" << dim << "_lo=" << std::setprecision(17) << coverage_intervals_[dim].lo << '\n'
+            << "coverage_" << dim << "_hi=" << std::setprecision(17) << coverage_intervals_[dim].hi << '\n';
     }
     out.close();
     return static_cast<bool>(out) && replace_file(tmp, path);

@@ -1,0 +1,55 @@
+\begin{table}[t]
+\centering
+\caption{Endpoint AABB source comparison at fixed joint-box widths. Cert. marks certificate-backed sources. MC uses width-density sampling, and Max neg. gap reports the worst per-axis shortfall against the CritSample/Analytical/MC sampling-union reference.}
+\label{tab:tro-endpoint-envelope}
+\scriptsize
+\setlength{\tabcolsep}{2.0pt}
+\renewcommand{\arraystretch}{0.94}
+\begin{tabular}{@{}llrrrr@{}}
+\toprule
+Width & Source & Cert. & $V_{\mathrm{ep}}$ (m$^3$) & Time ($\mu$s) & Max neg. gap \\
+\midrule
+0.02 & IFK\_AA & Y & 0.000045 & 5.5 & -0.0000 \\
+0.02 & HIFK\_3 & Y & 0.000042 & 25.9 & -0.0000 \\
+0.02 & HIFK\_5 & Y & 0.000042 & 70.4 & -0.0000 \\
+0.02 & CritSample & N & 0.000041 & 8.7 & -0.0000 \\
+0.02 & Analytical & Y & 0.000041 & 6430.0 & -0.0000 \\
+0.02 & MC & N & 0.000026 & 2251.7 & -0.0061 \\
+\addlinespace
+0.05 & IFK\_AA & Y & 0.000797 & 6.1 & -0.0000 \\
+0.05 & HIFK\_3 & Y & 0.000714 & 26.9 & -0.0000 \\
+0.05 & HIFK\_5 & Y & 0.000690 & 71.7 & -0.0000 \\
+0.05 & CritSample & N & 0.000647 & 9.0 & -0.0003 \\
+0.05 & Analytical & Y & 0.000647 & 6500.4 & -0.0000 \\
+0.05 & MC & N & 0.000454 & 5629.2 & -0.0146 \\
+\addlinespace
+0.10 & IFK\_AA & Y & 0.007709 & 6.5 & -0.0000 \\
+0.10 & HIFK\_3 & Y & 0.006187 & 29.2 & -0.0000 \\
+0.10 & HIFK\_5 & Y & 0.005748 & 73.8 & -0.0000 \\
+0.10 & CritSample & N & 0.005085 & 10.0 & -0.0012 \\
+0.10 & Analytical & Y & 0.005086 & 6602.3 & -0.0000 \\
+0.10 & MC & N & 0.003739 & 11233.3 & -0.0327 \\
+\addlinespace
+0.20 & IFK\_AA & Y & 0.095828 & 6.6 & -0.0000 \\
+0.20 & HIFK\_3 & Y & 0.063170 & 27.2 & -0.0000 \\
+0.20 & HIFK\_5 & Y & 0.054478 & 73.1 & -0.0000 \\
+0.20 & CritSample & N & 0.041680 & 11.6 & -0.0045 \\
+0.20 & Analytical & Y & 0.041748 & 6800.1 & -0.0000 \\
+0.20 & MC & N & 0.032592 & 22353.0 & -0.0656 \\
+\addlinespace
+0.30 & IFK\_AA & Y & 0.501814 & 6.8 & -0.0000 \\
+0.30 & HIFK\_3 & Y & 0.268384 & 29.3 & -0.0000 \\
+0.30 & HIFK\_5 & Y & 0.214676 & 75.9 & -0.0000 \\
+0.30 & CritSample & N & 0.141227 & 12.7 & -0.0108 \\
+0.30 & Analytical & Y & 0.142112 & 6927.1 & -0.0000 \\
+0.30 & MC & N & 0.112648 & 33813.6 & -0.0889 \\
+\addlinespace
+0.50 & IFK\_AA & Y & 5.602815 & 7.4 & -0.0000 \\
+0.50 & HIFK\_3 & Y & 2.028027 & 29.4 & -0.0000 \\
+0.50 & HIFK\_5 & Y & 1.347150 & 72.3 & -0.0000 \\
+0.50 & CritSample & N & 0.639900 & 16.3 & -0.0310 \\
+0.50 & Analytical & Y & 0.650907 & 7096.0 & -0.0045 \\
+0.50 & MC & N & 0.534496 & 56835.6 & -0.1235 \\
+\bottomrule
+\end{tabular}
+\end{table}

@@ -805,7 +805,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("domain_success_cap", &rbf::LeafSweepRefineConfig::domain_success_cap)
         .def_readwrite("domain_attempt_cap", &rbf::LeafSweepRefineConfig::domain_attempt_cap)
         .def_readwrite("allow_anchor_roots", &rbf::LeafSweepRefineConfig::allow_anchor_roots)
-        .def_readwrite("refine_timeout_ms", &rbf::LeafSweepRefineConfig::refine_timeout_ms);
+        .def_readwrite("refine_timeout_ms", &rbf::LeafSweepRefineConfig::refine_timeout_ms)
+        .def_readwrite("run_rrt_grower", &rbf::LeafSweepRefineConfig::run_rrt_grower)
+        .def_readwrite("rrt_grower_extra_boxes", &rbf::LeafSweepRefineConfig::rrt_grower_extra_boxes)
+        .def_readwrite("rrt_grower_timeout_ms", &rbf::LeafSweepRefineConfig::rrt_grower_timeout_ms);
 
     py::class_<rbf::LeafSweepRefineResult>(module, "LeafSweepRefineResult")
         .def_readonly("leaf_sweep", &rbf::LeafSweepRefineResult::leaf_sweep)
@@ -821,8 +824,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("deep_contained_rejects", &rbf::LeafSweepRefineResult::deep_contained_rejects)
         .def_readonly("deep_adjacency_rejects", &rbf::LeafSweepRefineResult::deep_adjacency_rejects)
         .def_readonly("deep_anchor_roots_added", &rbf::LeafSweepRefineResult::deep_anchor_roots_added)
+        .def_readonly("rrt_grower_boxes_added", &rbf::LeafSweepRefineResult::rrt_grower_boxes_added)
+        .def_readonly("rrt_grower_ffb_success", &rbf::LeafSweepRefineResult::rrt_grower_ffb_success)
+        .def_readonly("rrt_grower_ffb_fail", &rbf::LeafSweepRefineResult::rrt_grower_ffb_fail)
         .def_readonly("leaf_sweep_ms", &rbf::LeafSweepRefineResult::leaf_sweep_ms)
         .def_readonly("deep_refine_ms", &rbf::LeafSweepRefineResult::deep_refine_ms)
+        .def_readonly("rrt_grower_ms", &rbf::LeafSweepRefineResult::rrt_grower_ms)
         .def_readonly("connector_ms", &rbf::LeafSweepRefineResult::connector_ms)
         .def_readonly("total_ms", &rbf::LeafSweepRefineResult::total_ms)
         .def_readonly("diagnostics", &rbf::LeafSweepRefineResult::diagnostics);
@@ -998,6 +1005,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("goal_bias", &rbf::RRTConnectConfig::goal_bias)
         .def_readwrite("timeout_ms", &rbf::RRTConnectConfig::timeout_ms)
         .def_readwrite("segment_resolution", &rbf::RRTConnectConfig::segment_resolution)
+        .def_readwrite("segment_step", &rbf::RRTConnectConfig::segment_step)
         .def_readwrite("local_sampling_radius", &rbf::RRTConnectConfig::local_sampling_radius)
         .def_readwrite("shortcut_path", &rbf::RRTConnectConfig::shortcut_path)
         .def_readwrite("domain_tolerance", &rbf::RRTConnectConfig::domain_tolerance)
@@ -1041,6 +1049,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("rrt_segment_edges", &rbf::IslandConnectorConfig::rrt_segment_edges)
         .def_readwrite("point_gap_segment_edges", &rbf::IslandConnectorConfig::point_gap_segment_edges)
         .def_readwrite("segment_edges_fallback_only", &rbf::IslandConnectorConfig::segment_edges_fallback_only)
+        .def_readwrite("point_validated_gap_step", &rbf::IslandConnectorConfig::point_validated_gap_step)
         .def_readwrite("n_threads", &rbf::IslandConnectorConfig::n_threads)
         .def_readwrite("pair_batch_size", &rbf::IslandConnectorConfig::pair_batch_size)
         .def_readwrite("parallel_threshold", &rbf::IslandConnectorConfig::parallel_threshold)
@@ -1086,6 +1095,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             [](const rbf::LectDatabaseRuntimeConfig& config) { return config.external_evidence_snapshot_path.string(); },
             [](rbf::LectDatabaseRuntimeConfig& config, const std::string& path) { config.external_evidence_snapshot_path = path; })
         .def_readwrite("root_intervals_override", &rbf::LectDatabaseRuntimeConfig::root_intervals_override)
+        .def_readwrite("coverage_intervals_override", &rbf::LectDatabaseRuntimeConfig::coverage_intervals_override)
         .def_readwrite("split_policy", &rbf::LectDatabaseRuntimeConfig::split_policy)
         .def_readwrite("online_cache", &rbf::LectDatabaseRuntimeConfig::online_cache)
         .def_readwrite("external_evidence_use_snapshot", &rbf::LectDatabaseRuntimeConfig::external_evidence_use_snapshot)
@@ -1433,6 +1443,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("database_evidence_count", [](const rbf::RBFPlanningForest& forest) {
             return forest.database().evidence_count();
         })
+        .def("database_root_intervals", [](const rbf::RBFPlanningForest& forest) {
+            return interval_pairs_to_python(forest.database().root_intervals());
+        })
+        .def("database_coverage_intervals", [](const rbf::RBFPlanningForest& forest) {
+            return interval_pairs_to_python(forest.database().coverage_intervals());
+        })
         .def("database_checkpoint", [](rbf::RBFPlanningForest& forest) {
             return forest.database().checkpoint();
         })
@@ -1603,12 +1619,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  if (depth_ok) {
                      run_periodic_checkpoint("ensure_depth", expected_leaf_records, expected_leaf_records, true);
                  }
+                 rbf::OracleValidationConfig prewarm_validation = forest.config().validation;
+                 prewarm_validation.stateless_materialization_context = true;
                  rbf::DatabaseBoxOracle oracle(forest.robot(),
                                                forest.database(),
                                                rbf::Scene(obstacles),
                                                forest.config().endpoint_source,
                                                forest.config().envelope_type,
-                                               forest.config().validation);
+                                               prewarm_validation);
                  std::size_t nodes_touched = 0;
                  const std::size_t evidence_before = forest.database().evidence_count();
                  // Disable per-leaf auto-propagation; the bottom-up sweep below

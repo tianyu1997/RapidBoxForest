@@ -1,0 +1,24 @@
+\begin{table*}[t]
+\centering
+\caption{Saved-catalog random-scene best trade-off points. RBF rows are selected from the current v5 saved catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to old balanced random-scene common-rule context. Full current RBF budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
+\label{tab:tro-random-summary}
+\scriptsize
+\setlength{\tabcolsep}{1.55pt}
+\begin{tabular}{lrrr|rr|rr|rr|rr}
+\toprule
+Scenario & \multicolumn{3}{c|}{Current RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}
+ & Plan (s) & Path & Boxes & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\
+\midrule
+IIWA-Easy & 1.087 & 2.71 & 800 & 76.400 & 5.46 & 2.411 & 3.28 & 0.001 & 2.56 & 1.006 & 2.36 \\
+IIWA-Medium & 0.718 & 3.25 & 400 & 137.700 & 5.56 & 2.408 & 3.48 & 0.001 & 2.85 & 1.005 & 2.61 \\
+IIWA-Hard & 0.500 & 3.32 & 200 & 187.500 & 5.46 & 5.239 & 3.34 & 0.001 & 2.77 & 1.006 & 2.89 \\
+UR5-Easy & 0.449 & 9.09 & 400 & 18.140 & 7.62 & 1.416 & 5.17 & 0.002 & 4.92 & 1.006 & 4.69 \\
+UR5-Medium & 0.273 & 10.50 & 100 & 29.160 & 7.60 & 0.671 & 7.26 & 0.007 & 16.58 & 1.006 & 5.02 \\
+UR5-Hard & 0.285 & 10.67 & 100 & 40.670 & 7.62 & 0.920 & 6.21 & 0.003 & 9.52 & 1.005 & 4.66 \\
+PANDA-Easy & 0.248 & 6.90 & 100 & 18.130 & 5.82 & 1.420 & 4.64 & 0.001 & 4.38 & 1.005 & 4.39 \\
+PANDA-Medium & 0.317 & 7.70 & 100 & 30.120 & 5.87 & 1.419 & 4.82 & 0.001 & 4.44 & 1.005 & 4.90 \\
+PANDA-Hard & 0.364 & 7.68 & 200 & 44.300 & 5.79 & 1.420 & 4.73 & 0.001 & 3.90 & 1.005 & 4.08 \\
+\bottomrule
+\end{tabular}
+\end{table*}

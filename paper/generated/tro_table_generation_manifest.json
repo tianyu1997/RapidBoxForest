@@ -1,0 +1,177 @@
+{
+  "artifact": "tro2026_paper_assets",
+  "assets": {
+    "fig_tro_random_tradeoff.pdf": {
+      "caption": "Random-scene RBF budget trade-off curve.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_random_tradeoff.pdf",
+      "placeholder": false,
+      "sha256": "3e13c81c21627626e33b281835c198fb2d130519309d36fcec2bbfcf072a9d56"
+    },
+    "fig_tro_random_tradeoff.png": {
+      "caption": "Random-scene RBF budget trade-off curve preview.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_random_tradeoff.png",
+      "placeholder": false,
+      "sha256": "35d7a4d07962bae7551600324555ff5a0fa0e02608b281034e13355ab03fff02"
+    },
+    "fig_tro_shelf_cross_tradeoff.pdf": {
+      "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
+      "placeholder": false,
+      "sha256": "6443c54456589464f78cb687ca36a1b70a83c1d3e51abc15d1635f0816732004"
+    },
+    "fig_tro_shelf_cross_tradeoff.png": {
+      "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context preview.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
+      "placeholder": false,
+      "sha256": "f14fa29322135bb4a21b7bc7db9f580bb0c2aefff4e5d2360e6a8f99b0df51ff"
+    },
+    "fig_tro_shelf_tradeoff.pdf": {
+      "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
+      "placeholder": false,
+      "sha256": "983ad726723f0c2daee854f319c5b4dc378fbb2c52cedfb188e91d6aabef1552"
+    },
+    "fig_tro_shelf_tradeoff.png": {
+      "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve preview.",
+      "exists": true,
+      "path": "paper/generated/fig_tro_shelf_tradeoff.png",
+      "placeholder": false,
+      "sha256": "d8304c39436a86bb82d40b0383faa30b0a7e9a2d2a01e410a981415fb856cc9c"
+    },
+    "tab_tro_dynamic_update.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_dynamic_update.tex",
+      "placeholder": false,
+      "sha256": "a3eb1e6630e127d5e75308d6e3487fd92765e353ecc4750e9acb1942cb0ef161"
+    },
+    "tab_tro_endpoint_envelope.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_endpoint_envelope.tex",
+      "placeholder": false,
+      "sha256": "d4825bc6f553140223022d7794fdac43d4b07d01a717b819d1befcf72c6a372b"
+    },
+    "tab_tro_lect_performance.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_lect_performance.tex",
+      "placeholder": false,
+      "sha256": "1ed498326b85da20dcff66f7cdc8a642209f72d3bdd2dbbff07e1f490f73a04e"
+    },
+    "tab_tro_link_envelope.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_link_envelope.tex",
+      "placeholder": false,
+      "sha256": "e8a2957f38f345058ad13f24cfff9b9a9a831825a23a2b756ffcfa3ee2a20bfb"
+    },
+    "tab_tro_random_summary.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_random_summary.tex",
+      "placeholder": false,
+      "sha256": "894d128a22719dcbd9514a92bf17f6283a1a5ba0654981f0d91241c40857b28a"
+    },
+    "tab_tro_shelf_ablation.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_shelf_ablation.tex",
+      "placeholder": false,
+      "sha256": "54bb7a72d7d2e0898a7724cf2d66444b4701386c03446f80f4957a8aa2924b90"
+    },
+    "tab_tro_shelf_cross_algorithm.tex": {
+      "exists": true,
+      "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
+      "placeholder": false,
+      "sha256": "b09b108874c98ca96654d92adbe42d3e2250c27ef52f62baee7e0f0826a6fe7e"
+    }
+  },
+  "environment": {
+    "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "git_sha": "c92ebc1f34a7",
+    "hostname": "tian",
+    "machine": "x86_64",
+    "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
+    "proc_status": {
+      "VmData_kb": 12028,
+      "VmHWM_kb": 21652,
+      "VmRSS_kb": 21652,
+      "VmSize_kb": 26724
+    },
+    "processor": "x86_64",
+    "python": "3.10.19",
+    "repo_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
+    "thread_env": {}
+  },
+  "placeholder_mode": true,
+  "source_root": "outputs/new_experiments/tro2026",
+  "sources": {
+    "exp01_endpoint_envelope": {
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp01/endpoint_envelope_summary.csv",
+      "summary_sha256": "ba8115b976e975cf322edfb381b54a2e432741e8b20fdb4629c0781d2b60305f",
+      "table": "paper/generated/tab_tro_endpoint_envelope.tex"
+    },
+    "exp02_link_envelope": {
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp02/link_envelope_summary.csv",
+      "summary_sha256": "5e0466eb5c6a5c8a435eb8763e13392d53b64610a0a679245ebf893e727c9466",
+      "table": "paper/generated/tab_tro_link_envelope.tex"
+    },
+    "exp03_lect_performance": {
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp03/lect_performance_summary.csv",
+      "summary_sha256": "dc17404d0aeccc1ef6d86a2b9e9a69031e5c4b6a356d401a8772f0cb2a9073e1",
+      "table": "paper/generated/tab_tro_lect_performance.tex"
+    },
+    "exp04_shelf_leaf_rrt": {
+      "figure_pdf": "paper/generated/fig_tro_shelf_tradeoff.pdf",
+      "figure_png": "paper/generated/fig_tro_shelf_tradeoff.png",
+      "manifest": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
+      "rows": 20,
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
+      "summary_sha256": "12753e12a11e1cd2f6ee91a52d227ae253ae865ca13727822febf54d4367acd2",
+      "table": "paper/generated/tab_tro_shelf_ablation.tex"
+    },
+    "exp05_shelf_cross_algorithm": {
+      "current_baseline_manifest": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_manifest.json",
+      "current_baseline_summary": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_summary.csv",
+      "exp04_registered_summary": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
+      "figure_pdf": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
+      "figure_png": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
+      "rbf_manifest": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
+      "rows": 16,
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_summary.csv",
+      "summary_sha256": "7b6805f2db27e57d994339f9ec0af162d025a611ba120a5d7988df7486888d7b",
+      "table": "paper/generated/tab_tro_shelf_cross_algorithm.tex"
+    },
+    "exp06_random_robot": {
+      "current_baseline_rows": 99,
+      "current_baseline_summary": "outputs/new_experiments/tro2026/exp06/current_ompl_baselines/random_robot_summary.csv",
+      "current_baseline_summary_sha256": "76caa47a463aa2f898ce2a76cda1d014abf692abf7e23e0097f8f65fb14358a1",
+      "figure_pdf": "paper/generated/fig_tro_random_tradeoff.pdf",
+      "figure_png": "paper/generated/fig_tro_random_tradeoff.png",
+      "old_random_context_table": "/home/tian/\u684c\u9762/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated/tab_tro_main_random_best_tradeoff.tex",
+      "rows": 135,
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp06/random_robot_summary.csv",
+      "summary_sha256": "990678b7e740f41b4a3ec30d6ca2635193b88d5a0fb2c579be7a1fc3373ec997",
+      "table": "paper/generated/tab_tro_random_summary.tex"
+    },
+    "exp07_dynamic_update": {
+      "rows": 4,
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
+      "summary_sha256": "c28b0ccbec95303f72e15c1868f94171c57c24599f14711262991ee3311999f9",
+      "table": "paper/generated/tab_tro_dynamic_update.tex"
+    },
+    "supporting_table_imports": {
+      "manifest": "outputs/new_experiments/tro2026/supporting_imports/supporting_table_import_manifest.json",
+      "manifest_sha256": "e5953e867a9041f809ca9791e1751c8c5d66ab7445f36935544dca9cbb71d576",
+      "rows": [],
+      "status": "imported"
+    }
+  }
+}

@@ -160,7 +160,8 @@ void phase0_vertices(const Robot& robot,
 void phase1_edges(const Robot& robot,
                   const std::vector<Interval>& intervals,
                   float* out, int n_act, const int* alm,
-                  const bool* skip_link = nullptr)
+                  const bool* skip_link = nullptr,
+                  bool bypass_narrow_skip = false)
 {
     int n = robot.n_joints();
     double positions[MAX_TF][3];
@@ -169,7 +170,7 @@ void phase1_edges(const Robot& robot,
     for (int j = 0; j < n; ++j) {
         double lo_j = intervals[j].lo;
         double hi_j = intervals[j].hi;
-        if (hi_j - lo_j < kNarrowThreshold) continue;
+        if (!bypass_narrow_skip && hi_j - lo_j < kNarrowThreshold) continue;
 
         double mid_j = 0.5 * (lo_j + hi_j);
         double qvals[3] = { lo_j, mid_j, hi_j };
@@ -257,7 +258,8 @@ void phase1_edges(const Robot& robot,
 void phase2_faces(const Robot& robot,
                   const std::vector<Interval>& intervals,
                   float* out, int n_act, const int* alm,
-                  const bool* skip_link = nullptr)
+                  const bool* skip_link = nullptr,
+                  bool bypass_narrow_skip = false)
 {
     int n = robot.n_joints();
     if (n < 2) return;
@@ -269,7 +271,10 @@ void phase2_faces(const Robot& robot,
         for (int jj = ji + 1; jj < n; ++jj) {
             double lo_i = intervals[ji].lo, hi_i = intervals[ji].hi;
             double lo_j = intervals[jj].lo, hi_j = intervals[jj].hi;
-            if (hi_i - lo_i < kNarrowThreshold || hi_j - lo_j < kNarrowThreshold) continue;
+            if (!bypass_narrow_skip &&
+                (hi_i - lo_i < kNarrowThreshold || hi_j - lo_j < kNarrowThreshold)) {
+                continue;
+            }
 
             int n_bg = n - 2;
             int max_bg = 1 << std::max(n_bg, 0);
@@ -394,7 +399,8 @@ void phase2_faces(const Robot& robot,
 void phase3_interior(const Robot& robot,
                      const std::vector<Interval>& intervals,
                      float* out, int n_act, const int* alm,
-                     const bool* skip_link = nullptr)
+                     const bool* skip_link = nullptr,
+                     bool bypass_narrow_skip = false)
 {
     int n = robot.n_joints();
     if (n < 2) return;
@@ -427,7 +433,7 @@ void phase3_interior(const Robot& robot,
             for (int j = 0; j < n; ++j) {
                 double lo_j = intervals[j].lo;
                 double hi_j = intervals[j].hi;
-                if (hi_j - lo_j < kNarrowThreshold) continue;
+                if (!bypass_narrow_skip && hi_j - lo_j < kNarrowThreshold) continue;
 
                 double qvals[3] = { lo_j, 0.5*(lo_j+hi_j), hi_j };
                 Eigen::Matrix3d A;
@@ -556,15 +562,15 @@ EndpointIAABBResult compute_endpoint_iaabb_analytical(
     const bool* skip_ptr = (n_pruned > 0) ? skip_link.get() : nullptr;
 
     if (max_phase >= 1) {
-        phase1_edges(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr);
+        phase1_edges(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr, bypass_narrow_skip);
     }
 
     if (max_phase >= 2) {
-        phase2_faces(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr);
+        phase2_faces(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr, bypass_narrow_skip);
     }
 
     if (max_phase >= 3) {
-        phase3_interior(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr);
+        phase3_interior(robot, intervals, result.endpoint_iaabbs.data(), n_act, alm, skip_ptr, bypass_narrow_skip);
     }
 
     return result;

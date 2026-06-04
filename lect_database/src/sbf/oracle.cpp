@@ -174,6 +174,22 @@ std::optional<JointSymmetry> primary_database_symmetry(const Robot& robot,
     return symmetry;
 }
 
+bool active_tree_is_primary_canonical_sector(const Robot& robot,
+                                             const lect_database::LectDatabase& database) {
+    auto symmetry = primary_database_symmetry(robot, database);
+    if (!symmetry) {
+        return false;
+    }
+    const std::size_t joint_index = static_cast<std::size_t>(symmetry->joint_index);
+    const auto& root = database.root_intervals();
+    if (joint_index >= root.size()) {
+        return false;
+    }
+    const Interval& interval = root[joint_index];
+    return interval.lo >= symmetry->canonical_lo - 1e-12 &&
+           interval.hi <= symmetry->canonical_hi + 1e-12;
+}
+
 int normalize_sector(lect_database::SectorId sector) {
     return ((static_cast<int>(sector) % 4) + 4) % 4;
 }
@@ -824,7 +840,7 @@ std::vector<Interval> DatabaseBoxOracle::node_intervals(OracleNodeId node) const
 
 Eigen::VectorXd DatabaseBoxOracle::tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const {
     Eigen::VectorXd tree_q = q;
-    if (database_uses_canonical_symmetry(database_) && tree_q.size() > 0) {
+    if (active_tree_is_primary_canonical_sector(robot_, database_) && tree_q.size() > 0) {
         lect_database::canonicalize_configuration_for_robot(
             robot_,
             true,
@@ -839,7 +855,8 @@ std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId n
                                                                   const Eigen::Ref<const Eigen::VectorXd>& q) const {
     (void)node;
     auto symmetry = primary_database_symmetry(robot_, database_);
-    if (!symmetry || tree_intervals.empty() || q.size() <= symmetry->joint_index) {
+    if (!symmetry || !active_tree_is_primary_canonical_sector(robot_, database_) ||
+        tree_intervals.empty() || q.size() <= symmetry->joint_index) {
         return tree_intervals;
     }
     const auto& limits = robot_.joint_limits().limits;
@@ -1225,10 +1242,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     EndpointSourceConfig materialization_config = hifk_config_for_materialization(*this, node, endpoint_config_);
     bool used_source_incremental_state = false;
     EndpointIAABBResult endpoint;
-    if (materialization_config.source == EndpointSource::IFK) {
+    if (!validation_config_.stateless_materialization_context &&
+        materialization_config.source == EndpointSource::IFK) {
         endpoint = compute_endpoint_iaabb_ifk_aa_stateful(
             robot_, evidence_frame.lookup_intervals, impl_->aa_fk_prefix_state, &used_source_incremental_state);
-    } else if (materialization_config.source == EndpointSource::HIFK) {
+    } else if (!validation_config_.stateless_materialization_context &&
+               materialization_config.source == EndpointSource::HIFK) {
         endpoint = compute_endpoint_iaabb_hifk_aa_stateful(
             robot_, evidence_frame.lookup_intervals, materialization_config, impl_->hifk_aa_state, &used_source_incremental_state);
     } else {

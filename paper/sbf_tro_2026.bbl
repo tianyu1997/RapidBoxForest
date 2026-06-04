@@ -54,21 +54,6 @@ L.~E. Kavraki, P.~{\v S}vestka, J.-C. Latombe, and M.~H. Overmars,
 S.~Karaman and E.~Frazzoli, ``Sampling-based algorithms for optimal motion
   planning,'' \emph{Int. J. Robot. Res.}, vol.~30, no.~7, pp. 846--894, 2011.
 
-\bibitem{redon2004ccd_avatar}
-S.~Redon, Y.~J. Kim, M.~C. Lin, and D.~Manocha, ``Interactive and continuous
-  collision detection for avatars in virtual environments,'' in \emph{{IEEE}
-  Virtual Reality Conference}, 2004, pp. 117--124.
-
-\bibitem{redon2005fast_artic}
-S.~Redon, M.~C. Lin, D.~Manocha, and Y.~J. Kim, ``Fast continuous collision
-  detection for articulated models,'' \emph{J. Comput. Inf. Sci. Eng.}, vol.~5,
-  no.~2, pp. 126--137, 2005.
-
-\bibitem{zhang2007taylor}
-X.~Zhang, S.~Redon, M.~Lee, and Y.~J. Kim, ``Continuous collision detection for
-  articulated models using {Taylor} models and temporal culling,'' \emph{ACM
-  Trans. Graph.}, vol.~26, no.~3, p.~15, 2007.
-
 \bibitem{amice2022finding}
 A.~Amice, H.~Dai, P.~Werner, A.~Zhang, and R.~Tedrake, ``Finding and optimizing
   certified, collision-free regions in configuration space for robot
@@ -143,6 +128,21 @@ J.-P. Merlet, ``Solving the forward kinematics of a {Gough}-type parallel
 ------, ``Interval analysis for certified numerical solution of problems in
   robotics,'' \emph{Int. J. Appl. Math. Comput. Sci.}, vol.~19, no.~3, pp.
   399--412, 2009.
+
+\bibitem{redon2004ccd_avatar}
+S.~Redon, Y.~J. Kim, M.~C. Lin, and D.~Manocha, ``Interactive and continuous
+  collision detection for avatars in virtual environments,'' in \emph{{IEEE}
+  Virtual Reality Conference}, 2004, pp. 117--124.
+
+\bibitem{redon2005fast_artic}
+S.~Redon, M.~C. Lin, D.~Manocha, and Y.~J. Kim, ``Fast continuous collision
+  detection for articulated models,'' \emph{J. Comput. Inf. Sci. Eng.}, vol.~5,
+  no.~2, pp. 126--137, 2005.
+
+\bibitem{zhang2007taylor}
+X.~Zhang, S.~Redon, M.~Lee, and Y.~J. Kim, ``Continuous collision detection for
+  articulated models using {Taylor} models and temporal culling,'' \emph{ACM
+  Trans. Graph.}, vol.~26, no.~3, p.~15, 2007.
 
 \bibitem{schwarzer2005adaptive}
 F.~Schwarzer, M.~Saha, and J.-C. Latombe, ``Adaptive dynamic collision checking

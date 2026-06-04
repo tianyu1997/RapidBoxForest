@@ -59,6 +59,7 @@ struct BenchmarkFixture {
     std::vector<std::vector<rbf::Interval>> sampled_boxes;
     std::vector<std::vector<rbf::Interval>> query_boxes;
     std::vector<ld::EvidenceRecord> evidence_samples;
+    std::vector<std::vector<rbf::Interval>> evidence_sample_boxes;
 };
 
 ld::LectDatabaseStats diff_stats(const ld::LectDatabaseStats& after, const ld::LectDatabaseStats& before) {
@@ -537,6 +538,8 @@ bool build_baseline_database(const Options& options,
 
     fixture->evidence_samples.clear();
     fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    fixture->evidence_sample_boxes.clear();
+    fixture->evidence_sample_boxes.reserve(static_cast<std::size_t>(options.evidence_records));
     for (std::uint64_t i = 0; i < options.evidence_records; ++i) {
         const auto node_id = static_cast<ld::NodeId>(i % fixture->node_count);
         auto key = evidence_key(i, node_id, fixture->node_count);
@@ -551,6 +554,12 @@ bool build_baseline_database(const Options& options,
         sample.key = key;
         sample.payload = make_payload(i, options.payload_floats);
         fixture->evidence_samples.push_back(std::move(sample));
+        auto box = database.node_box(node_id);
+        if (!box) {
+            if (reason) *reason = "node_box failed while preparing evidence exact samples";
+            return false;
+        }
+        fixture->evidence_sample_boxes.push_back(std::move(*box));
     }
 
     if (!database.checkpoint()) {
@@ -619,6 +628,8 @@ bool load_snapshot_fixture(const Options& options,
 
     fixture->evidence_samples.clear();
     fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    fixture->evidence_sample_boxes.clear();
+    fixture->evidence_sample_boxes.reserve(static_cast<std::size_t>(options.evidence_records));
     const auto key_templates = fixture_key_templates();
     auto try_collect_record = [&](ld::NodeId node_id) {
         for (const auto& key_template : key_templates) {
@@ -628,7 +639,12 @@ bool load_snapshot_fixture(const Options& options,
             if (!view || view->unavailable || view->payload.empty()) {
                 continue;
             }
+            auto box = snapshot.node_box(node_id);
+            if (!box) {
+                continue;
+            }
             fixture->evidence_samples.push_back(materialize_record(*view));
+            fixture->evidence_sample_boxes.push_back(std::move(*box));
             return true;
         }
         return false;
@@ -648,7 +664,9 @@ bool load_snapshot_fixture(const Options& options,
     }
     const auto evidence_seed_size = fixture->evidence_samples.size();
     for (std::uint64_t i = static_cast<std::uint64_t>(evidence_seed_size); i < options.evidence_records; ++i) {
-        fixture->evidence_samples.push_back(fixture->evidence_samples[static_cast<std::size_t>(i % evidence_seed_size)]);
+        const auto index = static_cast<std::size_t>(i % evidence_seed_size);
+        fixture->evidence_samples.push_back(fixture->evidence_samples[index]);
+        fixture->evidence_sample_boxes.push_back(fixture->evidence_sample_boxes[index]);
     }
     return true;
 }
@@ -714,6 +732,8 @@ bool load_existing_fixture(const Options& options,
 
     fixture->evidence_samples.clear();
     fixture->evidence_samples.reserve(static_cast<std::size_t>(options.evidence_records));
+    fixture->evidence_sample_boxes.clear();
+    fixture->evidence_sample_boxes.reserve(static_cast<std::size_t>(options.evidence_records));
 
     std::vector<ld::EvidenceKey> key_templates;
     key_templates.reserve(24);
@@ -743,7 +763,12 @@ bool load_existing_fixture(const Options& options,
             if (!view || view->unavailable || view->payload.empty()) {
                 continue;
             }
+            auto box = database->node_box(node_id);
+            if (!box) {
+                continue;
+            }
             fixture->evidence_samples.push_back(materialize_record(*view));
+            fixture->evidence_sample_boxes.push_back(std::move(*box));
             return true;
         }
         return false;
@@ -773,7 +798,12 @@ bool load_existing_fixture(const Options& options,
             if (record.unavailable || record.payload.empty()) {
                 continue;
             }
+            auto box = database->node_box(record.key.node_id);
+            if (!box) {
+                continue;
+            }
             fixture->evidence_samples.push_back(record);
+            fixture->evidence_sample_boxes.push_back(std::move(*box));
         }
     }
     if (fixture->evidence_samples.empty()) {
@@ -973,9 +1003,9 @@ int main(int argc, char** argv) {
                                            true,
                                            [&](ld::LectDatabase& database) {
                                                for (std::uint64_t i = 0; i < options.queries; ++i) {
-                                                   const auto index = static_cast<std::size_t>(i % fixture.sampled_boxes.size());
-                                                   const auto& box = fixture.sampled_boxes[index];
-                                                   auto key_template = fixture.evidence_samples[static_cast<std::size_t>(i % fixture.evidence_samples.size())].key;
+                                                   const auto index = static_cast<std::size_t>(i % fixture.evidence_samples.size());
+                                                   const auto& box = fixture.evidence_sample_boxes[index];
+                                                   auto key_template = fixture.evidence_samples[index].key;
                                                    const auto endpoint = database.endpoint_for_box_exact(database.make_box_key(box), key_template);
                                                    if (!endpoint) {
                                                        return false;

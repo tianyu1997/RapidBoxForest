@@ -1,0 +1,16 @@
+\begin{table}[t]
+\centering
+\caption{Saved-catalog dynamic-update pilot results. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}
+\label{tab:tro-dynamic-update}
+\footnotesize
+\begin{tabular}{lrrrr}
+\toprule
+Transition & SR & Update (s) & Warm (s) & Speedup \\
+\midrule
+easy->medium & 8/8 & 0.045 & 0.549 & 14.346 \\
+hard->medium & 8/8 & 0.006 & 0.549 & 85.692 \\
+medium->easy & 8/8 & 0.004 & 0.634 & 138.987 \\
+medium->hard & 8/8 & 0.059 & 0.444 & 10.738 \\
+\bottomrule
+\end{tabular}
+\end{table}

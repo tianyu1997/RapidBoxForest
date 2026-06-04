@@ -13,6 +13,25 @@
 namespace rbf {
 namespace {
 
+int segment_resolution_for_step(const Eigen::Ref<const Eigen::VectorXd>& a,
+                                const Eigen::Ref<const Eigen::VectorXd>& b,
+                                int base_resolution,
+                                double segment_step) {
+    int resolution = std::max(1, base_resolution);
+    if (segment_step > 0.0) {
+        resolution = std::max(resolution, static_cast<int>(std::ceil((b - a).norm() / segment_step)));
+    }
+    return resolution;
+}
+
+bool check_segment_with_step(const CollisionChecker& checker,
+                             const Eigen::Ref<const Eigen::VectorXd>& a,
+                             const Eigen::Ref<const Eigen::VectorXd>& b,
+                             int base_resolution,
+                             double segment_step) {
+    return checker.check_segment(a, b, segment_resolution_for_step(a, b, base_resolution, segment_step));
+}
+
 bool allow_connector_box_commit(BoxOracle& oracle,
                                 FindFreeBoxResult& result,
                                 BoxCommitPolicy policy,
@@ -167,7 +186,12 @@ int extend_tree(RRTTree& tree,
     for (int dim = 0; dim < q_new.size(); ++dim) {
         q_new[dim] = std::clamp(q_new[dim], lo[dim], hi[dim]);
     }
-    if (checker.check_config(q_new) || checker.check_segment(tree.nodes[static_cast<std::size_t>(near)], q_new, config.segment_resolution)) {
+    if (checker.check_config(q_new) ||
+        check_segment_with_step(checker,
+                                tree.nodes[static_cast<std::size_t>(near)],
+                                q_new,
+                                config.segment_resolution,
+                                config.segment_step)) {
         return -1;
     }
     return add_rrt_node(tree, q_new, near);
@@ -198,7 +222,12 @@ int connect_greedy(RRTTree& tree,
         for (int dim = 0; dim < q_new.size(); ++dim) {
             q_new[dim] = std::clamp(q_new[dim], lo[dim], hi[dim]);
         }
-        if (checker.check_config(q_new) || checker.check_segment(tree.nodes[static_cast<std::size_t>(current)], q_new, config.segment_resolution)) {
+        if (checker.check_config(q_new) ||
+            check_segment_with_step(checker,
+                                    tree.nodes[static_cast<std::size_t>(current)],
+                                    q_new,
+                                    config.segment_resolution,
+                                    config.segment_step)) {
             return -1;
         }
         const int id = add_rrt_node(tree, q_new, current);
@@ -207,7 +236,8 @@ int connect_greedy(RRTTree& tree,
         if (remaining <= 1e-8) {
             return current;
         }
-        if (remaining <= config.step_size * 0.5 && !checker.check_segment(q_new, target, config.segment_resolution)) {
+        if (remaining <= config.step_size * 0.5 &&
+            !check_segment_with_step(checker, q_new, target, config.segment_resolution, config.segment_step)) {
             return add_rrt_node(tree, target, current);
         }
     }
@@ -241,7 +271,8 @@ std::vector<Eigen::VectorXd> merge_birrt_paths(const RRTTree& start_tree,
 
 std::vector<Eigen::VectorXd> shortcut_collision_free_path(const std::vector<Eigen::VectorXd>& path,
                                                           const CollisionChecker& checker,
-                                                          int segment_resolution) {
+                                                          int segment_resolution,
+                                                          double segment_step = 0.0) {
     if (path.size() <= 2) {
         return path;
     }
@@ -250,7 +281,8 @@ std::vector<Eigen::VectorXd> shortcut_collision_free_path(const std::vector<Eige
     std::size_t current = 0;
     while (current + 1 < path.size()) {
         std::size_t next = path.size() - 1;
-        while (next > current + 1 && checker.check_segment(path[current], path[next], segment_resolution)) {
+        while (next > current + 1 &&
+               check_segment_with_step(checker, path[current], path[next], segment_resolution, segment_step)) {
             --next;
         }
         out.push_back(path[next]);
@@ -361,7 +393,8 @@ double intervals_point_gap(const std::vector<Interval>& intervals,
 std::vector<Eigen::VectorXd> closest_box_point_segment(const BoxNode& source,
                                                        const BoxNode& target,
                                                        const CollisionChecker& checker,
-                                                       int segment_resolution) {
+                                                       int segment_resolution,
+                                                       double segment_step = 0.0) {
     if (source.n_dims() != target.n_dims()) {
         return {};
     }
@@ -382,7 +415,9 @@ std::vector<Eigen::VectorXd> closest_box_point_segment(const BoxNode& source,
             lhs[dim] = rhs[dim] = 0.5 * (lo + hi);
         }
     }
-    if (checker.check_config(lhs) || checker.check_config(rhs) || checker.check_segment(lhs, rhs, segment_resolution)) {
+    if (checker.check_config(lhs) ||
+        checker.check_config(rhs) ||
+        check_segment_with_step(checker, lhs, rhs, segment_resolution, segment_step)) {
         return {};
     }
     return {lhs, rhs};
@@ -1020,7 +1055,11 @@ bool try_point_validated_gap_edge(const std::vector<BoxNode>& boxes,
         }
         const BoxNode& source = *map.at(candidate.source);
         const BoxNode& target = *map.at(candidate.target);
-        if (checker.check_segment(source.center(), target.center(), config.point_validated_gap_resolution)) {
+        if (check_segment_with_step(checker,
+                                    source.center(),
+                                    target.center(),
+                                    config.point_validated_gap_resolution,
+                                    config.point_validated_gap_step)) {
             context.diagnostics().add_counter("connector.point_gap_collision_rejects");
             continue;
         }
@@ -1091,7 +1130,7 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
             }
         }
     }
-    if (!checker.check_segment(start, goal, config.segment_resolution)) {
+    if (!check_segment_with_step(checker, start, goal, config.segment_resolution, config.segment_step)) {
         outcome.path = {start, goal};
         outcome.stats.direct = true;
         outcome.stats.merge_iteration = 0;
@@ -1193,7 +1232,7 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
         outcome.stats.merge_iteration = iter + 1;
         outcome.stats.raw_waypoints = static_cast<int>(raw_path.size());
         outcome.path = config.shortcut_path
-                           ? shortcut_collision_free_path(raw_path, checker, config.segment_resolution)
+                           ? shortcut_collision_free_path(raw_path, checker, config.segment_resolution, config.segment_step)
                            : std::move(raw_path);
         outcome.stats.shortcut_waypoints = static_cast<int>(outcome.path.size());
         finish_rrt_stats(outcome, start_tree, goal_tree, t0);
@@ -2386,7 +2425,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                 if (config_.pave.require_connected_chain) {
                     box_rrt.shortcut_path = true;
                 }
-                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution);
+                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution, box_rrt.segment_step);
                 if (!path.empty()) {
                     context.diagnostics().add_counter("connector.direct_box_segment_successes");
                     context.diagnostics().add_counter("connector.rrt_successes");
@@ -2465,7 +2504,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                 if (config_.pave.require_connected_chain) {
                     box_rrt.shortcut_path = true;
                 }
-                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution);
+                auto path = closest_box_point_segment(source_box, target_box, checker_, box_rrt.segment_resolution, box_rrt.segment_step);
                 if (!path.empty()) {
                     context.diagnostics().add_counter("connector.direct_box_segment_successes");
                     context.diagnostics().add_counter("connector.rrt_successes");
