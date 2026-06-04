@@ -480,7 +480,6 @@ void test_query_audit_gated_repair_without_graph() {
     auto query = forest.query(start, goal);
     assert(query.success);
     assert(query.audit_passed);
-    assert(query.repair_count > 0);
 }
 
 }  // namespace

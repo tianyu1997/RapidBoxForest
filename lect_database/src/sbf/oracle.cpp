@@ -850,6 +850,60 @@ Eigen::VectorXd DatabaseBoxOracle::tree_configuration_for_query(const Eigen::Ref
     return tree_q;
 }
 
+OracleNodeId DatabaseBoxOracle::child_containing_point(OracleNodeId node,
+                                                       const Eigen::Ref<const Eigen::VectorXd>& q) const {
+    if (node < 0 || is_leaf(node) || q.size() != n_dims()) {
+        return kInvalidOracleNodeId;
+    }
+    const Eigen::VectorXd tree_q = tree_configuration_for_query(q);
+    const int dim = split_dim(node);
+    if (dim < 0 || dim >= tree_q.size()) {
+        return kInvalidOracleNodeId;
+    }
+    return tree_q[dim] <= split_value(node) ? left_child(node) : right_child(node);
+}
+
+std::vector<std::vector<Interval>> DatabaseBoxOracle::native_interval_copies_for_node(
+    OracleNodeId node,
+    const std::vector<Interval>& tree_intervals) const {
+    (void)node;
+    auto symmetry = primary_database_symmetry(robot_, database_);
+    if (!symmetry || !active_tree_is_primary_canonical_sector(robot_, database_) ||
+        tree_intervals.empty()) {
+        return {tree_intervals};
+    }
+    const auto& limits = robot_.joint_limits().limits;
+    const std::size_t joint_index = static_cast<std::size_t>(symmetry->joint_index);
+    if (joint_index >= tree_intervals.size() || joint_index >= limits.size()) {
+        return {tree_intervals};
+    }
+    std::vector<std::vector<Interval>> copies;
+    copies.reserve(4);
+    for (lect_database::SectorId sector = 0; sector < 4; ++sector) {
+        std::vector<Interval> native_intervals = tree_intervals;
+        const double reference_value = tree_intervals[joint_index].center() +
+            static_cast<double>(normalize_sector(sector)) * symmetry->period;
+        native_intervals[joint_index] = map_canonical_interval_to_sector(
+            *symmetry,
+            tree_intervals[joint_index],
+            sector,
+            limits[joint_index],
+            reference_value);
+        if (native_intervals[joint_index].hi < limits[joint_index].lo - 1e-12 ||
+            native_intervals[joint_index].lo > limits[joint_index].hi + 1e-12) {
+            continue;
+        }
+        native_intervals[joint_index].lo =
+            std::max(native_intervals[joint_index].lo, limits[joint_index].lo);
+        native_intervals[joint_index].hi =
+            std::min(native_intervals[joint_index].hi, limits[joint_index].hi);
+        if (native_intervals[joint_index].lo <= native_intervals[joint_index].hi + 1e-12) {
+            copies.push_back(std::move(native_intervals));
+        }
+    }
+    return copies.empty() ? std::vector<std::vector<Interval>>{tree_intervals} : copies;
+}
+
 std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId node,
                                                                   const std::vector<Interval>& tree_intervals,
                                                                   const Eigen::Ref<const Eigen::VectorXd>& q) const {
@@ -1471,15 +1525,24 @@ bool DatabaseBoxOracle::validate_intervals(const std::vector<Interval>& interval
 }
 
 bool DatabaseBoxOracle::is_reserved(OracleNodeId node) const {
+    if (active_tree_is_primary_canonical_sector(robot_, database_)) {
+        return false;
+    }
     return node_to_box_.find(node) != node_to_box_.end();
 }
 
 std::optional<int> DatabaseBoxOracle::reservation_owner(OracleNodeId node) const {
+    if (active_tree_is_primary_canonical_sector(robot_, database_)) {
+        return std::nullopt;
+    }
     const auto it = node_to_box_.find(node);
     return it == node_to_box_.end() ? std::nullopt : std::optional<int>(it->second);
 }
 
 void DatabaseBoxOracle::reserve_node(OracleNodeId node, int box_id) {
+    if (active_tree_is_primary_canonical_sector(robot_, database_)) {
+        return;
+    }
     node_to_box_[node] = box_id;
     box_to_node_[box_id] = node;
 }

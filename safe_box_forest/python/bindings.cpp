@@ -1129,6 +1129,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("repair_timeout_ms", &rbf::QueryConfig::repair_timeout_ms)
         .def_readwrite("repair_local_sampling_radius", &rbf::QueryConfig::repair_local_sampling_radius)
         .def_readwrite("repair_local_sampling_growth", &rbf::QueryConfig::repair_local_sampling_growth)
+        .def_readwrite("final_rrt_simplify", &rbf::QueryConfig::final_rrt_simplify)
+        .def_readwrite("final_rrt_simplify_timeout_ms", &rbf::QueryConfig::final_rrt_simplify_timeout_ms)
+        .def_readwrite("final_rrt_simplify_max_iters", &rbf::QueryConfig::final_rrt_simplify_max_iters)
+        .def_readwrite("final_rrt_simplify_attempts", &rbf::QueryConfig::final_rrt_simplify_attempts)
         .def_readwrite("adjacency_tolerance", &rbf::QueryConfig::adjacency_tolerance);
 
     py::class_<rbf::RBFPlanningConfig>(module, "RBFPlanningConfig")
@@ -1216,12 +1220,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             return eigen_path_to_lists(result.path);
         })
         .def_readonly("path_length", &rbf::QueryResult::path_length)
+        .def_readonly("raw_path_length", &rbf::QueryResult::raw_path_length)
         .def_readonly("query_time_ms", &rbf::QueryResult::query_time_ms)
         .def_readonly("segment_edges_used", &rbf::QueryResult::segment_edges_used)
         .def_readonly("audit_status", &rbf::QueryResult::audit_status)
         .def_readonly("audit_passed", &rbf::QueryResult::audit_passed)
         .def_readonly("audit_time_ms", &rbf::QueryResult::audit_time_ms)
         .def_readonly("repair_time_ms", &rbf::QueryResult::repair_time_ms)
+        .def_readonly("final_simplify_time_ms", &rbf::QueryResult::final_simplify_time_ms)
         .def_readonly("repair_count", &rbf::QueryResult::repair_count)
         .def_readonly("failed_segment_index", &rbf::QueryResult::failed_segment_index)
         .def_readonly("certified_box_length", &rbf::QueryResult::certified_box_length)

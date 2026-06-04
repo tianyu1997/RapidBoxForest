@@ -24,6 +24,10 @@ struct QueryConfig {
 	double repair_local_sampling_radius = 0.0;
 	double repair_local_sampling_growth = 2.0;
 	int collision_shortcut_resolution = 16;
+	bool final_rrt_simplify = false;
+	double final_rrt_simplify_timeout_ms = 0.0;
+	int final_rrt_simplify_max_iters = 50000;
+	int final_rrt_simplify_attempts = 1;
 	double adjacency_tolerance = 1e-9;
 };
 

@@ -28,6 +28,11 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
     DEFAULT_RBF_DOMAIN_SEED_CAP,
     DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
+    DEFAULT_RBF_FINAL_COLLISION_SHORTCUT,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
@@ -104,28 +109,39 @@ class RBFLeafRRTOptions:
     connector_pave_depth: int = DEFAULT_RBF_CONNECTOR_PAVE_DEPTH
     connector_pave_fill_gaps: bool = False
     connector_pave_require_connected_chain: bool = False
+    final_collision_shortcut: bool = DEFAULT_RBF_FINAL_COLLISION_SHORTCUT
+    final_rrt_simplify: bool = DEFAULT_RBF_FINAL_RRT_SIMPLIFY
+    final_rrt_simplify_timeout_ms: float = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS
+    final_rrt_simplify_max_iters: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS
+    final_rrt_simplify_attempts: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS
     allow_anchor_roots: bool = True
     use_priority_points: bool = True
-    canonicalize_queries: bool = True
+    canonicalize_queries: bool = False
 
 
 def query_spec(query: Any) -> QuerySpec:
     if isinstance(query, QuerySpec):
         return query
     if isinstance(query, dict):
+        raw_start = [float(value) for value in query.get("start", query.get("actual_start", query.get("canonical_start", [])))]
+        raw_goal = [float(value) for value in query.get("goal", query.get("actual_goal", query.get("canonical_goal", [])))]
         return QuerySpec(
             label=str(query.get("label", query.get("name", "query"))),
-            start=[float(value) for value in query.get("canonical_start", query["start"])],
-            goal=[float(value) for value in query.get("canonical_goal", query["goal"])],
-            actual_start=[float(value) for value in query.get("actual_start", query.get("start", []))] or None,
-            actual_goal=[float(value) for value in query.get("actual_goal", query.get("goal", []))] or None,
+            start=raw_start,
+            goal=raw_goal,
+            actual_start=[float(value) for value in query.get("actual_start", raw_start)] or None,
+            actual_goal=[float(value) for value in query.get("actual_goal", raw_goal)] or None,
         )
+    raw_start = [float(value) for value in getattr(query, "start")]
+    raw_goal = [float(value) for value in getattr(query, "goal")]
+    actual_start = getattr(query, "actual_start", raw_start)
+    actual_goal = getattr(query, "actual_goal", raw_goal)
     return QuerySpec(
         label=str(getattr(query, "label", getattr(query, "name", "query"))),
-        start=[float(value) for value in getattr(query, "start")],
-        goal=[float(value) for value in getattr(query, "goal")],
-        actual_start=getattr(query, "actual_start", None),
-        actual_goal=getattr(query, "actual_goal", None),
+        start=raw_start,
+        goal=raw_goal,
+        actual_start=[float(value) for value in (raw_start if actual_start is None else actual_start)],
+        actual_goal=[float(value) for value in (raw_goal if actual_goal is None else actual_goal)],
     )
 
 
@@ -295,7 +311,15 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.query.audit_resolution = max(int(options.audit_resolution), int(options.connector_segment_resolution))
     cfg.query.audit_segment_step = float(options.audit_segment_step)
     cfg.query.shortcut_boxes = False
-    cfg.query.collision_shortcut = False
+    cfg.query.collision_shortcut = bool(options.final_collision_shortcut)
+    if hasattr(cfg.query, "final_rrt_simplify"):
+        cfg.query.final_rrt_simplify = bool(options.final_rrt_simplify)
+    if hasattr(cfg.query, "final_rrt_simplify_timeout_ms"):
+        cfg.query.final_rrt_simplify_timeout_ms = float(options.final_rrt_simplify_timeout_ms)
+    if hasattr(cfg.query, "final_rrt_simplify_max_iters"):
+        cfg.query.final_rrt_simplify_max_iters = int(options.final_rrt_simplify_max_iters)
+    if hasattr(cfg.query, "final_rrt_simplify_attempts"):
+        cfg.query.final_rrt_simplify_attempts = int(options.final_rrt_simplify_attempts)
     return cfg
 
 
@@ -322,15 +346,40 @@ def make_refine_config(options: RBFLeafRRTOptions) -> Any:
     return cfg
 
 
-def reflect_path_to_actual(query: QuerySpec, path: list[list[float]]) -> list[list[float]]:
-    if query.actual_start is None:
-        return path
+def point_distance(a: Iterable[float], b: Iterable[float]) -> float:
+    return math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
+
+
+def reflect_path_to_actual(
+    query: QuerySpec,
+    path: list[list[float]],
+    planning_start: list[float],
+    planning_goal: list[float],
+    *,
+    endpoint_tol: float = 1e-6,
+) -> tuple[list[list[float]], bool, str]:
+    if not path:
+        return path, False, "empty_path"
+    if query.actual_start is None or query.actual_goal is None:
+        return path, False, "missing_actual_endpoint"
     actual_start = [float(value) for value in query.actual_start]
-    canonical_start = [float(value) for value in query.start]
-    if len(actual_start) != len(canonical_start):
-        return path
-    delta = [a - c for a, c in zip(actual_start, canonical_start)]
-    return [[float(value) + delta[index] for index, value in enumerate(point)] for point in path]
+    actual_goal = [float(value) for value in query.actual_goal]
+    if (
+        len(actual_start) != len(planning_start)
+        or len(actual_goal) != len(planning_goal)
+        or any(len(point) != len(planning_start) for point in path)
+    ):
+        return path, False, "dimension_mismatch"
+    start_delta = [a - c for a, c in zip(actual_start, planning_start)]
+    goal_delta = [a - c for a, c in zip(actual_goal, planning_goal)]
+    if max((abs(a - b) for a, b in zip(start_delta, goal_delta)), default=0.0) > float(endpoint_tol):
+        return path, False, "actual_reflection_endpoint_mismatch"
+    reflected = [[float(value) + start_delta[index] for index, value in enumerate(point)] for point in path]
+    if point_distance(reflected[0], actual_start) > float(endpoint_tol):
+        return reflected, False, "actual_start_mismatch"
+    if point_distance(reflected[-1], actual_goal) > float(endpoint_tol):
+        return reflected, False, "actual_goal_mismatch"
+    return reflected, True, "actual_reflection_ok"
 
 
 def path_collision_free(robot: Any, obstacles: list[Any], path: list[list[float]], step: float) -> bool:
@@ -347,13 +396,19 @@ def path_collision_free(robot: Any, obstacles: list[Any], path: list[list[float]
     return True
 
 
+def path_length(path: list[list[float]]) -> float:
+    if len(path) < 2:
+        return math.nan
+    return sum(point_distance(a, b) for a, b in zip(path[:-1], path[1:]))
+
+
 def query_rows(
     forest: Any,
     robot: Any,
     queries: Iterable[Any],
     obstacles: list[Any] | None = None,
     audit_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP,
-    canonicalize_queries: bool = True,
+    canonicalize_queries: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for raw in queries:
@@ -362,14 +417,19 @@ def query_rows(
         goal = query_point(robot, query.goal, canonicalize_queries)
         result = forest.query(start, goal)
         canonical_path = result.path_as_lists() if bool(result.success) else []
-        actual_path = reflect_path_to_actual(query, canonical_path)
+        actual_path, reflected_ok, reflection_status = reflect_path_to_actual(query, canonical_path, start, goal)
         actual_audit_passed = bool(result.audit_passed)
         actual_audit_status = str(result.audit_status)
         if bool(result.success) and obstacles is not None:
-            actual_audit_passed = path_collision_free(robot, obstacles, actual_path, audit_step)
-            actual_audit_status = "actual_reflected_audit_passed" if actual_audit_passed else "actual_reflected_audit_failed"
+            if reflected_ok:
+                actual_audit_passed = path_collision_free(robot, obstacles, actual_path, audit_step)
+                actual_audit_status = "actual_reflected_audit_passed" if actual_audit_passed else "actual_reflected_audit_failed"
+            else:
+                actual_audit_passed = False
+                actual_audit_status = reflection_status
         combined_audit_passed = bool(result.audit_passed) and bool(actual_audit_passed)
-        path_length = float(result.path_length) if bool(result.success) else math.nan
+        audited_path_length = path_length(actual_path) if bool(result.success) and reflected_ok else math.nan
+        raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0
         rows.append({
             "label": query.label,
@@ -377,11 +437,16 @@ def query_rows(
             "audit_passed": combined_audit_passed,
             "canonical_audit_passed": bool(result.audit_passed),
             "actual_reflected_audit_passed": bool(actual_audit_passed),
+            "actual_reflection_status": reflection_status,
             "query_ms": float(result.query_time_ms),
             "audit_ms": float(result.audit_time_ms),
-            "path_length": path_length,
+            "final_simplify_ms": float(getattr(result, "final_simplify_time_ms", 0.0)),
+            "path_length": audited_path_length,
+            "final_path_length": audited_path_length,
+            "raw_path_length": raw_path_length,
+            "canonical_path_length": float(result.path_length) if bool(result.success) else math.nan,
             "segment_edge_length": segment_length,
-            "segment_fraction": (segment_length / path_length) if bool(result.success) and path_length > 1e-12 else math.nan,
+            "segment_fraction": (segment_length / raw_path_length) if bool(result.success) and raw_path_length > 1e-12 else math.nan,
             "box_sequence_len": len(list(result.box_sequence)),
             "segment_edges_used": int(result.segment_edges_used),
             "waypoint_count": len(canonical_path),
@@ -427,7 +492,7 @@ def run_leaf_rrt(
         canonicalize_queries=bool(options.canonicalize_queries),
     )
     successes = [row for row in qrows if bool(row["audit_passed"])]
-    total_len = sum(float(row["path_length"]) for row in successes if math.isfinite(float(row["path_length"])))
+    total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))
     total_seg = sum(float(row["segment_edge_length"]) for row in successes)
     diagnostics = {str(k): float(v) for k, v in dict(build.diagnostics).items()}
     build_s = float(build.total_ms) / 1000.0

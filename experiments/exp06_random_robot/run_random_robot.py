@@ -82,10 +82,27 @@ def interpolate(a: list[float], b: list[float], alpha: float) -> list[float]:
     return [(1.0 - alpha) * float(x) + alpha * float(y) for x, y in zip(a, b)]
 
 
-def audit_path(robot: Any, obstacles: list[Any], path: list[list[float]], segment_step: float) -> tuple[bool, float, str]:
+def point_distance(a: list[float], b: list[float]) -> float:
+    return math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
+
+
+def audit_path(
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    segment_step: float,
+    *,
+    start: list[float] | None = None,
+    goal: list[float] | None = None,
+    endpoint_tol: float = 1e-6,
+) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
     if len(path) < 2:
         return False, time.perf_counter() - t0, "empty_path"
+    if start is not None and point_distance(path[0], list(start)) > float(endpoint_tol):
+        return False, time.perf_counter() - t0, "start_mismatch"
+    if goal is not None and point_distance(path[-1], list(goal)) > float(endpoint_tol):
+        return False, time.perf_counter() - t0, "goal_mismatch"
     step = max(1e-9, float(segment_step))
     for a, b in zip(path, path[1:]):
         distance = math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
@@ -215,7 +232,14 @@ def run_rrtconnect_scene(args: argparse.Namespace, catalog: dict[str, Any], robo
         int(args.seed_base) + int(scene_seed),
     )
     path = [[float(value) for value in point] for point in result.get("path", [])]
-    audit_passed, audit_s, audit_status = audit_path(robot, list(scene.obstacles), path, float(args.audit_segment_step))
+    audit_passed, audit_s, audit_status = audit_path(
+        robot,
+        list(scene.obstacles),
+        path,
+        float(args.audit_segment_step),
+        start=list(scene.start),
+        goal=list(scene.goal),
+    )
     ok = bool(result.get("ok"))
     return summarize_single_query_method(
         "rrtconnect",
@@ -251,7 +275,14 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     )
     qresult = list(result.get("queries", []))[0] if list(result.get("queries", [])) else {}
     path = [[float(value) for value in point] for point in qresult.get("path", [])]
-    audit_passed, audit_s, audit_status = audit_path(robot, list(scene.obstacles), path, float(args.audit_segment_step))
+    audit_passed, audit_s, audit_status = audit_path(
+        robot,
+        list(scene.obstacles),
+        path,
+        float(args.audit_segment_step),
+        start=list(scene.start),
+        goal=list(scene.goal),
+    )
     planning_s = float(result.get("build_s", 0.0)) + float(qresult.get("t_s", 0.0))
     return summarize_single_query_method(
         "prm",
@@ -295,7 +326,14 @@ def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_n
         False,
     )
     path = [[float(value) for value in point] for point in result.get("path", [])]
-    audit_passed, audit_s, audit_status = audit_path(robot, list(scene.obstacles), path, float(args.audit_segment_step))
+    audit_passed, audit_s, audit_status = audit_path(
+        robot,
+        list(scene.obstacles),
+        path,
+        float(args.audit_segment_step),
+        start=list(scene.start),
+        goal=list(scene.goal),
+    )
     return summarize_single_query_method(
         "bitstar",
         robot_name,

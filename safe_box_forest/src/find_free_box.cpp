@@ -72,16 +72,13 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         result.fail_code = 4;
         return result;
     }
-    const Eigen::VectorXd tree_seed = seed.size() == oracle_.n_dims()
-        ? oracle_.tree_configuration_for_query(seed)
-        : Eigen::VectorXd(seed);
     bool seed_in_domain = false;
-    if (tree_seed.size() == oracle_.n_dims()) {
+    if (seed.size() == oracle_.n_dims()) {
         const auto contains_start = Clock::now();
-        seed_in_domain = oracle_.contains_point(oracle_.root_node(), tree_seed);
+        seed_in_domain = oracle_.contains_point(oracle_.root_node(), seed);
         record_elapsed(context, "oracle.contains_point", contains_start);
     }
-    if (tree_seed.size() != oracle_.n_dims() || !seed_in_domain) {
+    if (seed.size() != oracle_.n_dims() || !seed_in_domain) {
         result.fail_code = 5;
         return result;
     }
@@ -141,9 +138,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                 result.splits += 1;
             }
             changed_dim = oracle_.split_dim(node);
-            node = (tree_seed[changed_dim] <= oracle_.split_value(node))
-                ? oracle_.left_child(node)
-                : oracle_.right_child(node);
+            node = oracle_.child_containing_point(node, seed);
+            if (node == kInvalidOracleNodeId) {
+                result.fail_code = 5;
+                break;
+            }
             continue;
         }
 
@@ -204,9 +203,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             result.splits += 1;
         }
         changed_dim = oracle_.split_dim(node);
-        node = (tree_seed[changed_dim] <= oracle_.split_value(node))
-            ? oracle_.left_child(node)
-            : oracle_.right_child(node);
+        node = oracle_.child_containing_point(node, seed);
+        if (node == kInvalidOracleNodeId) {
+            result.fail_code = 5;
+            break;
+        }
     }
     result.total_ms = elapsed_ms();
     return result;

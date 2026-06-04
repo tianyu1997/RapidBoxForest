@@ -219,6 +219,46 @@ public:
     virtual Eigen::VectorXd tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const {
         return q;
     }
+    virtual OracleNodeId child_containing_point(OracleNodeId node,
+                                                const Eigen::Ref<const Eigen::VectorXd>& q) const {
+        if (node < 0 || is_leaf(node) || q.size() != n_dims()) {
+            return kInvalidOracleNodeId;
+        }
+        const int dim = split_dim(node);
+        if (dim < 0 || dim >= q.size()) {
+            return kInvalidOracleNodeId;
+        }
+        return q[dim] <= split_value(node) ? left_child(node) : right_child(node);
+    }
+    virtual std::vector<std::vector<Interval>> native_interval_copies_for_node(
+        OracleNodeId node,
+        const std::vector<Interval>& tree_intervals) const {
+        (void)node;
+        return {tree_intervals};
+    }
+    virtual std::vector<std::vector<Interval>> native_root_interval_copies() const {
+        return native_interval_copies_for_node(root_node(), root_intervals());
+    }
+    virtual std::vector<Interval> native_root_hull() const {
+        const auto copies = native_root_interval_copies();
+        if (copies.empty()) {
+            return root_intervals();
+        }
+        std::vector<Interval> hull = copies.front();
+        for (std::size_t copy_index = 1; copy_index < copies.size(); ++copy_index) {
+            if (copies[copy_index].size() != hull.size()) {
+                continue;
+            }
+            for (std::size_t dim = 0; dim < hull.size(); ++dim) {
+                hull[dim] = hull[dim].hull(copies[copy_index][dim]);
+            }
+        }
+        return hull;
+    }
+    virtual std::vector<Interval> native_root_intervals_for_query(
+        const Eigen::Ref<const Eigen::VectorXd>& q) const {
+        return query_intervals_for_node(root_node(), root_intervals(), q);
+    }
     virtual std::vector<Interval> query_intervals_for_node(OracleNodeId node,
                                                            const std::vector<Interval>& tree_intervals,
                                                            const Eigen::Ref<const Eigen::VectorXd>& q) const {
@@ -310,6 +350,11 @@ public:
     const std::vector<Interval>& root_intervals() const override;
     std::vector<Interval> node_intervals(OracleNodeId node) const override;
     Eigen::VectorXd tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const override;
+    OracleNodeId child_containing_point(OracleNodeId node,
+                                        const Eigen::Ref<const Eigen::VectorXd>& q) const override;
+    std::vector<std::vector<Interval>> native_interval_copies_for_node(
+        OracleNodeId node,
+        const std::vector<Interval>& tree_intervals) const override;
     std::vector<Interval> query_intervals_for_node(OracleNodeId node,
                                                    const std::vector<Interval>& tree_intervals,
                                                    const Eigen::Ref<const Eigen::VectorXd>& q) const override;

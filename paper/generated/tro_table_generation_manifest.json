@@ -6,42 +6,42 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "3e13c81c21627626e33b281835c198fb2d130519309d36fcec2bbfcf072a9d56"
+      "sha256": "1adea523c373cd43916ded71b820aa0b7fb71106fc0065bec49f93907f932b5a"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene RBF budget trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.png",
       "placeholder": false,
-      "sha256": "35d7a4d07962bae7551600324555ff5a0fa0e02608b281034e13355ab03fff02"
+      "sha256": "413ecb0feed0f4f4e709ec2a7b0f5f1422c0076611261c96dfc79342a7bf546c"
     },
     "fig_tro_shelf_cross_tradeoff.pdf": {
       "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "6443c54456589464f78cb687ca36a1b70a83c1d3e51abc15d1635f0816732004"
+      "sha256": "cea68e720d9f272cc46dc31a14cd9084adf1ab4a22706195dcae0cb556da8b47"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
       "placeholder": false,
-      "sha256": "f14fa29322135bb4a21b7bc7db9f580bb0c2aefff4e5d2360e6a8f99b0df51ff"
+      "sha256": "a0cc535973f5b817b840394f99ec295c7149e1b618d925cb01c93a7ff36100ce"
     },
     "fig_tro_shelf_tradeoff.pdf": {
       "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "983ad726723f0c2daee854f319c5b4dc378fbb2c52cedfb188e91d6aabef1552"
+      "sha256": "512bb274587b78098c4c397f82f8d64a0f74fb1b80b43dd27e202080bfc8b7e2"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.png",
       "placeholder": false,
-      "sha256": "d8304c39436a86bb82d40b0383faa30b0a7e9a2d2a01e410a981415fb856cc9c"
+      "sha256": "89a040641fa0da648b3d436d080f78cbfb6c306f160726531b4db6cc13e5b225"
     },
     "tab_tro_dynamic_update.tex": {
       "exists": true,
@@ -71,7 +71,7 @@
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "894d128a22719dcbd9514a92bf17f6283a1a5ba0654981f0d91241c40857b28a"
+      "sha256": "12c3c3b3807187b83a8e078e1e112e57dc9cbaaf9c95f4525605e0f15e43215f"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
@@ -88,15 +88,15 @@
   },
   "environment": {
     "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
-    "git_sha": "c92ebc1f34a7",
+    "git_sha": "b2b361234250",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 12028,
-      "VmHWM_kb": 21652,
-      "VmRSS_kb": 21652,
-      "VmSize_kb": 26724
+      "VmData_kb": 12332,
+      "VmHWM_kb": 22072,
+      "VmRSS_kb": 22072,
+      "VmSize_kb": 27028
     },
     "processor": "x86_64",
     "python": "3.10.19",

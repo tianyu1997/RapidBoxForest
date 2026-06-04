@@ -38,6 +38,11 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
     DEFAULT_RBF_DOMAIN_SEED_CAP,
     DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
+    DEFAULT_RBF_FINAL_COLLISION_SHORTCUT,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
@@ -160,7 +165,15 @@ def configure_case(case: str, seed: int, deep_max_boxes: int, args: argparse.Nam
     cfg.query.audit_resolution = max(int(args.audit_resolution), int(args.connector_segment_resolution))
     cfg.query.audit_segment_step = float(args.audit_segment_step)
     cfg.query.shortcut_boxes = False
-    cfg.query.collision_shortcut = False
+    cfg.query.collision_shortcut = bool(args.final_collision_shortcut)
+    if hasattr(cfg.query, "final_rrt_simplify"):
+        cfg.query.final_rrt_simplify = bool(args.final_rrt_simplify)
+    if hasattr(cfg.query, "final_rrt_simplify_timeout_ms"):
+        cfg.query.final_rrt_simplify_timeout_ms = float(args.final_rrt_simplify_timeout_ms)
+    if hasattr(cfg.query, "final_rrt_simplify_max_iters"):
+        cfg.query.final_rrt_simplify_max_iters = int(args.final_rrt_simplify_max_iters)
+    if hasattr(cfg.query, "final_rrt_simplify_attempts"):
+        cfg.query.final_rrt_simplify_attempts = int(args.final_rrt_simplify_attempts)
     if case.startswith("baseline_d23"):
         warm_path = Path(args.rbf_cache_root) / str(args.warm_cache_label)
         cfg.database.external_evidence_path = str(warm_path)
@@ -218,6 +231,7 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
         goal = canonical_q(robot, query.goal)
         result = forest.query(start, goal)
         path_length = float(result.path_length) if bool(result.success) else math.nan
+        raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0
         rows.append({
             "label": str(query.label),
@@ -225,9 +239,12 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
             "audit_passed": bool(result.audit_passed),
             "query_ms": float(result.query_time_ms),
             "audit_ms": float(result.audit_time_ms),
+            "final_simplify_ms": float(getattr(result, "final_simplify_time_ms", 0.0)),
             "path_length": path_length,
+            "final_path_length": path_length,
+            "raw_path_length": raw_path_length,
             "segment_edge_length": segment_length,
-            "segment_fraction": (segment_length / path_length) if bool(result.success) and path_length > 1e-12 else math.nan,
+            "segment_fraction": (segment_length / raw_path_length) if bool(result.success) and raw_path_length > 1e-12 else math.nan,
             "box_sequence_len": len(list(result.box_sequence)),
             "segment_edges_used": int(result.segment_edges_used),
             "waypoint_count": len(result.path_as_lists()),
@@ -286,6 +303,11 @@ def run_case(case: str, seed: int, deep_max_boxes: int, args: argparse.Namespace
         connector_pave_depth=int(args.connector_pave_depth),
         connector_pave_fill_gaps=bool(args.connector_pave_fill_gaps),
         connector_pave_require_connected_chain=bool(args.connector_pave_require_connected_chain),
+        final_collision_shortcut=bool(args.final_collision_shortcut),
+        final_rrt_simplify=bool(args.final_rrt_simplify),
+        final_rrt_simplify_timeout_ms=float(args.final_rrt_simplify_timeout_ms),
+        final_rrt_simplify_max_iters=int(args.final_rrt_simplify_max_iters),
+        final_rrt_simplify_attempts=int(args.final_rrt_simplify_attempts),
         allow_anchor_roots=True,
         use_priority_points=True,
         run_rrt_grower=bool(args.run_rrt_grower),
@@ -406,6 +428,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
     parser.add_argument("--connector-pave-fill-gaps", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--connector-pave-require-connected-chain", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--final-collision-shortcut", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_FINAL_COLLISION_SHORTCUT)
+    parser.add_argument("--final-rrt-simplify", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY)
+    parser.add_argument("--final-rrt-simplify-timeout-ms", type=float, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS)
+    parser.add_argument("--final-rrt-simplify-max-iters", type=int, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS)
+    parser.add_argument("--final-rrt-simplify-attempts", type=int, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS)
     parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
     parser.add_argument("--rrt-grower-timeout-ms", type=float, default=DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS)
@@ -457,6 +484,11 @@ def main() -> int:
             "connector_rrt_iters": int(args.connector_rrt_iters),
             "connector_rrt_timeout_ms": float(args.connector_rrt_timeout_ms),
             "connector_bridge_boxes": int(args.connector_bridge_boxes),
+            "final_collision_shortcut": bool(args.final_collision_shortcut),
+            "final_rrt_simplify": bool(args.final_rrt_simplify),
+            "final_rrt_simplify_timeout_ms": float(args.final_rrt_simplify_timeout_ms),
+            "final_rrt_simplify_max_iters": int(args.final_rrt_simplify_max_iters),
+            "final_rrt_simplify_attempts": int(args.final_rrt_simplify_attempts),
             "run_rrt_grower": bool(args.run_rrt_grower),
             "rrt_grower_extra_boxes": int(args.rrt_grower_extra_boxes),
             "rrt_grower_timeout_ms": float(args.rrt_grower_timeout_ms),

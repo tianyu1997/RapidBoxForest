@@ -72,14 +72,8 @@ RRTConnectConfig with_query_root_hull_domain(const RRTConnectConfig& config,
                                              const Eigen::Ref<const Eigen::VectorXd>& start,
                                              const Eigen::Ref<const Eigen::VectorXd>& goal) {
     RRTConnectConfig out = config;
-    auto lhs = oracle.query_intervals_for_node(
-        oracle.root_node(),
-        oracle.root_intervals(),
-        start);
-    auto rhs = oracle.query_intervals_for_node(
-        oracle.root_node(),
-        oracle.root_intervals(),
-        goal);
+    auto lhs = oracle.native_root_intervals_for_query(start);
+    auto rhs = oracle.native_root_intervals_for_query(goal);
     if (lhs.size() == rhs.size()) {
         for (std::size_t i = 0; i < lhs.size(); ++i) {
             lhs[i] = lhs[i].hull(rhs[i]);
@@ -826,7 +820,7 @@ bool select_frontier_bridge_candidate(const std::vector<BoxNode>& boxes,
         return false;
     }
     const auto map = make_box_map(boxes);
-    const auto& root = oracle.root_intervals();
+    const auto root = oracle.native_root_hull();
     const double epsilon = std::max(config.frontier_bridge_boundary_epsilon, 0.25 * config.pave.adjacency_tolerance);
     std::vector<FrontierBridgeCandidate> candidates;
     candidates.reserve(static_cast<std::size_t>(std::max(1, config.frontier_bridge_candidate_limit)));
@@ -1313,6 +1307,14 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         auto it = box_index.find(id);
         return it == box_index.end() ? nullptr : &boxes[it->second];
     };
+    auto find_box_owning_node_covering = [&](int node, const Eigen::VectorXd& p) -> int {
+        for (const auto& box : boxes) {
+            if (box.tree_id == node && box.contains(p, config.adjacency_tolerance)) {
+                return box.id;
+            }
+        }
+        return -1;
+    };
 
     // Commit a certified-free FFB result as a new box parented to `parent_id`.
     // Returns the new box id on success, or -1 if the result cannot be committed
@@ -1338,7 +1340,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         // first-committed slab need not contain a later sample. Permitting a
         // duplicate-node box (without clobbering the oracle's canonical owner) lets
         // that later free sample still be covered.
-        const bool node_already_owned = tree_owner.find(result.node) != tree_owner.end();
+        const bool node_already_owned = find_box_owning_node_covering(result.node, seed) >= 0;
         if (!allow_duplicate_node && node_already_owned) {
             return -1;
         }
@@ -1379,7 +1381,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return new_id;
     };
 
-    // Find the committed box that owns canonical tree node `node`, or -1.
+    // Find the first committed box indexed by canonical tree node `node`, or -1.
     auto find_box_owning_node = [&](int node) -> int {
         auto it = tree_owner.find(node);
         return it == tree_owner.end() ? -1 : it->second;
@@ -1462,7 +1464,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             if (committed >= 0) {
                 to_id = committed;
             } else {
-                const int owner = find_box_owning_node(result.node);
+                const int owner = find_box_owning_node_covering(result.node, to_pt);
                 if (owner >= 0) {
                     BoxNode* owner_box = box_by_id(owner);
                     BoxNode* from_box = box_by_id(from_id);
@@ -1535,7 +1537,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         }
         int committed = commit_box(result, p, parent_id, true);
         if (committed < 0) {
-            const int owner = find_box_owning_node(result.node);
+            const int owner = find_box_owning_node_covering(result.node, p);
             if (owner >= 0) {
                 BoxNode* owner_box = box_by_id(owner);
                 BoxNode* parent_box = box_by_id(parent_id);
@@ -1594,9 +1596,8 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         if (p.size() != oracle.n_dims()) {
             return -1;
         }
-        const Eigen::VectorXd tree_p = oracle.tree_configuration_for_query(p);
         OracleNodeId node = oracle.root_node();
-        if (!oracle.contains_point(node, tree_p)) {
+        if (!oracle.contains_point(node, p)) {
             return -1;
         }
         int best = -1;
@@ -1606,16 +1607,9 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         }
         int guard = 0;
         while (!oracle.is_leaf(node) && guard++ <= oracle.max_tree_depth() + 2) {
-            const int dim = oracle.split_dim(node);
-            if (dim < 0 || dim >= tree_p.size()) {
-                break;
-            }
-            const double split = oracle.split_value(node);
-            const OracleNodeId child = tree_p[dim] <= split
-                                           ? oracle.left_child(node)
-                                           : oracle.right_child(node);
+            const OracleNodeId child = oracle.child_containing_point(node, p);
             if (child == kInvalidOracleNodeId ||
-                !oracle.contains_point(child, tree_p)) {
+                !oracle.contains_point(child, p)) {
                 break;
             }
             node = child;
@@ -2101,7 +2095,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                                        current_box_id,
                                        /*require_adjacency=*/true);
                 if (committed < 0) {
-                    const int owner = find_box_owning_node(evaluated.result.node);
+                    const int owner = find_box_owning_node_covering(evaluated.result.node, evaluated.seed);
                     BoxNode* owner_box = box_by_id(owner);
                     BoxNode* current_box = box_by_id(current_box_id);
                     const bool adjacent_owner =

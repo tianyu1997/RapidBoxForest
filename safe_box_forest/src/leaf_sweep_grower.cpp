@@ -404,13 +404,20 @@ std::vector<LeafSweepGrower::PendingNode> LeafSweepGrower::materialize_start_fro
 	LeafSweepResult& result) {
 	(void)max_depth;
 	std::vector<PendingNode> frontier;
-	PendingNode root;
-	root.node = oracle_.root_node();
-	root.changed_dim = -1;
 	if (config_.use_virtual_topology) {
-		root.intervals = oracle_.root_intervals();
+		for (const auto& intervals : oracle_.native_root_interval_copies()) {
+			PendingNode root;
+			root.node = oracle_.root_node();
+			root.changed_dim = -1;
+			root.intervals = intervals;
+			frontier.push_back(std::move(root));
+		}
+	} else {
+		PendingNode root;
+		root.node = oracle_.root_node();
+		root.changed_dim = -1;
+		frontier.push_back(std::move(root));
 	}
-	frontier.push_back(std::move(root));
 	for (int depth = 0; depth < start_depth; ++depth) {
 		std::vector<PendingNode> next;
 		for (const auto& item : frontier) {

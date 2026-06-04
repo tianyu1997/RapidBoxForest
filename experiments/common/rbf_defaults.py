@@ -7,8 +7,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
-RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_sweep_rrt_b200_d28_fast_rrt1"
-RBF_SHELF_PROFILE_NAME = "exp04_leaf_sweep_rrt_d23_b200_d28_fast_rrt1"
+RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_sweep_qroot_b200_l15_d34"
+RBF_SHELF_PROFILE_NAME = "exp04_leaf_sweep_qroot_d23_b200_l15_d34"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
@@ -31,16 +31,16 @@ D23_ROOT_INTERVALS: list[tuple[float, float]] = [
     (1.262, 1.8794),
 ]
 
-DEFAULT_RBF_LEAF_START_DEPTH = 8
-DEFAULT_RBF_LEAF_MAX_DEPTH = 14
+DEFAULT_RBF_LEAF_START_DEPTH = 10
+DEFAULT_RBF_LEAF_MAX_DEPTH = 15
 DEFAULT_RBF_DEEP_MAX_BOXES = 200
-DEFAULT_RBF_DEEP_FFB_DEPTH = 28
+DEFAULT_RBF_DEEP_FFB_DEPTH = 34
 DEFAULT_RBF_REFINE_TIMEOUT_MS = 800.0
 DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES = 1
 DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS = 1.0
 DEFAULT_RBF_DOMAIN_SEED_CAP = 24
 DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 8
-DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 24
+DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 160
 DEFAULT_RBF_VALIDATION_BATCH_SIZE = 512
 DEFAULT_RBF_THREADS = 8
 DEFAULT_RBF_FFB_START_DEPTH = 15
@@ -59,6 +59,11 @@ DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 64
 
 DEFAULT_RBF_AUDIT_RESOLUTION = 16
 DEFAULT_RBF_AUDIT_SEGMENT_STEP = 0.01
+DEFAULT_RBF_FINAL_COLLISION_SHORTCUT = True
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY = True
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 300.0
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS = 50000
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 4
 
 
 def root_override_intervals(sbf: Any) -> list[Any]:
@@ -118,7 +123,10 @@ def default_rbf_profile() -> dict[str, Any]:
         "query": {
             "strict_path_audit": True,
             "shortcut_boxes": False,
-            "collision_shortcut": False,
+            "collision_shortcut": DEFAULT_RBF_FINAL_COLLISION_SHORTCUT,
+            "final_rrt_simplify": DEFAULT_RBF_FINAL_RRT_SIMPLIFY,
+            "final_rrt_simplify_timeout_ms": DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
+            "final_rrt_simplify_attempts": DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
             "audit_resolution": DEFAULT_RBF_AUDIT_RESOLUTION,
             "audit_segment_step": DEFAULT_RBF_AUDIT_SEGMENT_STEP,
             "planning_time_excludes_audit": True,
@@ -127,10 +135,10 @@ def default_rbf_profile() -> dict[str, Any]:
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
             "validated_on": "Exp.4 shelf full seeds 0..7",
             "success_runs": "8/8",
-            "median_build_s": 0.23,
-            "median_planning_s": 0.41,
-            "median_raw_segment_fraction": 0.022,
-            "median_route_length": 12.59,
+            "median_build_s": 0.64,
+            "median_planning_s": 1.68,
+            "median_raw_segment_fraction": 0.419,
+            "mean_route_length": 3.29,
         },
     }
 

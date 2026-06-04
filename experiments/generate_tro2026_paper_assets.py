@@ -118,6 +118,75 @@ def method_time(row: dict[str, Any]) -> float:
     return as_float(row.get("build_s", row.get("planning_s_median"))) + as_float(row.get("query_s_median"), 0.0)
 
 
+AMORTIZATION_QUERY_COUNTS = [1, 5, 10, 20, 50]
+PANEL_TITLE_FONTSIZE = 7.6
+AXIS_LABEL_FONTSIZE = 7.0
+TICK_LABEL_FONTSIZE = 6.2
+LEGEND_FONTSIZE = 6.6
+LINE_WIDTH = 0.95
+POINT_SIZE = 14
+SELECTED_POINT_SIZE = 42
+SELECTED_LINE_WIDTH = 1.2
+
+
+def plot_query_amortization_panel(
+    ax: Any,
+    methods: list[dict[str, Any]],
+    *,
+    title: str = "(b) amortization",
+    show_xlabel: bool = True,
+    show_ylabel: bool = True,
+) -> None:
+    plotted = False
+    for method in methods:
+        label = str(method.get("label", method.get("method", "")))
+        style = METHOD_STYLE.get(str(method.get("method", "")), {})
+        color = method.get("color", style.get("color", "0.35"))
+        marker = method.get("marker", style.get("marker", "o"))
+        build_s = as_float(method.get("build_s"), 0.0)
+        per_query_s = as_float(method.get("per_query_s"), 0.0)
+        if not math.isfinite(build_s) or not math.isfinite(per_query_s):
+            continue
+        ys = [
+            max(1e-5, (max(0.0, build_s) + count * max(0.0, per_query_s)) / count)
+            for count in AMORTIZATION_QUERY_COUNTS
+        ]
+        ax.plot(
+            AMORTIZATION_QUERY_COUNTS,
+            ys,
+            marker=marker,
+            markersize=3.0,
+            linewidth=LINE_WIDTH,
+            color=color,
+            label=label,
+            alpha=0.92,
+        )
+        plotted = True
+    if not plotted:
+        ax.text(0.5, 0.5, "amortization rows missing", ha="center", va="center", fontsize=7.0)
+        ax.axis("off")
+        return
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+    ax.set_xlabel("number of queries" if show_xlabel else "")
+    ax.set_ylabel("amortized time / query (s)" if show_ylabel else "")
+    ax.set_title(title, fontsize=PANEL_TITLE_FONTSIZE)
+    ax.grid(True, which="both", alpha=0.24)
+    ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
+    ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+    ax.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+
+
+def set_padded_linear_ylim(ax: Any, values: list[float], *, min_pad: float = 0.08) -> None:
+    finite = [value for value in values if math.isfinite(value)]
+    if not finite:
+        return
+    low = min(finite)
+    high = max(finite)
+    span = max(high - low, min_pad)
+    ax.set_ylim(low - 0.08 * span, high + 0.10 * span)
+
+
 def parse_old_random_context(table_path: Path = OLD_RANDOM_TABLE) -> dict[tuple[str, str], dict[str, dict[str, float]]]:
     """Read old TRO random best-point table as contextual baseline markers.
 
@@ -622,9 +691,10 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         "single_thread": "No LECT, 1 thread",
     }
     lines = [
-        r"\begin{table*}[t]",
+        r"% Auto-generated from current trade-off artifacts.",
+        r"\begingroup",
         r"\centering",
-        r"\caption{Shelf+IIWA leaf-sweep--RRT grower trade-off. Planning time excludes final audit and equals build plus five-query graph search. SR counts seeds for which all five canonical queries pass strict audit. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction.}",
+        r"\captionof{table}{Shelf+IIWA leaf-sweep--RRT grower trade-off. Planning time excludes final audit and equals build plus five-query graph search. SR counts seeds for which all five canonical queries pass strict audit. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\begin{tabular}{lrrrrrrrrrr}",
         r"\toprule",
@@ -644,7 +714,7 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{tex_num(row.get('deep_refine_s_median'))} & {tex_num(row.get('connector_s_median'))} & "
             f"{tex_num(path_length)} & {tex_num(segment_fraction)} \\\\"
         )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -841,8 +911,9 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if method_rows.get(method)
     }
 
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.0), constrained_layout=True)
+    fig, axes = plt.subplots(1, 2, figsize=(5.25, 2.15))
     ax = axes[0]
+    path_values: list[float] = []
     for method in method_order:
         items = method_rows.get(method, [])
         if not items:
@@ -850,9 +921,10 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         style = METHOD_STYLE.get(method, {"label": method, "color": "0.3", "marker": "o"})
         xs = [method_time(row) for row in items]
         ys = [path_length_stat(row) for row in items]
+        path_values.extend(ys)
         if len(items) > 1:
-            ax.plot(xs, ys, "-", color=style["color"], alpha=0.62, linewidth=1.35)
-        ax.scatter(xs, ys, marker=style["marker"], color=style["color"], s=24, alpha=0.78, label=style["label"])
+            ax.plot(xs, ys, "-", color=style["color"], alpha=0.62, linewidth=LINE_WIDTH)
+        ax.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.78, label=style["label"])
         selected = selected_rows.get(method)
         if selected is not None:
             ax.scatter(
@@ -860,40 +932,54 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 [path_length_stat(selected)],
                 facecolors="none",
                 edgecolors="#d4a017",
-                linewidths=1.8,
-                s=84,
+                linewidths=SELECTED_LINE_WIDTH,
+                s=SELECTED_POINT_SIZE,
                 zorder=5,
             )
     ax.set_xscale("log")
     ax.set_xlabel("charged time (s, log)")
     ax.set_ylabel("mean audited path length")
-    ax.set_title("(a) time / path", fontsize=9)
+    ax.set_title("(a) time / path", fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
+    ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
+    ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+    ax.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+    set_padded_linear_ylim(ax, path_values)
 
     ax = axes[1]
-    labels: list[str] = []
-    values: list[float] = []
-    colors: list[str] = []
+    amortization_methods: list[dict[str, Any]] = []
     for method in method_order:
         row = selected_rows.get(method)
         if row is None:
             continue
         label = str(row.get("method_label") or METHOD_STYLE.get(method, {}).get("label", method))
-        labels.append(label)
-        values.append(method_time(row) / 5.0)
-        colors.append(METHOD_STYLE.get(method, {"color": "0.4"})["color"])
-    ax.bar(range(len(labels)), values, color=colors)
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=7)
-    ax.set_ylabel("amortized time/query (s)")
-    ax.set_title("(b) tabulated-row amortization", fontsize=9)
-    ax.grid(True, axis="y", alpha=0.24)
+        if method == "sbf_leaf_rrt":
+            build_s = row.get("build_s", row.get("planning_s_median"))
+            per_query_s = row.get("query_s_median")
+        elif method == "iris_np_gcs":
+            build_s = row.get("build_s", row.get("planning_s_median"))
+            per_query_s = row.get("query_s_median")
+        elif method in {"prm"}:
+            build_s = row.get("build_s", row.get("planning_s_median"))
+            per_query_s = row.get("query_s_median")
+        else:
+            build_s = 0.0
+            per_query_s = method_time(row)
+        amortization_methods.append({
+            "method": method,
+            "label": label,
+            "build_s": build_s,
+            "per_query_s": per_query_s,
+        })
+    plot_query_amortization_panel(ax, amortization_methods, title="(b) amortization")
 
     handles, labels = axes[0].get_legend_handles_labels()
     dedup: dict[str, Any] = {}
     for handle, label in zip(handles, labels):
         dedup.setdefault(label, handle)
-    fig.legend(dedup.values(), dedup.keys(), loc="lower center", ncol=5, frameon=False, fontsize=8)
+    fig.legend(dedup.values(), dedup.keys(), loc="upper center", bbox_to_anchor=(0.5, 1.02),
+               ncol=5, frameon=False, fontsize=LEGEND_FONTSIZE)
+    fig.subplots_adjust(left=0.12, right=0.985, top=0.86, bottom=0.20, wspace=0.34)
     fig.savefig(pdf_path)
     fig.savefig(png_path, dpi=220)
     plt.close(fig)
@@ -908,14 +994,14 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
 
     case_order = [
         ("baseline_d23_aafk_support_hull_8t", "RBF-SH", "#1f77b4", "o"),
-        ("critsample_support_hull_unsafe", "CritSample", "#17becf", "v"),
+        ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
-        ("no_external_lect", "No LECT replay", "#ff7f0e", "D"),
-        ("single_thread", "1 thread", "#9467bd", "^"),
+        ("no_external_lect", "No LECT", "#ff7f0e", "D"),
+        ("single_thread", "1T", "#9467bd", "^"),
     ]
     selected_rows: dict[str, dict[str, Any]] = {}
-    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.0), constrained_layout=True)
-    ax = axes[0]
+    fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.20))
+    path_values: list[float] = []
     for case, label, color, marker in case_order:
         items = sorted(
             [row for row in rows if str(row.get("case")) == case],
@@ -928,8 +1014,9 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             selected_rows[case] = selected
         xs = [as_float(row.get("planning_s_median")) for row in items]
         ys = [path_length_stat(row) for row in items]
-        ax.plot(xs, ys, "-", color=color, alpha=0.62, linewidth=1.25)
-        ax.scatter(xs, ys, marker=marker, color=color, s=24, alpha=0.78, label=label)
+        path_values.extend(ys)
+        ax.plot(xs, ys, "-", color=color, alpha=0.62, linewidth=LINE_WIDTH)
+        ax.scatter(xs, ys, marker=marker, color=color, s=POINT_SIZE, alpha=0.78, label=label)
         selected_path = None if selected is None else path_length_stat(selected)
         if selected is not None and math.isfinite(selected_path):
             ax.scatter(
@@ -937,35 +1024,22 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 [selected_path],
                 facecolors="none",
                 edgecolors="#d4a017",
-                linewidths=1.8,
-                s=84,
+                linewidths=SELECTED_LINE_WIDTH,
+                s=SELECTED_POINT_SIZE,
                 zorder=5,
             )
     ax.set_xscale("log")
     ax.set_xlabel("charged time (s, log)")
     ax.set_ylabel("mean audited path length")
-    ax.set_title("(a) time / path", fontsize=9)
     ax.grid(True, which="both", alpha=0.24)
-
-    ax = axes[1]
-    labels: list[str] = []
-    values: list[float] = []
-    colors: list[str] = []
-    for case, label, color, _marker in case_order:
-        row = selected_rows.get(case)
-        if row is None:
-            continue
-        labels.append(label)
-        values.append(as_float(row.get("planning_s_median")) / 5.0)
-        colors.append(color)
-    ax.bar(range(len(labels)), values, color=colors)
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=35, ha="right", fontsize=7)
-    ax.set_ylabel("amortized time/query (s)")
-    ax.set_title("(b) tabulated-row amortization", fontsize=9)
-    ax.grid(True, axis="y", alpha=0.24)
-    handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="lower center", ncol=3, frameon=False, fontsize=7)
+    ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
+    ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+    ax.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+    set_padded_linear_ylim(ax, path_values)
+    handles, labels = ax.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.02),
+               ncol=5, frameon=False, fontsize=LEGEND_FONTSIZE, handlelength=1.1)
+    fig.subplots_adjust(left=0.21, right=0.97, top=0.88, bottom=0.21)
     fig.savefig(pdf_path)
     fig.savefig(png_path, dpi=220)
     plt.close(fig)
@@ -1162,12 +1236,13 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     robot_order = ["iiwa", "ur5", "panda"]
     difficulty_order = ["easy", "medium", "hard"]
     lines = [
-        r"\begin{table*}[t]",
+        r"% Auto-generated from current trade-off artifacts.",
+        r"\begingroup",
         r"\centering",
         (
-            r"\caption{Saved-catalog random-scene best trade-off points. RBF rows are selected from the current v5 saved catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to old balanced random-scene common-rule context. Full current RBF budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. RBF rows are selected from the current v5 saved catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to old balanced random-scene common-rule context. Full current RBF budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
             if has_current_baselines else
-            r"\caption{Saved-catalog random-scene RBF best trade-off points with old TRO common-rule baseline context. RBF rows are selected from the current v5 saved catalog; non-RBF columns are imported from the old balanced random-scene artifact and are shown only as protocol context. Full current RBF budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene RBF best trade-off points with old TRO common-rule baseline context. RBF rows are selected from the current v5 saved catalog; non-RBF columns are imported from the old balanced random-scene artifact and are shown only as protocol context. Full current RBF budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
         ),
         r"\label{tab:tro-random-summary}",
         r"\scriptsize",
@@ -1196,7 +1271,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
                 + " & ".join(cells)
                 + r" \\"
             )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -1213,10 +1288,37 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     current_curves = current_random_curves_from_rows(rows)
     robot_order = ["iiwa", "ur5", "panda"]
     difficulty_order = ["easy", "medium", "hard"]
-    fig, axes = plt.subplots(1, 3, figsize=(11.0, 3.55), sharey=False)
-    for axis, difficulty in zip(axes, difficulty_order):
-        for robot_index, robot in enumerate(robot_order):
-            jitter = 1.0 + (robot_index - 1) * 0.018
+    robot_labels = {"iiwa": "IIWA", "ur5": "UR5", "panda": "Panda"}
+    rbf_selected = {
+        (str(row.get("robot")).lower(), str(row.get("difficulty")).lower()): row
+        for row in select_best_budget_rows(
+            [row for row in rows if str(row.get("method")) == "sbf_leaf_rrt"],
+            ["robot", "difficulty"],
+        )
+    }
+
+    fig, axes = plt.subplots(
+        len(robot_order),
+        len(difficulty_order) + 1,
+        figsize=(11.2, 6.9),
+    )
+    for row_index, robot in enumerate(robot_order):
+        robot_path_values: list[float] = []
+        for difficulty in difficulty_order:
+            robot_path_values.extend([
+                path_length_stat(row)
+                for row in rows
+                if str(row.get("method")) == "sbf_leaf_rrt"
+                and str(row.get("robot")).lower() == robot
+                and str(row.get("difficulty")).lower() == difficulty
+            ])
+            robot_path_values.extend([
+                item["path_length"]
+                for item in context.get((robot, difficulty), {}).values()
+                if math.isfinite(item.get("path_length", math.nan))
+            ])
+        for col_index, difficulty in enumerate(difficulty_order):
+            axis = axes[row_index][col_index]
             items = sorted(
                 [
                     row for row in rows
@@ -1227,15 +1329,23 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 key=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
             )
             if items:
-                xs = [as_float(row.get("planning_s_median")) * jitter for row in items]
+                xs = [as_float(row.get("planning_s_median")) for row in items]
                 ys = [path_length_stat(row) for row in items]
                 axis.plot(xs, ys, "-", color=METHOD_STYLE["sbf_leaf_rrt"]["color"],
-                          alpha=0.60, linewidth=1.4)
+                          alpha=0.60, linewidth=LINE_WIDTH)
                 axis.scatter(xs, ys, marker=METHOD_STYLE["sbf_leaf_rrt"]["marker"],
-                             color=METHOD_STYLE["sbf_leaf_rrt"]["color"], s=22, alpha=0.82)
-                axis.annotate(robot.upper(), (xs[0], ys[0]), xytext=(3, 3),
-                              textcoords="offset points", fontsize=7,
-                              color=METHOD_STYLE["sbf_leaf_rrt"]["color"])
+                             color=METHOD_STYLE["sbf_leaf_rrt"]["color"], s=POINT_SIZE, alpha=0.82)
+                selected = rbf_selected.get((robot, difficulty))
+                if selected is not None:
+                    axis.scatter(
+                        [as_float(selected.get("planning_s_median"))],
+                        [path_length_stat(selected)],
+                        facecolors="none",
+                        edgecolors="#d4a017",
+                        linewidths=SELECTED_LINE_WIDTH,
+                        s=SELECTED_POINT_SIZE,
+                        zorder=5,
+                    )
             scenario_context = context.get((robot, difficulty), {})
             scenario_curves = current_curves.get((robot, difficulty), {})
             for method in ["prm", "bitstar"]:
@@ -1243,22 +1353,63 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 if len(points) < 2:
                     continue
                 style = METHOD_STYLE[method]
-                xs = [point["total_s"] * jitter for point in points]
+                xs = [point["total_s"] for point in points]
                 ys = [point["path_length"] for point in points]
-                axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=1.1)
-                axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=18, alpha=0.58)
+                axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
+                axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
             for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
                 item = scenario_context.get(method)
                 if not item:
                     continue
                 style = METHOD_STYLE[method]
-                axis.scatter([item["total_s"] * jitter], [item["path_length"]],
-                             marker=style["marker"], color=style["color"], s=28, alpha=0.82)
-        axis.set_xscale("log")
-        axis.set_xlabel("charged time (s, log)")
-        axis.set_title(difficulty.capitalize())
-        axis.grid(True, which="both", alpha=0.22)
-    axes[0].set_ylabel("mean audited path length")
+                axis.scatter([item["total_s"]], [item["path_length"]],
+                             marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.82)
+            axis.set_xscale("log")
+            axis.set_xlabel("charged time (s, log)" if row_index == len(robot_order) - 1 else "")
+            if row_index == 0:
+                axis.set_title(difficulty.capitalize(), fontsize=PANEL_TITLE_FONTSIZE)
+            if col_index == 0:
+                axis.set_ylabel(f"{robot_labels[robot]}\nmean audited path length")
+            axis.grid(True, which="both", alpha=0.22)
+            axis.tick_params(labelsize=TICK_LABEL_FONTSIZE)
+            axis.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+            axis.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
+            set_padded_linear_ylim(axis, robot_path_values)
+
+        amort_methods: list[dict[str, Any]] = []
+        for method in ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
+            build_values: list[float] = []
+            query_values: list[float] = []
+            for difficulty in difficulty_order:
+                if method == "sbf_leaf_rrt":
+                    selected = rbf_selected.get((robot, difficulty))
+                    if selected is None:
+                        continue
+                    build_values.append(as_float(selected.get("planning_s_median"), 0.0))
+                    query_values.append(as_float(selected.get("audit_s_median"), 0.0))
+                else:
+                    item = context.get((robot, difficulty), {}).get(method)
+                    if not item:
+                        continue
+                    build_values.append(as_float(item.get("build_s"), 0.0))
+                    query_values.append(as_float(item.get("query_s"), item.get("total_s", 0.0)))
+            if build_values and query_values:
+                style = METHOD_STYLE[method]
+                amort_methods.append({
+                    "method": method,
+                    "label": style["label"],
+                    "build_s": mean(build_values) or 0.0,
+                    "per_query_s": mean(query_values) or 0.0,
+                })
+        amort_axis = axes[row_index][len(difficulty_order)]
+        plot_query_amortization_panel(
+            amort_axis,
+            amort_methods,
+            title="Amortization" if row_index == 0 else "",
+            show_xlabel=row_index == len(robot_order) - 1,
+            show_ylabel=False,
+        )
+
     handles = []
     labels = []
     for method in ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
@@ -1266,12 +1417,23 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         handles.append(
             plt.Line2D([0], [0], color=style["color"], marker=style["marker"],
                        linestyle="-" if method == "sbf_leaf_rrt" else "None",
-                       markersize=5, linewidth=1.2)
+                       markersize=4, linewidth=LINE_WIDTH)
         )
         labels.append(style["label"])
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.02),
-               ncol=5, frameon=False, fontsize=8)
-    fig.subplots_adjust(left=0.065, right=0.99, top=0.80, bottom=0.16, wspace=0.18)
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.0),
+        ncol=5,
+        frameon=False,
+        fontsize=max(LEGEND_FONTSIZE, 7.2),
+        handlelength=2.4,
+        handletextpad=0.4,
+        columnspacing=0.85,
+        labelspacing=0.45,
+    )
+    fig.subplots_adjust(left=0.072, right=0.992, top=0.94, bottom=0.055, hspace=0.18, wspace=0.16)
     fig.savefig(pdf_path)
     fig.savefig(png_path, dpi=220)
     plt.close(fig)

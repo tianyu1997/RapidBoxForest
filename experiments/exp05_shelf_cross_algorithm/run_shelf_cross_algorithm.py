@@ -454,6 +454,43 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
             writer.writerow({field: row.get(field) for field in fields})
 
 
+def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "method",
+        "stage_id",
+        "seed",
+        "label",
+        "success",
+        "audit_passed",
+        "audit_status",
+        "path_length",
+        "query_ms",
+        "audit_ms",
+        "waypoint_count",
+        "planner_status",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for row in rows:
+            for query in row.get("queries", []):
+                writer.writerow({
+                    "method": row.get("method"),
+                    "stage_id": row.get("stage_id"),
+                    "seed": row.get("seed"),
+                    "label": query.get("label"),
+                    "success": query.get("success"),
+                    "audit_passed": query.get("audit_passed"),
+                    "audit_status": query.get("audit_status"),
+                    "path_length": query.get("path_length"),
+                    "query_ms": query.get("query_ms"),
+                    "audit_ms": query.get("audit_ms"),
+                    "waypoint_count": query.get("waypoint_count"),
+                    "planner_status": query.get("planner_status"),
+                })
+
+
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     def path_stat(row: dict[str, Any]) -> float:
         for key in ("path_length_mean", "path_length_median"):
@@ -569,15 +606,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
     parser.add_argument("--rrt-timeout-s", type=float, default=10.0)
     parser.add_argument("--rrt-range", type=float, default=0.35)
-    parser.add_argument("--bitstar-timeout-s", type=float, default=5.0)
-    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=1.0)
+    parser.add_argument("--bitstar-timeout-s", type=float, default=120.0)
+    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=2.0)
     parser.add_argument("--bitstar-samples-per-batch", type=int, default=-1)
     parser.add_argument("--bitstar-rewire-factor", type=float, default=-1.0)
     parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--prm-build-s", type=float, default=0.25)
-    parser.add_argument("--prm-build-grid-s", default="0.25,0.5,1,2,5")
+    parser.add_argument("--prm-build-s", type=float, default=40.0)
+    parser.add_argument("--prm-build-grid-s", default="2,5,10,20,40,80")
     parser.add_argument("--prm-query-s", type=float, default=1.0)
-    parser.add_argument("--prm-max-nearest-neighbors", type=int, default=32)
+    parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
     return parser.parse_args()
 
 
@@ -625,7 +662,7 @@ def main() -> int:
             "budget_s": float(budget) if method != "sbf_leaf_rrt" and budget is not None else None,
             "deep_max_boxes": budget,
             "scene": "marcucci_shelf_iiwa",
-            "query_set": "AS_TS_CS_LB_RB_canonical",
+            "query_set": "AS_TS_CS_LB_RB_raw_actual",
             "audit_segment_step": float(args.audit_segment_step),
             "execution_policy": "import_old_audited_artifact" if method in IMPORTED_BASELINE_METHODS and not args.rerun_baselines else "current_execution",
             "rbf_default_profile": shelf_d23_rbf_profile() if method == "sbf_leaf_rrt" else None,
@@ -683,6 +720,7 @@ def main() -> int:
     write_json(args.out_dir / "shelf_cross_algorithm_manifest.json", payload)
     if summary:
         write_csv(args.out_dir / "shelf_cross_algorithm_summary.csv", summary)
+        write_per_query_csv(args.out_dir / "shelf_cross_algorithm_per_query.csv", rows)
         if any(str(row.get("method")) == "sbf_leaf_rrt" for row in summary):
             write_tex(REPO_ROOT / "paper" / "generated" / "tab_tro_shelf_cross_algorithm.tex", summary)
     print(f"wrote {args.out_dir / 'shelf_cross_algorithm_manifest.json'}")

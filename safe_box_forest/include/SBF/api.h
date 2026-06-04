@@ -41,6 +41,7 @@ struct QueryResult {
     int segment_edges_used = 0;
     std::vector<Eigen::VectorXd> path;
     double path_length = 0.0;
+    double raw_path_length = 0.0;
     double query_time_ms = 0.0;
     bool audit_passed = false;
     PathAuditStatus audit_status = PathAuditStatus::NotRun;
@@ -49,6 +50,7 @@ struct QueryResult {
     int remaining_unsafe_assumptions = 0;
     double audit_time_ms = 0.0;
     double repair_time_ms = 0.0;
+    double final_simplify_time_ms = 0.0;
     double certified_box_length = 0.0;
     double provisional_audited_length = 0.0;
     double segment_edge_length = 0.0;

@@ -778,16 +778,15 @@ void finalize_result(GrowerResult& result, double adjacency_tol) {
 }
 
 OracleNodeId find_leaf_containing(BoxOracle& oracle, const Eigen::Ref<const Eigen::VectorXd>& q) {
-    const Eigen::VectorXd tree_q = q.size() == oracle.n_dims()
-        ? oracle.tree_configuration_for_query(q)
-        : Eigen::VectorXd(q);
-    if (tree_q.size() != oracle.n_dims() || !oracle.contains_point(oracle.root_node(), tree_q)) {
+    if (q.size() != oracle.n_dims() || !oracle.contains_point(oracle.root_node(), q)) {
         return kInvalidOracleNodeId;
     }
     OracleNodeId node = oracle.root_node();
     while (!oracle.is_leaf(node)) {
-        const int dim = oracle.split_dim(node);
-        node = tree_q[dim] <= oracle.split_value(node) ? oracle.left_child(node) : oracle.right_child(node);
+        node = oracle.child_containing_point(node, q);
+        if (node == kInvalidOracleNodeId) {
+            break;
+        }
     }
     return node;
 }
@@ -1175,7 +1174,7 @@ GrowerResult RrtGrower::grow_from_existing(const std::vector<BoxNode>& initial_b
 
 std::vector<Eigen::VectorXd> RrtGrower::select_initial_roots(const std::vector<Eigen::VectorXd>& seeds,
                                                              StageContext& context) {
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     std::vector<Eigen::VectorXd> selected;
     std::vector<OracleNodeId> selected_leaves;
 
@@ -1386,10 +1385,7 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         anchor_reference_leaves.push_back(find_leaf_containing(oracle_, point));
     }
     for (const Eigen::VectorXd& anchor : config_.fixed_anchor_targets) {
-        const Eigen::VectorXd tree_anchor = anchor.size() == oracle_.n_dims()
-            ? oracle_.tree_configuration_for_query(anchor)
-            : anchor;
-        if (tree_anchor.size() != static_cast<int>(oracle_.root_intervals().size())) {
+        if (anchor.size() != static_cast<int>(oracle_.native_root_hull().size())) {
             context.diagnostics().add_counter("grower.fixed_anchor_target_invalid");
             continue;
         }
@@ -1397,8 +1393,8 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
             context.diagnostics().add_counter("grower.fixed_anchor_target_collision");
             continue;
         }
-        const Eigen::VectorXd clipped_anchor = clip_to_root_intervals(tree_anchor, oracle_.root_intervals());
-        const double clip_delta = (clipped_anchor - tree_anchor).cwiseAbs().maxCoeff();
+        const Eigen::VectorXd clipped_anchor = clip_to_root_intervals(anchor, oracle_.native_root_hull());
+        const double clip_delta = (clipped_anchor - anchor).cwiseAbs().maxCoeff();
         if (clip_delta > 1e-12) {
             context.diagnostics().add_counter("grower.fixed_anchor_target_clipped_to_root");
             set_max_diagnostic(context,
@@ -1454,9 +1450,10 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                 continue;
             }
             double min_distance = anchor_reference_points.empty() ? 1.0 : std::numeric_limits<double>::infinity();
+            const auto native_root = oracle_.native_root_hull();
             for (const auto& reference : anchor_reference_points) {
                 min_distance = std::min(min_distance,
-                                        normalized_linf_distance(oracle_.root_intervals(), reference, candidate));
+                                        normalized_linf_distance(native_root, reference, candidate));
             }
             if (!found_anchor ||
                 max_lca_depth < best_lca_depth ||
@@ -1565,7 +1562,7 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                 continue;
             }
             const BoxNode parent = *parent_it;
-            const auto& root_intervals = oracle_.root_intervals();
+            const auto root_intervals = oracle_.native_root_hull();
             struct BootstrapFace { int dim = -1; int side = 0; };
             std::vector<BootstrapFace> faces;
             faces.reserve(static_cast<std::size_t>(2 * parent.n_dims()));
@@ -2900,7 +2897,7 @@ bool RrtGrower::best_uncovered_directed_face_score(const std::vector<BoxNode>& b
                                                    const Eigen::Ref<const Eigen::VectorXd>& target,
                                                    double& best_score,
                                                    StageContext* context) const {
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     if (parent.n_dims() != target.size() || target.size() != static_cast<int>(root.size())) {
         return false;
     }
@@ -2949,7 +2946,7 @@ Eigen::VectorXd RrtGrower::staged_component_target(const BoxNode& parent,
     if (!config_.component_connect_staged_growth || config_.component_connect_stage_normalized_linf <= 0.0) {
         return target;
     }
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     if (target.size() != static_cast<int>(root.size())) {
         return target;
     }
@@ -3617,7 +3614,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
     if (lateral_prob > 0.0 && selected_face_out->valid) {
         std::uniform_real_distribution<double> u01(0.0, 1.0);
         if (u01(rng_) < lateral_prob) {
-            const auto& root = oracle_.root_intervals();
+            const auto root = oracle_.native_root_hull();
             const double seed_epsilon = std::max(config_.boundary_epsilon, 0.25 * config_.adjacency_tolerance);
             const int attempts = std::max(1, config_.component_connect_lateral_sample_attempts);
             bool applied = false;
@@ -3812,7 +3809,7 @@ int RrtGrower::hard_frontier_box_horizon() const {
 }
 
 Eigen::VectorXd RrtGrower::sample_uniform() {
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     Eigen::VectorXd q(static_cast<int>(root.size()));
     std::uniform_real_distribution<double> u01(0.0, 1.0);
     for (int dim = 0; dim < static_cast<int>(root.size()); ++dim) {
@@ -3824,7 +3821,17 @@ Eigen::VectorXd RrtGrower::sample_uniform() {
 
 Eigen::VectorXd RrtGrower::sample_unexplored() {
     const OracleNodeId node = oracle_.select_unexplored_node();
-    const auto intervals = node >= 0 ? oracle_.node_intervals(node) : oracle_.root_intervals();
+    std::vector<Interval> intervals;
+    if (node >= 0) {
+        auto copies = oracle_.native_interval_copies_for_node(node, oracle_.node_intervals(node));
+        if (!copies.empty()) {
+            std::uniform_int_distribution<std::size_t> pick(0, copies.size() - 1);
+            intervals = std::move(copies[pick(rng_)]);
+        }
+    }
+    if (intervals.empty()) {
+        intervals = oracle_.native_root_hull();
+    }
     Eigen::VectorXd q(static_cast<int>(intervals.size()));
     std::uniform_real_distribution<double> u01(0.0, 1.0);
     for (int dim = 0; dim < static_cast<int>(intervals.size()); ++dim) {
@@ -3841,7 +3848,7 @@ bool RrtGrower::prepare_frontier_seed_with_memory(const std::vector<BoxNode>& bo
                                                   int side,
                                                   Eigen::VectorXd& seed,
                                                   StageContext* context) const {
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     if (parent.n_dims() != target.size() || target.size() != static_cast<int>(root.size())) {
         return false;
     }
@@ -3949,7 +3956,7 @@ bool RrtGrower::make_frontier_seed_for_root(const std::vector<BoxNode>& boxes,
     if (boxes.empty()) {
         return false;
     }
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     if (target.size() != static_cast<int>(root.size())) {
         return false;
     }
@@ -4130,7 +4137,7 @@ bool RrtGrower::make_frontier_seed_from_parent(const std::vector<BoxNode>& boxes
     if (parent_index < 0 || parent_index >= static_cast<int>(boxes.size())) {
         return false;
     }
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     const BoxNode& parent = boxes[static_cast<std::size_t>(parent_index)];
     if (parent.n_dims() != target.size() || target.size() != static_cast<int>(root.size())) {
         return false;
@@ -4583,7 +4590,7 @@ std::vector<GrowWorkerResult> FrontwaveGrower::run_worker_ffb_tasks(const std::v
 std::vector<FrontwaveGrower::BoundarySeed> FrontwaveGrower::boundary_seeds(const BoxNode& box,
                                                                             const Eigen::VectorXd* bias_target) {
     std::vector<BoundarySeed> seeds;
-    const auto& root = oracle_.root_intervals();
+    const auto root = oracle_.native_root_hull();
     const int nd = box.n_dims();
     std::uniform_real_distribution<double> u01(0.0, 1.0);
     struct Face { int dim; int side; double priority; };
