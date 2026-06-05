@@ -19,6 +19,7 @@ enum class SegmentEdgeType : std::uint8_t {
 	PointValidatedGap = 1,
 	RRTConnector = 2,
 	QueryBridge = 3,
+	BoxCorridor = 4,
 };
 
 enum class SegmentEdgeValidation : std::uint8_t {
@@ -84,6 +85,7 @@ int add_segment_edge(SegmentEdgeList& edges,
 void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges, AdjacencyGraph& graph);
 const SegmentEdge* find_segment_edge(const SegmentEdgeList& edges, int source_box_id, int target_box_id);
 const SegmentEdge* find_segment_edge(const QueryGraphCache& cache, int source_box_id, int target_box_id);
+bool counts_as_segment_edge(SegmentEdgeType type);
 std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph);
 std::unordered_set<int> find_articulation_points(const AdjacencyGraph& graph);
 DijkstraResult dijkstra_search(const AdjacencyGraph& graph,

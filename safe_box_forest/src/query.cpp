@@ -44,7 +44,7 @@ QueryResult CorridorQuery::run(const QueryGraphCache& cache,
     for (std::size_t index = 1; index < result.box_sequence.size(); ++index) {
         const SegmentEdge* edge = find_segment_edge(cache, result.box_sequence[index - 1], result.box_sequence[index]);
         result.segment_edge_sequence.push_back(edge == nullptr ? -1 : edge->id);
-        if (edge != nullptr) {
+        if (edge != nullptr && counts_as_segment_edge(edge->type)) {
             result.segment_edges_used += 1;
         }
     }

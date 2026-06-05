@@ -6,7 +6,9 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <limits>
 #include <utility>
+#include <vector>
 
 namespace rbf {
 namespace {
@@ -46,40 +48,121 @@ void build_dh_point(double alpha, double a, double ct, double st, double d, doub
     out[15] = 1.0;
 }
 
-bool segment_hits_inflated_aabb(const double origin[3],
+double point_aabb_distance_sq_at_t(const double origin[3],
+                                   const double dir[3],
+                                   const double lo[3],
+                                   const double hi[3],
+                                   double t) {
+    double dist_sq = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double value = origin[axis] + t * dir[axis];
+        if (value < lo[axis]) {
+            const double delta = lo[axis] - value;
+            dist_sq += delta * delta;
+        } else if (value > hi[axis]) {
+            const double delta = value - hi[axis];
+            dist_sq += delta * delta;
+        }
+    }
+    return dist_sq;
+}
+
+double segment_aabb_distance_sq(const double origin[3],
                                 const double dir[3],
-                                const float* obstacle,
-                                double radius,
-                                double tolerance) {
-    const double effective_radius = std::max(0.0, radius - std::max(0.0, tolerance));
-    const double lo[3] = {static_cast<double>(obstacle[0]) - effective_radius,
-                          static_cast<double>(obstacle[1]) - effective_radius,
-                          static_cast<double>(obstacle[2]) - effective_radius};
-    const double hi[3] = {static_cast<double>(obstacle[3]) + effective_radius,
-                          static_cast<double>(obstacle[4]) + effective_radius,
-                          static_cast<double>(obstacle[5]) + effective_radius};
-    double enter = 0.0;
-    double exit = 1.0;
+                                const float* obstacle) {
+    const double lo[3] = {static_cast<double>(obstacle[0]),
+                          static_cast<double>(obstacle[1]),
+                          static_cast<double>(obstacle[2])};
+    const double hi[3] = {static_cast<double>(obstacle[3]),
+                          static_cast<double>(obstacle[4]),
+                          static_cast<double>(obstacle[5])};
+
+    std::vector<double> breaks;
+    breaks.reserve(8);
+    breaks.push_back(0.0);
+    breaks.push_back(1.0);
     for (int axis = 0; axis < 3; ++axis) {
         if (std::abs(dir[axis]) < 1e-15) {
-            if (origin[axis] < lo[axis] || origin[axis] > hi[axis]) {
-                return false;
-            }
             continue;
         }
         const double inv = 1.0 / dir[axis];
-        double t0 = (lo[axis] - origin[axis]) * inv;
-        double t1 = (hi[axis] - origin[axis]) * inv;
-        if (t0 > t1) {
-            std::swap(t0, t1);
+        const double t_lo = (lo[axis] - origin[axis]) * inv;
+        const double t_hi = (hi[axis] - origin[axis]) * inv;
+        if (t_lo > 0.0 && t_lo < 1.0) {
+            breaks.push_back(t_lo);
         }
-        enter = std::max(enter, t0);
-        exit = std::min(exit, t1);
-        if (enter > exit) {
+        if (t_hi > 0.0 && t_hi < 1.0) {
+            breaks.push_back(t_hi);
+        }
+    }
+    std::sort(breaks.begin(), breaks.end());
+    breaks.erase(std::unique(breaks.begin(), breaks.end(), [](double a, double b) {
+                     return std::abs(a - b) <= 1e-14;
+                 }),
+                 breaks.end());
+
+    double best = std::numeric_limits<double>::infinity();
+    auto eval = [&](double t) {
+        best = std::min(best, point_aabb_distance_sq_at_t(origin, dir, lo, hi, std::clamp(t, 0.0, 1.0)));
+    };
+    for (double t : breaks) {
+        eval(t);
+    }
+
+    for (std::size_t i = 0; i + 1 < breaks.size(); ++i) {
+        const double left = breaks[i];
+        const double right = breaks[i + 1];
+        if (right - left <= 1e-14) {
+            continue;
+        }
+        const double mid = 0.5 * (left + right);
+        double numerator = 0.0;
+        double denominator = 0.0;
+        bool inside_all_axes = true;
+        for (int axis = 0; axis < 3; ++axis) {
+            const double value = origin[axis] + mid * dir[axis];
+            double bound = 0.0;
+            if (value < lo[axis]) {
+                bound = lo[axis];
+            } else if (value > hi[axis]) {
+                bound = hi[axis];
+            } else {
+                continue;
+            }
+            inside_all_axes = false;
+            numerator += dir[axis] * (origin[axis] - bound);
+            denominator += dir[axis] * dir[axis];
+        }
+        if (inside_all_axes) {
+            return 0.0;
+        }
+        if (denominator > 0.0) {
+            const double t_star = -numerator / denominator;
+            if (t_star >= left && t_star <= right) {
+                eval(t_star);
+            }
+        }
+    }
+    return best;
+}
+
+bool segment_hits_aabb_with_radius(const double origin[3],
+                                   const double dir[3],
+                                   const float* obstacle,
+                                   double radius,
+                                   double tolerance) {
+    const double effective_radius = std::max(0.0, radius - std::max(0.0, tolerance));
+    for (int axis = 0; axis < 3; ++axis) {
+        const double seg_lo = std::min(origin[axis], origin[axis] + dir[axis]);
+        const double seg_hi = std::max(origin[axis], origin[axis] + dir[axis]);
+        const double obs_lo = static_cast<double>(obstacle[axis]) - effective_radius;
+        const double obs_hi = static_cast<double>(obstacle[axis + 3]) + effective_radius;
+        if (seg_hi < obs_lo || seg_lo > obs_hi) {
             return false;
         }
     }
-    return true;
+    const double distance_sq = segment_aabb_distance_sq(origin, dir, obstacle);
+    return distance_sq <= effective_radius * effective_radius + 1e-14;
 }
 
 }  // namespace
@@ -215,11 +298,11 @@ bool CollisionChecker::check_config(const Eigen::Ref<const Eigen::VectorXd>& q) 
         const double dir[3] = {target[0] - origin[0], target[1] - origin[1], target[2] - origin[2]};
         const double radius = radii != nullptr ? radii[active] : 0.0;
         for (int obs = 0; obs < scene_.n_obstacles(); ++obs) {
-            if (segment_hits_inflated_aabb(origin,
-                                           dir,
-                                           scene_.obstacle_aabbs_data() + obs * 6,
-                                           radius,
-                                           collision_tolerance_)) {
+            if (segment_hits_aabb_with_radius(origin,
+                                              dir,
+                                              scene_.obstacle_aabbs_data() + obs * 6,
+                                              radius,
+                                              collision_tolerance_)) {
                 return true;
             }
         }

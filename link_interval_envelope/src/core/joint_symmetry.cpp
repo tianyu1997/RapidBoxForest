@@ -7,6 +7,10 @@
 
 namespace rbf {
 
+namespace {
+constexpr double kSectorBoundarySnapTolerance = 1e-3;
+}
+
 int JointSymmetry::canonicalize(double q, double& q_canonical) const {
     if (type == JointSymmetryType::NONE) {
         q_canonical = q;
@@ -16,6 +20,21 @@ int JointSymmetry::canonicalize(double q, double& q_canonical) const {
     double q_norm = std::fmod(q - canonical_lo, TWO_PI);
     if (q_norm < 0.0) q_norm += TWO_PI;
     q_norm += canonical_lo;
+
+    const double rel = q_norm - canonical_lo;
+    const int n_sectors = std::max(1, static_cast<int>(std::round(TWO_PI / period)));
+    const int boundary = static_cast<int>(std::llround(rel / period));
+    if (boundary >= 0 && boundary <= n_sectors) {
+        const double boundary_value = static_cast<double>(boundary) * period;
+        if (std::abs(rel - boundary_value) <= kSectorBoundarySnapTolerance) {
+            if (boundary <= 0 || boundary >= n_sectors) {
+                q_canonical = canonical_lo;
+                return 0;
+            }
+            q_canonical = canonical_lo + period;
+            return std::clamp(boundary - 1, 0, n_sectors - 1);
+        }
+    }
 
     int sector = static_cast<int>(std::floor(
         (q_norm - canonical_lo) / period));

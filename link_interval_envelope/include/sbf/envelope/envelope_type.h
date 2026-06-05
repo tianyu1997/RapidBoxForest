@@ -46,6 +46,8 @@ struct KdopConfig {
 
 struct SupportHullConfig {
     bool keep_kdop = true;      // build KDOP intervals as a collision prefilter
+    bool skip_aabb_broadphase = false;  // keep KDOP/GJK but bypass envelope/link AABB broadphases
+    bool direct_collision = false;  // bypass AABB/KDOP broadphases and run support-hull GJK directly
     double safety_epsilon = 0.0;
 };
 

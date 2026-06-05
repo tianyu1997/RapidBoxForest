@@ -1381,23 +1381,29 @@ Planner success means that the returned path passes the fixed-resolution
 query-validation check. Validation time is reported separately and is not charged to planning
 time. Path-length statistics are success-only means, while success rate is reported
 over all registered runs. Query-time shortcut boxes and final collision
-shortcutting are disabled for the main no-post RBF rows.
+shortcut boxes are disabled for the registered RBF rows. The final
+collision-checked shortcut and the fixed 50~ms OMPL simplifier are enabled and
+charged to query/planning time; the independent strict audit remains reported
+separately.
 
 \paragraph{Registered RBF default.}
 Unless otherwise stated, RBF uses the Exp.~4 profile
-\texttt{exp04\_leaf\_sweep\_rrt\_b200\_d28\_fast\_rrt1}: a virtual leaf sweep from depth 8
-to 14, followed by restricted deep refinement inside shallow collision domains
-and a bounded RRT grower. The default deep budget is 200 boxes,
-\textsc{FindFreeBox} uses maximum depth 28, the RRT grower is kept as a
-low-budget connectivity repair stage with a one-box, 1~ms cap, and virtual leaf validation uses the registered
-parallel worker setting. Build-stage RRT segment witnesses are enabled and
-explicitly accounted. The connector is capped at one 50~ms pair attempt per
-gap. Connector segment validation uses the same 0.01~rad
+\texttt{Exp4-b400}: a parallel virtual leaf sweep from depth 8 to 14, overlap
+pruning from depth 14, query-root box growth inside shallow collision domains,
+and bounded connector repair. The registered trade-off point uses a 400-box query-root budget,
+\textsc{FindFreeBox} maximum depth 40 with skip-to-depth 23, a 200-box connector
+bridge budget, four 20~ms connector attempts per gap, and a fixed 50~ms final
+simplification budget. Support-hull collision uses the shared AABB broadphase
+followed by a KDOP prefilter and support-hull GJK narrow phase. Query-root bridge repair is applied only to the two
+high-gap shelf pairs AS--TS and TS--CS after probing the existing box graph, and
+virtual leaf validation uses the registered parallel worker setting.
+Build-stage RRT segment witnesses are enabled and
+explicitly accounted. Connector segment validation uses the same 0.01~rad
 maximum joint-space sample spacing as the final strict audit, so a segment
 witness cannot be accepted under a looser build-time collision check.
 Shelf+IIWA baseline rows additionally use the
-\texttt{exp04\_leaf\_sweep\_rrt\_d23\_b200\_d28\_fast\_rrt1} warm-cache override, where the
-d23 external LECT evidence cache is read-only. Random-scene rows use the same
+\texttt{Exp4-d23-b400} warm-cache override, where the d23 external LECT
+evidence cache is read-only. Random-scene rows use the same
 algorithm defaults but robot-local roots and no Shelf anchors or Shelf d23
 cache.
 
@@ -1407,10 +1413,10 @@ cache.
 \Cref{fig:tro_shelf_tradeoff,tab:tro-shelf-ablation} show the Shelf+IIWA
 trade-off over seeds 0--7 and the five canonical query pairs. The tabulated
 rows use the common-rule design points selected from their budget curves, while
-the figure shows the complete budget sweep. A CritSample row is included as a
-sampling-based upper-reference ablation: it can improve coverage and path
-quality, but it does not provide box-level safety certificates and is therefore
-not the registered baseline.
+the figure shows the complete budget sweep. The table reports the registered
+400-box trade-off point for the active RBF ablations; the CritSample
+endpoint-source diagnostic is not mixed into the registered table because it
+changes the envelope approximation rather than the planning pipeline.
 
 \subsection{Shelf Cross-Algorithm Context}
 \label{sec:exp_shelf_cross_algorithm}
@@ -1449,12 +1455,22 @@ The Shelf+IIWA cross-algorithm experiment uses the same five canonical queries
 and 0.01~rad final-audit setting for RBF, IRIS-NP+GCS, PRM, RRTConnect, and
 BIT*. RBF rows are regenerated from the current Exp.~4 registered
 leaf-sweep--RRT budget curve, so \cref{tab:tro-shelf-cross-algorithm} reports
-the same registered RBF default as \cref{tab:tro-shelf-ablation}. The non-RBF rows are
-imported from the audited old TRO artifact only after checking the scene, query
-set, and final-audit resolution. IRIS-NP+GCS is assigned the larger old-paper
-region budget rather than the reduced diagnostic budget. The comparison is
-therefore a latency/amortization context for the reusable box-region graph, not
-a claim that RBF dominates one-shot planners in path length.
+the selected RBF trade-off point from that curve. PRM, RRTConnect, and BIT* are
+current full-joint-space reruns under the same native-query semantics and final
+audit; only IRIS-NP+GCS is imported from the audited old TRO artifact after
+checking the scene, query set, and final-audit resolution. IRIS-NP+GCS is
+assigned the larger old-paper region budget rather than the reduced diagnostic
+budget. The BIT* row uses one isolated OMPL invocation per query with an outer
+watchdog, \texttt{samples\_per\_batch}=100, \texttt{rewire\_factor}=5.0,
+\texttt{stop\_on\_solution\_improvement}=true, a 5~s per-query cap, and the
+same 0.05~s final OMPL simplification budget as the other OMPL reruns. This
+setting was selected from the BIT* timeout curve: sub-second caps repeatedly
+miss the narrow TS$\rightarrow$CS query, while the registered 5~s cap gives
+8/8 successful seeds and 40/40 strict-audited query paths. The selected BIT*
+row has 0.294~s median five-query planning time and 4.46~rad success-only mean
+path length. The comparison is therefore a latency/amortization context for the
+reusable box-region graph, not a claim that RBF dominates one-shot planners in
+path length.
 
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}

@@ -72,8 +72,10 @@ RRTConnectConfig with_query_root_hull_domain(const RRTConnectConfig& config,
                                              const Eigen::Ref<const Eigen::VectorXd>& start,
                                              const Eigen::Ref<const Eigen::VectorXd>& goal) {
     RRTConnectConfig out = config;
-    auto lhs = oracle.native_root_intervals_for_query(start);
-    auto rhs = oracle.native_root_intervals_for_query(goal);
+    auto lhs = oracle.planning_intervals();
+    auto rhs = oracle.planning_intervals();
+    (void)start;
+    (void)goal;
     if (lhs.size() == rhs.size()) {
         for (std::size_t i = 0; i < lhs.size(); ++i) {
             lhs[i] = lhs[i].hull(rhs[i]);
@@ -154,6 +156,57 @@ bool graph_has_path(const AdjacencyGraph& graph, int source_box_id, int target_b
         }
     }
     return false;
+}
+
+void append_graph_edge_unique(AdjacencyGraph& graph, int lhs, int rhs) {
+    if (lhs < 0 || rhs < 0 || lhs == rhs) {
+        return;
+    }
+    auto append_one = [&](int from, int to) {
+        auto& neighbors = graph[from];
+        if (std::find(neighbors.begin(), neighbors.end(), to) == neighbors.end()) {
+            neighbors.push_back(to);
+        }
+    };
+    append_one(lhs, rhs);
+    append_one(rhs, lhs);
+}
+
+int connect_new_boxes_to_island(std::vector<BoxNode>& boxes,
+                                AdjacencyGraph& graph,
+                                int first_new_box_id,
+                                int next_box_id,
+                                const std::vector<int>& target_island,
+                                double tolerance) {
+    if (first_new_box_id >= next_box_id || target_island.empty()) {
+        return 0;
+    }
+    std::unordered_map<int, const BoxNode*> map;
+    map.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        map[box.id] = &box;
+    }
+    int added_edges = 0;
+    for (int new_id = first_new_box_id; new_id < next_box_id; ++new_id) {
+        const auto new_it = map.find(new_id);
+        if (new_it == map.end()) {
+            continue;
+        }
+        for (int target_id : target_island) {
+            const auto target_it = map.find(target_id);
+            if (target_it == map.end()) {
+                continue;
+            }
+            if (boxes_connected(*new_it->second, *target_it->second, tolerance)) {
+                const std::size_t before = graph[new_id].size();
+                append_graph_edge_unique(graph, new_id, target_id);
+                if (graph[new_id].size() > before) {
+                    added_edges += 1;
+                }
+            }
+        }
+    }
+    return added_edges;
 }
 
 int add_rrt_node(RRTTree& tree, const Eigen::VectorXd& q, int parent) {
@@ -820,7 +873,7 @@ bool select_frontier_bridge_candidate(const std::vector<BoxNode>& boxes,
         return false;
     }
     const auto map = make_box_map(boxes);
-    const auto root = oracle.native_root_hull();
+    const auto root = oracle.planning_intervals();
     const double epsilon = std::max(config.frontier_bridge_boundary_epsilon, 0.25 * config.pave.adjacency_tolerance);
     std::vector<FrontierBridgeCandidate> candidates;
     candidates.reserve(static_cast<std::size_t>(std::max(1, config.frontier_bridge_candidate_limit)));
@@ -2379,18 +2432,48 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
         const int per_gap_limit = std::max(1, config_.max_pairs_per_gap);
         for (std::size_t lhs_isl = 0; lhs_isl < islands.size(); ++lhs_isl) {
             for (std::size_t rhs_isl = lhs_isl + 1; rhs_isl < islands.size(); ++rhs_isl) {
-            std::vector<BridgePairTask> gap_candidates = broadphase_bridge_pairs(map,
-                                                                                 islands[lhs_isl],
-                                                                                 islands[rhs_isl],
-                                                                                 per_gap_limit,
-                                                                                 std::max(4, config_.max_pairs_per_gap));
-            for (auto& task : gap_candidates) {
-                task.task_id = static_cast<int>(candidates.size());
-                candidates.push_back(std::move(task));
-            }
+                std::vector<BridgePairTask> gap_candidates = broadphase_bridge_pairs(map,
+                                                                                     islands[lhs_isl],
+                                                                                     islands[rhs_isl],
+                                                                                     per_gap_limit,
+                                                                                     std::max(4, config_.max_pairs_per_gap));
+                for (auto& task : gap_candidates) {
+                    task.task_id = static_cast<int>(candidates.size());
+                    candidates.push_back(std::move(task));
+                }
             }
         }
+        const int broadphase_pairs_before_prune = static_cast<int>(candidates.size());
+        const int global_candidate_limit =
+            std::min(per_gap_limit,
+                     std::max(4, 4 * std::max(1, static_cast<int>(islands.size()) - 1)));
+        if (static_cast<int>(candidates.size()) > global_candidate_limit) {
+            std::nth_element(candidates.begin(),
+                             candidates.begin() + global_candidate_limit,
+                             candidates.end(),
+                             [](const BridgePairTask& lhs, const BridgePairTask& rhs) {
+                                 return lhs.score < rhs.score;
+                             });
+            candidates.resize(static_cast<std::size_t>(global_candidate_limit));
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const BridgePairTask& lhs, const BridgePairTask& rhs) {
+            if (lhs.score == rhs.score) {
+                if (lhs.source_box_id == rhs.source_box_id) {
+                    return lhs.target_box_id < rhs.target_box_id;
+                }
+                return lhs.source_box_id < rhs.source_box_id;
+            }
+            return lhs.score < rhs.score;
+        });
+        for (int index = 0; index < static_cast<int>(candidates.size()); ++index) {
+            candidates[static_cast<std::size_t>(index)].task_id = index;
+        }
+        context.diagnostics().add_counter("connector.bridge_broadphase_pairs_raw",
+                                          static_cast<double>(broadphase_pairs_before_prune));
         context.diagnostics().add_counter("connector.bridge_broadphase_pairs", static_cast<double>(candidates.size()));
+        context.diagnostics().add_counter("connector.bridge_broadphase_pairs_pruned",
+                                          static_cast<double>(std::max(0, broadphase_pairs_before_prune -
+                                                                          static_cast<int>(candidates.size()))));
         bool progressed = false;
         std::vector<BridgePairResult> successful_pairs;
         RRTConnectConfig pair_rrt = config_.rrt;
@@ -2597,6 +2680,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             bool box_connected = false;
             if (result.bridge_boxes_added < config_.max_total_bridge_boxes) {
                 context.diagnostics().add_counter("connector.chain_pave_attempts");
+                const int first_new_box_id = next_box_id;
                 added = chain_pave_along_path(
                     bridge_path,
                     chosen.source_box_id,
@@ -2607,8 +2691,23 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     context,
                     config_.pave);
                 if (added > 0) {
-                    graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+                    const int local_edges = connect_new_boxes_to_island(
+                        boxes,
+                        graph,
+                        first_new_box_id,
+                        next_box_id,
+                        islands[static_cast<std::size_t>(tgt_isl_it->second)],
+                        config_.pave.adjacency_tolerance);
+                    if (local_edges > 0) {
+                        context.diagnostics().add_counter("connector.chain_pave_local_target_edges",
+                                                          static_cast<double>(local_edges));
+                    }
                     box_connected = graph_has_path(graph, chosen.source_box_id, chosen.target_box_id);
+                    if (!box_connected) {
+                        context.diagnostics().add_counter("connector.chain_pave_full_adjacency_checks");
+                        graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+                        box_connected = graph_has_path(graph, chosen.source_box_id, chosen.target_box_id);
+                    }
                     if (box_connected) {
                         context.diagnostics().add_counter("connector.chain_pave_box_connected");
                     } else {

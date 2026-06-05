@@ -1,2 +1,3 @@
-wrote outputs/new_experiments/exp04_gap_target_no_post_sweep_20260602/gap_dense_cover_a15_b260_s0_2/recommended_profile.json
-wrote outputs/new_experiments/exp04_gap_target_no_post_sweep_20260602/gap_dense_cover_a15_b260_s0_2/recommended_profile.md
+[exp04] case=baseline_d23_aafk_support_hull_8t seed=0 boxes=800
+wrote outputs/exp04_pure_gjk_probe_b800_q3_bridge300_s0/shelf_leaf_rrt_manifest.json
+n

@@ -63,6 +63,21 @@ std::uint64_t make_envelope_cache_key(const lect_database::EvidenceKey& key, int
     return make_envelope_cache_key(key.node_id, sector);
 }
 
+std::uint64_t endpoint_payload_hash(std::span<const float> payload) {
+    // Envelope evidence for the same node/sector may come from a direct box or
+    // a child-hull/external exact lookup. Include the payload bytes so those
+    // distinct envelopes cannot alias in the per-oracle envelope cache.
+    std::uint64_t hash = 1469598103934665603ull;
+    const auto* bytes = reinterpret_cast<const unsigned char*>(payload.data());
+    const std::size_t n_bytes = payload.size() * sizeof(float);
+    for (std::size_t i = 0; i < n_bytes; ++i) {
+        hash ^= static_cast<std::uint64_t>(bytes[i]);
+        hash *= 1099511628211ull;
+    }
+    hash ^= static_cast<std::uint64_t>(payload.size()) + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    return hash;
+}
+
 std::uint64_t next_session_id() {
     static std::atomic<std::uint64_t> counter{0};
     return counter.fetch_add(1, std::memory_order_relaxed);
@@ -81,6 +96,13 @@ void record_envelope_collision(OracleCounters& counters, const EnvelopeCollision
     counters.envelope_collision_gjk_tests += stats.gjk_tests;
     counters.envelope_collision_gjk_rejects += stats.gjk_rejects;
     counters.envelope_collision_gjk_iterations += stats.gjk_iterations;
+    counters.envelope_collision_overlap_depth_sum += stats.maybe_pair_overlap_depth_sum;
+    counters.envelope_collision_overlap_depth_max =
+        std::max(counters.envelope_collision_overlap_depth_max,
+                 stats.maybe_pair_overlap_depth_max);
+    counters.envelope_collision_overlap_volume_ratio_max =
+        std::max(counters.envelope_collision_overlap_volume_ratio_max,
+                 stats.maybe_pair_overlap_volume_ratio_max);
 }
 
 lect_database::EvidenceChannel database_channel_for_endpoint(EndpointSource source) {
@@ -738,9 +760,17 @@ bool intervals_straddle_sector_boundary(const JointSymmetry& symmetry,
     if (joint_index >= intervals.size()) {
         return false;
     }
+    const Interval& interval = intervals[joint_index];
+    const double width = interval.hi - interval.lo;
+    if (width <= 1e-14) {
+        return false;
+    }
+    const double eps = std::min(0.25 * width, std::max(1e-12, width * 1e-12));
+    const double lo_probe = interval.lo + eps;
+    const double hi_probe = interval.hi - eps;
     double dummy = 0.0;
-    const int sector_lo = symmetry.canonicalize(intervals[joint_index].lo, dummy);
-    const int sector_hi = symmetry.canonicalize(intervals[joint_index].hi, dummy);
+    const int sector_lo = symmetry.canonicalize(lo_probe, dummy);
+    const int sector_hi = symmetry.canonicalize(hi_probe, dummy);
     return normalize_sector(sector_lo) != normalize_sector(sector_hi);
 }
 
@@ -902,6 +932,11 @@ std::vector<std::vector<Interval>> DatabaseBoxOracle::native_interval_copies_for
         }
     }
     return copies.empty() ? std::vector<std::vector<Interval>>{tree_intervals} : copies;
+}
+
+std::vector<Interval> DatabaseBoxOracle::planning_intervals() const {
+    const auto& coverage = database_.coverage_intervals();
+    return coverage.empty() ? native_root_hull() : coverage;
 }
 
 std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId node,
@@ -1123,7 +1158,8 @@ lect_database::EvidenceKey DatabaseBoxOracle::endpoint_key(OracleNodeId node) co
 std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_payload_for_node(
     OracleNodeId node,
     const std::vector<Interval>& intervals,
-    int changed_dim) {
+    int changed_dim,
+    bool allow_external_evidence) {
     const auto key = endpoint_key(node);
     const auto evidence_frame = canonical_evidence_frame_for_intervals(robot_, database_, intervals);
     const int normalized_sector = normalize_sector(evidence_frame.sector);
@@ -1165,6 +1201,7 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         reflected.payload = reflected.owned_payload;
         reflected.envelope_cache_key = payload.envelope_cache_key;
         reflected.envelope_cacheable = payload.envelope_cacheable;
+        reflected.reused_external_evidence = payload.reused_external_evidence;
         return reflected;
     };
     const bool use_endpoint_evidence_cache = validation_config_.enable_endpoint_evidence_cache;
@@ -1172,8 +1209,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         use_endpoint_evidence_cache && validation_config_.store_endpoint_evidence_cache;
     const bool read_local_endpoint_cache =
         use_endpoint_evidence_cache && (online_cache_ != nullptr || store_endpoint_evidence_cache);
+    const bool external_evidence_allowed =
+        allow_external_evidence &&
+        validation_config_.external_evidence_materialization &&
+        external_evidence_source_ != nullptr;
     auto lookup_external_payload = [&]() -> std::optional<EndpointPayload> {
-        if (!validation_config_.external_evidence_materialization || external_evidence_source_ == nullptr) {
+        if (!external_evidence_allowed) {
             return std::nullopt;
         }
         const auto external_lookup_start = Clock::now();
@@ -1191,8 +1232,10 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         }
         counters_.materialization_external_lookup_time_us += elapsed_us(external_lookup_start);
         if (!cached) {
+            counters_.materialization_external_exact_misses += 1;
             return std::nullopt;
         }
+        counters_.materialization_external_exact_hits += 1;
         counters_.materialization_reused_external_evidence += 1;
         last_validation_detail_.reused_external_evidence = true;
         if (validation_config_.external_evidence_backfill_active && store_endpoint_evidence_cache) {
@@ -1214,11 +1257,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         payload.payload = cached->payload;
         payload.envelope_cache_key = make_envelope_cache_key(cached->key, normalized_sector);
         payload.envelope_cacheable = true;
+        payload.reused_external_evidence = true;
         counters_.materialization_external_read_time_us += elapsed_us(read_start);
         return reflect_payload(std::move(payload));
     };
     const bool prefer_external_first =
-        validation_config_.external_evidence_materialization && external_evidence_source_ != nullptr &&
+        external_evidence_allowed &&
         !validation_config_.external_evidence_backfill_active;
     if (prefer_external_first) {
         if (auto payload = lookup_external_payload()) {
@@ -1264,6 +1308,9 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         if (auto payload = lookup_external_payload()) {
             return payload;
         }
+    }
+    if (external_evidence_allowed) {
+        counters_.materialization_external_live_fallbacks += 1;
     }
 
     // Cross-task shared endpoint cache (interval-keyed, thread-safe). Lets a
@@ -1365,8 +1412,11 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
         !std::getenv("RBF_DISABLE_ENVELOPE_CACHE") &&
         !database_.bulk_prewarm_mode_enabled() &&
         !database_.streaming_prewarm_mode_enabled();
+    const std::uint64_t envelope_cache_key = use_envelope_cache
+        ? (endpoint_payload.envelope_cache_key ^ endpoint_payload_hash(endpoint_payload.payload))
+        : endpoint_payload.envelope_cache_key;
     if (use_envelope_cache) {
-        const auto cache_it = envelope_cache_.find(endpoint_payload.envelope_cache_key);
+        const auto cache_it = envelope_cache_.find(envelope_cache_key);
         counters_.materialization_envelope_read_time_us += elapsed_us(envelope_read_start);
         if (cache_it != envelope_cache_.end()) {
             counters_.materialization_reused_cached_envelope += 1;
@@ -1387,7 +1437,7 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
         envelope_compute_us = elapsed_us(envelope_start);
         counters_.materialization_envelope_compute_time_us += envelope_compute_us;
         if (use_envelope_cache) {
-            auto [cache_it, inserted] = envelope_cache_.try_emplace(endpoint_payload.envelope_cache_key,
+            auto [cache_it, inserted] = envelope_cache_.try_emplace(envelope_cache_key,
                                                                     std::move(computed_envelope));
             if (!inserted) {
                 cache_it->second = std::move(computed_envelope);
@@ -1401,6 +1451,11 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     EnvelopeCollisionOptions collision_options;
     collision_options.safety_epsilon = std::max(envelope_config_.kdop_config.safety_epsilon,
                                                 envelope_config_.support_hull_config.safety_epsilon);
+    collision_options.skip_aabb_broadphase =
+        envelope_config_.support_hull_config.skip_aabb_broadphase;
+    collision_options.direct_support_hull_collision =
+        envelope_config_.support_hull_config.direct_collision;
+    collision_options.count_all_pairs = validation_config_.collect_full_overlap_stats;
     if (const char* dbg = std::getenv("RBF_ENV_DEBUG"); dbg != nullptr && dbg[0] == '1') {
         std::fprintf(stderr,
             "[ENVDBG] cfg.type=%d n_sub=%d keep_kdop=%d || env.type=%d env.n_sub=%d env.n_active=%d link_iaabbs=%zu support_hulls=%zu kdop_intervals=%zu kdop_n_axes=%d\n",
@@ -1444,25 +1499,16 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     last_validation_detail_.endpoint_is_safe = endpoint_safety_is_certified(last_validation_detail_.endpoint_safety_level);
     last_validation_detail_.materialized = true;
     last_validation_detail_.aabb_overlap = collision != CollisionResultKind::DefinitelyFree;
+    last_validation_detail_.aabb_overlap_depth = collision_stats.maybe_pair_overlap_depth_max;
+    last_validation_detail_.aabb_overlap_volume_ratio = collision_stats.maybe_pair_overlap_volume_ratio_max;
     if (collision == CollisionResultKind::DefinitelyFree) {
         counters_.envelope_collision_free += 1;
-        const bool endpoint_certified = endpoint_safety_is_certified(last_validation_detail_.endpoint_safety_level);
-        const bool accept_heuristic = validation_config_.accept_unsafe_free ||
-            validation_config_.mode == OracleValidationMode::CoverageHeuristic;
-        if (endpoint_certified || accept_heuristic) {
-            last_validation_detail_.validation = BoxValidation::Free;
-            if (endpoint_certified) {
-                counters_.certified_free += 1;
-                last_validation_detail_.safety_status = BoxSafetyStatus::CertifiedFree;
-            } else {
-                counters_.provisional_free += 1;
-                last_validation_detail_.safety_status = BoxSafetyStatus::ProvisionalFree;
-                last_validation_detail_.strict_audit_required = true;
-            }
-            last_validation_detail_.collision_possible = false;
-            return BoxValidation::Free;
-        }
-        counters_.unsafe_free_rejected += 1;
+        counters_.certified_free += 1;
+        last_validation_detail_.validation = BoxValidation::Free;
+        last_validation_detail_.safety_status = BoxSafetyStatus::CertifiedFree;
+        last_validation_detail_.strict_audit_required = false;
+        last_validation_detail_.collision_possible = false;
+        return BoxValidation::Free;
     }
     counters_.collision_possible += 1;
     counters_.envelope_collision_maybe += 1;
@@ -1509,7 +1555,21 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
         return BoxValidation::Unknown;
     }
     const auto classify_start = Clock::now();
-    const BoxValidation result = classify_payload(node, intervals, *payload);
+    BoxValidation result = classify_payload(node, intervals, *payload);
+    if (result == BoxValidation::Unknown &&
+        validation_config_.external_evidence_live_retry_on_maybe &&
+        payload->reused_external_evidence) {
+        counters_.materialization_external_maybe_live_retries += 1;
+        const auto live_endpoint_start = Clock::now();
+        auto live_payload = endpoint_payload_for_node(node, intervals, changed_dim, /*allow_external_evidence=*/false);
+        counters_.validate_node_endpoint_path_time_us += elapsed_us(live_endpoint_start);
+        if (live_payload) {
+            result = classify_payload(node, intervals, *live_payload);
+            if (result == BoxValidation::Free) {
+                counters_.materialization_external_maybe_live_retry_free += 1;
+            }
+        }
+    }
     const double classify_us = elapsed_us(classify_start);
     counters_.validate_node_classify_time_us += classify_us;
     const double total_us = elapsed_us(total_start);

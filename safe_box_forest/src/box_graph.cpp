@@ -428,6 +428,10 @@ const SegmentEdge* find_segment_edge(const QueryGraphCache& cache,
     return &(*cache.segment_edges)[it->second];
 }
 
+bool counts_as_segment_edge(SegmentEdgeType type) {
+    return type != SegmentEdgeType::BoxCorridor;
+}
+
 std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph) {
     std::unordered_set<int> unseen;
     for (const auto& [id, _] : graph) {
@@ -607,7 +611,13 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             const SegmentEdge* edge = find_segment_edge(cache, current, next);
             if (edge != nullptr) {
                 edge_cost = edge->length > 0.0 ? edge->length : edge_cost;
-                if (edge->strict_audit_required && edge->type == SegmentEdgeType::QueryBridge) {
+                if (counts_as_segment_edge(edge->type) &&
+                    edge->type != SegmentEdgeType::QueryBridge) {
+                    edge_cost += 100.0;
+                }
+                if (edge->strict_audit_required &&
+                    edge->type == SegmentEdgeType::QueryBridge &&
+                    edge->validation != SegmentEdgeValidation::CollisionChecked) {
                     edge_cost += 1.0e6;
                 }
                 next_rep = next_box->center();
@@ -731,18 +741,6 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
         const auto it = cache.box_index_by_id.find(id);
         return it == cache.box_index_by_id.end() ? nullptr : &boxes[it->second];
     };
-    auto overlap_waypoint = [](const BoxNode& lhs, const BoxNode& rhs)
-        -> Eigen::VectorXd {
-        Eigen::VectorXd waypoint(lhs.n_dims());
-        for (int dim = 0; dim < lhs.n_dims(); ++dim) {
-            const double overlap_lo = std::max(lhs.joint_intervals[dim].lo,
-                                               rhs.joint_intervals[dim].lo);
-            const double overlap_hi = std::min(lhs.joint_intervals[dim].hi,
-                                               rhs.joint_intervals[dim].hi);
-            waypoint[dim] = 0.5 * (overlap_lo + overlap_hi);
-        }
-        return waypoint;
-    };
     auto append_if_new = [&](const Eigen::VectorXd& waypoint) {
         if (path.empty() || (path.back() - waypoint).norm() > 1e-12) {
             path.push_back(waypoint);
@@ -773,20 +771,9 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
             }
             continue;
         }
-        if (lhs.parent_box_id == rhs.id && lhs.seed_config.size() == lhs.n_dims() &&
-            lhs.contains(lhs.seed_config) && boxes_connected(lhs, rhs)) {
-            append_if_new(lhs.seed_config);
-            append_if_new(overlap_waypoint(lhs, rhs));
-            continue;
-        }
-        if (rhs.parent_box_id == lhs.id && rhs.seed_config.size() == rhs.n_dims() &&
-            rhs.contains(rhs.seed_config) && boxes_connected(lhs, rhs)) {
-            append_if_new(overlap_waypoint(lhs, rhs));
-            append_if_new(rhs.seed_config);
-            continue;
-        }
         if (boxes_connected(lhs, rhs)) {
-            append_if_new(overlap_waypoint(lhs, rhs));
+            append_if_new(lhs.center());
+            append_if_new(transition_waypoint_toward_goal(lhs, rhs, path.back(), goal));
         } else {
             const Eigen::VectorXd lhs_center = lhs.center();
             const Eigen::VectorXd rhs_center = rhs.center();

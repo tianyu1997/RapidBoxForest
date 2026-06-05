@@ -1,12 +1,17 @@
-\begin{table*}[t]
+% Auto-generated from current trade-off artifacts.
+\begingroup
 \centering
-\caption{Shelf+IIWA leaf-sweep--RRT grower ablation. Planning excludes final audit and equals build plus five-query graph search. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction. CritSample is a sampling-based row and does not provide box-level safety certificates.}
+\captionof{table}{Shelf+IIWA leaf-sweep--RRT grower ablation at the registered design point. Planning excludes final audit and equals build plus five-query graph search. SR counts seeds for which all five shelf queries pass strict audit. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction; the full measured-time trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}
 \label{tab:tro-shelf-ablation}
 \begin{tabular}{lrrrrrrrrrr}
 \toprule
 Case & Boxes & SR & Plan & Build & Query & Leaf & Refine & Conn. & Len. & Seg. \\
 \midrule
-RBF-SH d23 & 200 & 1/1 & 1.703 & 0.652 & 1.051 & 0.125 & 0.124 & 0.084 & 3.332 & 0.442 \\
+RBF-SH d23 & 400 & 8/8 & 1.956 & 1.725 & 0.233 & 0.081 & 0.009 & 1.291 & 2.935 & 0.282 \\
+Link AABB & 400 & 6/8 & 1.864 & 1.515 & 0.356 & 0.087 & 0.009 & 0.674 & -- & -- \\
+No LECT replay & 400 & 8/8 & 3.052 & 2.548 & 0.501 & 0.104 & 0.009 & 1.433 & 2.969 & 0.342 \\
+No LECT, 1 thread & 400 & 8/8 & 4.456 & 3.914 & 0.544 & 0.519 & 0.009 & 2.060 & 2.935 & 0.328 \\
+SH w/o broadphase & 400 & 8/8 & 6.147 & 5.610 & 0.535 & 0.522 & 0.012 & 3.864 & 2.986 & 0.328 \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\par\endgroup

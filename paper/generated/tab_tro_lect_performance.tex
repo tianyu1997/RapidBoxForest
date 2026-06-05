@@ -1,21 +1,22 @@
-\begin{table}[t]
+% Auto-generated from current trade-off artifacts.
+\begingroup
 \centering
-\caption{LECT read-snapshot microbenchmark on a persisted cache (UR5 d20 SupportHull cache; 2,097,151 nodes, 2,097,151 evidence records).}
+\captionof{table}{LECT snapshot/cache operation costs. Exact lookup and endpoint lookup are measured on the registered d23 snapshot.}
 \label{tab:tro-lect-performance}
-\scriptsize
-\setlength{\tabcolsep}{2.2pt}
-\begin{tabular}{lrrr}
+\footnotesize
+\setlength{\tabcolsep}{2.4pt}
+\begin{tabular}{lrrrr}
 \toprule
-Operation & Ops & Avg. ($\mu$s) & Throughput (Mops/s) \\
+Operation & Ops & Avg. ($\mu$s) & Nodes & Evidence \\
 \midrule
-Open snapshot & 1 & 86.22 & 0.01 \\
-Node box & 20000 & 1.08 & 0.92 \\
-Exact lookup & 20000 & 0.85 & 1.18 \\
-Endpoint lookup & 20000 & 1.86 & 0.54 \\
-Endpoint lookup (hot) & 20000 & 0.58 & 1.73 \\
-Range query & 20000 & 22.60 & 0.04 \\
-Evidence read & 20000 & 1.26 & 0.79 \\
-Evidence read (hot) & 20000 & 0.13 & 7.56 \\
+Open snapshot & 1 & 86.219 & 2097151 & 2097151 \\
+Node box & 20000 & 1.084 & 2097151 & 2097151 \\
+Exact lookup & 20000 & 0.849 & 2097151 & 2097151 \\
+Endpoint lookup & 20000 & 1.860 & 2097151 & 2097151 \\
+Endpoint lookup (hot) & 20000 & 0.577 & 2097151 & 2097151 \\
+Range query & 20000 & 22.596 & 2097151 & 2097151 \\
+Evidence read & 20000 & 1.262 & 2097151 & 2097151 \\
+Evidence read (hot) & 20000 & 0.132 & 2097151 & 2097151 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\par\endgroup

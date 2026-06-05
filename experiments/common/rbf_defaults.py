@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -7,8 +8,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
-RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_sweep_qroot_b200_l15_d34"
-RBF_SHELF_PROFILE_NAME = "exp04_leaf_sweep_qroot_d23_b200_l15_d34"
+RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_overlapd14o005_bridge_allbox_simplify50ms"
+RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_overlapd14o005_bridge_allbox_simplify50ms"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
@@ -31,43 +32,71 @@ D23_ROOT_INTERVALS: list[tuple[float, float]] = [
     (1.262, 1.8794),
 ]
 
-DEFAULT_RBF_LEAF_START_DEPTH = 10
-DEFAULT_RBF_LEAF_MAX_DEPTH = 15
-DEFAULT_RBF_DEEP_MAX_BOXES = 200
-DEFAULT_RBF_DEEP_FFB_DEPTH = 34
+D23_NATIVE_DIM0_ROOT_INTERVALS: list[tuple[float, float]] = [
+    (-math.pi, math.pi),
+    *D23_ROOT_INTERVALS[1:],
+]
+
+DEFAULT_RBF_LEAF_START_DEPTH = 8
+DEFAULT_RBF_LEAF_MAX_DEPTH = 14
+DEFAULT_RBF_DEEP_MAX_BOXES = 400
+DEFAULT_RBF_DEEP_FFB_DEPTH = 60
 DEFAULT_RBF_REFINE_TIMEOUT_MS = 800.0
 DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES = 1
 DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS = 1.0
-DEFAULT_RBF_DOMAIN_SEED_CAP = 24
-DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 8
-DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 160
+DEFAULT_RBF_DOMAIN_SEED_CAP = 3
+DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 2
+DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 3
 DEFAULT_RBF_VALIDATION_BATCH_SIZE = 512
 DEFAULT_RBF_THREADS = 8
 DEFAULT_RBF_FFB_START_DEPTH = 15
 
-DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 50.0
-DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP = 1
+DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 20.0
+DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP = 4
 DEFAULT_RBF_CONNECTOR_RRT_ITERS = 50000
 DEFAULT_RBF_CONNECTOR_RRT_TIMEOUT_MS = 2000.0
-DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE = 0.25
-DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS = 0.4
+DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE = 0.5
+DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS = 0.2
 DEFAULT_RBF_CONNECTOR_SEGMENT_RESOLUTION = 16
-DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES = 0
-DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN = 0
+DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES = 200
+DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN = 160
 DEFAULT_RBF_CONNECTOR_PAVE_STEPS = 12
-DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 64
+DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 60
+DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 60
+DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS = True
+DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN = True
 
 DEFAULT_RBF_AUDIT_RESOLUTION = 16
 DEFAULT_RBF_AUDIT_SEGMENT_STEP = 0.01
+DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE = 0.0
 DEFAULT_RBF_FINAL_COLLISION_SHORTCUT = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY = True
-DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 300.0
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 50.0
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS = 50000
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 4
+DEFAULT_RBF_QUERY_BRIDGE_ALL = True
+DEFAULT_RBF_QUERY_BRIDGE_LABELS = "AS->TS,TS->CS,CS->LB,LB->RB,RB->AS"
+DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH = 14
+DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD = 0.05
+DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD = 0.0
 
 
 def root_override_intervals(sbf: Any) -> list[Any]:
     return [sbf.Interval(float(lo), float(hi)) for lo, hi in D23_ROOT_INTERVALS]
+
+
+def robot_joint_limit_tuples(robot: Any) -> list[tuple[float, float]]:
+    return [
+        (float(interval.lo), float(interval.hi))
+        for interval in list(robot.joint_limits().limits)
+    ]
+
+
+def robot_symmetry_aligned_root_tuples(robot: Any) -> list[tuple[float, float]]:
+    intervals = robot_joint_limit_tuples(robot)
+    if intervals:
+        intervals[0] = (-math.pi, math.pi)
+    return intervals
 
 
 def default_rbf_profile() -> dict[str, Any]:
@@ -77,11 +106,16 @@ def default_rbf_profile() -> dict[str, Any]:
         "grower_mode": RBF_DEFAULT_GROWER_MODE,
         "cache": {
             "mode": "robot_native_stateless_external_evidence",
+            "depth_semantics": "lect_canonical_tree",
             "default_depths": dict(ROBOT_DEFAULT_LECTDB_DEPTHS),
             "root": str(ROBOT_LECTDB_CACHE_ROOT),
             "max_depth": ROBOT_LECTDB_MAX_DEPTH,
+            "active_planning_root": "full_robot_joint_limits",
+            "coverage_root": "full_robot_joint_limits",
+            "canonical_mapping_scope": "LECT_internal_only",
         },
         "leaf_sweep": {
+            "depth_semantics": "lect_active_tree",
             "leaf_start_depth": DEFAULT_RBF_LEAF_START_DEPTH,
             "leaf_max_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
             "use_virtual_topology": True,
@@ -90,8 +124,12 @@ def default_rbf_profile() -> dict[str, Any]:
             "obstacle_cluster_gap": 1000.0,
             "validation_batch_size": DEFAULT_RBF_VALIDATION_BATCH_SIZE,
             "leaf_threads": DEFAULT_RBF_THREADS,
+            "collision_overlap_prune_min_depth": DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH,
+            "collision_overlap_prune_threshold": DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD,
+            "collision_overlap_prune_ratio_threshold": DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD,
         },
         "deep_refine": {
+            "depth_semantics": "lect_active_tree",
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
             "deep_ffb_depth": DEFAULT_RBF_DEEP_FFB_DEPTH,
             "ffb_start_depth": DEFAULT_RBF_FFB_START_DEPTH,
@@ -104,6 +142,7 @@ def default_rbf_profile() -> dict[str, Any]:
             "rrt_grower_timeout_ms": DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
         },
         "connector": {
+            "depth_semantics": "lect_active_tree",
             "segment_edges_enabled": True,
             "segment_edges_fallback_only": False,
             "segment_step": DEFAULT_RBF_AUDIT_SEGMENT_STEP,
@@ -119,26 +158,39 @@ def default_rbf_profile() -> dict[str, Any]:
             "pave_max_chain": DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
             "pave_steps": DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
             "pave_depth": DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
+            "pave_fill_gaps": DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS,
+            "pave_require_connected_chain": DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
+        },
+        "query_bridge": {
+            "depth_semantics": "lect_active_tree",
+            "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+            "note": "Query bridge may use a deeper FFB cap than global connector while leaf/deep/connector stay at their registered depths.",
         },
         "query": {
+            "state_space": "native_joint_space",
             "strict_path_audit": True,
             "shortcut_boxes": False,
             "collision_shortcut": DEFAULT_RBF_FINAL_COLLISION_SHORTCUT,
             "final_rrt_simplify": DEFAULT_RBF_FINAL_RRT_SIMPLIFY,
             "final_rrt_simplify_timeout_ms": DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
             "final_rrt_simplify_attempts": DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
+            "final_rrt_simplify_domain": "robot_joint_limits",
+            "query_bridge_all": DEFAULT_RBF_QUERY_BRIDGE_ALL,
+            "query_bridge_labels": DEFAULT_RBF_QUERY_BRIDGE_LABELS,
             "audit_resolution": DEFAULT_RBF_AUDIT_RESOLUTION,
             "audit_segment_step": DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+            "audit_collision_tolerance": DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
             "planning_time_excludes_audit": True,
         },
         "recommended_tradeoff": {
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
-            "validated_on": "Exp.4 shelf full seeds 0..7",
+            "validated_on": "Exp.4 shelf baseline seeds 0..7, ffb depth 60, all-query box bridge, 50 ms simplify",
             "success_runs": "8/8",
-            "median_build_s": 0.64,
-            "median_planning_s": 1.68,
-            "median_raw_segment_fraction": 0.419,
-            "mean_route_length": 3.29,
+            "median_build_s": 3.108,
+            "median_planning_s": 3.366,
+            "median_raw_segment_fraction": 0.0,
+            "mean_route_length": 3.273,
+            "source": "outputs/exp04_baseline_d60_allbox_seedderived_s0_7",
         },
     }
 
@@ -148,9 +200,14 @@ def shelf_d23_rbf_profile() -> dict[str, Any]:
     profile["profile"] = RBF_SHELF_PROFILE_NAME
     profile["cache"] = {
         "mode": "d23_warm_external_evidence",
+        "depth_semantics": "lect_canonical_tree",
         "root": str(D23_CACHE_ROOT),
         "label": D23_CACHE_LABEL,
         "root_intervals": [[lo, hi] for lo, hi in D23_ROOT_INTERVALS],
+        "active_planning_root": "native_query_space",
+        "coverage_root": "shelf_task_root_reflected_dim0_all_sectors",
+        "split_schedule": "primary_sector_shelf_aafk",
+        "canonical_mapping_scope": "LECT_internal_only",
     }
     return profile
 
@@ -173,22 +230,25 @@ def robot_lectdb_path(robot_name: str, *, depth: int | None = None, envelope: st
 def robot_lectdb_profile(robot_name: str) -> dict[str, Any]:
     depth = robot_lectdb_depth(robot_name)
     if str(robot_name) == "iiwa":
-        coverage = robot_sector_expanded_root_tuples("iiwa")
         return {
             "mode": "restricted_d23_external_evidence",
+            "depth_semantics": "lect_canonical_tree",
             "robot": "iiwa",
             "depth": 23,
             "root": str(D23_CACHE_ROOT),
             "label": D23_CACHE_LABEL,
             "path": str(D23_CACHE_ROOT / D23_CACHE_LABEL),
             "root_intervals": [[lo, hi] for lo, hi in D23_ROOT_INTERVALS],
-            "coverage_intervals": [[lo, hi] for lo, hi in (coverage or D23_ROOT_INTERVALS)],
             "coverage_domain": "reflected_canonical_lect_root_sections",
             "canonical_mode": True,
+            "active_planning_root": "native_query_space",
+            "split_schedule": "primary_sector_shelf_aafk",
+            "canonical_mapping_scope": "LECT_internal_only",
             "symmetry_descriptor": CANONICAL_SYMMETRY_DESCRIPTOR,
         }
     return {
         "mode": "robot_native_stateless_external_evidence",
+        "depth_semantics": "lect_canonical_tree",
         "robot": str(robot_name),
         "depth": depth,
         "root": str(ROBOT_LECTDB_CACHE_ROOT),
@@ -196,13 +256,13 @@ def robot_lectdb_profile(robot_name: str) -> dict[str, Any]:
         "path": str(robot_lectdb_path(robot_name, depth=depth)),
         "max_depth": ROBOT_LECTDB_MAX_DEPTH,
         "canonical_mode": True,
+        "active_planning_root": "full_robot_joint_limits",
+        "canonical_mapping_scope": "LECT_internal_only",
         "symmetry_descriptor": CANONICAL_SYMMETRY_DESCRIPTOR,
     }
 
 
 def robot_root_override_tuples(robot_name: str) -> list[tuple[float, float]] | None:
-    if str(robot_name) == "iiwa":
-        return list(D23_ROOT_INTERVALS)
     return None
 
 

@@ -30,6 +30,8 @@ enum class EnvelopeCollisionMode : uint8_t {
 struct EnvelopeCollisionOptions {
     EnvelopeCollisionMode mode = EnvelopeCollisionMode::Auto;
     bool use_link_aabb_broadphase = true;
+    bool skip_aabb_broadphase = false;
+    bool direct_support_hull_collision = false;
     bool count_all_pairs = false;
     double safety_epsilon = 0.0;
 };
@@ -48,6 +50,11 @@ struct EnvelopeCollisionStats {
     int64_t gjk_rejects = 0;
     int64_t gjk_iterations = 0;
     int64_t maybe_pairs = 0;
+    double maybe_pair_overlap_depth_sum = 0.0;
+    double maybe_pair_overlap_depth_max = 0.0;
+    double maybe_pair_overlap_volume_sum = 0.0;
+    double envelope_volume_sum = 0.0;
+    double maybe_pair_overlap_volume_ratio_max = 0.0;
 };
 
 namespace detail {
@@ -130,6 +137,54 @@ inline bool aabb_overlap_padded(const float* a, const float* b, float pad) {
     return a[0] - pad <= b[3] && b[0] <= a[3] + pad &&
            a[1] - pad <= b[4] && b[1] <= a[4] + pad &&
            a[2] - pad <= b[5] && b[2] <= a[5] + pad;
+}
+
+inline float aabb_overlap_depth_padded(const float* a, const float* b, float pad) {
+    if (!aabb_overlap_padded(a, b, pad)) {
+        return 0.0f;
+    }
+    const float ax0 = a[0] - pad;
+    const float ay0 = a[1] - pad;
+    const float az0 = a[2] - pad;
+    const float ax1 = a[3] + pad;
+    const float ay1 = a[4] + pad;
+    const float az1 = a[5] + pad;
+    const float dx = std::min(ax1 - b[0], b[3] - ax0);
+    const float dy = std::min(ay1 - b[1], b[4] - ay0);
+    const float dz = std::min(az1 - b[2], b[5] - az0);
+    return std::max(0.0f, std::min({dx, dy, dz}));
+}
+
+inline float aabb_volume_padded(const float* a, float pad) {
+    const float ax0 = a[0] - pad;
+    const float ay0 = a[1] - pad;
+    const float az0 = a[2] - pad;
+    const float ax1 = a[3] + pad;
+    const float ay1 = a[4] + pad;
+    const float az1 = a[5] + pad;
+    return std::max((ax1 - ax0) * (ay1 - ay0) * (az1 - az0), kCollisionEps);
+}
+
+inline float aabb_overlap_volume_padded(const float* a, const float* b, float pad) {
+    if (!aabb_overlap_padded(a, b, pad)) {
+        return 0.0f;
+    }
+    const float ax0 = a[0] - pad;
+    const float ay0 = a[1] - pad;
+    const float az0 = a[2] - pad;
+    const float ax1 = a[3] + pad;
+    const float ay1 = a[4] + pad;
+    const float az1 = a[5] + pad;
+    const float ix = std::max(0.0f, std::min(ax1, b[3]) - std::max(ax0, b[0]));
+    const float iy = std::max(0.0f, std::min(ay1, b[4]) - std::max(ay0, b[1]));
+    const float iz = std::max(0.0f, std::min(az1, b[5]) - std::max(az0, b[2]));
+    return ix * iy * iz;
+}
+
+inline float aabb_overlap_volume_ratio_padded(const float* a, const float* b, float pad) {
+    const float overlap_volume = aabb_overlap_volume_padded(a, b, pad);
+    const float volume = aabb_volume_padded(a, pad);
+    return std::max(0.0f, std::min(1.0f, overlap_volume / volume));
 }
 
 inline void include_aabb(float dst[6], const float* src) {
@@ -454,10 +509,29 @@ inline CollisionResultKind collide_envelope_aabbs(
         s.maybe_pairs += static_cast<int64_t>(std::max(0, n_obstacles));
         return CollisionResultKind::MaybeColliding;
     }
-    const EnvelopeCollisionMode resolved_mode = detail::resolve_collision_mode(
+    EnvelopeCollisionMode resolved_mode = detail::resolve_collision_mode(
         envelope,
         options.mode,
         n_boxes);
+    const bool direct_support_hull =
+        options.direct_support_hull_collision &&
+        envelope.type == EnvelopeType::SupportHull &&
+        detail::has_support_hull_payload(envelope, n_boxes);
+    const bool skip_aabb_broadphase =
+        (direct_support_hull || options.skip_aabb_broadphase) &&
+        envelope.type == EnvelopeType::SupportHull &&
+        detail::has_support_hull_payload(envelope, n_boxes);
+    if (direct_support_hull) {
+        resolved_mode = EnvelopeCollisionMode::GJK;
+    }
+
+    s.envelope_volume_sum = 0.0;
+    for (int box = 0; box < n_boxes; ++box) {
+        const float* link_box = envelope.link_iaabbs.data() + box * 6;
+        const float pad = detail::link_radius_for_box(envelope, box) +
+            static_cast<float>(std::max(0.0, options.safety_epsilon));
+        s.envelope_volume_sum += static_cast<double>(detail::aabb_volume_padded(link_box, pad));
+    }
 
     float envelope_bounds[6] = {
         envelope.link_iaabbs[0], envelope.link_iaabbs[1], envelope.link_iaabbs[2],
@@ -473,10 +547,12 @@ inline CollisionResultKind collide_envelope_aabbs(
 
     for (int obs = 0; obs < n_obstacles; ++obs) {
         const float* obstacle = obstacles[obs].bounds;
-        s.envelope_aabb_tests += 1;
-        if (!detail::aabb_overlap_padded(envelope_bounds, obstacle, max_radius)) {
-            s.envelope_aabb_rejects += 1;
-            continue;
+        if (!skip_aabb_broadphase) {
+            s.envelope_aabb_tests += 1;
+            if (!detail::aabb_overlap_padded(envelope_bounds, obstacle, max_radius)) {
+                s.envelope_aabb_rejects += 1;
+                continue;
+            }
         }
 
         bool obstacle_maybe = false;
@@ -484,7 +560,7 @@ inline CollisionResultKind collide_envelope_aabbs(
             const float* link_box = envelope.link_iaabbs.data() + box * 6;
             const float pad = detail::link_radius_for_box(envelope, box) +
                 static_cast<float>(std::max(0.0, options.safety_epsilon));
-            if (options.use_link_aabb_broadphase) {
+            if (options.use_link_aabb_broadphase && !skip_aabb_broadphase) {
                 s.link_aabb_tests += 1;
                 if (!detail::aabb_overlap_padded(link_box, obstacle, pad)) {
                     s.link_aabb_rejects += 1;
@@ -507,6 +583,20 @@ inline CollisionResultKind collide_envelope_aabbs(
             }
 
             s.maybe_pairs += 1;
+            const double overlap_depth =
+                static_cast<double>(detail::aabb_overlap_depth_padded(link_box, obstacle, pad));
+            s.maybe_pair_overlap_depth_sum += overlap_depth;
+            s.maybe_pair_overlap_depth_max =
+                std::max(s.maybe_pair_overlap_depth_max, overlap_depth);
+            const double overlap_volume =
+                static_cast<double>(detail::aabb_overlap_volume_padded(link_box, obstacle, pad));
+            s.maybe_pair_overlap_volume_sum += overlap_volume;
+            const double overlap_ratio = s.envelope_volume_sum > 0.0
+                ? s.maybe_pair_overlap_volume_sum / s.envelope_volume_sum
+                : 0.0;
+            s.maybe_pair_overlap_volume_ratio_max =
+                std::max(s.maybe_pair_overlap_volume_ratio_max,
+                         std::max(0.0, std::min(1.0, overlap_ratio)));
             obstacle_maybe = true;
             if (!options.count_all_pairs) {
                 return CollisionResultKind::MaybeColliding;

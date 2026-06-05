@@ -48,6 +48,18 @@ int main() {
     assert(facade_robot.n_joints() == robot.n_joints());
     assert(robot.n_joints() == 2);
     assert(robot.n_active_links() > 0);
+    {
+        rbf::Robot same_kinematics_larger_radius(
+            robot.name(),
+            robot.dh_params(),
+            robot.joint_limits(),
+            robot.tool_frame(),
+            {0.07, 0.07, 0.07});
+        assert(same_kinematics_larger_radius.fingerprint() == robot.fingerprint());
+        assert(same_kinematics_larger_radius.active_link_radii() != nullptr);
+        assert(std::abs(same_kinematics_larger_radius.active_link_radii()[0] -
+                        robot.active_link_radii()[0]) > 1e-6);
+    }
 
     std::vector<rbf::Interval> intervals = {
         {-0.4, 0.4},

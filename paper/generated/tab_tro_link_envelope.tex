@@ -1,31 +1,26 @@
-\begin{table}[t]
+% Auto-generated from current trade-off artifacts.
+\begingroup
 \centering
-\caption{Width-wise IFK\_AA link-envelope comparison with one link split ($S=1$). Entries are means over fixed-width boxes. Env. reports envelope materialization only; Coll. is the standalone obstacle test.}
+\captionof{table}{Link envelope representation study. Env. reports envelope construction time only; Coll. reports obstacle collision time.}
 \label{tab:tro-link-envelope}
-\scriptsize
-\setlength{\tabcolsep}{2.0pt}
-\renewcommand{\arraystretch}{0.94}
-\begin{tabular}{@{}llrrr@{}}
+\footnotesize
+\setlength{\tabcolsep}{2.2pt}
+\begin{tabular}{llrrrr}
 \toprule
-Width & Envelope & $V$ (m$^3$) & \shortstack{Env.\\($\mu$s)} & \shortstack{Coll.\\($\mu$s)} \\
+Width & Envelope & Splits & Vol. & Env. ($\mu$s) & Coll. ($\mu$s) \\
 \midrule
-0.02 & LinkIAABB & 0.013628 & 0.1 & 0.3 \\
-0.02 & SupportHull & 0.000359 & 0.2 & 2.0 \\
-\addlinespace
-0.05 & LinkIAABB & 0.020148 & 0.1 & 0.4 \\
-0.05 & SupportHull & 0.002662 & 0.2 & 2.1 \\
-\addlinespace
-0.10 & LinkIAABB & 0.038415 & 0.2 & 0.3 \\
-0.10 & SupportHull & 0.014329 & 0.2 & 2.4 \\
-\addlinespace
-0.20 & LinkIAABB & 0.146513 & 0.1 & 0.4 \\
-0.20 & SupportHull & 0.105919 & 0.2 & 3.2 \\
-\addlinespace
-0.30 & LinkIAABB & 0.507549 & 0.2 & 0.4 \\
-0.30 & SupportHull & 0.448860 & 0.2 & 5.2 \\
-\addlinespace
-0.50 & LinkIAABB & 4.607121 & 0.2 & 0.3 \\
-0.50 & SupportHull & 4.537899 & 0.2 & 11.2 \\
+0.02 & LinkIAABB & 1 & 0.013 & 0.110 & 0.300 \\
+0.02 & SupportHull & 1 & 0.000 & 0.166 & 0.309 \\
+0.05 & LinkIAABB & 1 & 0.020 & 0.139 & 0.310 \\
+0.05 & SupportHull & 1 & 0.003 & 0.177 & 0.306 \\
+0.10 & LinkIAABB & 1 & 0.038 & 0.141 & 0.297 \\
+0.10 & SupportHull & 1 & 0.014 & 0.188 & 0.305 \\
+0.20 & LinkIAABB & 1 & 0.147 & 0.136 & 0.305 \\
+0.20 & SupportHull & 1 & 0.105 & 0.171 & 0.311 \\
+0.30 & LinkIAABB & 1 & 0.502 & 0.137 & 0.305 \\
+0.30 & SupportHull & 1 & 0.440 & 0.175 & 4.823 \\
+0.50 & LinkIAABB & 1 & 4.514 & 0.143 & 0.304 \\
+0.50 & SupportHull & 1 & 4.448 & 0.184 & 10.950 \\
 \bottomrule
 \end{tabular}
-\end{table}
+\par\endgroup

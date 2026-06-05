@@ -29,6 +29,8 @@
 #include <ompl/geometric/PathSimplifier.h>
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/prm/PRM.h>
+#include <ompl/geometric/planners/prm/PRMstar.h>
+#include <ompl/geometric/planners/prm/LazyPRM.h>
 #include <ompl/geometric/planners/rrt/RRTConnect.h>
 #include <ompl/util/Console.h>
 #include <ompl/util/RandomNumbers.h>
@@ -146,6 +148,8 @@ py::dict oracle_validation_detail_to_python(const rbf::OracleValidationDetail& d
     result["candidate_dirty_count"] = detail.candidate_dirty_count;
     result["predh_rebuild_count"] = detail.predh_rebuild_count;
     result["aabb_overlap"] = detail.aabb_overlap;
+    result["aabb_overlap_depth"] = detail.aabb_overlap_depth;
+    result["aabb_overlap_volume_ratio"] = detail.aabb_overlap_volume_ratio;
     return result;
 }
 
@@ -182,6 +186,11 @@ py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
     result["materialization_reused_fk"] = counters.materialization_reused_fk;
     result["materialization_reused_endpoint_cache"] = counters.materialization_reused_endpoint_cache;
     result["materialization_reused_external_evidence"] = counters.materialization_reused_external_evidence;
+    result["materialization_external_exact_hits"] = counters.materialization_external_exact_hits;
+    result["materialization_external_exact_misses"] = counters.materialization_external_exact_misses;
+    result["materialization_external_live_fallbacks"] = counters.materialization_external_live_fallbacks;
+    result["materialization_external_maybe_live_retries"] = counters.materialization_external_maybe_live_retries;
+    result["materialization_external_maybe_live_retry_free"] = counters.materialization_external_maybe_live_retry_free;
     result["materialization_reused_shared_endpoint_cache"] = counters.materialization_reused_shared_endpoint_cache;
     result["materialization_stored_shared_endpoint_cache"] = counters.materialization_stored_shared_endpoint_cache;
     result["materialization_reused_cached_envelope"] = counters.materialization_reused_cached_envelope;
@@ -213,6 +222,9 @@ py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
     result["envelope_collision_gjk_tests"] = counters.envelope_collision_gjk_tests;
     result["envelope_collision_gjk_rejects"] = counters.envelope_collision_gjk_rejects;
     result["envelope_collision_gjk_iterations"] = counters.envelope_collision_gjk_iterations;
+    result["envelope_collision_overlap_depth_sum"] = counters.envelope_collision_overlap_depth_sum;
+    result["envelope_collision_overlap_depth_max"] = counters.envelope_collision_overlap_depth_max;
+    result["envelope_collision_overlap_volume_ratio_max"] = counters.envelope_collision_overlap_volume_ratio_max;
     return result;
 }
 
@@ -302,6 +314,23 @@ public:
     void setLocalSeed(std::uint_fast32_t local_seed) {
         rng_.setLocalSeed(local_seed);
     }
+
+    Vertex addMilestoneFromState(const ompl::base::State* state) {
+        return addMilestone(si_->cloneState(state));
+    }
+};
+
+class SeededPRMstar final : public ompl::geometric::PRMstar {
+public:
+    using ompl::geometric::PRMstar::PRMstar;
+
+    void setLocalSeed(std::uint_fast32_t local_seed) {
+        rng_.setLocalSeed(local_seed);
+    }
+
+    Vertex addMilestoneFromState(const ompl::base::State* state) {
+        return addMilestone(si_->cloneState(state));
+    }
 };
 
 class SeededBITstar final : public ompl::geometric::BITstar {
@@ -323,6 +352,22 @@ public:
         applyLocalSeed();
     }
 
+    void setInitialInflationFactorPublic(double factor) {
+        setInitialInflationFactor(factor);
+    }
+
+    void setInflationScalingParameterPublic(double parameter) {
+        setInflationScalingParameter(parameter);
+    }
+
+    void setTruncationScalingParameterPublic(double parameter) {
+        setTruncationScalingParameter(parameter);
+    }
+
+    void enableCascadingRewiringsPublic(bool enable) {
+        enableCascadingRewirings(enable);
+    }
+
 private:
     void applyLocalSeed() {
         if (graphPtr_) {
@@ -342,6 +387,72 @@ private:
 
 double ompl_elapsed_s(const std::chrono::steady_clock::time_point& start) {
     return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
+void configure_bitstar_planner(const std::shared_ptr<SeededBITstar>& planner,
+                               int samples_per_batch,
+                               double rewire_factor,
+                               bool stop_on_solution_improvement,
+                               int use_k_nearest,
+                               int pruning,
+                               double prune_threshold_fraction,
+                               int delay_rewiring_until_initial_solution,
+                               int just_in_time_sampling,
+                               int drop_samples_on_prune,
+                               int approximate_solutions,
+                               int strict_queue_ordering,
+                               int cascading_rewirings,
+                               double initial_inflation_factor,
+                               double inflation_scaling_parameter,
+                               double truncation_scaling_parameter,
+                               int allowed_failed_sampling_attempts) {
+    if (samples_per_batch > 0) {
+        planner->setSamplesPerBatch(static_cast<unsigned int>(samples_per_batch));
+    }
+    if (rewire_factor > 0.0) {
+        planner->setRewireFactor(rewire_factor);
+    }
+    planner->setStopOnSolnImprovement(stop_on_solution_improvement);
+    if (use_k_nearest >= 0) {
+        planner->setUseKNearest(use_k_nearest != 0);
+    }
+    if (pruning >= 0) {
+        planner->setPruning(pruning != 0);
+    }
+    if (prune_threshold_fraction >= 0.0) {
+        planner->setPruneThresholdFraction(prune_threshold_fraction);
+    }
+    if (delay_rewiring_until_initial_solution >= 0) {
+        planner->setDelayRewiringUntilInitialSolution(delay_rewiring_until_initial_solution != 0);
+    }
+    if (just_in_time_sampling >= 0) {
+        planner->setJustInTimeSampling(just_in_time_sampling != 0);
+    }
+    if (drop_samples_on_prune >= 0) {
+        planner->setDropSamplesOnPrune(drop_samples_on_prune != 0);
+    }
+    if (approximate_solutions >= 0) {
+        planner->setConsiderApproximateSolutions(approximate_solutions != 0);
+    }
+    if (strict_queue_ordering >= 0) {
+        planner->setStrictQueueOrdering(strict_queue_ordering != 0);
+    }
+    if (cascading_rewirings >= 0) {
+        planner->enableCascadingRewiringsPublic(cascading_rewirings != 0);
+    }
+    if (initial_inflation_factor > 0.0) {
+        planner->setInitialInflationFactorPublic(initial_inflation_factor);
+    }
+    if (inflation_scaling_parameter >= 0.0) {
+        planner->setInflationScalingParameterPublic(inflation_scaling_parameter);
+    }
+    if (truncation_scaling_parameter >= 0.0) {
+        planner->setTruncationScalingParameterPublic(truncation_scaling_parameter);
+    }
+    if (allowed_failed_sampling_attempts >= 0) {
+        planner->setAverageNumOfAllowedFailedAttemptsWhenSampling(
+            static_cast<std::size_t>(allowed_failed_sampling_attempts));
+    }
 }
 
 std::shared_ptr<ompl::base::RealVectorStateSpace> make_ompl_space(const rbf::Robot& robot) {
@@ -660,6 +771,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
 
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
+        .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
+        .def_readwrite("skip_aabb_broadphase", &rbf::SupportHullConfig::skip_aabb_broadphase)
+        .def_readwrite("direct_collision", &rbf::SupportHullConfig::direct_collision)
         .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
 
     py::class_<rbf::EndpointSourceConfig>(module, "EndpointSourceConfig")
@@ -808,7 +922,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("refine_timeout_ms", &rbf::LeafSweepRefineConfig::refine_timeout_ms)
         .def_readwrite("run_rrt_grower", &rbf::LeafSweepRefineConfig::run_rrt_grower)
         .def_readwrite("rrt_grower_extra_boxes", &rbf::LeafSweepRefineConfig::rrt_grower_extra_boxes)
-        .def_readwrite("rrt_grower_timeout_ms", &rbf::LeafSweepRefineConfig::rrt_grower_timeout_ms);
+        .def_readwrite("rrt_grower_timeout_ms", &rbf::LeafSweepRefineConfig::rrt_grower_timeout_ms)
+        .def_readwrite("priority_prune_radius", &rbf::LeafSweepRefineConfig::priority_prune_radius)
+        .def_readwrite("collision_overlap_prune_min_depth", &rbf::LeafSweepRefineConfig::collision_overlap_prune_min_depth)
+        .def_readwrite("collision_overlap_prune_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_threshold)
+        .def_readwrite("collision_overlap_prune_ratio_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_ratio_threshold);
 
     py::class_<rbf::LeafSweepRefineResult>(module, "LeafSweepRefineResult")
         .def_readonly("leaf_sweep", &rbf::LeafSweepRefineResult::leaf_sweep)
@@ -873,6 +991,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("external_evidence_materialization", &rbf::OracleValidationConfig::external_evidence_materialization)
         .def_readwrite("external_evidence_scoring", &rbf::OracleValidationConfig::external_evidence_scoring)
         .def_readwrite("external_evidence_backfill_active", &rbf::OracleValidationConfig::external_evidence_backfill_active)
+        .def_readwrite("external_evidence_live_retry_on_maybe", &rbf::OracleValidationConfig::external_evidence_live_retry_on_maybe)
         .def_readwrite("stateless_materialization_context", &rbf::OracleValidationConfig::stateless_materialization_context)
         .def_readwrite("enable_worker_shared_endpoint_cache", &rbf::OracleValidationConfig::enable_worker_shared_endpoint_cache)
         .def_readwrite("shared_endpoint_cache_max_entries", &rbf::OracleValidationConfig::shared_endpoint_cache_max_entries)
@@ -1148,7 +1267,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("runtime", &rbf::RBFPlanningConfig::runtime)
         .def_readwrite("dynamic_update", &rbf::RBFPlanningConfig::dynamic_update)
         .def_readwrite("enable_merger", &rbf::RBFPlanningConfig::enable_merger)
-        .def_readwrite("enable_connector", &rbf::RBFPlanningConfig::enable_connector);
+        .def_readwrite("enable_connector", &rbf::RBFPlanningConfig::enable_connector)
+        .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
         .def_readonly("total_ms", &rbf::BuildProfile::total_ms)
@@ -1343,6 +1463,24 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                     return forest.bridge_query_known_needed(eigen_vector_from_list(start), eigen_vector_from_list(goal));
                          },
                          py::arg("start"), py::arg("goal"))
+                .def("bridge_queries",
+                         [](rbf::RBFPlanningForest& forest,
+                                const std::vector<std::vector<double>>& starts,
+                                const std::vector<std::vector<double>>& goals) {
+                                    if (starts.size() != goals.size()) {
+                                        throw std::invalid_argument("bridge_queries requires starts/goals with matching sizes");
+                                    }
+                                    std::vector<Eigen::VectorXd> eigen_starts;
+                                    std::vector<Eigen::VectorXd> eigen_goals;
+                                    eigen_starts.reserve(starts.size());
+                                    eigen_goals.reserve(goals.size());
+                                    for (std::size_t i = 0; i < starts.size(); ++i) {
+                                        eigen_starts.push_back(eigen_vector_from_list(starts[i]));
+                                        eigen_goals.push_back(eigen_vector_from_list(goals[i]));
+                                    }
+                                    return forest.bridge_queries(eigen_starts, eigen_goals);
+                         },
+                         py::arg("starts"), py::arg("goals"))
                 .def("debug_chain_pave",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<double>& start,
@@ -1429,6 +1567,84 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          py::arg("gap_fill_time_budget_ms") = 10.0,
                          py::arg("gap_fill_max_ffb_calls") = 32,
                          py::arg("gap_fill_min_arc_gain") = 0.01)
+                .def("debug_chain_pave_waypoints",
+                         [](rbf::RBFPlanningForest& forest,
+                                const std::vector<std::vector<double>>& waypoints,
+                                int max_chain,
+                                int max_depth,
+                                int max_gap_fill_steps,
+                                bool fill_segment_gaps,
+                                double gap_fill_min_step,
+                                double adjacency_tolerance,
+                                double gap_fill_sample_step,
+                                double gap_fill_time_budget_ms,
+                                int gap_fill_max_ffb_calls,
+                                double gap_fill_min_arc_gain,
+                                bool require_connected_chain,
+                                bool commit_certified_only) {
+                                    rbf::ChainPaveConfig pave;
+                                    pave.commit_policy =
+                                        commit_certified_only
+                                            ? rbf::BoxCommitPolicy::CommitCertifiedOnly
+                                            : rbf::BoxCommitPolicy::CommitProvisionalAllowed;
+                                    pave.max_chain = max_chain;
+                                    pave.fill_gaps = fill_segment_gaps;
+                                    pave.max_gap_fill_depth = std::max(1, std::min(20, max_gap_fill_steps));
+                                    pave.gap_fill_min_step = gap_fill_min_step;
+                                    pave.adjacency_tolerance = adjacency_tolerance;
+                                    pave.gap_fill_sample_step = gap_fill_sample_step;
+                                    pave.gap_fill_time_budget_ms = gap_fill_time_budget_ms;
+                                    pave.gap_fill_max_ffb_calls = gap_fill_max_ffb_calls;
+                                    pave.gap_fill_min_arc_gain = gap_fill_min_arc_gain;
+                                    pave.require_connected_chain = require_connected_chain;
+                                    pave.find_free_box.max_depth = max_depth;
+                                    pave.find_free_box.reject_seed_collision = false;
+                                    std::vector<Eigen::VectorXd> eigen_waypoints;
+                                    eigen_waypoints.reserve(waypoints.size());
+                                    for (const auto& waypoint : waypoints) {
+                                        eigen_waypoints.push_back(eigen_vector_from_list(waypoint));
+                                    }
+                                    auto res = forest.debug_chain_pave_waypoints(eigen_waypoints, pave);
+                                    py::dict result;
+                                    result["added"] = res.added;
+                                    result["bridge_found"] = res.bridge_found;
+                                    result["audit_passed"] = res.audit_passed;
+                                    result["start_box_id"] = res.start_box_id;
+                                    result["goal_box_id"] = res.goal_box_id;
+                                    result["fast_gap_fill_ffb_calls"] = res.fast_gap_fill_ffb_calls;
+                                    result["fast_gap_fill_ms"] = res.fast_gap_fill_ms;
+                                    py::list out_waypoints;
+                                    for (const auto& wp : res.waypoints) {
+                                        out_waypoints.append(vector_to_list(wp));
+                                    }
+                                    result["waypoints"] = out_waypoints;
+                                    py::list committed_boxes;
+                                    for (const auto& box : res.committed_boxes) {
+                                        committed_boxes.append(interval_pairs_to_python(box));
+                                    }
+                                    result["committed_boxes"] = committed_boxes;
+                                    py::list all_boxes;
+                                    for (const auto& box : res.all_boxes) {
+                                        all_boxes.append(interval_pairs_to_python(box));
+                                    }
+                                    result["all_boxes"] = all_boxes;
+                                    result["start_box"] = interval_pairs_to_python(res.start_box);
+                                    result["goal_box"] = interval_pairs_to_python(res.goal_box);
+                                    return result;
+                         },
+                         py::arg("waypoints"),
+                         py::arg("max_chain") = 4096,
+                         py::arg("max_depth") = 120,
+                         py::arg("max_gap_fill_steps") = 64,
+                         py::arg("fill_segment_gaps") = true,
+                         py::arg("gap_fill_min_step") = 1e-4,
+                         py::arg("adjacency_tolerance") = 1e-9,
+                         py::arg("gap_fill_sample_step") = 0.05,
+                         py::arg("gap_fill_time_budget_ms") = 10.0,
+                         py::arg("gap_fill_max_ffb_calls") = 32,
+                         py::arg("gap_fill_min_arc_gain") = 0.01,
+                         py::arg("require_connected_chain") = false,
+                         py::arg("commit_certified_only") = true)
         .def("add_obstacle_and_rebuild", &rbf::RBFPlanningForest::add_obstacle_and_rebuild, py::arg("obstacle"))
         .def("add_obstacles_and_rebuild", &rbf::RBFPlanningForest::add_obstacles_and_rebuild, py::arg("obstacles"))
         .def("connect_update_segment_fallback", &rbf::RBFPlanningForest::connect_update_segment_fallback)
@@ -1464,6 +1680,92 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def("database_snapshot_path", [](const rbf::RBFPlanningForest& forest) {
             return rbf::lect_database::LectReadSnapshot::default_snapshot_path(forest.config().database.path).string();
         })
+        .def("debug_external_endpoint_lookup",
+             [](const rbf::RBFPlanningForest& forest,
+                const std::vector<std::vector<double>>& interval_pairs,
+                const std::vector<rbf::Obstacle>& obstacles) {
+                 py::dict result;
+                 const auto intervals = intervals_from_pairs(interval_pairs);
+                 result["intervals"] = interval_pairs_to_python(intervals);
+                 const auto external_root = forest.config().database.external_evidence_path;
+                 result["external_evidence_path"] = external_root.string();
+                 if (external_root.empty()) {
+                     result["found"] = false;
+                     result["reason"] = "external_evidence_path is empty";
+                     return result;
+                 }
+                 const auto snapshot_path = forest.config().database.external_evidence_snapshot_path.empty()
+                     ? rbf::lect_database::LectReadSnapshot::default_snapshot_path(external_root)
+                     : forest.config().database.external_evidence_snapshot_path;
+                 result["snapshot_path"] = snapshot_path.string();
+                 rbf::lect_database::LectReadSnapshot snapshot;
+                 std::string open_reason;
+                 if (!snapshot.open(snapshot_path, &open_reason)) {
+                     result["found"] = false;
+                     result["reason"] = open_reason;
+                     return result;
+                 }
+                 rbf::lect_database::EvidenceKey key;
+                 key.sector = rbf::lect_database::kPrimarySector;
+                 key.channel = rbf::source_channel(forest.config().endpoint_source.source) == 0
+                     ? rbf::lect_database::EvidenceChannel::Safe
+                     : rbf::lect_database::EvidenceChannel::Rapid;
+                 key.endpoint_source = forest.config().endpoint_source.source;
+                 key.payload_kind = rbf::lect_database::EvidencePayloadKind::EndpointEnvelope;
+                 const auto box_key = snapshot.make_box_key(intervals);
+                 const auto lookup = snapshot.box_to_node_exact(box_key);
+                 result["box_node_found"] = lookup.found;
+                 result["box_node_id"] = lookup.found ? static_cast<unsigned long long>(lookup.node_id) : 0ULL;
+                 result["box_node_reason"] = lookup.reason;
+                 const auto view = snapshot.endpoint_for_box_exact(box_key, key);
+                 if (!view) {
+                     result["found"] = false;
+                     result["reason"] = "endpoint evidence not found";
+                     return result;
+                 }
+                 result["found"] = true;
+                 result["node_id"] = static_cast<unsigned long long>(view->key.node_id);
+                 result["sector"] = static_cast<unsigned int>(view->key.sector);
+                 result["channel"] = static_cast<int>(view->key.channel);
+                 result["endpoint_source"] = static_cast<int>(view->key.endpoint_source);
+                 result["payload_kind"] = static_cast<int>(view->key.payload_kind);
+                 result["payload_size"] = static_cast<unsigned long long>(view->payload.size());
+                 result["child_hull"] = view->child_hull;
+                 result["unavailable"] = view->unavailable;
+                 result["generation"] = static_cast<unsigned long long>(view->generation);
+                 result["checksum"] = static_cast<unsigned long long>(view->checksum);
+                 rbf::LinkEnvelope envelope = rbf::compute_link_envelope(view->payload.data(),
+                                                                         forest.robot().n_active_links(),
+                                                                         forest.robot().active_link_radii(),
+                                                                         forest.config().envelope_type);
+                 rbf::EnvelopeCollisionOptions options;
+                 options.safety_epsilon = std::max(forest.config().envelope_type.kdop_config.safety_epsilon,
+                                                   forest.config().envelope_type.support_hull_config.safety_epsilon);
+                 options.skip_aabb_broadphase =
+                     forest.config().envelope_type.support_hull_config.skip_aabb_broadphase;
+                 options.direct_support_hull_collision =
+                     forest.config().envelope_type.support_hull_config.direct_collision;
+                 rbf::EnvelopeCollisionStats stats;
+                 const auto collision = rbf::collide_envelope_aabbs(envelope,
+                                                                     obstacles.empty() ? nullptr : obstacles.data(),
+                                                                     static_cast<int>(obstacles.size()),
+                                                                     options,
+                                                                     &stats);
+                 result["external_is_definitely_free"] =
+                     collision == rbf::CollisionResultKind::DefinitelyFree;
+                 result["external_maybe_pairs"] = stats.maybe_pairs;
+                 result["external_aabb_tests"] = stats.envelope_aabb_tests;
+                 result["external_aabb_rejects"] = stats.envelope_aabb_rejects;
+                 result["external_link_aabb_tests"] = stats.link_aabb_tests;
+                 result["external_link_aabb_rejects"] = stats.link_aabb_rejects;
+                 result["external_gjk_tests"] = stats.gjk_tests;
+                 result["external_gjk_rejects"] = stats.gjk_rejects;
+                 result["external_overlap_depth_max"] = stats.maybe_pair_overlap_depth_max;
+                 result["external_overlap_volume_ratio_max"] = stats.maybe_pair_overlap_volume_ratio_max;
+                 return result;
+             },
+             py::arg("interval_pairs"),
+             py::arg("obstacles") = std::vector<rbf::Obstacle>{})
         .def("database_wait_for_snapshot_publish", [](const rbf::RBFPlanningForest& forest) {
             const auto snapshot_path = rbf::lect_database::LectReadSnapshot::default_snapshot_path(forest.config().database.path);
             return rbf::lect_database::LectReadSnapshot::build_from_legacy(forest.config().database.path, snapshot_path);
@@ -2272,7 +2574,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            double segment_step,
            double simplify_time_s,
            int seed,
-           int max_nearest_neighbors) {
+           int max_nearest_neighbors,
+           const std::string& planner_kind,
+           bool preload_query_endpoints) {
             namespace ob = ompl::base;
             namespace og = ompl::geometric;
             ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
@@ -2297,15 +2601,42 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             auto si = make_ompl_space_information(robot, obstacles, space, segment_step, checking_resolution);
             auto problem = std::make_shared<ob::ProblemDefinition>(si);
             set_problem_query(problem, space, si, starts.front(), goals.front(), dimension);
-            auto planner = std::make_shared<SeededPRM>(si);
-            planner->setLocalSeed(mix_seed(base_seed, 0x50524D50U));
-            if (max_nearest_neighbors > 0) {
+            std::shared_ptr<og::PRM> planner;
+            std::shared_ptr<SeededPRM> seeded_prm;
+            std::shared_ptr<SeededPRMstar> seeded_prmstar;
+            const bool use_prmstar = planner_kind == "prmstar" || planner_kind == "PRMstar" || planner_kind == "PRM*";
+            if (use_prmstar) {
+                seeded_prmstar = std::make_shared<SeededPRMstar>(si);
+                seeded_prmstar->setLocalSeed(mix_seed(base_seed, 0x50524D50U));
+                planner = seeded_prmstar;
+            } else {
+                seeded_prm = std::make_shared<SeededPRM>(si);
+                seeded_prm->setLocalSeed(mix_seed(base_seed, 0x50524D50U));
+                planner = seeded_prm;
+            }
+            if (!use_prmstar && max_nearest_neighbors > 0) {
                 planner->setMaxNearestNeighbors(static_cast<unsigned int>(max_nearest_neighbors));
             }
             planner->setProblemDefinition(problem);
             planner->setup();
 
             const auto build_start = std::chrono::steady_clock::now();
+            if (preload_query_endpoints) {
+                for (std::size_t index = 0; index < starts.size(); ++index) {
+                    ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+                    for (int dim = 0; dim < dimension; ++dim) {
+                        q_start->values[dim] = starts[index][static_cast<std::size_t>(dim)];
+                        q_goal->values[dim] = goals[index][static_cast<std::size_t>(dim)];
+                    }
+                    if (use_prmstar) {
+                        seeded_prmstar->addMilestoneFromState(q_start.get());
+                        seeded_prmstar->addMilestoneFromState(q_goal.get());
+                    } else {
+                        seeded_prm->addMilestoneFromState(q_start.get());
+                        seeded_prm->addMilestoneFromState(q_goal.get());
+                    }
+                }
+            }
             planner->constructRoadmap(ob::timedPlannerTerminationCondition(std::max(0.0, build_budget_s)));
             const double build_s = ompl_elapsed_s(build_start);
 
@@ -2325,6 +2656,18 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 planner->clearQuery();
                 set_problem_query(problem, space, si, starts[index], goals[index], dimension);
                 const auto query_start = std::chrono::steady_clock::now();
+                ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+                for (int dim = 0; dim < dimension; ++dim) {
+                    q_start->values[dim] = starts[index][static_cast<std::size_t>(dim)];
+                    q_goal->values[dim] = goals[index][static_cast<std::size_t>(dim)];
+                }
+                if (use_prmstar) {
+                    seeded_prmstar->addMilestoneFromState(q_start.get());
+                    seeded_prmstar->addMilestoneFromState(q_goal.get());
+                } else {
+                    seeded_prm->addMilestoneFromState(q_start.get());
+                    seeded_prm->addMilestoneFromState(q_goal.get());
+                }
                 ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
                 bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
                 double query_s = ompl_elapsed_s(query_start);
@@ -2352,10 +2695,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             ob::PlannerData planner_data(si);
             planner->getPlannerData(planner_data);
             result["ok"] = true;
-            result["planner"] = "OMPL_PRM";
+            result["planner"] = planner_kind == "prmstar" || planner_kind == "PRMstar" || planner_kind == "PRM*" ? "OMPL_PRMstar" : "OMPL_PRM";
             result["build_s"] = build_s;
             result["nodes"] = static_cast<int>(planner_data.numVertices());
             result["checking_resolution"] = checking_resolution;
+            result["preload_query_endpoints"] = preload_query_endpoints;
             result["queries"] = query_results;
             return result;
         },
@@ -2368,7 +2712,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("segment_step") = 0.05,
         py::arg("simplify_time_s") = 0.1,
         py::arg("seed") = 42,
-        py::arg("max_nearest_neighbors") = 32);
+        py::arg("max_nearest_neighbors") = 32,
+        py::arg("planner_kind") = "prm",
+        py::arg("preload_query_endpoints") = false);
 
     module.def("ompl_simplify_path",
         [](const rbf::Robot& robot,
@@ -2426,6 +2772,118 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("segment_step"),
         py::arg("simplify_time_s") = 0.05);
 
+    module.def("ompl_lazy_prm_multiquery",
+        [](const rbf::Robot& robot,
+           const std::vector<rbf::Obstacle>& obstacles,
+           const std::vector<std::vector<double>>& starts,
+           const std::vector<std::vector<double>>& goals,
+           double query_budget_s,
+           double segment_step,
+           double simplify_time_s,
+           int seed,
+           int max_nearest_neighbors,
+           double range) {
+            namespace ob = ompl::base;
+            namespace og = ompl::geometric;
+            ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
+            const auto base_seed = normalize_seed(seed);
+            py::dict result;
+            const int dimension = robot.n_joints();
+            if (starts.empty() || starts.size() != goals.size()) {
+                throw std::invalid_argument("starts/goals must be non-empty and have the same length");
+            }
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                if (static_cast<int>(starts[index].size()) != dimension || static_cast<int>(goals[index].size()) != dimension) {
+                    throw std::invalid_argument("all start/goal dimensions must match robot.n_joints()");
+                }
+            }
+            auto checker = std::make_shared<rbf::CollisionChecker>(robot, rbf::Scene(obstacles));
+            auto endpoint_collision = [&](const std::vector<double>& q) {
+                return checker->check_config(eigen_vector_from_list(q));
+            };
+            double checking_resolution = 0.0;
+            auto space = make_ompl_space(robot);
+            configure_deterministic_state_sampler(space, mix_seed(base_seed, 0x4C50524DU));
+            auto si = make_ompl_space_information(robot, obstacles, space, segment_step, checking_resolution);
+            auto problem = std::make_shared<ob::ProblemDefinition>(si);
+            set_problem_query(problem, space, si, starts.front(), goals.front(), dimension);
+            auto planner = std::make_shared<og::LazyPRM>(si);
+            if (max_nearest_neighbors > 0) {
+                planner->setMaxNearestNeighbors(static_cast<unsigned int>(max_nearest_neighbors));
+            }
+            if (range > 0.0) {
+                planner->setRange(range);
+            }
+            planner->setProblemDefinition(problem);
+            planner->setup();
+
+            const auto total_start = std::chrono::steady_clock::now();
+            py::list query_results;
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                py::dict row;
+                row["index"] = static_cast<int>(index);
+                if (endpoint_collision(starts[index]) || endpoint_collision(goals[index])) {
+                    row["ok"] = false;
+                    row["reason"] = "endpoint_collision";
+                    row["status"] = "endpoint_collision";
+                    row["t_s"] = 0.0;
+                    row["path"] = std::vector<std::vector<double>>{};
+                    query_results.append(row);
+                    continue;
+                }
+                set_problem_query(problem, space, si, starts[index], goals[index], dimension);
+                if (index > 0) {
+                    planner->clearQuery();
+                }
+                planner->setProblemDefinition(problem);
+                planner->setup();
+                const auto query_start = std::chrono::steady_clock::now();
+                ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
+                bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
+                double query_s = ompl_elapsed_s(query_start);
+                if (ok && simplify_time_s > 0.0) {
+                    auto path_ptr = problem->getSolutionPath();
+                    auto geometric_path = std::dynamic_pointer_cast<og::PathGeometric>(path_ptr);
+                    if (geometric_path) {
+                        const auto simplify_start = std::chrono::steady_clock::now();
+                        og::PathSimplifier simplifier(si);
+                        simplifier.simplify(*geometric_path, std::max(0.0, simplify_time_s));
+                        query_s += ompl_elapsed_s(simplify_start);
+                    }
+                }
+                auto path = ok ? path_from_problem_solution(problem, dimension) : std::vector<std::vector<double>>{};
+                if (path.size() < 2) {
+                    ok = false;
+                }
+                row["ok"] = ok;
+                row["reason"] = ok ? "connected" : std::string(status.asString());
+                row["status"] = std::string(status.asString());
+                row["t_s"] = query_s;
+                row["path"] = path;
+                query_results.append(row);
+            }
+            ob::PlannerData planner_data(si);
+            planner->getPlannerData(planner_data);
+            result["ok"] = true;
+            result["planner"] = "OMPL_LazyPRM";
+            result["build_s"] = 0.0;
+            result["total_s"] = ompl_elapsed_s(total_start);
+            result["nodes"] = static_cast<int>(planner_data.numVertices());
+            result["checking_resolution"] = checking_resolution;
+            result["queries"] = query_results;
+            return result;
+        },
+        py::arg("robot"),
+        py::arg("obstacles"),
+        py::arg("starts"),
+        py::arg("goals"),
+        py::arg("query_budget_s") = 2.0,
+        py::arg("segment_step") = 0.05,
+        py::arg("simplify_time_s") = 0.1,
+        py::arg("seed") = 42,
+        py::arg("max_nearest_neighbors") = 32,
+        py::arg("range") = 0.0);
+
     module.def("ompl_bitstar_path",
         [](const rbf::Robot& robot,
            const std::vector<rbf::Obstacle>& obstacles,
@@ -2437,7 +2895,20 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            int seed,
            int samples_per_batch,
            double rewire_factor,
-           bool stop_on_solution_improvement) {
+           bool stop_on_solution_improvement,
+           int use_k_nearest,
+           int pruning,
+           double prune_threshold_fraction,
+           int delay_rewiring_until_initial_solution,
+           int just_in_time_sampling,
+           int drop_samples_on_prune,
+           int approximate_solutions,
+           int strict_queue_ordering,
+           int cascading_rewirings,
+           double initial_inflation_factor,
+           double inflation_scaling_parameter,
+           double truncation_scaling_parameter,
+           int allowed_failed_sampling_attempts) {
             namespace ob = ompl::base;
             namespace og = ompl::geometric;
             ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
@@ -2484,18 +2955,45 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             setup.setOptimizationObjective(std::make_shared<ob::PathLengthOptimizationObjective>(si));
             auto planner = std::make_shared<SeededBITstar>(si);
             planner->setLocalSeed(mix_seed(base_seed, 0x42495450U));
-            if (samples_per_batch > 0) {
-                planner->setSamplesPerBatch(static_cast<unsigned int>(samples_per_batch));
-            }
-            if (rewire_factor > 0.0) {
-                planner->setRewireFactor(rewire_factor);
-            }
-            planner->setStopOnSolnImprovement(stop_on_solution_improvement);
+            configure_bitstar_planner(
+                planner,
+                samples_per_batch,
+                rewire_factor,
+                stop_on_solution_improvement,
+                use_k_nearest,
+                pruning,
+                prune_threshold_fraction,
+                delay_rewiring_until_initial_solution,
+                just_in_time_sampling,
+                drop_samples_on_prune,
+                approximate_solutions,
+                strict_queue_ordering,
+                cascading_rewirings,
+                initial_inflation_factor,
+                inflation_scaling_parameter,
+                truncation_scaling_parameter,
+                allowed_failed_sampling_attempts);
             setup.setPlanner(planner);
             const double timeout_s = std::max(0.0, timeout_ms) / 1000.0;
-            const double ptc_interval_s = std::max(1e-3, std::min(0.05, timeout_s / 20.0));
-            ob::PlannerStatus status = setup.solve(ob::timedPlannerTerminationCondition(timeout_s, ptc_interval_s));
-            bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
+            const double solve_slice_s = 0.10;
+            ob::PlannerStatus status = ob::PlannerStatus::UNKNOWN;
+            bool exact_solution = false;
+            while (ompl_elapsed_s(t0) < timeout_s - 1e-6) {
+                const double remaining_s = std::max(1e-5, timeout_s - ompl_elapsed_s(t0));
+                const double slice_s = std::min(solve_slice_s, remaining_s);
+                const double ptc_interval_s = std::max(1e-3, std::min(0.01, slice_s / 10.0));
+                const auto before_s = ompl_elapsed_s(t0);
+                status = setup.solve(ob::timedPlannerTerminationCondition(slice_s, ptc_interval_s));
+                exact_solution = exact_solution || status == ob::PlannerStatus::EXACT_SOLUTION;
+                if (stop_on_solution_improvement && setup.haveSolutionPath()) {
+                    break;
+                }
+                // Guard against planners that do not make observable progress or overshoot a slice.
+                if (ompl_elapsed_s(t0) <= before_s + 1e-7) {
+                    break;
+                }
+            }
+            bool ok = exact_solution || setup.haveSolutionPath();
             if (ok && simplify_time_s > 0.0) {
                 setup.simplifySolution(simplify_time_s);
             }
@@ -2514,7 +3012,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             result["ok"] = ok;
             result["reason"] = ok ? "connected" : std::string(status.asString());
             result["status"] = std::string(status.asString());
-            result["exact_solution"] = status == ob::PlannerStatus::EXACT_SOLUTION;
+            result["exact_solution"] = exact_solution;
             result["t_s"] = elapsed_before_diagnostics_s;
             result["path"] = path;
             result["nodes"] = 0;
@@ -2534,7 +3032,20 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("seed") = 42,
         py::arg("samples_per_batch") = -1,
         py::arg("rewire_factor") = -1.0,
-        py::arg("stop_on_solution_improvement") = true);
+        py::arg("stop_on_solution_improvement") = true,
+        py::arg("use_k_nearest") = -1,
+        py::arg("pruning") = -1,
+        py::arg("prune_threshold_fraction") = -1.0,
+        py::arg("delay_rewiring_until_initial_solution") = -1,
+        py::arg("just_in_time_sampling") = -1,
+        py::arg("drop_samples_on_prune") = -1,
+        py::arg("approximate_solutions") = -1,
+        py::arg("strict_queue_ordering") = -1,
+        py::arg("cascading_rewirings") = -1,
+        py::arg("initial_inflation_factor") = -1.0,
+        py::arg("inflation_scaling_parameter") = -1.0,
+        py::arg("truncation_scaling_parameter") = -1.0,
+        py::arg("allowed_failed_sampling_attempts") = -1);
 
     module.def("ompl_bitstar_trace",
         [](const rbf::Robot& robot,
@@ -2547,7 +3058,20 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            int seed,
            int samples_per_batch,
            double rewire_factor,
-           bool stop_on_solution_improvement) {
+           bool stop_on_solution_improvement,
+           int use_k_nearest,
+           int pruning,
+           double prune_threshold_fraction,
+           int delay_rewiring_until_initial_solution,
+           int just_in_time_sampling,
+           int drop_samples_on_prune,
+           int approximate_solutions,
+           int strict_queue_ordering,
+           int cascading_rewirings,
+           double initial_inflation_factor,
+           double inflation_scaling_parameter,
+           double truncation_scaling_parameter,
+           int allowed_failed_sampling_attempts) {
             namespace ob = ompl::base;
             namespace og = ompl::geometric;
             ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
@@ -2597,13 +3121,24 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             setup.setOptimizationObjective(std::make_shared<ob::PathLengthOptimizationObjective>(si));
             auto planner = std::make_shared<SeededBITstar>(si);
             planner->setLocalSeed(mix_seed(base_seed, 0x42495450U));
-            if (samples_per_batch > 0) {
-                planner->setSamplesPerBatch(static_cast<unsigned int>(samples_per_batch));
-            }
-            if (rewire_factor > 0.0) {
-                planner->setRewireFactor(rewire_factor);
-            }
-            planner->setStopOnSolnImprovement(stop_on_solution_improvement);
+            configure_bitstar_planner(
+                planner,
+                samples_per_batch,
+                rewire_factor,
+                stop_on_solution_improvement,
+                use_k_nearest,
+                pruning,
+                prune_threshold_fraction,
+                delay_rewiring_until_initial_solution,
+                just_in_time_sampling,
+                drop_samples_on_prune,
+                approximate_solutions,
+                strict_queue_ordering,
+                cascading_rewirings,
+                initial_inflation_factor,
+                inflation_scaling_parameter,
+                truncation_scaling_parameter,
+                allowed_failed_sampling_attempts);
             setup.setPlanner(planner);
 
             const double timeout_s = std::max(0.0, timeout_ms) / 1000.0;
@@ -2696,7 +3231,20 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("seed") = 42,
         py::arg("samples_per_batch") = -1,
         py::arg("rewire_factor") = -1.0,
-        py::arg("stop_on_solution_improvement") = false);
+        py::arg("stop_on_solution_improvement") = false,
+        py::arg("use_k_nearest") = -1,
+        py::arg("pruning") = -1,
+        py::arg("prune_threshold_fraction") = -1.0,
+        py::arg("delay_rewiring_until_initial_solution") = -1,
+        py::arg("just_in_time_sampling") = -1,
+        py::arg("drop_samples_on_prune") = -1,
+        py::arg("approximate_solutions") = -1,
+        py::arg("strict_queue_ordering") = -1,
+        py::arg("cascading_rewirings") = -1,
+        py::arg("initial_inflation_factor") = -1.0,
+        py::arg("inflation_scaling_parameter") = -1.0,
+        py::arg("truncation_scaling_parameter") = -1.0,
+        py::arg("allowed_failed_sampling_attempts") = -1);
 
     module.def("check_config_collision",
         [](const rbf::Robot& robot,

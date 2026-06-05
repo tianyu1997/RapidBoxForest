@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <queue>
 #include <stdexcept>
 #include <string>
@@ -97,6 +98,70 @@ BoxNode make_box_from_intervals(const std::vector<Interval>& intervals,
 	return box;
 }
 
+bool should_prune_by_overlap(const LeafSweepConfig& config,
+							 int depth,
+							 const OracleValidationDetail& detail) {
+	if (config.collision_overlap_prune_min_depth < 0 ||
+		depth < config.collision_overlap_prune_min_depth) {
+		return false;
+	}
+	if (config.collision_overlap_prune_threshold > 0.0 &&
+		detail.aabb_overlap_depth >= config.collision_overlap_prune_threshold) {
+		return true;
+	}
+	return config.collision_overlap_prune_ratio_threshold > 0.0 &&
+		detail.aabb_overlap_volume_ratio >= config.collision_overlap_prune_ratio_threshold;
+}
+
+bool intervals_overlap_domain(const std::vector<Interval>& intervals,
+							  const std::vector<Interval>& domain,
+							  double tolerance = 0.0) {
+	if (domain.empty()) {
+		return true;
+	}
+	if (intervals.size() != domain.size()) {
+		return false;
+	}
+	for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
+		if (intervals[dim].hi < domain[dim].lo - tolerance ||
+			intervals[dim].lo > domain[dim].hi + tolerance) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool clip_intervals_to_domain(std::vector<Interval>& intervals,
+							  const std::vector<Interval>& domain) {
+	if (domain.empty()) {
+		return !intervals.empty();
+	}
+	if (intervals.size() != domain.size()) {
+		return false;
+	}
+	for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
+		intervals[dim].lo = std::max(intervals[dim].lo, domain[dim].lo);
+		intervals[dim].hi = std::min(intervals[dim].hi, domain[dim].hi);
+		if (intervals[dim].lo > intervals[dim].hi) {
+			return false;
+		}
+	}
+	return true;
+}
+
+bool intervals_same_exact(const std::vector<Interval>& lhs,
+						  const std::vector<Interval>& rhs) {
+	if (lhs.size() != rhs.size()) {
+		return false;
+	}
+	for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
+		if (lhs[dim].lo != rhs[dim].lo || lhs[dim].hi != rhs[dim].hi) {
+			return false;
+		}
+	}
+	return true;
+}
+
 Obstacle aggregate_obstacles(const std::vector<Obstacle>& obstacles) {
 	if (obstacles.empty()) {
 		return {};
@@ -178,6 +243,27 @@ public:
 private:
 	DatabaseBoxOracle& oracle_;
 	bool previous_ = true;
+};
+
+class ScopedOracleFullOverlapStats {
+public:
+	ScopedOracleFullOverlapStats(DatabaseBoxOracle& oracle, bool enabled)
+		: oracle_(oracle), previous_(oracle.validation_config().collect_full_overlap_stats) {
+		if (enabled) {
+			oracle_.set_collect_full_overlap_stats(true);
+		}
+	}
+
+	~ScopedOracleFullOverlapStats() {
+		oracle_.set_collect_full_overlap_stats(previous_);
+	}
+
+	ScopedOracleFullOverlapStats(const ScopedOracleFullOverlapStats&) = delete;
+	ScopedOracleFullOverlapStats& operator=(const ScopedOracleFullOverlapStats&) = delete;
+
+private:
+	DatabaseBoxOracle& oracle_;
+	bool previous_ = false;
 };
 
 }  // namespace
@@ -264,6 +350,10 @@ LeafSweepResult LeafSweepGrower::sweep(const std::vector<Obstacle>& obstacles,
 
 	LeafSweepResult result;
 	ScopedOracleEnvelopeCache envelope_cache_scope(oracle_, false);
+	const bool collect_full_overlap_stats =
+		config_.collision_overlap_prune_ratio_threshold > 0.0 &&
+		config_.collision_overlap_prune_min_depth >= 0;
+	ScopedOracleFullOverlapStats overlap_stats_scope(oracle_, collect_full_overlap_stats);
 	const auto total_start = Clock::now();
 	oracle_.set_scene(Scene(obstacles));
 	set_value(result, context, "leaf_sweep.start_depth", static_cast<double>(start_depth));
@@ -272,6 +362,8 @@ LeafSweepResult LeafSweepGrower::sweep(const std::vector<Obstacle>& obstacles,
 	set_value(result, context, "leaf_sweep.executor_threads", static_cast<double>(context.executor().n_threads()));
 	set_value(result, context, "leaf_sweep.validation_batch_size",
 			  static_cast<double>(std::max(1, config_.validation_batch_size)));
+	set_value(result, context, "leaf_sweep.collect_full_overlap_stats",
+			  collect_full_overlap_stats ? 1.0 : 0.0);
 	if (config_.pre_split_to_max_depth) {
 		const auto pre_split_start = Clock::now();
 		const bool ok = oracle_.database().ensure_depth(effective_max_depth);
@@ -404,19 +496,35 @@ std::vector<LeafSweepGrower::PendingNode> LeafSweepGrower::materialize_start_fro
 	LeafSweepResult& result) {
 	(void)max_depth;
 	std::vector<PendingNode> frontier;
+	const auto planning_domain = oracle_.planning_intervals();
+	auto node_overlaps_planning = [&](const PendingNode& item) {
+		if (planning_domain.empty()) {
+			return true;
+		}
+		const auto intervals = item.intervals.empty() ? oracle_.node_intervals(item.node) : item.intervals;
+		return intervals_overlap_domain(intervals, planning_domain, 0.0);
+	};
 	if (config_.use_virtual_topology) {
 		for (const auto& intervals : oracle_.native_root_interval_copies()) {
 			PendingNode root;
 			root.node = oracle_.root_node();
 			root.changed_dim = -1;
 			root.intervals = intervals;
-			frontier.push_back(std::move(root));
+			if (intervals_overlap_domain(root.intervals, planning_domain, 0.0)) {
+				frontier.push_back(std::move(root));
+			} else {
+				add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+			}
 		}
 	} else {
 		PendingNode root;
 		root.node = oracle_.root_node();
 		root.changed_dim = -1;
-		frontier.push_back(std::move(root));
+		if (node_overlaps_planning(root)) {
+			frontier.push_back(std::move(root));
+		} else {
+			add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+		}
 	}
 	for (int depth = 0; depth < start_depth; ++depth) {
 		std::vector<PendingNode> next;
@@ -440,8 +548,16 @@ std::vector<LeafSweepGrower::PendingNode> LeafSweepGrower::materialize_start_fro
 					continue;
 				}
 				add_counter(result, context, "leaf_sweep.initialize_splits");
-				next.push_back(std::move(left));
-				next.push_back(std::move(right));
+				if (intervals_overlap_domain(left.intervals, planning_domain, 0.0)) {
+					next.push_back(std::move(left));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
+				if (intervals_overlap_domain(right.intervals, planning_domain, 0.0)) {
+					next.push_back(std::move(right));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
 				continue;
 			}
 			if (oracle_.is_leaf(item.node)) {
@@ -466,13 +582,21 @@ std::vector<LeafSweepGrower::PendingNode> LeafSweepGrower::materialize_start_fro
 				PendingNode child;
 				child.node = left;
 				child.changed_dim = split_dim;
-				next.push_back(std::move(child));
+				if (node_overlaps_planning(child)) {
+					next.push_back(std::move(child));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
 			}
 			if (valid_oracle_node(right)) {
 				PendingNode child;
 				child.node = right;
 				child.changed_dim = split_dim;
-				next.push_back(std::move(child));
+				if (node_overlaps_planning(child)) {
+					next.push_back(std::move(child));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
 			}
 		}
 		frontier = std::move(next);
@@ -489,6 +613,7 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 								  StageContext& context,
 								  LeafSweepResult& result) {
 	oracle_.set_scene(Scene(group.result.obstacles));
+	const auto planning_domain = oracle_.planning_intervals();
 	std::vector<PendingNode> pending = start_frontier;
 	std::size_t index = 0;
 	int next_free_id = 0;
@@ -497,6 +622,9 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 		struct ValidationOutcome {
 			BoxValidation validation = BoxValidation::Unknown;
 			OracleValidationDetail detail;
+			std::vector<Interval> commit_intervals;
+			bool outside_planning_domain = false;
+			bool clipped_to_planning_domain = false;
 			bool exception = false;
 		};
 		const int n_workers = std::max(1, context.executor().n_threads());
@@ -506,6 +634,9 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			auto worker_validation_config = oracle_.validation_config();
 			worker_validation_config.store_endpoint_evidence_cache = false;
 			worker_validation_config.external_evidence_backfill_active = false;
+			worker_validation_config.collect_full_overlap_stats =
+				config_.collision_overlap_prune_ratio_threshold > 0.0 &&
+				config_.collision_overlap_prune_min_depth >= 0;
 			auto worker_oracle = std::make_unique<DatabaseBoxOracle>(oracle_.robot(),
 																	 oracle_.database(),
 																	 oracle_.scene(),
@@ -526,14 +657,21 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			if (context.should_stop()) {
 				result.deadline_reached = context.deadline().expired();
 				add_counter(result, context, "leaf_sweep.group_deadline");
-				for (; index < pending.size(); ++index) {
-					if (!valid_oracle_node(pending[index].node)) {
-						continue;
-					}
-					group.collision_nodes.push_back(pending[index].node);
-					group.result.collision_boxes.push_back(
-						make_box_from_intervals(pending[index].intervals,
-												pending[index].node,
+					for (; index < pending.size(); ++index) {
+						if (!valid_oracle_node(pending[index].node)) {
+							continue;
+						}
+						auto commit_intervals = pending[index].intervals.empty()
+							? oracle_.node_intervals(pending[index].node)
+							: pending[index].intervals;
+						if (!clip_intervals_to_domain(commit_intervals, planning_domain)) {
+							add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+							continue;
+						}
+						group.collision_nodes.push_back(pending[index].node);
+						group.result.collision_boxes.push_back(
+							make_box_from_intervals(commit_intervals,
+													pending[index].node,
 												next_collision_id++,
 												BoxSafetyStatus::Occupied));
 				}
@@ -552,7 +690,19 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 				const PendingNode& item = pending[batch_begin + static_cast<std::size_t>(local_index)];
 				auto& outcome = outcomes[static_cast<std::size_t>(local_index)];
 				try {
-					outcome.validation = worker_oracle.validate_node(item.node, item.intervals, item.changed_dim);
+					const auto intervals = item.intervals.empty() ? worker_oracle.node_intervals(item.node) : item.intervals;
+					if (!intervals_overlap_domain(intervals, planning_domain, 0.0)) {
+						outcome.outside_planning_domain = true;
+						return;
+					}
+					outcome.commit_intervals = intervals;
+					if (!clip_intervals_to_domain(outcome.commit_intervals, planning_domain)) {
+						outcome.outside_planning_domain = true;
+						outcome.commit_intervals.clear();
+						return;
+					}
+					outcome.clipped_to_planning_domain = !intervals_same_exact(outcome.commit_intervals, intervals);
+					outcome.validation = worker_oracle.validate_node(item.node, intervals, item.changed_dim);
 					outcome.detail = worker_oracle.last_validation_detail();
 				} catch (...) {
 					outcome.validation = BoxValidation::Unknown;
@@ -567,6 +717,13 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 					add_counter(result, context, "leaf_sweep.invalid_pending_nodes");
 					continue;
 				}
+				if (outcome.outside_planning_domain) {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+					continue;
+				}
+				if (outcome.clipped_to_planning_domain) {
+					add_counter(result, context, "leaf_sweep.valid_domain_clipped_boxes");
+				}
 				if (outcome.exception) {
 					add_counter(result, context, "leaf_sweep.validation_exceptions");
 				}
@@ -574,7 +731,7 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 				if (outcome.validation == BoxValidation::Free) {
 					group.free_nodes.push_back(item.node);
 					group.result.free_boxes.push_back(
-						make_box_from_intervals(item.intervals,
+						make_box_from_intervals(outcome.commit_intervals,
 												item.node,
 												next_free_id++,
 												outcome.detail.safety_status,
@@ -582,10 +739,20 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 					continue;
 				}
 				const int depth = virtual_depth(item.node);
+				if (should_prune_by_overlap(config_, depth, outcome.detail)) {
+					add_counter(result, context, "leaf_sweep.collision_overlap_pruned");
+					group.collision_nodes.push_back(item.node);
+					group.result.collision_boxes.push_back(
+						make_box_from_intervals(outcome.commit_intervals,
+												item.node,
+												next_collision_id++,
+												BoxSafetyStatus::Occupied));
+					continue;
+				}
 				if (depth >= max_depth) {
 					group.collision_nodes.push_back(item.node);
 					group.result.collision_boxes.push_back(
-						make_box_from_intervals(item.intervals,
+						make_box_from_intervals(outcome.commit_intervals,
 												item.node,
 												next_collision_id++,
 												BoxSafetyStatus::Occupied));
@@ -597,16 +764,24 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 					add_counter(result, context, "leaf_sweep.split_failures");
 					group.collision_nodes.push_back(item.node);
 					group.result.collision_boxes.push_back(
-						make_box_from_intervals(item.intervals,
+						make_box_from_intervals(outcome.commit_intervals,
 												item.node,
 												next_collision_id++,
 												BoxSafetyStatus::Occupied));
 					continue;
+					}
+					add_counter(result, context, "leaf_sweep.splits");
+					if (intervals_overlap_domain(left.intervals, planning_domain, 0.0)) {
+						pending.push_back(std::move(left));
+					} else {
+						add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+					}
+					if (intervals_overlap_domain(right.intervals, planning_domain, 0.0)) {
+						pending.push_back(std::move(right));
+					} else {
+						add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+					}
 				}
-				add_counter(result, context, "leaf_sweep.splits");
-				pending.push_back(std::move(left));
-				pending.push_back(std::move(right));
-			}
 			index = batch_end;
 		}
 		for (const auto& worker_oracle : worker_oracles) {
@@ -624,6 +799,26 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 						static_cast<double>(counters.materialization_reused_external_evidence));
 			add_counter(result,
 						context,
+						"leaf_sweep.worker_oracle.materialization_external_exact_hits",
+						static_cast<double>(counters.materialization_external_exact_hits));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.materialization_external_exact_misses",
+						static_cast<double>(counters.materialization_external_exact_misses));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.materialization_external_live_fallbacks",
+						static_cast<double>(counters.materialization_external_live_fallbacks));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.materialization_external_maybe_live_retries",
+						static_cast<double>(counters.materialization_external_maybe_live_retries));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.materialization_external_maybe_live_retry_free",
+						static_cast<double>(counters.materialization_external_maybe_live_retry_free));
+			add_counter(result,
+						context,
 						"leaf_sweep.worker_oracle.validate_node_total_time_us",
 						counters.validate_node_total_time_us);
 			add_counter(result,
@@ -638,6 +833,62 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 						context,
 						"leaf_sweep.worker_oracle.materialization_envelope_collision_time_us",
 						counters.materialization_envelope_collision_time_us);
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_queries",
+						static_cast<double>(counters.envelope_collision_queries));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_free",
+						static_cast<double>(counters.envelope_collision_free));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_maybe",
+						static_cast<double>(counters.envelope_collision_maybe));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_envelope_aabb_tests",
+						static_cast<double>(counters.envelope_collision_envelope_aabb_tests));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_envelope_aabb_rejects",
+						static_cast<double>(counters.envelope_collision_envelope_aabb_rejects));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_link_union_aabb_tests",
+						static_cast<double>(counters.envelope_collision_link_union_aabb_tests));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_link_union_aabb_rejects",
+						static_cast<double>(counters.envelope_collision_link_union_aabb_rejects));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_link_aabb_tests",
+						static_cast<double>(counters.envelope_collision_link_aabb_tests));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_link_aabb_rejects",
+						static_cast<double>(counters.envelope_collision_link_aabb_rejects));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_kdop_tests",
+						static_cast<double>(counters.envelope_collision_kdop_tests));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_kdop_rejects",
+						static_cast<double>(counters.envelope_collision_kdop_rejects));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_gjk_tests",
+						static_cast<double>(counters.envelope_collision_gjk_tests));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_gjk_rejects",
+						static_cast<double>(counters.envelope_collision_gjk_rejects));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.envelope_collision_gjk_iterations",
+						static_cast<double>(counters.envelope_collision_gjk_iterations));
 		}
 		add_counter(result, context, "leaf_sweep.group_free_boxes",
 					static_cast<double>(group.result.free_boxes.size()));
@@ -647,96 +898,127 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 	}
 	while (index < pending.size()) {
 		const PendingNode item = pending[index++];
-		if (context.should_stop()) {
-			result.deadline_reached = context.deadline().expired();
-			add_counter(result, context, "leaf_sweep.group_deadline");
-			if (valid_oracle_node(item.node)) {
-				group.collision_nodes.push_back(item.node);
-				group.result.collision_boxes.push_back(
-					item.intervals.empty()
-						? make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied)
-						: make_box_from_intervals(item.intervals,
-												  item.node,
-												  next_collision_id++,
-												  BoxSafetyStatus::Occupied));
-			}
-			for (; index < pending.size(); ++index) {
-				if (!valid_oracle_node(pending[index].node)) {
-					continue;
+			if (context.should_stop()) {
+				result.deadline_reached = context.deadline().expired();
+				add_counter(result, context, "leaf_sweep.group_deadline");
+				if (valid_oracle_node(item.node)) {
+					auto commit_intervals = item.intervals.empty() ? oracle_.node_intervals(item.node) : item.intervals;
+					if (clip_intervals_to_domain(commit_intervals, planning_domain)) {
+						group.collision_nodes.push_back(item.node);
+						group.result.collision_boxes.push_back(
+							make_box_from_intervals(commit_intervals,
+													item.node,
+													next_collision_id++,
+													BoxSafetyStatus::Occupied));
+					} else {
+						add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+					}
 				}
-				group.collision_nodes.push_back(pending[index].node);
-				group.result.collision_boxes.push_back(
-					pending[index].intervals.empty()
-						? make_box(oracle_, pending[index].node, next_collision_id++, BoxSafetyStatus::Occupied)
-						: make_box_from_intervals(pending[index].intervals,
-												  pending[index].node,
-												  next_collision_id++,
-												  BoxSafetyStatus::Occupied));
+				for (; index < pending.size(); ++index) {
+					if (!valid_oracle_node(pending[index].node)) {
+						continue;
+					}
+					auto commit_intervals = pending[index].intervals.empty()
+						? oracle_.node_intervals(pending[index].node)
+						: pending[index].intervals;
+					if (clip_intervals_to_domain(commit_intervals, planning_domain)) {
+						group.collision_nodes.push_back(pending[index].node);
+						group.result.collision_boxes.push_back(
+							make_box_from_intervals(commit_intervals,
+													pending[index].node,
+													next_collision_id++,
+													BoxSafetyStatus::Occupied));
+					} else {
+						add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+					}
+				}
+				break;
 			}
-			break;
-		}
 		if (!valid_oracle_node(item.node)) {
 			add_counter(result, context, "leaf_sweep.invalid_pending_nodes");
 			continue;
-		}
-		const auto intervals = item.intervals.empty() ? oracle_.node_intervals(item.node) : item.intervals;
-		BoxValidation validation = BoxValidation::Unknown;
-		try {
-			validation = oracle_.validate_node(item.node, intervals, item.changed_dim);
+			}
+			const auto intervals = item.intervals.empty() ? oracle_.node_intervals(item.node) : item.intervals;
+			if (!intervals_overlap_domain(intervals, planning_domain, 0.0)) {
+				add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+				continue;
+			}
+			auto commit_intervals = intervals;
+			if (!clip_intervals_to_domain(commit_intervals, planning_domain)) {
+				add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+				continue;
+			}
+			const bool clipped_to_planning_domain = !intervals_same_exact(commit_intervals, intervals);
+			if (clipped_to_planning_domain) {
+				add_counter(result, context, "leaf_sweep.valid_domain_clipped_boxes");
+			}
+			BoxValidation validation = BoxValidation::Unknown;
+			try {
+				validation = oracle_.validate_node(item.node, intervals, item.changed_dim);
 		} catch (...) {
 			add_counter(result, context, "leaf_sweep.validation_exceptions");
 			validation = BoxValidation::Unknown;
 		}
+		const auto detail = oracle_.last_validation_detail();
 		add_counter(result, context, "leaf_sweep.node_validations");
-		if (validation == BoxValidation::Free) {
-			const auto detail = oracle_.last_validation_detail();
-			group.free_nodes.push_back(item.node);
-			group.result.free_boxes.push_back(
-				item.intervals.empty()
-					? make_box(oracle_,
-							   item.node,
-							   next_free_id++,
-							   detail.safety_status,
-							   detail.strict_audit_required)
-					: make_box_from_intervals(item.intervals,
-											  item.node,
-											  next_free_id++,
-											  detail.safety_status,
-											  detail.strict_audit_required));
-			continue;
-		}
+			if (validation == BoxValidation::Free) {
+				group.free_nodes.push_back(item.node);
+				group.result.free_boxes.push_back(
+					make_box_from_intervals(commit_intervals,
+											item.node,
+											next_free_id++,
+											detail.safety_status,
+											detail.strict_audit_required));
+				continue;
+			}
 
 		const int depth = config_.use_virtual_topology ? virtual_depth(item.node) : oracle_.depth(item.node);
-		if (depth >= max_depth) {
-			group.collision_nodes.push_back(item.node);
-			group.result.collision_boxes.push_back(
-				item.intervals.empty()
-					? make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied)
-					: make_box_from_intervals(item.intervals,
-											  item.node,
-											  next_collision_id++,
-											  BoxSafetyStatus::Occupied));
-			continue;
-		}
-
-		if (config_.use_virtual_topology) {
-			PendingNode left;
-			PendingNode right;
-			if (!virtual_split_node(item, depth, left, right)) {
-				add_counter(result, context, "leaf_sweep.split_failures");
+			if (should_prune_by_overlap(config_, depth, detail)) {
+				add_counter(result, context, "leaf_sweep.collision_overlap_pruned");
 				group.collision_nodes.push_back(item.node);
 				group.result.collision_boxes.push_back(
-					make_box_from_intervals(item.intervals,
+					make_box_from_intervals(commit_intervals,
 											item.node,
 											next_collision_id++,
 											BoxSafetyStatus::Occupied));
 				continue;
 			}
-			add_counter(result, context, "leaf_sweep.splits");
-			pending.push_back(std::move(left));
-			pending.push_back(std::move(right));
-			continue;
-		}
+			if (depth >= max_depth) {
+				group.collision_nodes.push_back(item.node);
+				group.result.collision_boxes.push_back(
+					make_box_from_intervals(commit_intervals,
+											item.node,
+											next_collision_id++,
+											BoxSafetyStatus::Occupied));
+				continue;
+			}
+
+		if (config_.use_virtual_topology) {
+			PendingNode left;
+			PendingNode right;
+			if (!virtual_split_node(item, depth, left, right)) {
+					add_counter(result, context, "leaf_sweep.split_failures");
+					group.collision_nodes.push_back(item.node);
+					group.result.collision_boxes.push_back(
+						make_box_from_intervals(commit_intervals,
+												item.node,
+											next_collision_id++,
+											BoxSafetyStatus::Occupied));
+				continue;
+				}
+				add_counter(result, context, "leaf_sweep.splits");
+				if (intervals_overlap_domain(left.intervals, planning_domain, 0.0)) {
+					pending.push_back(std::move(left));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
+				if (intervals_overlap_domain(right.intervals, planning_domain, 0.0)) {
+					pending.push_back(std::move(right));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
+				continue;
+			}
 
 		if (oracle_.is_leaf(item.node)) {
 			SplitNodeResult split;
@@ -750,30 +1032,41 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			} catch (...) {
 				add_counter(result, context, "leaf_sweep.split_exceptions");
 			}
-			if (!split.split) {
-				add_counter(result, context, "leaf_sweep.split_failures");
-				group.collision_nodes.push_back(item.node);
-				group.result.collision_boxes.push_back(
-					make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied));
-				continue;
-			}
+				if (!split.split) {
+					add_counter(result, context, "leaf_sweep.split_failures");
+					group.collision_nodes.push_back(item.node);
+					group.result.collision_boxes.push_back(
+						make_box_from_intervals(commit_intervals,
+												item.node,
+												next_collision_id++,
+												BoxSafetyStatus::Occupied));
+					continue;
+				}
 			add_counter(result, context, "leaf_sweep.splits");
 		}
 		const int split_dim = oracle_.split_dim(item.node);
 		const OracleNodeId left = oracle_.left_child(item.node);
 		const OracleNodeId right = oracle_.right_child(item.node);
 		if (valid_oracle_node(left)) {
-			PendingNode child;
-			child.node = left;
-			child.changed_dim = split_dim;
-			pending.push_back(std::move(child));
-		}
-		if (valid_oracle_node(right)) {
-			PendingNode child;
-			child.node = right;
-			child.changed_dim = split_dim;
-			pending.push_back(std::move(child));
-		}
+				PendingNode child;
+				child.node = left;
+				child.changed_dim = split_dim;
+				if (intervals_overlap_domain(oracle_.node_intervals(child.node), planning_domain, 0.0)) {
+					pending.push_back(std::move(child));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
+			}
+			if (valid_oracle_node(right)) {
+				PendingNode child;
+				child.node = right;
+				child.changed_dim = split_dim;
+				if (intervals_overlap_domain(oracle_.node_intervals(child.node), planning_domain, 0.0)) {
+					pending.push_back(std::move(child));
+				} else {
+					add_counter(result, context, "leaf_sweep.valid_domain_pruned_frontier");
+				}
+			}
 	}
 	add_counter(result, context, "leaf_sweep.group_free_boxes",
 				static_cast<double>(group.result.free_boxes.size()));
@@ -818,6 +1111,17 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 		result.collision_boxes.push_back(box);
 		result.collision_box_obstacle_indices.push_back(obstacle_indices_for_mask(blocker_mask));
 	};
+	const auto planning_domain = oracle_.planning_intervals();
+	auto make_clipped_box = [&](OracleNodeId node,
+								int id,
+								BoxSafetyStatus status) -> std::optional<BoxNode> {
+		auto intervals = oracle_.node_intervals(node);
+		if (!clip_intervals_to_domain(intervals, planning_domain)) {
+			add_counter(result, context, "leaf_sweep.valid_domain_pruned_boxes");
+			return std::nullopt;
+		}
+		return make_box_from_intervals(intervals, node, id, status);
+	};
 
 	struct ComposeNode {
 		OracleNodeId node = kInvalidOracleNodeId;
@@ -854,41 +1158,54 @@ void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 		}
 		const int depth = oracle_.depth(item.node);
 		if (depth < start_depth) {
-			if (oracle_.is_leaf(item.node)) {
-				add_counter(result, context, "leaf_sweep.compose_shallow_leaf_collision");
-				const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
-				push_collision_box(
-					make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
-					blocker_mask);
-				continue;
-			}
+				if (oracle_.is_leaf(item.node)) {
+					add_counter(result, context, "leaf_sweep.compose_shallow_leaf_collision");
+					const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
+					if (auto box = make_clipped_box(item.node,
+													next_collision_id,
+													BoxSafetyStatus::Occupied)) {
+						++next_collision_id;
+						push_collision_box(*box, blocker_mask);
+					}
+					continue;
+				}
 			const int split_dim = oracle_.split_dim(item.node);
 			queue.push({oracle_.left_child(item.node), split_dim, item.free_mask, item.collision_mask});
 			queue.push({oracle_.right_child(item.node), split_dim, item.free_mask, item.collision_mask});
 			continue;
 		}
 
-		if (item.collision_mask != 0) {
-			push_collision_box(
-				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
-				item.collision_mask);
-			continue;
-		}
+			if (item.collision_mask != 0) {
+				if (auto box = make_clipped_box(item.node,
+												next_collision_id,
+												BoxSafetyStatus::Occupied)) {
+					++next_collision_id;
+					push_collision_box(*box, item.collision_mask);
+				}
+				continue;
+			}
 
-		if (item.free_mask == all_free_mask) {
-			result.free_boxes.push_back(
-				make_box(oracle_, item.node, next_free_id++, BoxSafetyStatus::CertifiedFree));
-			continue;
-		}
+			if (item.free_mask == all_free_mask) {
+				if (auto box = make_clipped_box(item.node,
+												next_free_id,
+												BoxSafetyStatus::CertifiedFree)) {
+					++next_free_id;
+					result.free_boxes.push_back(*box);
+				}
+				continue;
+			}
 
 		if (depth >= max_depth || oracle_.is_leaf(item.node)) {
-			add_counter(result, context, "leaf_sweep.compose_unclassified_collision");
-			const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
-			push_collision_box(
-				make_box(oracle_, item.node, next_collision_id++, BoxSafetyStatus::Occupied),
-				blocker_mask);
-			continue;
-		}
+				add_counter(result, context, "leaf_sweep.compose_unclassified_collision");
+				const std::uint64_t blocker_mask = item.collision_mask | (all_free_mask & ~item.free_mask);
+				if (auto box = make_clipped_box(item.node,
+												next_collision_id,
+												BoxSafetyStatus::Occupied)) {
+					++next_collision_id;
+					push_collision_box(*box, blocker_mask);
+				}
+				continue;
+			}
 
 		const int split_dim = oracle_.split_dim(item.node);
 		queue.push({oracle_.left_child(item.node), split_dim, item.free_mask, item.collision_mask});

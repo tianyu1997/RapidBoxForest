@@ -20,6 +20,14 @@ to produce a reproducible evidence chain that supports the manuscript claims.
 5. Shelf and random planning rows use the current leaf-sweep + RRT grower SBF
    backend. Segment bridges are fallback witnesses and must be reported
    separately from box-overlap graph edges.
+6. Depth notation is LECT-tree depth. A label such as `d23` always refers to
+   the depth in the cache's canonical tree and split schedule, not to any
+   native/all-sector planning tree. Leaf sweep depths, free-box-finder depths,
+   connector/paving depths, and `rbf_max_depth` are also LECT node depths in
+   the active tree that generates or certifies boxes. Native query endpoints,
+   paths, and final audit remain in native joint space; canonical mapping is an
+   internal LECT evidence lookup operation only. Planner depths are reported
+   separately and must not be folded into the cache depth label.
 
 ## Registered RBF Default
 
@@ -41,7 +49,9 @@ shared algorithm profile `exp04_leaf_sweep_rrt_b100_d34` from
 
 Shelf+IIWA baseline rows additionally use the profile
 `exp04_leaf_sweep_rrt_d23_b100_d34`, which enables the fixed d23 read-only
-external evidence cache and the restricted Shelf+IIWA canonical root. Random
+external evidence cache and the restricted Shelf+IIWA canonical root. The `d23`
+cache depth is measured in that canonical LECT tree; all Shelf query endpoints
+and final-audit paths are native joint-space values. Random
 multi-robot rows use the same algorithm defaults but must use robot-local roots
 and must not reuse Shelf anchors or the Shelf d23 cache. The 100-box default is
 registered because the Exp.4 full run over seeds `0..7` passed all five

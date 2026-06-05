@@ -1,7 +1,0 @@
-
-Wrote /tmp/verify_chain_pave_ast/gap_fill_result.json
-
-=== aggregate ===
-fill=False  mean coverage=   nan%  mean boxes=nan
-fill=True   mean coverage=   nan%  mean boxes=nan
-现在证实birrt segment在chain pave已经可以实现box only connector。证明是可以连通的，剩下的就是优化grower策略。现在请优化grower直接通过生长实现box only connector而不依赖birrt segment引导，在尽量浅的深度下，用尽量少的时间连通。

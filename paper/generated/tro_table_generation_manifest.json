@@ -2,46 +2,46 @@
   "artifact": "tro2026_paper_assets",
   "assets": {
     "fig_tro_random_tradeoff.pdf": {
-      "caption": "Random-scene RBF budget trade-off curve.",
+      "caption": "Random-scene measured-time trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "1adea523c373cd43916ded71b820aa0b7fb71106fc0065bec49f93907f932b5a"
+      "sha256": "7096b48aaa69f3f27f80fc59674b885750ca132aafd263508a8bd2a2fb2046d3"
     },
     "fig_tro_random_tradeoff.png": {
-      "caption": "Random-scene RBF budget trade-off curve preview.",
+      "caption": "Random-scene measured-time trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.png",
       "placeholder": false,
-      "sha256": "413ecb0feed0f4f4e709ec2a7b0f5f1422c0076611261c96dfc79342a7bf546c"
+      "sha256": "44753eb2acc4b98db8c8ce57f5fa3a27114323a80396fab3ed6d2999d05d775f"
     },
     "fig_tro_shelf_cross_tradeoff.pdf": {
-      "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context.",
+      "caption": "Shelf+IIWA measured-time trade-off with cross-algorithm context.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "cea68e720d9f272cc46dc31a14cd9084adf1ab4a22706195dcae0cb556da8b47"
+      "sha256": "da2fdc1c5cf93b12fc70316daccaaf237cf3f3e6ad868f38c70a67b86d1aaf98"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
-      "caption": "Shelf+IIWA RBF budget trade-off with cross-algorithm context preview.",
+      "caption": "Shelf+IIWA measured-time trade-off with cross-algorithm context preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
       "placeholder": false,
-      "sha256": "a0cc535973f5b817b840394f99ec295c7149e1b618d925cb01c93a7ff36100ce"
+      "sha256": "7518f724b92bf36dcca6105a33e7bd250f378a069fc3faa08d243ce6eb34ad60"
     },
     "fig_tro_shelf_tradeoff.pdf": {
-      "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve.",
+      "caption": "Shelf+IIWA SBF measured-time quality/segment trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "512bb274587b78098c4c397f82f8d64a0f74fb1b80b43dd27e202080bfc8b7e2"
+      "sha256": "ba7b08db6d12c8c73bb1d7464db1ae35baa06e2b4983c79f07a99b558313f336"
     },
     "fig_tro_shelf_tradeoff.png": {
-      "caption": "Shelf+IIWA SBF time/quality/segment trade-off curve preview.",
+      "caption": "Shelf+IIWA SBF measured-time quality/segment trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.png",
       "placeholder": false,
-      "sha256": "89a040641fa0da648b3d436d080f78cbfb6c306f160726531b4db6cc13e5b225"
+      "sha256": "2ab90b1e366550dc52d4543a8d6098e242f039a7ea6b96f817d87413cf17d2c8"
     },
     "tab_tro_dynamic_update.tex": {
       "exists": true,
@@ -53,50 +53,50 @@
       "exists": true,
       "path": "paper/generated/tab_tro_endpoint_envelope.tex",
       "placeholder": false,
-      "sha256": "d4825bc6f553140223022d7794fdac43d4b07d01a717b819d1befcf72c6a372b"
+      "sha256": "2bb842045ee73ae4d4605a90646caa76767e0d85613bfe2bbec287e36f2a1b36"
     },
     "tab_tro_lect_performance.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_lect_performance.tex",
       "placeholder": false,
-      "sha256": "1ed498326b85da20dcff66f7cdc8a642209f72d3bdd2dbbff07e1f490f73a04e"
+      "sha256": "db89585bb882e421ef60d5df30abf09434fd47ed51cedd09b602782e541aa7ee"
     },
     "tab_tro_link_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_link_envelope.tex",
       "placeholder": false,
-      "sha256": "e8a2957f38f345058ad13f24cfff9b9a9a831825a23a2b756ffcfa3ee2a20bfb"
+      "sha256": "89b16aa166827b328c1bcb176779c0344747308377d3032a8b2100dae847811c"
     },
     "tab_tro_random_summary.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "12c3c3b3807187b83a8e078e1e112e57dc9cbaaf9c95f4525605e0f15e43215f"
+      "sha256": "2a11c926233526d06ba476686827ee9825f95dc2d079276a1df9248dc03fea38"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "54bb7a72d7d2e0898a7724cf2d66444b4701386c03446f80f4957a8aa2924b90"
+      "sha256": "47a58b65006fa7836cb691874775c283f332751e3681b3b10949680d1b0da941"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "b09b108874c98ca96654d92adbe42d3e2250c27ef52f62baee7e0f0826a6fe7e"
+      "sha256": "6c6f9ae9d2d0e0ced2d84c757066965abfe559c6d1af17833e0c9635d3176448"
     }
   },
   "environment": {
     "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
-    "git_sha": "b2b361234250",
+    "git_sha": "c24cf87a93b2",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-117-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 12332,
-      "VmHWM_kb": 22072,
-      "VmRSS_kb": 22072,
-      "VmSize_kb": 27028
+      "VmData_kb": 13012,
+      "VmHWM_kb": 22860,
+      "VmRSS_kb": 22860,
+      "VmSize_kb": 27708
     },
     "processor": "x86_64",
     "python": "3.10.19",
@@ -104,71 +104,96 @@
     "thread_env": {}
   },
   "placeholder_mode": true,
-  "source_root": "outputs/new_experiments/tro2026",
+  "source_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026",
   "sources": {
     "exp01_endpoint_envelope": {
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp01/endpoint_envelope_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp01/endpoint_envelope_summary.csv",
       "summary_sha256": "ba8115b976e975cf322edfb381b54a2e432741e8b20fdb4629c0781d2b60305f",
       "table": "paper/generated/tab_tro_endpoint_envelope.tex"
     },
     "exp02_link_envelope": {
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp02/link_envelope_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp02/link_envelope_summary.csv",
       "summary_sha256": "5e0466eb5c6a5c8a435eb8763e13392d53b64610a0a679245ebf893e727c9466",
       "table": "paper/generated/tab_tro_link_envelope.tex"
     },
     "exp03_lect_performance": {
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp03/lect_performance_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp03/lect_performance_summary.csv",
       "summary_sha256": "dc17404d0aeccc1ef6d86a2b9e9a69031e5c4b6a356d401a8772f0cb2a9073e1",
       "table": "paper/generated/tab_tro_lect_performance.tex"
     },
     "exp04_shelf_leaf_rrt": {
       "figure_pdf": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_shelf_tradeoff.png",
-      "manifest": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
+      "manifest": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
       "rows": 20,
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
       "summary_sha256": "12753e12a11e1cd2f6ee91a52d227ae253ae865ca13727822febf54d4367acd2",
       "table": "paper/generated/tab_tro_shelf_ablation.tex"
     },
     "exp05_shelf_cross_algorithm": {
-      "current_baseline_manifest": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_manifest.json",
-      "current_baseline_summary": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_summary.csv",
-      "exp04_registered_summary": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
+      "current_baseline_manifest": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_manifest.json",
+      "current_baseline_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp05/current_ompl_baselines/shelf_cross_algorithm_summary.csv",
+      "exp04_registered_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
       "figure_pdf": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
-      "rbf_manifest": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
-      "rows": 16,
+      "rbf_manifest": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
+      "registered_rrtconnect_manifest": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/tro2026/exp05_full_joint_rrtconnect_s0_7/shelf_cross_algorithm_manifest.json",
+      "registered_rrtconnect_manifest_rows": 8,
+      "registered_rrtconnect_rows": 1,
+      "registered_rrtconnect_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/tro2026/exp05_full_joint_rrtconnect_s0_7/shelf_cross_algorithm_summary.csv",
+      "rows": 19,
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_summary.csv",
       "summary_sha256": "7b6805f2db27e57d994339f9ec0af162d025a611ba120a5d7988df7486888d7b",
       "table": "paper/generated/tab_tro_shelf_cross_algorithm.tex"
     },
     "exp06_random_robot": {
-      "current_baseline_rows": 99,
-      "current_baseline_summary": "outputs/new_experiments/tro2026/exp06/current_ompl_baselines/random_robot_summary.csv",
-      "current_baseline_summary_sha256": "76caa47a463aa2f898ce2a76cda1d014abf692abf7e23e0097f8f65fb14358a1",
+      "current_baseline_rows": 0,
+      "current_baseline_summary": null,
+      "current_baseline_summary_sha256": null,
+      "current_iris_rows": 17,
+      "current_iris_summaries": [
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_adaptive/random_robot_iris_gcs_summary.csv",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs/random_robot_iris_gcs_summary.csv",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_r16/random_robot_iris_gcs_summary.csv",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_r24_it4/random_robot_iris_gcs_summary.csv",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_nopre/random_robot_iris_gcs_summary.csv"
+      ],
+      "current_iris_summary_sha256": {
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs/random_robot_iris_gcs_summary.csv": "809ff9cbf30587109fbeaabb0b8ea1c05853c1c795442a2e2e0e78779fd4d118",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_adaptive/random_robot_iris_gcs_summary.csv": "83488db5f1bb2e079cfe0ff1e1d2d8ee9f43c1cfa84567ad5c056c1db2ef4286",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_nopre/random_robot_iris_gcs_summary.csv": "721cf32bfe21d955317490ca49a644da1bf24de0d7492c8d5ec6e1603f4760bd",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_r16/random_robot_iris_gcs_summary.csv": "b82a0949599c5a2e32932d73faea135b97e62ce73c40b8e0bc903a22a76e33db",
+        "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/current_iris_gcs_r24_it4/random_robot_iris_gcs_summary.csv": "efb7492f64edb8fe57dc00ed50e8eeddd02a39aedf64dbd927c59d5455ea1e7a"
+      },
       "figure_pdf": "paper/generated/fig_tro_random_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_random_tradeoff.png",
+      "figure_rows": 143,
+      "include_current_baselines": false,
       "old_random_context_table": "/home/tian/\u684c\u9762/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated/tab_tro_main_random_best_tradeoff.tex",
-      "rows": 135,
+      "ompl_curve_rows_100pct": 90,
+      "ompl_curve_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/ompl_tradeoff_curves/random_robot_summary.csv",
+      "ompl_curve_summary_sha256": "00fdeef7b23b2291e08f9d22c4cb2175f546df78c90d01de759419ec3bb9d553",
+      "registered_baseline_context": true,
+      "rows": 143,
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp06/random_robot_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp06/random_robot_summary.csv",
       "summary_sha256": "990678b7e740f41b4a3ec30d6ca2635193b88d5a0fb2c579be7a1fc3373ec997",
       "table": "paper/generated/tab_tro_random_summary.tex"
     },
     "exp07_dynamic_update": {
       "rows": 4,
       "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
+      "summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
       "summary_sha256": "c28b0ccbec95303f72e15c1868f94171c57c24599f14711262991ee3311999f9",
       "table": "paper/generated/tab_tro_dynamic_update.tex"
     },
     "supporting_table_imports": {
-      "manifest": "outputs/new_experiments/tro2026/supporting_imports/supporting_table_import_manifest.json",
+      "manifest": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/new_experiments/tro2026/supporting_imports/supporting_table_import_manifest.json",
       "manifest_sha256": "e5953e867a9041f809ca9791e1751c8c5d66ab7445f36935544dca9cbb71d576",
       "rows": [],
       "status": "imported"

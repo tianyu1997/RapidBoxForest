@@ -97,6 +97,7 @@ struct OracleValidationConfig {
     bool external_evidence_materialization = true;
     bool external_evidence_scoring = true;
     bool external_evidence_backfill_active = true;
+    bool external_evidence_live_retry_on_maybe = false;
     bool stateless_materialization_context = false;
     // When true, worker oracles share a thread-safe, interval-keyed endpoint
     // cache spawned from the master so concurrent build tasks reuse endpoints
@@ -107,6 +108,10 @@ struct OracleValidationConfig {
     // builds cannot grow it without limit (OOM guard).
     std::size_t shared_endpoint_cache_max_entries = 200000;
     std::size_t shared_endpoint_cache_max_bytes = 512ull * 1024ull * 1024ull;
+    // Only enable for diagnostics or pruning heuristics that need an
+    // envelope-level overlap ratio. Default validation keeps the early-exit
+    // collision path.
+    bool collect_full_overlap_stats = false;
 };
 
 struct OracleValidationDetail {
@@ -132,6 +137,8 @@ struct OracleValidationDetail {
     int candidate_dirty_count = 0;
     int predh_rebuild_count = 0;
     bool aabb_overlap = false;
+    double aabb_overlap_depth = 0.0;
+    double aabb_overlap_volume_ratio = 0.0;
 };
 
 struct OracleCounters {
@@ -166,6 +173,11 @@ struct OracleCounters {
     int materialization_reused_fk = 0;
     int materialization_reused_endpoint_cache = 0;
     int materialization_reused_external_evidence = 0;
+    int materialization_external_exact_hits = 0;
+    int materialization_external_exact_misses = 0;
+    int materialization_external_live_fallbacks = 0;
+    int materialization_external_maybe_live_retries = 0;
+    int materialization_external_maybe_live_retry_free = 0;
     int materialization_reused_shared_endpoint_cache = 0;
     int materialization_stored_shared_endpoint_cache = 0;
     int materialization_reused_cached_envelope = 0;
@@ -197,6 +209,9 @@ struct OracleCounters {
     std::int64_t envelope_collision_gjk_tests = 0;
     std::int64_t envelope_collision_gjk_rejects = 0;
     std::int64_t envelope_collision_gjk_iterations = 0;
+    double envelope_collision_overlap_depth_sum = 0.0;
+    double envelope_collision_overlap_depth_max = 0.0;
+    double envelope_collision_overlap_volume_ratio_max = 0.0;
 };
 
 class BoxOracle;
@@ -254,6 +269,9 @@ public:
             }
         }
         return hull;
+    }
+    virtual std::vector<Interval> planning_intervals() const {
+        return native_root_hull();
     }
     virtual std::vector<Interval> native_root_intervals_for_query(
         const Eigen::Ref<const Eigen::VectorXd>& q) const {
@@ -355,6 +373,7 @@ public:
     std::vector<std::vector<Interval>> native_interval_copies_for_node(
         OracleNodeId node,
         const std::vector<Interval>& tree_intervals) const override;
+    std::vector<Interval> planning_intervals() const override;
     std::vector<Interval> query_intervals_for_node(OracleNodeId node,
                                                    const std::vector<Interval>& tree_intervals,
                                                    const Eigen::Ref<const Eigen::VectorXd>& q) const override;
@@ -399,6 +418,9 @@ public:
     const lect_database::LectDatabase& database() const { return database_; }
     bool envelope_cache_enabled() const { return enable_envelope_cache_; }
     void set_envelope_cache_enabled(bool enabled) { enable_envelope_cache_ = enabled; }
+    void set_collect_full_overlap_stats(bool enabled) {
+        validation_config_.collect_full_overlap_stats = enabled;
+    }
 
     // Public accessor exposing the canonical endpoint EvidenceKey (channel /
     // source / primary sector / payload_kind) so prewarm can build a key
@@ -435,12 +457,14 @@ private:
         std::span<const float> payload;
         std::uint64_t envelope_cache_key = 0;
         bool envelope_cacheable = false;
+        bool reused_external_evidence = false;
     };
 
     lect_database::EvidenceKey endpoint_key(OracleNodeId node) const;
     std::optional<EndpointPayload> endpoint_payload_for_node(OracleNodeId node,
                                                              const std::vector<Interval>& intervals,
-                                                             int changed_dim);
+                                                             int changed_dim,
+                                                             bool allow_external_evidence = true);
     BoxValidation classify_payload(OracleNodeId node,
                                    const std::vector<Interval>& intervals,
                                    const EndpointPayload& endpoint_payload);

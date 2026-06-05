@@ -78,8 +78,10 @@ public:
     /// Coupled joint pairs detected from robot structure.
     const std::vector<std::pair<int,int>>& coupled_pairs() const { return coupled_pairs_; }
 
-    /// FNV-1a 64-bit fingerprint over full kinematic identity:
-    /// DH params, joint limits, tool frame, radii, active link map, coupled pairs.
+    /// FNV-1a 64-bit fingerprint over kinematic/topological identity:
+    /// DH params, joint limits, tool frame, active link map, coupled pairs.
+    /// Link radii are intentionally excluded so LECT topology/evidence keys
+    /// remain reusable when only collision padding changes.
     uint64_t fingerprint() const;
 
 private:

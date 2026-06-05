@@ -664,6 +664,7 @@ struct LectReadSnapshot::Impl {
         }
         return std::nullopt;
     }
+
 };
 
 std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotDirectEvidenceEntry> direct_evidence,

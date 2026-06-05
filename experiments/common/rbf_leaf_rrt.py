@@ -11,13 +11,17 @@ from experiments.common.metrics import mean, median
 from experiments.common.rbf_defaults import (
     CANONICAL_SYMMETRY_DESCRIPTOR,
     DEFAULT_RBF_AUDIT_RESOLUTION,
+    DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
     DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES,
     DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
     DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
     DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
+    DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS,
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
+    DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
+    DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
     DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE,
@@ -33,6 +37,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
+    DEFAULT_RBF_QUERY_BRIDGE_ALL,
+    DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
@@ -42,6 +48,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
     root_override_intervals,
+    robot_symmetry_aligned_root_tuples,
 )
 from experiments.common.sbf_import import import_sbf
 
@@ -62,7 +69,7 @@ class QuerySpec:
 class RBFLeafRRTOptions:
     seed: int = 0
     deep_max_boxes: int = DEFAULT_RBF_DEEP_MAX_BOXES
-    rbf_max_depth: int = 40
+    rbf_max_depth: int = 60
     timeout_ms: float = 8000.0
     threads: int = DEFAULT_RBF_THREADS
     leaf_start_depth: int = DEFAULT_RBF_LEAF_START_DEPTH
@@ -75,22 +82,33 @@ class RBFLeafRRTOptions:
     run_rrt_grower: bool = True
     rrt_grower_extra_boxes: int = DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES
     rrt_grower_timeout_ms: float = DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS
+    priority_prune_radius: float = 0.0
+    collision_overlap_prune_min_depth: int = -1
+    collision_overlap_prune_threshold: float = 0.0
+    collision_overlap_prune_ratio_threshold: float = 0.0
     validation_batch_size: int = DEFAULT_RBF_VALIDATION_BATCH_SIZE
     ffb_start_depth: int = DEFAULT_RBF_FFB_START_DEPTH
     audit_resolution: int = DEFAULT_RBF_AUDIT_RESOLUTION
     audit_segment_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP
+    audit_collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE
+    query_shortcut_boxes: bool = False
     use_virtual_topology: bool = True
     parallel_virtual_validation: bool = False
     leaf_threads: int = 1
     envelope: str = "support_hull"
+    support_hull_skip_aabb_broadphase: bool = False
+    support_hull_direct_collision: bool = False
     endpoint_source: str = "ifk"
     unsafe_sampling_validation: bool = False
     use_external_evidence: bool = False
+    external_evidence_live_retry_on_maybe: bool = False
     external_evidence_path: Path | None = None
     external_evidence_verify_identity: bool = True
     use_shelf_root_override: bool = False
     root_override_tuples: list[tuple[float, float]] | None = None
     coverage_override_tuples: list[tuple[float, float]] | None = None
+    symmetry_aligned_native_root: bool = False
+    symmetry_aligned_cache_schedule: bool = False
     database_canonical_mode: bool = True
     case_label: str = "rbf_leaf_rrt"
     segment_edges_fallback_only: bool = False
@@ -107,13 +125,25 @@ class RBFLeafRRTOptions:
     connector_pave_max_chain: int = DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN
     connector_pave_steps: int = DEFAULT_RBF_CONNECTOR_PAVE_STEPS
     connector_pave_depth: int = DEFAULT_RBF_CONNECTOR_PAVE_DEPTH
-    connector_pave_fill_gaps: bool = False
-    connector_pave_require_connected_chain: bool = False
+    query_bridge_pave_depth: int = DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH
+    connector_pave_fill_gaps: bool = DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS
+    connector_pave_require_connected_chain: bool = DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN
     final_collision_shortcut: bool = DEFAULT_RBF_FINAL_COLLISION_SHORTCUT
     final_rrt_simplify: bool = DEFAULT_RBF_FINAL_RRT_SIMPLIFY
     final_rrt_simplify_timeout_ms: float = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS
     final_rrt_simplify_max_iters: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS
     final_rrt_simplify_attempts: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS
+    corridor_refine: bool = False
+    corridor_refine_budget_ms: float = 0.0
+    corridor_refine_max_boxes: int = 0
+    corridor_refine_boxes_per_query: int = 12
+    corridor_refine_passes: int = 1
+    corridor_refine_start_margin_ms: float = 0.0
+    corridor_refine_mode: str = "box_only_long_path"
+    corridor_refine_long_path_ratio: float = 1.25
+    corridor_refine_min_delta: float = 0.25
+    query_bridge_all: bool = DEFAULT_RBF_QUERY_BRIDGE_ALL
+    query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
     allow_anchor_roots: bool = True
     use_priority_points: bool = True
     canonicalize_queries: bool = False
@@ -187,8 +217,58 @@ def interval_pairs(intervals: Iterable[Any]) -> list[list[float]]:
     return pairs
 
 
-def make_aafk_split_policy(robot: Any, max_depth: int, root_intervals: Iterable[Any] | None = None) -> Any:
-    if root_intervals is None:
+def read_lect_cache_depth_dimensions(cache_path: Path | None) -> list[int]:
+    if cache_path is None:
+        return []
+    manifest = Path(cache_path) / "manifest.json"
+    if not manifest.exists():
+        return []
+    for line in manifest.read_text().splitlines():
+        if not line.startswith("split_depth_dimensions="):
+            continue
+        raw = line.split("=", 1)[1].strip()
+        return [int(item.strip()) for item in raw.split(",") if item.strip()]
+    return []
+
+
+def make_aafk_split_policy(
+    robot: Any,
+    max_depth: int,
+    root_intervals: Iterable[Any] | None = None,
+    *,
+    force_dim0_first_two: bool = False,
+    forced_tail_schedule: Iterable[int] | None = None,
+) -> Any:
+    if force_dim0_first_two:
+        tail = [int(dim) for dim in (forced_tail_schedule or [])]
+        schedule_root = list(root_intervals) if root_intervals is not None else list(
+            sbf.canonical_root_intervals_for_robot(
+                robot,
+                True,
+                CANONICAL_SYMMETRY_DESCRIPTOR,
+            )
+        )
+        if schedule_root:
+            # The first two binary splits cover the four dim0 symmetry sectors.
+            # The remaining schedule should match the per-sector shelf/root
+            # resolution, not the widened native dim0 hull.
+            schedule_root[0] = sbf.Interval(0.0, 0.5 * math.pi)
+        if not tail:
+            tail_depth = max(0, int(max_depth) - 2)
+            tail = list(sbf.aafk_volume_min_depth_schedule(robot, schedule_root, tail_depth, 8))
+        elif len(tail) + 2 < int(max_depth):
+            extra_depth = int(max_depth) - 2 - len(tail)
+            extra = list(
+                sbf.aafk_volume_min_depth_schedule(
+                    robot,
+                    schedule_root,
+                    extra_depth,
+                    8,
+                )
+            )
+            tail.extend(int(dim) for dim in extra)
+        schedule = [0, 0] + [int(dim) for dim in tail]
+    elif root_intervals is None:
         schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth), 8))
     else:
         schedule = list(sbf.aafk_volume_min_depth_schedule(robot, list(root_intervals), int(max_depth), 8))
@@ -215,6 +295,10 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     else:
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
     cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB if options.envelope == "link_aabb" else sbf.EnvelopeType.SupportHull
+    if options.envelope != "link_aabb" and hasattr(cfg.envelope_type.support_hull_config, "direct_collision"):
+        if hasattr(cfg.envelope_type.support_hull_config, "skip_aabb_broadphase"):
+            cfg.envelope_type.support_hull_config.skip_aabb_broadphase = bool(options.support_hull_skip_aabb_broadphase)
+        cfg.envelope_type.support_hull_config.direct_collision = bool(options.support_hull_direct_collision)
     if bool(options.unsafe_sampling_validation):
         cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
         cfg.validation.accept_unsafe_free = True
@@ -231,9 +315,17 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.database.max_tree_depth = int(options.rbf_max_depth)
     cfg.database.canonical_mode = bool(options.database_canonical_mode)
     cfg.database.symmetry_descriptor = CANONICAL_SYMMETRY_DESCRIPTOR
+    cfg.database.verify_identity = bool(options.external_evidence_verify_identity)
+    cfg.database.external_evidence_auto_build_snapshot = False
     root_intervals = None
     if options.root_override_tuples is not None:
         root_intervals = [sbf.Interval(float(lo), float(hi)) for lo, hi in options.root_override_tuples]
+        cfg.database.root_intervals_override = root_intervals
+    elif options.symmetry_aligned_native_root:
+        root_intervals = [
+            sbf.Interval(float(lo), float(hi))
+            for lo, hi in robot_symmetry_aligned_root_tuples(robot)
+        ]
         cfg.database.root_intervals_override = root_intervals
     elif options.use_shelf_root_override:
         root_intervals = root_override_intervals(sbf)
@@ -242,7 +334,18 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.database.coverage_intervals_override = [
             sbf.Interval(float(lo), float(hi)) for lo, hi in options.coverage_override_tuples
         ]
-    cfg.database.split_policy = make_aafk_split_policy(robot, int(options.rbf_max_depth), root_intervals)
+    forced_tail_schedule = (
+        read_lect_cache_depth_dimensions(options.external_evidence_path)
+        if bool(options.symmetry_aligned_cache_schedule)
+        else []
+    )
+    cfg.database.split_policy = make_aafk_split_policy(
+        robot,
+        int(options.rbf_max_depth),
+        root_intervals,
+        force_dim0_first_two=bool(options.symmetry_aligned_cache_schedule),
+        forced_tail_schedule=forced_tail_schedule,
+    )
 
     cfg.validation.enable_endpoint_evidence_cache = False
     cfg.validation.store_endpoint_evidence_cache = False
@@ -250,9 +353,10 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.validation.external_evidence_backfill_active = False
     cfg.validation.external_evidence_materialization = True
     cfg.validation.external_evidence_scoring = True
+    if hasattr(cfg.validation, "external_evidence_live_retry_on_maybe"):
+        cfg.validation.external_evidence_live_retry_on_maybe = bool(options.external_evidence_live_retry_on_maybe)
     if options.use_external_evidence and options.external_evidence_path is not None:
         cfg.database.external_evidence_path = str(options.external_evidence_path)
-        cfg.database.verify_identity = bool(options.external_evidence_verify_identity)
         snapshot_path = Path(options.external_evidence_path) / "lect_snapshot"
         cfg.database.external_evidence_use_snapshot = snapshot_path.exists()
         cfg.database.external_evidence_auto_build_snapshot = False
@@ -300,6 +404,7 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.connector.pave.max_chain = int(options.connector_pave_max_chain)
     cfg.connector.pave.max_steps_per_waypoint = int(options.connector_pave_steps)
     cfg.connector.pave.find_free_box.max_depth = int(options.connector_pave_depth)
+    cfg.query_bridge_pave_depth = int(options.query_bridge_pave_depth)
     cfg.connector.pave.find_free_box.skip_to_depth = int(options.ffb_start_depth)
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True
@@ -310,7 +415,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.query.strict_path_audit = True
     cfg.query.audit_resolution = max(int(options.audit_resolution), int(options.connector_segment_resolution))
     cfg.query.audit_segment_step = float(options.audit_segment_step)
-    cfg.query.shortcut_boxes = False
+    cfg.query.audit_collision_tolerance = float(options.audit_collision_tolerance)
+    cfg.query.shortcut_boxes = bool(options.query_shortcut_boxes)
     cfg.query.collision_shortcut = bool(options.final_collision_shortcut)
     if hasattr(cfg.query, "final_rrt_simplify"):
         cfg.query.final_rrt_simplify = bool(options.final_rrt_simplify)
@@ -343,6 +449,14 @@ def make_refine_config(options: RBFLeafRRTOptions) -> Any:
     cfg.run_rrt_grower = bool(options.run_rrt_grower)
     cfg.rrt_grower_extra_boxes = int(options.rrt_grower_extra_boxes)
     cfg.rrt_grower_timeout_ms = float(options.rrt_grower_timeout_ms)
+    if hasattr(cfg, "priority_prune_radius"):
+        cfg.priority_prune_radius = float(options.priority_prune_radius)
+    if hasattr(cfg, "collision_overlap_prune_min_depth"):
+        cfg.collision_overlap_prune_min_depth = int(options.collision_overlap_prune_min_depth)
+    if hasattr(cfg, "collision_overlap_prune_threshold"):
+        cfg.collision_overlap_prune_threshold = float(options.collision_overlap_prune_threshold)
+    if hasattr(cfg, "collision_overlap_prune_ratio_threshold"):
+        cfg.collision_overlap_prune_ratio_threshold = float(options.collision_overlap_prune_ratio_threshold)
     return cfg
 
 
@@ -382,7 +496,13 @@ def reflect_path_to_actual(
     return reflected, True, "actual_reflection_ok"
 
 
-def path_collision_free(robot: Any, obstacles: list[Any], path: list[list[float]], step: float) -> bool:
+def path_collision_free(
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    step: float,
+    collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
+) -> bool:
     if len(path) < 2:
         return False
     for a, b in zip(path[:-1], path[1:]):
@@ -391,7 +511,7 @@ def path_collision_free(robot: Any, obstacles: list[Any], path: list[list[float]
         for index in range(steps + 1):
             alpha = index / steps
             q = [(1.0 - alpha) * float(x) + alpha * float(y) for x, y in zip(a, b)]
-            if sbf.check_config_collision(robot, obstacles, q):
+            if sbf.check_config_collision(robot, obstacles, q, float(collision_tolerance)):
                 return False
     return True
 
@@ -408,6 +528,7 @@ def query_rows(
     queries: Iterable[Any],
     obstacles: list[Any] | None = None,
     audit_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+    audit_collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     canonicalize_queries: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
@@ -416,13 +537,19 @@ def query_rows(
         start = query_point(robot, query.start, canonicalize_queries)
         goal = query_point(robot, query.goal, canonicalize_queries)
         result = forest.query(start, goal)
-        canonical_path = result.path_as_lists() if bool(result.success) else []
+        canonical_path = result.path_as_lists()
         actual_path, reflected_ok, reflection_status = reflect_path_to_actual(query, canonical_path, start, goal)
         actual_audit_passed = bool(result.audit_passed)
         actual_audit_status = str(result.audit_status)
         if bool(result.success) and obstacles is not None:
             if reflected_ok:
-                actual_audit_passed = path_collision_free(robot, obstacles, actual_path, audit_step)
+                actual_audit_passed = path_collision_free(
+                    robot,
+                    obstacles,
+                    actual_path,
+                    audit_step,
+                    audit_collision_tolerance,
+                )
                 actual_audit_status = "actual_reflected_audit_passed" if actual_audit_passed else "actual_reflected_audit_failed"
             else:
                 actual_audit_passed = False
@@ -441,6 +568,8 @@ def query_rows(
             "query_ms": float(result.query_time_ms),
             "audit_ms": float(result.audit_time_ms),
             "final_simplify_ms": float(getattr(result, "final_simplify_time_ms", 0.0)),
+            "failed_segment_index": int(getattr(result, "failed_segment_index", -1)),
+            "failed_debug_path_length": path_length(actual_path) if canonical_path and reflected_ok else math.nan,
             "path_length": audited_path_length,
             "final_path_length": audited_path_length,
             "raw_path_length": raw_path_length,
@@ -458,6 +587,113 @@ def query_rows(
             "actual_goal": list(query.actual_goal) if query.actual_goal is not None else goal,
         })
     return rows
+
+
+def refine_corridors(
+    forest: Any,
+    robot: Any,
+    queries: Iterable[Any],
+    options: RBFLeafRRTOptions,
+) -> tuple[float, int, int]:
+    if not bool(options.corridor_refine):
+        return 0.0, 0, 0
+    budget_s = max(0.0, float(options.corridor_refine_budget_ms)) / 1000.0
+    max_total = max(0, int(options.corridor_refine_max_boxes))
+    per_query = max(1, int(options.corridor_refine_boxes_per_query))
+    if budget_s <= 0.0 or max_total <= 0:
+        return 0.0, 0, 0
+    mode = str(options.corridor_refine_mode)
+    if mode not in {"box_only_long_path", "legacy_bridge"}:
+        raise ValueError(f"unsupported corridor_refine_mode: {mode}")
+    query_list = [query_spec(query) for query in queries]
+    t0 = time.perf_counter()
+    added_total = 0
+    attempts = 0
+    start_margin_s = max(0.0, float(options.corridor_refine_start_margin_ms)) / 1000.0
+    for _pass in range(max(1, int(options.corridor_refine_passes))):
+        pass_added = 0
+        for query in query_list:
+            elapsed_s = time.perf_counter() - t0
+            if added_total >= max_total or elapsed_s >= budget_s:
+                break
+            if attempts > 0 and budget_s - elapsed_s < start_margin_s:
+                break
+            start = query_point(robot, query.start, bool(options.canonicalize_queries))
+            goal = query_point(robot, query.goal, bool(options.canonicalize_queries))
+            quota = min(per_query, max_total - added_total)
+            added = int(forest.refine_query_corridor(
+                start,
+                goal,
+                quota,
+                mode,
+                float(options.corridor_refine_long_path_ratio),
+                float(options.corridor_refine_min_delta),
+            ))
+            attempts += 1
+            added_total += added
+            pass_added += added
+        if pass_added == 0 or added_total >= max_total or time.perf_counter() - t0 >= budget_s:
+            break
+    return time.perf_counter() - t0, added_total, attempts
+
+
+def bridge_all_queries(
+    forest: Any,
+    robot: Any,
+    queries: Iterable[Any],
+    options: RBFLeafRRTOptions,
+) -> tuple[float, int, int, dict[str, float], dict[str, int]]:
+    if not bool(options.query_bridge_all):
+        labels = {item.strip() for item in str(options.query_bridge_labels).split(",") if item.strip()}
+        if not labels:
+            return 0.0, 0, 0, {}, {}
+    else:
+        labels = set()
+    t0 = time.perf_counter()
+    added_total = 0
+    attempts = 0
+    timing_by_label: dict[str, float] = {}
+    added_by_label: dict[str, int] = {}
+    selected: list[tuple[str, list[float], list[float]]] = []
+    for raw in queries:
+        query = query_spec(raw)
+        if labels and str(query.label) not in labels:
+            continue
+        start = query_point(robot, query.start, bool(options.canonicalize_queries))
+        goal = query_point(robot, query.goal, bool(options.canonicalize_queries))
+        if labels:
+            probe = forest.query(start, goal)
+            direct = point_distance(start, goal)
+            graph_only = int(getattr(probe, "segment_edges_used", 0)) == 0
+            short_enough = (
+                direct <= 1e-9 or
+                float(getattr(probe, "path_length", math.inf)) <= max(direct * 1.35, direct + 0.35)
+            )
+            if bool(probe.success) and bool(probe.audit_passed) and graph_only and short_enough:
+                continue
+        selected.append((str(query.label), start, goal))
+
+    if len(selected) > 1 and hasattr(forest, "bridge_queries"):
+        starts = [item[1] for item in selected]
+        goals = [item[2] for item in selected]
+        added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+        elapsed = time.perf_counter() - t0
+        timing_by_label["__batch_total__"] = elapsed
+        for (label, _start, _goal), added in zip(selected, added_values, strict=True):
+            added_by_label[label] = added_by_label.get(label, 0) + added
+            added_total += added
+        attempts = len(selected)
+        return elapsed, added_total, attempts, timing_by_label, added_by_label
+
+    for label, start, goal in selected:
+        q0 = time.perf_counter()
+        added = int(forest.bridge_query(start, goal))
+        elapsed = time.perf_counter() - q0
+        timing_by_label[label] = timing_by_label.get(label, 0.0) + elapsed
+        added_by_label[label] = added_by_label.get(label, 0) + added
+        added_total += added
+        attempts += 1
+    return time.perf_counter() - t0, added_total, attempts, timing_by_label, added_by_label
 
 
 def run_leaf_rrt(
@@ -482,6 +718,24 @@ def run_leaf_rrt(
             else []
         ),
     )
+    corridor_refine_s, corridor_refine_added, corridor_refine_attempts = refine_corridors(
+        forest,
+        robot,
+        query_list,
+        options,
+    )
+    (
+        query_bridge_s,
+        query_bridge_added,
+        query_bridge_attempts,
+        query_bridge_by_label_s,
+        query_bridge_added_by_label,
+    ) = bridge_all_queries(
+        forest,
+        robot,
+        query_list,
+        options,
+    )
     build_wall_s = time.perf_counter() - t0
     qrows = query_rows(
         forest,
@@ -489,13 +743,14 @@ def run_leaf_rrt(
         query_list,
         obstacles=list(obstacles),
         audit_step=float(options.audit_segment_step),
+        audit_collision_tolerance=float(options.audit_collision_tolerance),
         canonicalize_queries=bool(options.canonicalize_queries),
     )
     successes = [row for row in qrows if bool(row["audit_passed"])]
     total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))
     total_seg = sum(float(row["segment_edge_length"]) for row in successes)
     diagnostics = {str(k): float(v) for k, v in dict(build.diagnostics).items()}
-    build_s = float(build.total_ms) / 1000.0
+    build_s = float(build.total_ms) / 1000.0 + float(corridor_refine_s) + float(query_bridge_s)
     query_s = sum(float(row["query_ms"]) for row in qrows) / 1000.0
     external_hits = max(
         diagnostics.get("oracle.materialization_reused_external_evidence", 0.0),
@@ -519,6 +774,20 @@ def run_leaf_rrt(
         "deep_refine_s": float(build.deep_refine_ms) / 1000.0,
         "rrt_grower_s": float(getattr(build, "rrt_grower_ms", 0.0)) / 1000.0,
         "connector_s": float(build.connector_ms) / 1000.0,
+        "corridor_refine_s": float(corridor_refine_s),
+        "corridor_refine_added": int(corridor_refine_added),
+        "corridor_refine_attempts": int(corridor_refine_attempts),
+        "query_bridge_s": float(query_bridge_s),
+        "query_bridge_added": int(query_bridge_added),
+        "query_bridge_attempts": int(query_bridge_attempts),
+        "query_bridge_by_label_s": {
+            str(label): float(value)
+            for label, value in query_bridge_by_label_s.items()
+        },
+        "query_bridge_added_by_label": {
+            str(label): int(value)
+            for label, value in query_bridge_added_by_label.items()
+        },
         "audit_s": sum(float(row["audit_ms"]) for row in qrows) / 1000.0,
         "path_length_mean": mean(row["path_length"] for row in successes),
         "raw_segment_fraction": (total_seg / total_len) if total_len > 1e-12 else math.nan,

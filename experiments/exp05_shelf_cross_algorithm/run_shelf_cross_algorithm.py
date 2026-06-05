@@ -4,8 +4,11 @@ from __future__ import annotations
 import argparse
 import csv
 import math
+import multiprocessing as mp
+import os
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -14,24 +17,35 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
+from experiments.common.iris_gcs_dispatch import (
+    default_gcs_repo,
+    default_iris_python,
+    run_shelf_iris_anytime,
+    shelf_iris_json_to_run_rows,
+    shelf_iris_summary_rows,
+)
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
+    DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
     DEFAULT_RBF_DEEP_MAX_BOXES,
     rbf_budget_grid,
+    robot_joint_limit_tuples,
+    robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
 )
 from experiments.common.rbf_leaf_rrt import RBFLeafRRTOptions, canonical_q, run_leaf_rrt
 from experiments.common.sbf_import import import_sbf
 from experiments.exp05_shelf_cross_algorithm.import_old_shelf_baselines import import_old_baselines
+from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query as bitstar_per_query
 
 
 sbf = import_sbf()
 METHODS = ["sbf_leaf_rrt", "rrtconnect", "prm", "bitstar", "iris_np_gcs"]
-IMPORTED_BASELINE_METHODS = {"iris_np_gcs"}
+IMPORTED_BASELINE_METHODS: set[str] = set()
 METHOD_LABELS = {
     "sbf_leaf_rrt": "RBF",
     "iris_np_gcs": "IRIS-NP+GCS",
@@ -43,6 +57,35 @@ METHOD_LABELS = {
 
 def csv_items(raw: str) -> list[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def csv_floats(raw: str) -> list[float]:
+    return [float(item) for item in csv_items(raw)]
+
+
+def csv_ints(raw: str) -> list[int]:
+    return [int(float(item)) for item in csv_items(raw)]
+
+
+def csv_strings(raw: str) -> list[str]:
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
+def csv_bools(raw: str) -> list[bool]:
+    values = []
+    for item in csv_items(raw):
+        lowered = item.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            values.append(True)
+        elif lowered in {"0", "false", "no", "off"}:
+            values.append(False)
+        else:
+            raise ValueError(f"invalid boolean grid value: {item!r}")
+    return values
+
+
+def fmt_float(value: float) -> str:
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
 def path_length(path: Iterable[Iterable[float]]) -> float:
@@ -63,6 +106,40 @@ def point_distance(a: list[float], b: list[float]) -> float:
     return math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
 
 
+def configure_thread_environment(threads: int) -> None:
+    value = str(max(1, int(threads)))
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[key] = value
+
+
+def simplify_path_if_requested(
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    segment_step: float,
+    simplify_time_s: float,
+) -> tuple[list[list[float]], float, str]:
+    if len(path) < 2 or float(simplify_time_s) <= 0.0:
+        return path, 0.0, "not_requested" if float(simplify_time_s) <= 0.0 else "path_too_short"
+    result = sbf.ompl_simplify_path(
+        robot,
+        obstacles,
+        path,
+        float(segment_step),
+        float(simplify_time_s),
+    )
+    simplified = [[float(value) for value in point] for point in result.get("path", [])]
+    if bool(result.get("ok")) and len(simplified) >= 2:
+        return simplified, float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
+    return path, float(result.get("t_s", 0.0)), str(result.get("reason", "simplify_failed"))
+
+
 def audit_path(
     robot: Any,
     obstacles: list[Any],
@@ -72,6 +149,7 @@ def audit_path(
     start: list[float] | None = None,
     goal: list[float] | None = None,
     endpoint_tol: float = 1e-6,
+    collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
 ) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
     if len(path) < 2:
@@ -85,7 +163,12 @@ def audit_path(
         distance = math.sqrt(sum((x - y) * (x - y) for x, y in zip(a, b)))
         steps = max(1, int(math.ceil(distance / step)))
         for index in range(steps + 1):
-            if sbf.check_config_collision(robot, obstacles, interpolate(a, b, index / steps)):
+            if sbf.check_config_collision(
+                robot,
+                obstacles,
+                interpolate(a, b, index / steps),
+                float(collision_tolerance),
+            ):
                 return False, time.perf_counter() - t0, "collision"
     return True, time.perf_counter() - t0, "passed"
 
@@ -109,16 +192,24 @@ def shelf_queries(robot: Any) -> list[dict[str, Any]]:
 
 def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], budget: int) -> dict[str, Any]:
     budget = int(budget)
+    full_root = robot_joint_limit_tuples(robot)
+    symmetry_root = robot_symmetry_aligned_root_tuples(robot)
     options = RBFLeafRRTOptions(
         seed=int(seed),
         deep_max_boxes=budget,
         use_external_evidence=True,
         external_evidence_path=Path(args.rbf_cache_root) / str(args.warm_cache_label),
-        use_shelf_root_override=True,
+        external_evidence_verify_identity=False,
+        use_shelf_root_override=False,
+        root_override_tuples=symmetry_root,
+        coverage_override_tuples=full_root,
+        symmetry_aligned_native_root=True,
+        symmetry_aligned_cache_schedule=True,
         case_label="sbf_leaf_rrt",
         threads=int(args.threads),
         parallel_virtual_validation=True,
         leaf_threads=int(args.threads),
+        audit_collision_tolerance=float(args.audit_collision_tolerance),
     )
     row = run_leaf_rrt(
         robot=robot,
@@ -148,7 +239,7 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
             float(args.rrt_timeout_s) * 1000.0,
             float(args.rrt_range),
             float(args.audit_segment_step),
-            0.0,
+            float(args.ompl_simplify_time_s),
             int(seed) * 1009 + index,
         )
         planning_s += float(result.get("t_s", 0.0))
@@ -160,6 +251,7 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
             float(args.audit_segment_step),
             start=list(query["start"]),
             goal=list(query["goal"]),
+            collision_tolerance=float(args.audit_collision_tolerance),
         )
         audit_s += audit_time_s
         ok = bool(result.get("ok")) and audit_passed
@@ -183,31 +275,288 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
         planning_s,
         audit_s,
         qrows,
-        {"planner": "OMPL_RRTConnect", "timeout_s": float(args.rrt_timeout_s)},
+        {
+            "planner": "OMPL_RRTConnect",
+            "timeout_s": float(args.rrt_timeout_s),
+            "simplify_time_s": float(args.ompl_simplify_time_s),
+        },
         stage_id=f"timeout{float(args.rrt_timeout_s):g}s",
         budget_s=float(args.rrt_timeout_s),
     )
 
 
-def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    timeout_s = float(args.bitstar_timeout_s)
-    interval_s = float(args.bitstar_checkpoint_interval_s)
-    query_traces: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
-    for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
-        result = sbf.ompl_bitstar_trace(
+def bitstar_worker(
+    queue: Any,
+    robot: Any,
+    obstacles: list[Any],
+    query: dict[str, Any],
+    timeout_s: float,
+    args: argparse.Namespace,
+    rng_seed: int,
+    samples_per_batch: int,
+    rewire_factor: float,
+) -> None:
+    try:
+        raw = sbf.ompl_bitstar_path(
             robot,
             obstacles,
             list(query["start"]),
             list(query["goal"]),
-            timeout_s * 1000.0,
-            interval_s * 1000.0,
+            float(timeout_s) * 1000.0,
             float(args.audit_segment_step),
-            int(seed) * 2003 + index,
-            int(args.bitstar_samples_per_batch),
-            float(args.bitstar_rewire_factor),
+            0.0,
+            int(rng_seed),
+            int(samples_per_batch),
+            float(rewire_factor),
             bool(args.bitstar_stop_on_solution_improvement),
+            *bitstar_extra_args(args),
         )
-        query_traces.append((query, [dict(item) for item in result.get("checkpoints", [])]))
+        queue.put({"ok": True, "result": dict(raw)})
+    except BaseException:
+        queue.put({"ok": False, "error": traceback.format_exc()})
+
+
+def run_bitstar_path_watchdog(
+    robot: Any,
+    obstacles: list[Any],
+    query: dict[str, Any],
+    timeout_s: float,
+    args: argparse.Namespace,
+    rng_seed: int,
+    samples_per_batch: int,
+    rewire_factor: float,
+) -> dict[str, Any]:
+    wall_timeout = max(5.0, float(timeout_s) * float(args.bitstar_wall_timeout_factor) + 5.0)
+    context = mp.get_context("fork")
+    queue = context.Queue(maxsize=1)
+    process = context.Process(
+        target=bitstar_worker,
+        args=(queue, robot, obstacles, query, timeout_s, args, rng_seed, samples_per_batch, rewire_factor),
+    )
+    process.start()
+    process.join(wall_timeout)
+    if process.is_alive():
+        process.terminate()
+        process.join(1.0)
+        if process.is_alive():
+            process.kill()
+            process.join(1.0)
+        return {
+            "ok": False,
+            "status": "wall_timeout",
+            "reason": "wall_timeout",
+            "t_s": wall_timeout,
+            "path": [],
+            "iterations": 0,
+            "batches": 0,
+        }
+    payload = queue.get() if not queue.empty() else {"ok": False, "error": "worker exited without result"}
+    if bool(payload.get("ok")):
+        return dict(payload.get("result", {}))
+    return {
+        "ok": False,
+        "status": "worker_failed",
+        "reason": str(payload.get("error", ""))[-2000:],
+        "t_s": math.nan,
+        "path": [],
+        "iterations": 0,
+        "batches": 0,
+    }
+
+
+def run_bitstar_pre_audited_query(
+    seed: int,
+    query_index: int,
+    args: argparse.Namespace,
+    timeout_s: float,
+    samples_per_batch: int,
+    rewire_factor: float,
+) -> dict[str, Any]:
+    worker_args = argparse.Namespace(
+        out_dir=args.out_dir,
+        seeds=str(seed),
+        query_indices=str(query_index),
+        timeout_s=float(timeout_s),
+        samples_per_batch=int(samples_per_batch),
+        rewire_factor=float(rewire_factor),
+        wall_timeout_factor=float(args.bitstar_wall_timeout_factor),
+        audit_segment_step=float(args.audit_segment_step),
+        audit_collision_tolerance=float(args.audit_collision_tolerance),
+        simplify_time_s=float(args.ompl_simplify_time_s),
+        stop_on_solution_improvement=bool(args.bitstar_stop_on_solution_improvement),
+        use_k_nearest=int(args.bitstar_use_k_nearest),
+        pruning=int(args.bitstar_pruning),
+        prune_threshold_fraction=float(args.bitstar_prune_threshold_fraction),
+        delay_rewiring_until_initial_solution=int(args.bitstar_delay_rewiring_until_initial_solution),
+        just_in_time_sampling=int(args.bitstar_just_in_time_sampling),
+        drop_samples_on_prune=int(args.bitstar_drop_samples_on_prune),
+        approximate_solutions=int(args.bitstar_approximate_solutions),
+        strict_queue_ordering=int(args.bitstar_strict_queue_ordering),
+        cascading_rewirings=int(args.bitstar_cascading_rewirings),
+        initial_inflation_factor=float(args.bitstar_initial_inflation_factor),
+        inflation_scaling_parameter=float(args.bitstar_inflation_scaling_parameter),
+        truncation_scaling_parameter=float(args.bitstar_truncation_scaling_parameter),
+        allowed_failed_sampling_attempts=int(args.bitstar_allowed_failed_sampling_attempts),
+        append=False,
+        worker=True,
+        seed=int(seed),
+        query_index=int(query_index),
+    )
+    wall_timeout = max(5.0, float(timeout_s) * float(args.bitstar_wall_timeout_factor) + 5.0)
+    context = mp.get_context("fork")
+    queue = context.Queue(maxsize=1)
+    process = context.Process(target=bitstar_per_query.multiprocessing_worker, args=(worker_args, queue))
+    process.start()
+    process.join(wall_timeout)
+    query_label = str(bitstar_per_query.query_specs()[query_index]["label"])
+    if process.is_alive():
+        process.terminate()
+        process.join(1.0)
+        if process.is_alive():
+            process.kill()
+            process.join(1.0)
+        return {
+            "method": "bitstar",
+            "seed": int(seed),
+            "query_index": int(query_index),
+            "label": query_label,
+            "success": False,
+            "audit_passed": False,
+            "audit_status": "wall_timeout",
+            "planner_status": "wall_timeout",
+            "planning_s": wall_timeout,
+            "audit_s": 0.0,
+            "path_length": math.nan,
+            "waypoint_count": 0,
+        }
+    payload = queue.get() if not queue.empty() else {"ok": False, "error": "worker exited without result"}
+    if bool(payload.get("ok")):
+        return dict(payload.get("row", {}))
+    return {
+        "method": "bitstar",
+        "seed": int(seed),
+        "query_index": int(query_index),
+        "label": query_label,
+        "success": False,
+        "audit_passed": False,
+        "audit_status": "worker_failed",
+        "planner_status": str(payload.get("error", ""))[-2000:],
+        "planning_s": math.nan,
+        "audit_s": 0.0,
+        "path_length": math.nan,
+        "waypoint_count": 0,
+    }
+
+
+def run_bitstar_trace(
+    seed: int,
+    args: argparse.Namespace,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    *,
+    timeout_s: float | None = None,
+    samples_per_batch: int | None = None,
+    rewire_factor: float | None = None,
+    stage_prefix: str | None = None,
+) -> list[dict[str, Any]]:
+    timeout_s = float(args.bitstar_timeout_s if timeout_s is None else timeout_s)
+    interval_s = float(args.bitstar_checkpoint_interval_s)
+    samples_per_batch = int(args.bitstar_samples_per_batch if samples_per_batch is None else samples_per_batch)
+    rewire_factor = float(args.bitstar_rewire_factor if rewire_factor is None else rewire_factor)
+    stage_prefix = stage_prefix or f"batch{samples_per_batch}_rw{fmt_float(rewire_factor)}"
+    if interval_s >= timeout_s - 1e-9:
+        qrows: list[dict[str, Any]] = []
+        planning_s = 0.0
+        audit_s = 0.0
+        for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
+            row = run_bitstar_pre_audited_query(seed, index, args, timeout_s, samples_per_batch, rewire_factor)
+            query_planning_s = float(row.get("planning_s", 0.0) or 0.0)
+            query_audit_s = float(row.get("audit_s", 0.0) or 0.0)
+            planning_s += query_planning_s
+            audit_s += query_audit_s
+            ok = bool(row.get("audit_passed"))
+            qrows.append({
+                "label": query["label"],
+                "success": ok,
+                "audit_passed": ok,
+                "audit_status": str(row.get("audit_status", "")),
+                "query_ms": query_planning_s * 1000.0,
+                "audit_ms": query_audit_s * 1000.0,
+                "path_length": float(row.get("path_length", math.nan)) if ok else math.nan,
+                "segment_edge_length": 0.0,
+                "segment_fraction": 0.0 if ok else math.nan,
+                "waypoint_count": int(row.get("waypoint_count", 0) or 0),
+                "planner_status": str(row.get("planner_status", "")),
+                "iterations": int(row.get("iterations", 0) or 0),
+                "batches": int(row.get("batches", 0) or 0),
+                "checkpoint_s": timeout_s,
+                "simplify_ms": math.nan,
+                "simplify_status": "child_process",
+            })
+        return [
+            summarize_method_run(
+                "bitstar",
+                seed,
+                planning_s,
+                audit_s,
+                qrows,
+                {
+                    "planner": "OMPL_BITstar_per_query_watchdog",
+                    "timeout_s": timeout_s,
+                    "checkpoint_interval_s": interval_s,
+                    "checkpoint_s": timeout_s,
+                    "wall_timeout_factor": float(args.bitstar_wall_timeout_factor),
+                    "samples_per_batch": samples_per_batch,
+                    "rewire_factor": rewire_factor,
+                    "simplify_time_s": float(args.ompl_simplify_time_s),
+                    **bitstar_extra_metadata(args),
+                },
+                stage_id=f"{stage_prefix}_t{timeout_s:g}s",
+                budget_s=timeout_s,
+            )
+        ]
+    query_traces: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
+        rng_seed = int(seed) * 2003 + index
+        if interval_s >= timeout_s - 1e-9:
+            result = run_bitstar_path_watchdog(
+                robot,
+                obstacles,
+                query,
+                timeout_s,
+                args,
+                rng_seed,
+                samples_per_batch,
+                rewire_factor,
+            )
+            checkpoint = {
+                "checkpoint_s": timeout_s,
+                "elapsed_s": float(result.get("t_s", 0.0)),
+                "ok": bool(result.get("ok")),
+                "path": result.get("path", []),
+                "status": str(result.get("status", result.get("reason", ""))),
+                "reason": str(result.get("reason", result.get("status", ""))),
+                "iterations": int(result.get("iterations", 0) or 0),
+                "batches": int(result.get("batches", 0) or 0),
+            }
+            query_traces.append((query, [checkpoint]))
+        else:
+            result = sbf.ompl_bitstar_trace(
+                robot,
+                obstacles,
+                list(query["start"]),
+                list(query["goal"]),
+                timeout_s * 1000.0,
+                interval_s * 1000.0,
+                float(args.audit_segment_step),
+                rng_seed,
+                samples_per_batch,
+                rewire_factor,
+                bool(args.bitstar_stop_on_solution_improvement),
+                *bitstar_extra_args(args),
+            )
+            query_traces.append((query, [dict(item) for item in result.get("checkpoints", [])]))
     stage_count = max((len(checkpoints) for _query, checkpoints in query_traces), default=0)
     rows: list[dict[str, Any]] = []
     for stage_index in range(stage_count):
@@ -218,6 +567,13 @@ def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles
             checkpoint = checkpoints[min(stage_index, len(checkpoints) - 1)] if checkpoints else {}
             checkpoint_s = max(checkpoint_s, float(checkpoint.get("checkpoint_s", (stage_index + 1) * interval_s) or 0.0))
             path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
+            path, simplify_s, simplify_status = simplify_path_if_requested(
+                robot,
+                obstacles,
+                path,
+                float(args.audit_segment_step),
+                float(args.ompl_simplify_time_s),
+            )
             audit_passed, audit_time_s, audit_status = audit_path(
                 robot,
                 obstacles,
@@ -225,6 +581,7 @@ def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles
                 float(args.audit_segment_step),
                 start=list(query["start"]),
                 goal=list(query["goal"]),
+                collision_tolerance=float(args.audit_collision_tolerance),
             )
             audit_s += audit_time_s
             ok = bool(checkpoint.get("ok")) and audit_passed
@@ -234,7 +591,7 @@ def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles
                 "success": ok,
                 "audit_passed": audit_passed,
                 "audit_status": audit_status,
-                "query_ms": float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) * 1000.0,
+                "query_ms": (float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) + simplify_s) * 1000.0,
                 "audit_ms": audit_time_s * 1000.0,
                 "path_length": length,
                 "segment_edge_length": 0.0,
@@ -244,6 +601,8 @@ def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles
                 "iterations": int(checkpoint.get("iterations", 0) or 0),
                 "batches": int(checkpoint.get("batches", 0) or 0),
                 "checkpoint_s": checkpoint_s,
+                "simplify_ms": simplify_s * 1000.0,
+                "simplify_status": simplify_status,
             })
         row = summarize_method_run(
             "bitstar",
@@ -256,31 +615,107 @@ def run_bitstar_trace(seed: int, args: argparse.Namespace, robot: Any, obstacles
                 "timeout_s": timeout_s,
                 "checkpoint_interval_s": interval_s,
                 "checkpoint_s": checkpoint_s,
+                "wall_timeout_factor": float(args.bitstar_wall_timeout_factor),
+                "samples_per_batch": samples_per_batch,
+                "rewire_factor": rewire_factor,
+                "simplify_time_s": float(args.ompl_simplify_time_s),
+                **bitstar_extra_metadata(args),
             },
-            stage_id=f"t{checkpoint_s:g}s",
+            stage_id=f"{stage_prefix}_t{checkpoint_s:g}s",
             budget_s=checkpoint_s,
         )
         rows.append(row)
     return rows
 
 
-def run_prm(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], build_s: float | None = None) -> dict[str, Any]:
+def bitstar_extra_args(args: argparse.Namespace) -> list[Any]:
+    return [
+        int(args.bitstar_use_k_nearest),
+        int(args.bitstar_pruning),
+        float(args.bitstar_prune_threshold_fraction),
+        int(args.bitstar_delay_rewiring_until_initial_solution),
+        int(args.bitstar_just_in_time_sampling),
+        int(args.bitstar_drop_samples_on_prune),
+        int(args.bitstar_approximate_solutions),
+        int(args.bitstar_strict_queue_ordering),
+        int(args.bitstar_cascading_rewirings),
+        float(args.bitstar_initial_inflation_factor),
+        float(args.bitstar_inflation_scaling_parameter),
+        float(args.bitstar_truncation_scaling_parameter),
+        int(args.bitstar_allowed_failed_sampling_attempts),
+    ]
+
+
+def bitstar_extra_metadata(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "use_k_nearest": int(args.bitstar_use_k_nearest),
+        "pruning": int(args.bitstar_pruning),
+        "prune_threshold_fraction": float(args.bitstar_prune_threshold_fraction),
+        "delay_rewiring_until_initial_solution": int(args.bitstar_delay_rewiring_until_initial_solution),
+        "just_in_time_sampling": int(args.bitstar_just_in_time_sampling),
+        "drop_samples_on_prune": int(args.bitstar_drop_samples_on_prune),
+        "approximate_solutions": int(args.bitstar_approximate_solutions),
+        "strict_queue_ordering": int(args.bitstar_strict_queue_ordering),
+        "cascading_rewirings": int(args.bitstar_cascading_rewirings),
+        "initial_inflation_factor": float(args.bitstar_initial_inflation_factor),
+        "inflation_scaling_parameter": float(args.bitstar_inflation_scaling_parameter),
+        "truncation_scaling_parameter": float(args.bitstar_truncation_scaling_parameter),
+        "allowed_failed_sampling_attempts": int(args.bitstar_allowed_failed_sampling_attempts),
+    }
+
+
+def run_prm(
+    seed: int,
+    args: argparse.Namespace,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    build_s: float | None = None,
+    *,
+    query_budget_s: float | None = None,
+    max_nearest_neighbors: int | None = None,
+    planner_kind: str | None = None,
+    prm_range: float | None = None,
+    preload_query_endpoints: bool | None = None,
+    stage_id: str | None = None,
+) -> dict[str, Any]:
     build_s = float(args.prm_build_s if build_s is None else build_s)
+    query_budget_s = float(args.prm_query_s if query_budget_s is None else query_budget_s)
+    max_nearest_neighbors = int(args.prm_max_nearest_neighbors if max_nearest_neighbors is None else max_nearest_neighbors)
+    planner_kind = str(args.prm_planner_kind if planner_kind is None else planner_kind)
+    prm_range = float(args.prm_range if prm_range is None else prm_range)
+    preload_query_endpoints = bool(args.prm_preload_query_endpoints if preload_query_endpoints is None else preload_query_endpoints)
     starts = [list(query["start"]) for query in queries]
     goals = [list(query["goal"]) for query in queries]
     t0 = time.perf_counter()
-    result = sbf.ompl_prm_multiquery(
-        robot,
-        obstacles,
-        starts,
-        goals,
-        build_s,
-        float(args.prm_query_s),
-        float(args.audit_segment_step),
-        0.0,
-        int(seed),
-        int(args.prm_max_nearest_neighbors),
-    )
+    if planner_kind.lower() in {"lazyprm", "lazy_prm"}:
+        result = sbf.ompl_lazy_prm_multiquery(
+            robot,
+            obstacles,
+            starts,
+            goals,
+            query_budget_s,
+            float(args.audit_segment_step),
+            float(args.ompl_simplify_time_s),
+            int(seed),
+            max_nearest_neighbors,
+            prm_range,
+        )
+    else:
+        result = sbf.ompl_prm_multiquery(
+            robot,
+            obstacles,
+            starts,
+            goals,
+            build_s,
+            query_budget_s,
+            float(args.audit_segment_step),
+            float(args.ompl_simplify_time_s),
+            int(seed),
+            max_nearest_neighbors,
+            planner_kind,
+            preload_query_endpoints,
+        )
     planning_s = time.perf_counter() - t0
     qrows: list[dict[str, Any]] = []
     audit_s = 0.0
@@ -294,6 +729,7 @@ def run_prm(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
             float(args.audit_segment_step),
             start=list(query["start"]),
             goal=list(query["goal"]),
+            collision_tolerance=float(args.audit_collision_tolerance),
         )
         audit_s += audit_time_s
         ok = bool(qresult.get("ok")) and audit_passed
@@ -320,8 +756,14 @@ def run_prm(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
             "planner": "OMPL_PRM",
             "build_s": float(result.get("build_s", 0.0)),
             "nodes": int(result.get("nodes", 0)),
+            "query_budget_s": query_budget_s,
+            "max_nearest_neighbors": max_nearest_neighbors,
+            "planner_kind": planner_kind,
+            "range": prm_range,
+            "preload_query_endpoints": preload_query_endpoints,
+            "simplify_time_s": float(args.ompl_simplify_time_s),
         },
-        stage_id=f"build{build_s:g}s",
+        stage_id=stage_id or f"{planner_kind}_build{build_s:g}s_k{max_nearest_neighbors}_q{fmt_float(query_budget_s)}s_preload{int(preload_query_endpoints)}",
         budget_s=build_s,
     )
     row["build_s"] = float(result.get("build_s", build_s))
@@ -384,7 +826,7 @@ def run_method(method: str, seed: int, args: argparse.Namespace, robot: Any, obs
     if method == "bitstar":
         raise ValueError("BIT* uses run_bitstar_trace() so one fixed-timeout run can emit all checkpoints")
     if method == "iris_np_gcs":
-        return external_pending_row(method, seed, "IRIS/GCS backend requires external dependency and is not executed by smoke runner.")
+        return external_pending_row(method, seed, "IRIS/GCS is executed once through the prefix-anytime dispatcher, not per seed in this loop.")
     raise ValueError(f"unknown method {method!r}")
 
 
@@ -600,35 +1042,87 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--old-output-root", type=Path, default=Path("/home/tian/桌面/box_aabb/cpp/SBF/outputs/paper"))
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
+    parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
+    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.05)
     parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--sbf-box-budgets", default=",".join(str(item) for item in rbf_budget_grid("pilot")))
     parser.add_argument("--rbf-cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
     parser.add_argument("--rrt-timeout-s", type=float, default=10.0)
     parser.add_argument("--rrt-range", type=float, default=0.35)
-    parser.add_argument("--bitstar-timeout-s", type=float, default=120.0)
-    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=2.0)
-    parser.add_argument("--bitstar-samples-per-batch", type=int, default=-1)
-    parser.add_argument("--bitstar-rewire-factor", type=float, default=-1.0)
-    parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--bitstar-timeout-s", type=float, default=5.0)
+    parser.add_argument("--bitstar-timeout-grid-s", default="")
+    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=5.0)
+    parser.add_argument("--bitstar-wall-timeout-factor", type=float, default=1.5)
+    parser.add_argument("--bitstar-samples-per-batch", type=int, default=100)
+    parser.add_argument("--bitstar-samples-per-batch-grid", default="")
+    parser.add_argument("--bitstar-rewire-factor", type=float, default=5.0)
+    parser.add_argument("--bitstar-rewire-factor-grid", default="")
+    parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--bitstar-use-k-nearest", type=int, default=-1)
+    parser.add_argument("--bitstar-pruning", type=int, default=-1)
+    parser.add_argument("--bitstar-prune-threshold-fraction", type=float, default=-1.0)
+    parser.add_argument("--bitstar-delay-rewiring-until-initial-solution", type=int, default=-1)
+    parser.add_argument("--bitstar-just-in-time-sampling", type=int, default=-1)
+    parser.add_argument("--bitstar-drop-samples-on-prune", type=int, default=-1)
+    parser.add_argument("--bitstar-approximate-solutions", type=int, default=-1)
+    parser.add_argument("--bitstar-strict-queue-ordering", type=int, default=-1)
+    parser.add_argument("--bitstar-cascading-rewirings", type=int, default=-1)
+    parser.add_argument("--bitstar-initial-inflation-factor", type=float, default=-1.0)
+    parser.add_argument("--bitstar-inflation-scaling-parameter", type=float, default=-1.0)
+    parser.add_argument("--bitstar-truncation-scaling-parameter", type=float, default=-1.0)
+    parser.add_argument("--bitstar-allowed-failed-sampling-attempts", type=int, default=-1)
     parser.add_argument("--prm-build-s", type=float, default=40.0)
     parser.add_argument("--prm-build-grid-s", default="2,5,10,20,40,80")
     parser.add_argument("--prm-query-s", type=float, default=1.0)
+    parser.add_argument("--prm-query-grid-s", default="")
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
+    parser.add_argument("--prm-k-grid", default="")
+    parser.add_argument("--prm-planner-kind", default="prm")
+    parser.add_argument("--prm-planner-kind-grid", default="")
+    parser.add_argument("--prm-range", type=float, default=0.0)
+    parser.add_argument("--prm-range-grid", default="")
+    parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--prm-preload-query-endpoints-grid", default="")
+    parser.add_argument("--iris-python", type=Path, default=default_iris_python())
+    parser.add_argument("--iris-gcs-repo", type=Path, default=default_gcs_repo())
+    parser.add_argument("--iris-budget-s", type=float, default=1200.0)
+    parser.add_argument("--iris-stage-region-counts", default="8,12,16,20,24")
+    parser.add_argument("--iris-iteration-limit", type=int, default=8)
+    parser.add_argument("--iris-query-time-limit-s", type=float, default=120.0)
+    parser.add_argument("--iris-rounding-max-paths", type=int, default=24)
+    parser.add_argument("--iris-rounding-max-trials", type=int, default=240)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    configure_thread_environment(int(args.threads))
     seeds = [int(item) for item in csv_items(args.seeds)]
     methods = [item for item in csv_items(args.methods) if item in METHODS]
     sbf_budgets = [int(item) for item in csv_items(args.sbf_box_budgets)]
     prm_build_grid_s = [float(item) for item in csv_items(args.prm_build_grid_s)] if str(args.prm_build_grid_s).strip() else [float(args.prm_build_s)]
+    prm_query_grid_s = csv_floats(args.prm_query_grid_s) if str(args.prm_query_grid_s).strip() else [float(args.prm_query_s)]
+    prm_k_grid = csv_ints(args.prm_k_grid) if str(args.prm_k_grid).strip() else [int(args.prm_max_nearest_neighbors)]
+    prm_kind_grid = csv_strings(args.prm_planner_kind_grid) if str(args.prm_planner_kind_grid).strip() else [str(args.prm_planner_kind)]
+    prm_range_grid = csv_floats(args.prm_range_grid) if str(args.prm_range_grid).strip() else [float(args.prm_range)]
+    prm_preload_grid = csv_bools(args.prm_preload_query_endpoints_grid) if str(args.prm_preload_query_endpoints_grid).strip() else [bool(args.prm_preload_query_endpoints)]
+    bitstar_timeout_grid_s = csv_floats(args.bitstar_timeout_grid_s) if str(args.bitstar_timeout_grid_s).strip() else [float(args.bitstar_timeout_s)]
+    bitstar_batch_grid = csv_ints(args.bitstar_samples_per_batch_grid) if str(args.bitstar_samples_per_batch_grid).strip() else [int(args.bitstar_samples_per_batch)]
+    bitstar_rewire_grid = csv_floats(args.bitstar_rewire_factor_grid) if str(args.bitstar_rewire_factor_grid).strip() else [float(args.bitstar_rewire_factor)]
     if args.phase == "smoke":
         seeds = seeds[:1]
         sbf_budgets = [int(args.sbf_box_budget)]
         prm_build_grid_s = [min(float(args.prm_build_s), 0.25)]
+        prm_query_grid_s = [float(args.prm_query_s)]
+        prm_k_grid = [int(args.prm_max_nearest_neighbors)]
+        prm_kind_grid = [str(args.prm_planner_kind)]
+        prm_range_grid = [float(args.prm_range)]
+        prm_preload_grid = [bool(args.prm_preload_query_endpoints)]
         args.bitstar_timeout_s = min(float(args.bitstar_timeout_s), 0.25)
+        bitstar_timeout_grid_s = [float(args.bitstar_timeout_s)]
+        bitstar_batch_grid = [int(args.bitstar_samples_per_batch)]
+        bitstar_rewire_grid = [float(args.bitstar_rewire_factor)]
         args.bitstar_checkpoint_interval_s = min(float(args.bitstar_checkpoint_interval_s), float(args.bitstar_timeout_s))
     robot = sbf.load_iiwa14_robot()
     obstacles = list(sbf.make_combined_obstacles())
@@ -638,9 +1132,22 @@ def main() -> int:
         if method == "sbf_leaf_rrt":
             budgets: list[Any] = sbf_budgets
         elif method == "prm" and args.rerun_baselines:
-            budgets = prm_build_grid_s
+            budgets = [
+                {"build_s": build_s, "query_s": query_s, "k": k, "kind": kind, "range": prm_range, "preload": preload}
+                for build_s in prm_build_grid_s
+                for query_s in prm_query_grid_s
+                for k in prm_k_grid
+                for kind in prm_kind_grid
+                for prm_range in prm_range_grid
+                for preload in prm_preload_grid
+            ]
         elif method == "bitstar":
-            budgets = [float(args.bitstar_timeout_s)]
+            budgets = [
+                {"timeout_s": timeout_s, "batch": batch, "rewire": rewire}
+                for timeout_s in bitstar_timeout_grid_s
+                for batch in bitstar_batch_grid
+                for rewire in bitstar_rewire_grid
+            ]
         elif method == "rrtconnect" and args.rerun_baselines:
             budgets = [float(args.rrt_timeout_s)]
         else:
@@ -649,8 +1156,8 @@ def main() -> int:
             for budget in budgets:
                 stage_id = (
                     f"b{int(budget)}" if method == "sbf_leaf_rrt"
-                    else f"build{float(budget):g}s" if method == "prm" and budget is not None
-                    else f"trace{float(budget):g}s" if method == "bitstar" and budget is not None
+                    else f"{str(budget.get('kind', 'prm'))}_build{float(budget['build_s']):g}s_k{int(budget['k'])}_q{fmt_float(float(budget['query_s']))}s_r{fmt_float(float(budget.get('range', 0.0)))}_preload{int(bool(budget.get('preload', False)))}" if method == "prm" and isinstance(budget, dict)
+                    else f"batch{int(budget['batch'])}_rw{fmt_float(float(budget['rewire']))}_trace{float(budget['timeout_s']):g}s" if method == "bitstar" and isinstance(budget, dict)
                     else f"timeout{float(args.rrt_timeout_s):g}s" if method == "rrtconnect" and args.rerun_baselines
                     else method
                 )
@@ -659,11 +1166,23 @@ def main() -> int:
             "method": method,
             "seed": seed,
             "stage_id": stage_id,
-            "budget_s": float(budget) if method != "sbf_leaf_rrt" and budget is not None else None,
-            "deep_max_boxes": budget,
+            "budget_s": (
+                float(budget["build_s"]) if method == "prm" and isinstance(budget, dict)
+                else float(budget["timeout_s"]) if method == "bitstar" and isinstance(budget, dict)
+                else float(budget) if method != "sbf_leaf_rrt" and budget is not None
+                else None
+            ),
+            "deep_max_boxes": budget if method == "sbf_leaf_rrt" else None,
+            "planner_params": budget if isinstance(budget, dict) else None,
             "scene": "marcucci_shelf_iiwa",
             "query_set": "AS_TS_CS_LB_RB_raw_actual",
             "audit_segment_step": float(args.audit_segment_step),
+            "audit_collision_tolerance": float(args.audit_collision_tolerance),
+            "active_planning_root": "full_robot_joint_limits",
+            "coverage_root": "full_robot_joint_limits",
+            "canonical_mapping_scope": "LECT_internal_only",
+            "threads": int(args.threads),
+            "ompl_simplify_time_s": float(args.ompl_simplify_time_s),
             "execution_policy": "import_old_audited_artifact" if method in IMPORTED_BASELINE_METHODS and not args.rerun_baselines else "current_execution",
             "rbf_default_profile": shelf_d23_rbf_profile() if method == "sbf_leaf_rrt" else None,
             "box_budgets": rbf_budget_grid(args.phase) if method == "sbf_leaf_rrt" else None,
@@ -676,10 +1195,29 @@ def main() -> int:
             import_payload = import_old_baselines(args.out_dir, args.old_paper_root, args.old_output_root)
             if import_payload["audit"]["status"] != "reusable":
                 raise RuntimeError("old baseline reuse audit failed; rerun with --rerun-baselines or inspect old_shelf_baseline_reuse_audit.json")
+        if "iris_np_gcs" in methods:
+            iris_json = args.out_dir / "iris_np_gcs_anytime.json"
+            print(f"[exp05] method=iris_np_gcs out={iris_json}", flush=True)
+            iris_payload = run_shelf_iris_anytime(
+                out_json=iris_json,
+                python_executable=Path(args.iris_python),
+                gcs_repo=Path(args.iris_gcs_repo),
+                seeds=len(seeds),
+                threads=int(args.threads),
+                budget_s=float(args.iris_budget_s),
+                stage_region_counts=str(args.iris_stage_region_counts),
+                iteration_limit=int(args.iris_iteration_limit),
+                query_time_limit_s=float(args.iris_query_time_limit_s),
+                rounding_max_paths=int(args.iris_rounding_max_paths),
+                rounding_max_trials=int(args.iris_rounding_max_trials),
+                segment_step=float(args.audit_segment_step),
+                final_ompl_simplify_time_s=float(args.ompl_simplify_time_s),
+            )
+            rows.extend(shelf_iris_json_to_run_rows(iris_payload))
         executable_rows = [
             planned
             for planned in planned_rows
-            if str(planned["method"]) not in IMPORTED_BASELINE_METHODS
+            if str(planned["method"]) not in IMPORTED_BASELINE_METHODS and str(planned["method"]) != "iris_np_gcs"
         ]
         for planned in progress(executable_rows, desc="exp05 runs", total=len(executable_rows)):
             if (
@@ -690,7 +1228,34 @@ def main() -> int:
             if str(planned["method"]) == "sbf_leaf_rrt":
                 rows.append(run_sbf(int(planned["seed"]), args, robot, obstacles, queries, int(planned["deep_max_boxes"])))
             elif str(planned["method"]) == "bitstar":
-                rows.extend(run_bitstar_trace(int(planned["seed"]), args, robot, obstacles, queries))
+                params = dict(planned.get("planner_params") or {})
+                rows.extend(run_bitstar_trace(
+                    int(planned["seed"]),
+                    args,
+                    robot,
+                    obstacles,
+                    queries,
+                    timeout_s=float(params.get("timeout_s", args.bitstar_timeout_s)),
+                    samples_per_batch=int(params.get("batch", args.bitstar_samples_per_batch)),
+                    rewire_factor=float(params.get("rewire", args.bitstar_rewire_factor)),
+                    stage_prefix=f"batch{int(params.get('batch', args.bitstar_samples_per_batch))}_rw{fmt_float(float(params.get('rewire', args.bitstar_rewire_factor)))}",
+                ))
+            elif str(planned["method"]) == "prm":
+                params = dict(planned.get("planner_params") or {})
+                rows.append(run_prm(
+                    int(planned["seed"]),
+                    args,
+                    robot,
+                    obstacles,
+                    queries,
+                    float(params.get("build_s", planned["budget_s"])),
+                    query_budget_s=float(params.get("query_s", args.prm_query_s)),
+                    max_nearest_neighbors=int(params.get("k", args.prm_max_nearest_neighbors)),
+                    planner_kind=str(params.get("kind", args.prm_planner_kind)),
+                    prm_range=float(params.get("range", args.prm_range)),
+                    preload_query_endpoints=bool(params.get("preload", args.prm_preload_query_endpoints)),
+                    stage_id=str(planned.get("stage_id")),
+                ))
             else:
                 rows.append(run_method(
                     str(planned["method"]),
@@ -702,6 +1267,9 @@ def main() -> int:
                     float(planned["budget_s"]) if planned.get("budget_s") is not None else None,
                 ))
     summary = aggregate(rows) if rows else []
+    if rows:
+        summary = [row for row in summary if str(row.get("method")) != "iris_np_gcs"]
+        summary.extend(shelf_iris_summary_rows([row for row in rows if str(row.get("method")) == "iris_np_gcs"]))
     if import_payload is not None:
         imported_methods = set(methods) & IMPORTED_BASELINE_METHODS
         summary.extend(row for row in import_payload["summary"] if row["method"] in imported_methods)
@@ -712,6 +1280,14 @@ def main() -> int:
         "status": "dry_run" if args.dry_run else "executed",
         "environment": environment_metadata(),
         "rbf_default_profile": shelf_d23_rbf_profile(),
+        "audit": {
+            "segment_step": float(args.audit_segment_step),
+            "collision_tolerance": float(args.audit_collision_tolerance),
+        },
+        "baseline_execution": {
+            "threads": int(args.threads),
+            "ompl_simplify_time_s": float(args.ompl_simplify_time_s),
+        },
         "baseline_reuse_audit": import_payload["audit"] if import_payload is not None else None,
         "planned_rows": planned_rows,
         "rows": rows,

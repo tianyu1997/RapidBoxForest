@@ -70,6 +70,10 @@ struct LeafSweepRefineConfig {
 	bool run_rrt_grower = false;
 	int rrt_grower_extra_boxes = 0;
 	double rrt_grower_timeout_ms = 0.0;
+	double priority_prune_radius = 0.0;
+	int collision_overlap_prune_min_depth = -1;
+	double collision_overlap_prune_threshold = 0.0;
+	double collision_overlap_prune_ratio_threshold = 0.0;
 };
 
 struct LectDatabaseRuntimeConfig {
@@ -111,6 +115,8 @@ struct RBFPlanningConfig {
 	DynamicUpdateConfig dynamic_update;
 	bool enable_merger = true;
 	bool enable_connector = true;
+	/// Optional query-bridge chain-pave FFB depth. <=0 reuses connector.pave.
+	int query_bridge_pave_depth = 0;
 
 	/// RSS threshold for session-level evidence spill during online cache updates.
 	/// 0 = disabled.
@@ -276,6 +282,8 @@ public:
 					 const Eigen::Ref<const Eigen::VectorXd>& goal);
 	int bridge_query_known_needed(const Eigen::Ref<const Eigen::VectorXd>& start,
 								  const Eigen::Ref<const Eigen::VectorXd>& goal);
+	std::vector<int> bridge_queries(const std::vector<Eigen::VectorXd>& starts,
+									const std::vector<Eigen::VectorXd>& goals);
 	/// Isolated chain_pave debug entry: build the BiRRT bridge between the boxes
 	/// containing @p start and @p goal, then run chain_pave_along_path() with the
 	/// supplied @p pave config (the IslandConnector gap step is skipped) so the
@@ -283,6 +291,8 @@ public:
 	DebugChainPaveResult debug_chain_pave(const Eigen::Ref<const Eigen::VectorXd>& start,
 										  const Eigen::Ref<const Eigen::VectorXd>& goal,
 										  const ChainPaveConfig& pave);
+	DebugChainPaveResult debug_chain_pave_waypoints(const std::vector<Eigen::VectorXd>& waypoint_path,
+													const ChainPaveConfig& pave);
 	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
 							  const Eigen::Ref<const Eigen::VectorXd>& goal,
 							  int max_boxes_to_add);
@@ -328,6 +338,11 @@ private:
 	QueryResult run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
 								   const Eigen::Ref<const Eigen::VectorXd>& goal,
 								   bool allow_collision_shortcut) const;
+	int bridge_query_with_waypoint_path(const Eigen::Ref<const Eigen::VectorXd>& start,
+										const Eigen::Ref<const Eigen::VectorXd>& goal,
+										const std::vector<Eigen::VectorXd>& waypoint_path,
+										bool short_local_bridge,
+										const RRTConnectConfig& bridge_rrt);
 	void reset_oracle(Scene scene);
 	void reserve_existing_boxes();
 	void rebuild_adjacency();

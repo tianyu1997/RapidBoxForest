@@ -126,11 +126,6 @@ uint64_t Robot::fingerprint() const {
         hash_bytes(&has, 1);
     }
 
-    // Active link radii
-    if (!active_link_radii_.empty())
-        hash_bytes(active_link_radii_.data(),
-                   active_link_radii_.size() * sizeof(double));
-
     // Active link map
     if (!active_link_map_.empty())
         hash_bytes(active_link_map_.data(),

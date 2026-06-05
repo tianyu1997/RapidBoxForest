@@ -315,6 +315,8 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
         .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
+        .def_readwrite("skip_aabb_broadphase", &rbf::SupportHullConfig::skip_aabb_broadphase)
+        .def_readwrite("direct_collision", &rbf::SupportHullConfig::direct_collision)
         .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
 
     py::class_<rbf::EnvelopeTypeConfig>(module, "EnvelopeTypeConfig")
@@ -536,6 +538,8 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             rbf::EnvelopeCollisionOptions options;
             options.mode = parse_collision_mode(collision_mode);
             options.use_link_aabb_broadphase = use_link_aabb_broadphase;
+            options.skip_aabb_broadphase = envelope_config.support_hull_config.skip_aabb_broadphase;
+            options.direct_support_hull_collision = envelope_config.support_hull_config.direct_collision;
             options.count_all_pairs = count_all_pairs;
             collision_start = Clock::now();
             collision = rbf::collide_envelope_aabbs(

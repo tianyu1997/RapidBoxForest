@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from experiments.common.experiment_io import environment_metadata
-from experiments.common.rbf_defaults import D23_ROOT_INTERVALS, robot_sector_expanded_root_tuples
+from experiments.common.rbf_defaults import robot_joint_limit_tuples
 from experiments.common.sbf_import import import_sbf
 
 
@@ -34,8 +34,9 @@ RANDOM_OBSTACLE_SCALES = {"easy": 0.12, "medium": 0.16, "hard": 0.20}
 RANDOM_WORKSPACE_Z_MIN = 0.05
 RANDOM_WORKSPACE_Z_MAX = 0.90
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
-CATALOG_SCHEMA = "tro2026_random_scene_catalog_v5"
-LECT_SAMPLE_DOMAIN = "reflected_canonical_lect_root_sections"
+CATALOG_SCHEMA = "tro2026_random_scene_catalog_v6"
+READABLE_CATALOG_SCHEMAS = {CATALOG_SCHEMA, "tro2026_random_scene_catalog_v5"}
+LECT_SAMPLE_DOMAIN = "full_robot_joint_limits"
 
 
 @dataclass(frozen=True)
@@ -195,6 +196,10 @@ def canonical_root_intervals(robot: Any) -> list[Any]:
     return list(robot.joint_limits().limits)
 
 
+def robot_joint_limit_intervals(robot: Any) -> list[Any]:
+    return [sbf.Interval(lo, hi) for lo, hi in robot_joint_limit_tuples(robot)]
+
+
 def robot_name_from_robot(robot: Any) -> str:
     raw_name = getattr(robot, "name", "")
     name = str(raw_name() if callable(raw_name) else raw_name)
@@ -209,17 +214,11 @@ def robot_name_from_robot(robot: Any) -> str:
 
 
 def base_lect_root_intervals(robot: Any) -> list[Any]:
-    if robot_name_from_robot(robot) == "iiwa":
-        return [sbf.Interval(float(lo), float(hi)) for lo, hi in D23_ROOT_INTERVALS]
-    return canonical_root_intervals(robot)
+    return robot_joint_limit_intervals(robot)
 
 
 def sector_expanded_lect_root_intervals(robot: Any) -> list[Any]:
-    robot_name = robot_name_from_robot(robot)
-    override = robot_sector_expanded_root_tuples(robot_name, robot)
-    if override is not None:
-        return [sbf.Interval(float(lo), float(hi)) for lo, hi in override]
-    return canonical_root_intervals(robot)
+    return robot_joint_limit_intervals(robot)
 
 
 def interval_pairs(intervals: Iterable[Any]) -> list[list[float]]:
@@ -333,7 +332,7 @@ def canonicalize_q(robot: Any, q: list[float]) -> list[float]:
 
 
 def sample_q(robot: Any, rng: random.Random, *, canonical: bool = True) -> list[float]:
-    intervals = base_lect_root_intervals(robot) if canonical else list(robot.joint_limits().limits)
+    intervals = list(robot.joint_limits().limits)
     q = [rng.uniform(interval.lo, interval.hi) for interval in intervals]
     return canonicalize_q(robot, q) if canonical else [float(value) for value in q]
 
@@ -454,29 +453,17 @@ def sample_free_pair_with_canonical_record(
     clearance_margin_m: float = ENDPOINT_CLEARANCE_MARGIN_M,
     max_tries: int = 2000,
 ) -> tuple[list[float], list[float], list[float], list[float], int, int]:
-    shifts = valid_symmetry_shifts(robot, None)
-    section_shift = int(shifts[rng.randrange(len(shifts))])
-    section_sector = section_shift % 4
-    start: list[float] | None = None
-    canonical_start: list[float] | None = None
-    for _ in range(max_tries):
-        q, cq, _shift, _sector = sample_reflected_lect_q_in_shift(robot, rng, section_shift)
-        if not sbf.check_config_collision(robot, obstacles, q) and config_has_clearance(robot, obstacles, q, clearance_margin_m):
-            start = q
-            canonical_start = cq
-            break
-    if start is None or canonical_start is None:
-        raise RuntimeError("could not sample a collision-free reflected start")
-    for _ in range(max_tries):
-        goal, canonical_goal, _goal_shift, _goal_sector = sample_reflected_lect_q_in_shift(robot, rng, section_shift)
-        if sbf.check_config_collision(robot, obstacles, goal):
-            continue
-        if not config_has_clearance(robot, obstacles, goal, clearance_margin_m):
-            continue
-        dist = math.sqrt(sum((a - b) * (a - b) for a, b in zip(start, goal)))
-        if dist >= min_l2 and dist <= max_l2:
-            return start, goal, canonical_start, canonical_goal, section_shift, section_sector
-    raise RuntimeError("could not sample and reflect a collision-free query pair")
+    start, goal = sample_free_pair(
+        robot,
+        obstacles,
+        rng,
+        min_l2=min_l2,
+        max_l2=max_l2,
+        clearance_margin_m=clearance_margin_m,
+        max_tries=max_tries,
+        canonical=False,
+    )
+    return start, goal, canonicalize_q(robot, start), canonicalize_q(robot, goal), 0, 0
 
 
 def append_random_scene_obstacle(
@@ -633,9 +620,10 @@ def scene_to_record(scene: SceneSpec, *, scene_seed: int, generator_seed: int, s
         "sample_domain": LECT_SAMPLE_DOMAIN,
         "canonical_cache": True,
         "lect_root_intervals": interval_pairs(canonical_root_intervals(robot)),
+        "planning_root_intervals": interval_pairs(robot_joint_limit_intervals(robot)),
         "sector_expanded_root_intervals": interval_pairs(sector_expanded_lect_root_intervals(robot)),
-        "canonical_start_in_lect_root": q_in_base_lect_root(robot, canonical_start),
-        "canonical_goal_in_lect_root": q_in_base_lect_root(robot, canonical_goal),
+        "canonical_start_in_lect_root": q_in_intervals(canonical_start, canonical_root_intervals(robot)),
+        "canonical_goal_in_lect_root": q_in_intervals(canonical_goal, canonical_root_intervals(robot)),
         "actual_start_in_lect_root": q_in_lect_root(robot, scene.start),
         "actual_goal_in_lect_root": q_in_lect_root(robot, scene.goal),
         "endpoint_clearance_margin_m": float(scene.endpoint_clearance_margin_m),
@@ -665,13 +653,20 @@ def scene_from_record(record: dict[str, Any]) -> SceneSpec:
 
 
 def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
+    if str(record.get("schema", "")) == "tro2026_random_scene_catalog_v5":
+        return (
+            str(record.get("sample_domain", "")) in {LECT_SAMPLE_DOMAIN, "reflected_canonical_lect_root_sections"}
+            and bool(record.get("canonical_cache", False))
+            and bool(record.get("actual_start_in_lect_root", False))
+            and bool(record.get("actual_goal_in_lect_root", False))
+            and bool(record.get("canonical_start_in_lect_root", False))
+            and bool(record.get("canonical_goal_in_lect_root", False))
+        )
     try:
         robot = make_robot(str(record["robot"]))
         return (
             str(record.get("sample_domain", "")) == LECT_SAMPLE_DOMAIN
             and bool(record.get("canonical_cache", False))
-            and q_in_base_lect_root(robot, [float(value) for value in record["canonical_start"]])
-            and q_in_base_lect_root(robot, [float(value) for value in record["canonical_goal"]])
             and q_in_lect_root(robot, [float(value) for value in record["start"]])
             and q_in_lect_root(robot, [float(value) for value in record["goal"]])
             and q_close(canonicalize_q(robot, [float(value) for value in record["start"]]), [float(value) for value in record["canonical_start"]])
@@ -711,9 +706,9 @@ def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds:
         "difficulty_order": list(RANDOM_DIFFICULTY_ORDER),
         "sample_domain": LECT_SAMPLE_DOMAIN,
         "canonical_cache": True,
-        "root_policy": "sample actual start/goal inside the union of reflected canonical LECT-root sections; store canonical representatives for RBF queries.",
+        "root_policy": "sample actual start/goal in full native robot joint limits; store canonical representatives only as LECT metadata.",
         "robot_root_intervals": {
-            robot_name: interval_pairs(canonical_root_intervals(make_robot(robot_name)))
+            robot_name: interval_pairs(robot_joint_limit_intervals(make_robot(robot_name)))
             for robot_name in robots
         },
         "robot_sector_expanded_root_intervals": {
@@ -727,7 +722,7 @@ def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds:
 def load_catalog(path: Path) -> dict[str, Any]:
     with Path(path).open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
-    if payload.get("schema") != CATALOG_SCHEMA:
+    if payload.get("schema") not in READABLE_CATALOG_SCHEMAS:
         raise ValueError(f"unsupported scene catalog schema in {path}: {payload.get('schema')!r}")
     return payload
 

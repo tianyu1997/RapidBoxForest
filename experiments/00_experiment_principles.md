@@ -25,6 +25,37 @@ Report wall-clock seconds. `planning_time` excludes final audit. At minimum:
 3. `audit_s`: final fixed-step audit;
 4. `asset_s`: analysis/table/figure generation, never charged to planning.
 
+## Depth Semantics
+
+All paper-facing cache, leaf-sweep, free-box-finder, and connector/paving depth
+values are defined in the relevant LECT tree, not in an external native planning
+tree. For robots with symmetry reduction, the canonical LECT tree owns the root
+interval, split policy, node ids, box depth, and evidence identity.
+Native-space planning, query endpoints, paths, and final audit remain outside
+LECT and must not change the meaning of any depth parameter.
+
+This means:
+
+1. `d23` means depth 23 in the canonical LECT root recorded by the cache
+   manifest.
+2. `leaf_start_depth`, `leaf_max_depth`, `deep_ffb_depth`,
+   `ffb_start_depth`, `connector_pave_depth`, and `rbf_max_depth` are LECT
+   node depths in the active LECT tree used to generate or certify boxes. They
+   are not native-sector-expanded depths.
+3. External native/all-sector planning must reuse canonical evidence through
+   the LECT evidence adapter's internal canonical map and inverse evidence
+   transform; it must not reinterpret `d23` as a native-tree depth.
+4. Never compensate for native sector expansion by adding artificial leading
+   sector splits and renaming the result as a comparable depth. Such a cache is
+   a different LECT tree and must be reported with a different explicit label.
+5. Exp.4 Shelf+IIWA prewarm is capped at canonical `d23`. Scripts must refuse
+   larger prewarm depths unless a new appendix experiment explicitly studies
+   cache-depth scaling.
+6. Depth fields must be named and reported as either `lect_*_depth` or
+   explicitly documented as LECT tree depths. They must be reported separately
+   from native path metrics and must not be used to name the cache unless they
+   are the actual canonical prewarm depth.
+
 ## Path Quality And Success
 
 Only paths that pass the common fixed-step final audit are eligible for main

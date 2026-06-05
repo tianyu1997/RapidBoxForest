@@ -18,13 +18,15 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import generate_catalog, make_robot, scene_for_key
 from experiments.common.rbf_defaults import (
+    DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
     DEFAULT_RBF_DEEP_MAX_BOXES,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
     rbf_budget_grid,
     robot_lectdb_profile,
-    robot_sector_expanded_root_tuples,
+    robot_joint_limit_tuples,
+    robot_symmetry_aligned_root_tuples,
 )
 from experiments.common.rbf_leaf_rrt import QuerySpec, RBFLeafRRTOptions, run_leaf_rrt
 from experiments.common.robot_lectdb_cache import ensure_robot_lectdb_cache, robot_external_evidence_path
@@ -56,16 +58,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
+    parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
     parser.add_argument("--rrt-timeout-s", type=float, default=1.0)
     parser.add_argument("--rrt-range", type=float, default=0.35)
+    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.05)
     parser.add_argument("--prm-build-s", type=float, default=2.0)
-    parser.add_argument("--prm-build-grid-s", default="0.25,0.5,1,2,5")
-    parser.add_argument("--prm-query-s", type=float, default=1.0)
-    parser.add_argument("--prm-max-nearest-neighbors", type=int, default=32)
-    parser.add_argument("--bitstar-timeout-s", type=float, default=2.0)
-    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=1.0)
+    parser.add_argument("--prm-build-grid-s", default="2")
+    parser.add_argument("--prm-query-s", type=float, default=4.0)
+    parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
+    parser.add_argument("--prm-planner-kind", default="prm")
+    parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--bitstar-timeout-s", type=float, default=5.0)
+    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=5.0)
     parser.add_argument("--bitstar-samples-per-batch", type=int, default=100)
-    parser.add_argument("--bitstar-rewire-factor", type=float, default=1.1)
+    parser.add_argument("--bitstar-rewire-factor", type=float, default=5.0)
+    parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
     return parser.parse_args()
 
 
@@ -95,6 +102,7 @@ def audit_path(
     start: list[float] | None = None,
     goal: list[float] | None = None,
     endpoint_tol: float = 1e-6,
+    collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
 ) -> tuple[bool, float, str]:
     t0 = time.perf_counter()
     if len(path) < 2:
@@ -108,7 +116,12 @@ def audit_path(
         distance = math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
         steps = max(1, int(math.ceil(distance / step)))
         for index in range(steps + 1):
-            if sbf.check_config_collision(robot, obstacles, interpolate(a, b, index / steps)):
+            if sbf.check_config_collision(
+                robot,
+                obstacles,
+                interpolate(a, b, index / steps),
+                float(collision_tolerance),
+            ):
                 return False, time.perf_counter() - t0, "collision"
     return True, time.perf_counter() - t0, "passed"
 
@@ -123,7 +136,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         actual_start=list(scene.start),
         actual_goal=list(scene.goal),
     )
-    root_override = robot_sector_expanded_root_tuples(robot_name, robot)
+    valid_root = robot_joint_limit_tuples(robot)
+    root_override = robot_symmetry_aligned_root_tuples(robot) if str(robot_name) == "iiwa" else valid_root
     row = run_leaf_rrt(
         robot=robot,
         obstacles=list(scene.obstacles),
@@ -135,14 +149,17 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             threads=int(args.threads),
             use_external_evidence=True,
             external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
-            external_evidence_verify_identity=root_override is None,
+            external_evidence_verify_identity=False,
             root_override_tuples=root_override,
-            coverage_override_tuples=root_override,
+            coverage_override_tuples=valid_root,
+            symmetry_aligned_native_root=str(robot_name) == "iiwa",
+            symmetry_aligned_cache_schedule=str(robot_name) == "iiwa",
             database_canonical_mode=True,
             case_label=f"rbf_{robot_name}_{difficulty}",
             parallel_virtual_validation=False,
             leaf_threads=1,
             canonicalize_queries=False,
+            audit_collision_tolerance=float(args.audit_collision_tolerance),
             connector_segment_resolution=(
                 int(args.connector_segment_resolution)
                 if args.connector_segment_resolution is not None
@@ -159,6 +176,9 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "obstacle_count": len(scene.obstacles),
             "scene_catalog": str(args.scene_catalog or (args.out_dir / "random_scene_catalog.json")),
             "lectdb": robot_lectdb_profile(robot_name),
+            "active_planning_root": "full_robot_joint_limits",
+            "coverage_root": "full_robot_joint_limits",
+            "canonical_mapping_scope": "LECT_internal_only",
             "external_evidence_path": str(robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root))),
         }
     )
@@ -239,6 +259,7 @@ def run_rrtconnect_scene(args: argparse.Namespace, catalog: dict[str, Any], robo
         float(args.audit_segment_step),
         start=list(scene.start),
         goal=list(scene.goal),
+        collision_tolerance=float(args.audit_collision_tolerance),
     )
     ok = bool(result.get("ok"))
     return summarize_single_query_method(
@@ -269,9 +290,11 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         float(build_budget_s),
         float(args.prm_query_s),
         float(args.audit_segment_step),
-        0.0,
+        float(args.ompl_simplify_time_s),
         int(args.seed_base) + 10007 * int(scene_seed),
         int(args.prm_max_nearest_neighbors),
+        str(args.prm_planner_kind),
+        bool(args.prm_preload_query_endpoints),
     )
     qresult = list(result.get("queries", []))[0] if list(result.get("queries", [])) else {}
     path = [[float(value) for value in point] for point in qresult.get("path", [])]
@@ -282,6 +305,7 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         float(args.audit_segment_step),
         start=list(scene.start),
         goal=list(scene.goal),
+        collision_tolerance=float(args.audit_collision_tolerance),
     )
     planning_s = float(result.get("build_s", 0.0)) + float(qresult.get("t_s", 0.0))
     return summarize_single_query_method(
@@ -303,8 +327,18 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_s": float(qresult.get("t_s", 0.0)),
             "status": str(qresult.get("status", "")),
             "nodes": int(result.get("nodes", 0) or 0),
+            "query_budget_s": float(args.prm_query_s),
+            "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
+            "planner_kind": str(args.prm_planner_kind),
+            "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+            "simplify_time_s": float(args.ompl_simplify_time_s),
         },
-        stage_id=f"build{float(build_budget_s):g}s",
+        stage_id=(
+            f"{str(args.prm_planner_kind)}_build{float(build_budget_s):g}s"
+            f"_k{int(args.prm_max_nearest_neighbors)}"
+            f"_q{float(args.prm_query_s):g}s"
+            f"_preload{int(bool(args.prm_preload_query_endpoints))}"
+        ),
         budget_s=float(build_budget_s),
     )
 
@@ -319,11 +353,11 @@ def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_n
         list(scene.goal),
         float(timeout_s) * 1000.0,
         float(args.audit_segment_step),
-        0.0,
+        float(args.ompl_simplify_time_s),
         int(args.seed_base) + 20011 * int(scene_seed),
         int(args.bitstar_samples_per_batch),
         float(args.bitstar_rewire_factor),
-        False,
+        bool(args.bitstar_stop_on_solution_improvement),
     )
     path = [[float(value) for value in point] for point in result.get("path", [])]
     audit_passed, audit_s, audit_status = audit_path(
@@ -333,6 +367,7 @@ def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_n
         float(args.audit_segment_step),
         start=list(scene.start),
         goal=list(scene.goal),
+        collision_tolerance=float(args.audit_collision_tolerance),
     )
     return summarize_single_query_method(
         "bitstar",
@@ -352,8 +387,16 @@ def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_n
             "status": str(result.get("status", "")),
             "iterations": int(result.get("iterations", 0) or 0),
             "batches": int(result.get("batches", 0) or 0),
+            "samples_per_batch": int(args.bitstar_samples_per_batch),
+            "rewire_factor": float(args.bitstar_rewire_factor),
+            "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+            "simplify_time_s": float(args.ompl_simplify_time_s),
         },
-        stage_id=f"t{float(timeout_s):g}s",
+        stage_id=(
+            f"batch{int(args.bitstar_samples_per_batch)}"
+            f"_rw{float(args.bitstar_rewire_factor):g}"
+            f"_t{float(timeout_s):g}s"
+        ),
         budget_s=float(timeout_s),
     )
 
@@ -595,8 +638,17 @@ def main() -> int:
                     for budget in budgets:
                         stage_id = (
                             f"b{int(budget)}" if method == "sbf_leaf_rrt"
-                            else f"build{float(budget):g}s" if method == "prm"
-                            else f"t{float(budget):g}s" if method == "bitstar"
+                            else (
+                                f"{str(args.prm_planner_kind)}_build{float(budget):g}s"
+                                f"_k{int(args.prm_max_nearest_neighbors)}"
+                                f"_q{float(args.prm_query_s):g}s"
+                                f"_preload{int(bool(args.prm_preload_query_endpoints))}"
+                            ) if method == "prm"
+                            else (
+                                f"batch{int(args.bitstar_samples_per_batch)}"
+                                f"_rw{float(args.bitstar_rewire_factor):g}"
+                                f"_t{float(budget):g}s"
+                            ) if method == "bitstar"
                             else f"timeout{float(args.rrt_timeout_s):g}s" if method == "rrtconnect"
                             else method
                         )
@@ -609,10 +661,30 @@ def main() -> int:
                             "budget_s": float(budget) if method != "sbf_leaf_rrt" and budget is not None else None,
                             "deep_max_boxes": budget if method == "sbf_leaf_rrt" else 0,
                             "scene_catalog": str(catalog_path),
+                            "audit_segment_step": float(args.audit_segment_step),
+                            "audit_collision_tolerance": float(args.audit_collision_tolerance),
+                            "active_planning_root": "full_robot_joint_limits",
+                            "coverage_root": "full_robot_joint_limits",
+                            "canonical_mapping_scope": "LECT_internal_only",
                             "status": "planned" if args.dry_run else "planned_for_execution",
                             "rbf_default_profile": default_rbf_profile() if method == "sbf_leaf_rrt" else None,
                             "rbf_robot_lectdb": robot_lectdb_profile(robot) if method == "sbf_leaf_rrt" else None,
                             "rbf_box_budgets": box_budgets if method == "sbf_leaf_rrt" else None,
+                            "ompl_registered_profile": "exp05_registered" if method in {"prm", "bitstar"} else None,
+                            "ompl_simplify_time_s": float(args.ompl_simplify_time_s) if method in {"prm", "bitstar", "rrtconnect"} else None,
+                            "prm_config": {
+                                "build_s": float(budget) if method == "prm" else None,
+                                "query_s": float(args.prm_query_s),
+                                "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
+                                "planner_kind": str(args.prm_planner_kind),
+                                "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+                            } if method == "prm" else None,
+                            "bitstar_config": {
+                                "timeout_s": float(budget) if method == "bitstar" else None,
+                                "samples_per_batch": int(args.bitstar_samples_per_batch),
+                                "rewire_factor": float(args.bitstar_rewire_factor),
+                                "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+                            } if method == "bitstar" else None,
                             "metrics": ["success_rate", "planning_s", "audit_s", "path_length", "raw_segment_fraction"],
                         })
     run_rows: list[dict[str, Any]] = []
@@ -641,6 +713,30 @@ def main() -> int:
         "status": "dry_run" if args.dry_run else "executed",
         "environment": environment_metadata(),
         "rbf_default_profile": default_rbf_profile(),
+        "audit": {
+            "segment_step": float(args.audit_segment_step),
+            "collision_tolerance": float(args.audit_collision_tolerance),
+            "tolerance_policy": "strict_zero_tolerance",
+        },
+        "ompl_baseline_profile": {
+            "inherits_from": "Exp.5 registered Shelf+IIWA OMPL baseline profile",
+            "simplify_time_s": float(args.ompl_simplify_time_s),
+            "prm": {
+                "build_grid_s": prm_build_grid_s,
+                "query_s": float(args.prm_query_s),
+                "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
+                "planner_kind": str(args.prm_planner_kind),
+                "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+            },
+            "bitstar": {
+                "stage_s": bitstar_stage_s,
+                "timeout_s": float(args.bitstar_timeout_s),
+                "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
+                "samples_per_batch": int(args.bitstar_samples_per_batch),
+                "rewire_factor": float(args.bitstar_rewire_factor),
+                "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+            },
+        },
         "lectdb_caches": cache_rows,
         "scene_catalog": catalog_summary,
         "planned_rows": rows,
