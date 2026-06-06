@@ -8,8 +8,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
-RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_overlapd14o005_bridge_allbox_simplify50ms"
-RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_overlapd14o005_bridge_allbox_simplify50ms"
+RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_overlapd14o005_bridge_allbox_simplify10ms"
+RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_overlapd14o005_bridge_allbox_simplify10ms"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
@@ -153,7 +153,13 @@ def default_rbf_profile() -> dict[str, Any]:
             "depth_semantics": "lect_active_tree",
             "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
             "adaptive_ffb_depths": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
-            "note": "Query bridge may use a deeper FFB cap than global connector while leaf/deep/connector stay at their registered depths. Adaptive shallow-to-deep schedules are supported for sweeps but disabled by default because the registered 8-seed scan preserved better quality/time with direct d60.",
+            "adaptive_all": True,
+            "adaptive_max_path_length": 4.5,
+            "accept_segment_fraction": 0.25,
+            "accept_path_ratio": 1.50,
+            "accept_path_additive": 0.75,
+            "endpoint_anchor_before_bridge": True,
+            "note": "Online endpoint anchoring is attempted before full query bridge. Existing graph paths are accepted when strict audit passes, segment fraction is below the registered threshold, and path length is within the registered bound; full bridge is reserved for queries that fail these gates.",
         },
         "query": {
             "state_space": "native_joint_space",
@@ -173,7 +179,7 @@ def default_rbf_profile() -> dict[str, Any]:
         },
         "recommended_tradeoff": {
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
-            "validated_on": "Exp.4 shelf baseline seeds 0..7, ffb depth 60, all-query box bridge, 50 ms simplify",
+            "validated_on": "Exp.4 shelf baseline seeds 0..7, ffb depth 60, all-query box bridge, 10 ms main simplify budget",
             "success_runs": "8/8",
             "median_build_s": 3.108,
             "median_planning_s": 3.366,

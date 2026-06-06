@@ -32,6 +32,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
     DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
     rbf_budget_grid,
     robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
@@ -250,6 +251,14 @@ def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
         parallel_virtual_validation=True,
         leaf_threads=int(args.threads),
         audit_collision_tolerance=float(args.audit_collision_tolerance),
+        offline_query_agnostic_build=True,
+        offline_random_anchors=bool(args.offline_random_anchors),
+        offline_anchor_count=int(args.offline_anchor_count),
+        offline_anchor_candidate_count=int(args.offline_anchor_candidate_count),
+        offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
+        offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+        final_rrt_simplify_timeout_ms=1000.0 * float(args.ompl_simplify_time_s),
+        final_rrt_simplify_attempts=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
     )
     row = run_leaf_rrt(
         robot=robot,
@@ -282,7 +291,10 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
             float(args.ompl_simplify_time_s),
             int(seed) * 1009 + index,
         )
-        planning_s += float(result.get("t_s", 0.0))
+        total_s = float(result.get("t_s", 0.0))
+        solve_s = float(result.get("solve_s", max(0.0, total_s - float(result.get("simplify_s", 0.0)))))
+        simplify_s = float(result.get("simplify_s", max(0.0, total_s - solve_s)))
+        planning_s += total_s
         path = [[float(value) for value in point] for point in result.get("path", [])]
         audit_passed, audit_time_s, audit_status = audit_path(
             robot,
@@ -301,7 +313,9 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
             "success": ok,
             "audit_passed": audit_passed,
             "audit_status": audit_status,
-            "query_ms": float(result.get("t_s", 0.0)) * 1000.0,
+            "query_ms": total_s * 1000.0,
+            "solve_ms": solve_s * 1000.0,
+            "simplify_ms": simplify_s * 1000.0,
             "audit_ms": audit_time_s * 1000.0,
             "path_length": length,
             "segment_edge_length": 0.0,
@@ -513,6 +527,12 @@ def run_bitstar_trace(
         for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
             row = run_bitstar_pre_audited_query(seed, index, args, timeout_s, samples_per_batch, rewire_factor)
             query_planning_s = float(row.get("planning_s", 0.0) or 0.0)
+            query_simplify_s = float(row.get("simplify_s", math.nan))
+            if not math.isfinite(query_simplify_s):
+                query_simplify_s = float(row.get("simplify_ms", math.nan)) / 1000.0
+            if not math.isfinite(query_simplify_s):
+                query_simplify_s = float(args.ompl_simplify_time_s) if query_planning_s > 0.0 else 0.0
+            query_solve_s = max(0.0, float(row.get("solve_s", query_planning_s - query_simplify_s)))
             query_audit_s = float(row.get("audit_s", 0.0) or 0.0)
             planning_s += query_planning_s
             audit_s += query_audit_s
@@ -523,6 +543,8 @@ def run_bitstar_trace(
                 "audit_passed": ok,
                 "audit_status": str(row.get("audit_status", "")),
                 "query_ms": query_planning_s * 1000.0,
+                "solve_ms": query_solve_s * 1000.0,
+                "simplify_ms": query_simplify_s * 1000.0,
                 "audit_ms": query_audit_s * 1000.0,
                 "path_length": float(row.get("path_length", math.nan)) if ok else math.nan,
                 "segment_edge_length": 0.0,
@@ -532,7 +554,7 @@ def run_bitstar_trace(
                 "iterations": int(row.get("iterations", 0) or 0),
                 "batches": int(row.get("batches", 0) or 0),
                 "checkpoint_s": timeout_s,
-                "simplify_ms": math.nan,
+                "simplify_ms": query_simplify_s * 1000.0,
                 "simplify_status": "child_process",
             })
         return [
@@ -633,6 +655,8 @@ def run_bitstar_trace(
                 "audit_passed": audit_passed,
                 "audit_status": audit_status,
                 "query_ms": (float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) + simplify_s) * 1000.0,
+                "solve_ms": float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0) * 1000.0,
+                "simplify_ms": simplify_s * 1000.0,
                 "audit_ms": audit_time_s * 1000.0,
                 "path_length": length,
                 "segment_edge_length": 0.0,
@@ -643,7 +667,6 @@ def run_bitstar_trace(
                 "batches": int(checkpoint.get("batches", 0) or 0),
                 "checkpoint_s": checkpoint_s,
                 "target_checkpoint_s": float(target_checkpoint_s),
-                "simplify_ms": simplify_s * 1000.0,
                 "simplify_status": simplify_status,
             })
         row = summarize_method_run(
@@ -778,12 +801,17 @@ def run_prm(
         )
         audit_s += audit_time_s
         ok = bool(qresult.get("ok")) and audit_passed
+        total_s = float(qresult.get("t_s", 0.0))
+        solve_s = float(qresult.get("solve_s", max(0.0, total_s - float(qresult.get("simplify_s", 0.0)))))
+        simplify_s = float(qresult.get("simplify_s", max(0.0, total_s - solve_s)))
         qrows.append({
             "label": query["label"],
             "success": ok,
             "audit_passed": audit_passed,
             "audit_status": audit_status,
-            "query_ms": float(qresult.get("t_s", 0.0)) * 1000.0,
+            "query_ms": total_s * 1000.0,
+            "solve_ms": solve_s * 1000.0,
+            "simplify_ms": simplify_s * 1000.0,
             "audit_ms": audit_time_s * 1000.0,
             "path_length": path_length(path) if ok else math.nan,
             "segment_edge_length": 0.0,
@@ -826,6 +854,45 @@ def summarize_method_run(
     budget_s: float | None = None,
 ) -> dict[str, Any]:
     successes = [row for row in qrows if bool(row["audit_passed"])]
+    query_count = max(1, len(qrows))
+    extra_dict = dict(extra or {})
+    build_s = float(extra_dict.get("build_s", 0.0) or 0.0)
+    online_batch_s = max(0.0, float(planning_s) - build_s)
+    if method in {"rrtconnect", "bitstar"}:
+        build_s = 0.0
+        online_batch_s = float(planning_s)
+    online_simplify_s = 0.0
+    online_solve_s = 0.0
+    split_available = False
+    for query in qrows:
+        try:
+            total_ms = float(query.get("query_ms", math.nan))
+            solve_ms = float(query.get("solve_ms", math.nan))
+            simplify_ms = float(query.get("simplify_ms", math.nan))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(solve_ms) or math.isfinite(simplify_ms):
+            split_available = True
+            if math.isfinite(solve_ms):
+                online_solve_s += solve_ms / 1000.0
+            elif math.isfinite(total_ms) and math.isfinite(simplify_ms):
+                online_solve_s += max(0.0, total_ms - simplify_ms) / 1000.0
+            if math.isfinite(simplify_ms):
+                online_simplify_s += simplify_ms / 1000.0
+    if not split_available:
+        online_solve_s = online_batch_s
+        online_simplify_s = 0.0
+    else:
+        residual_s = online_batch_s - online_solve_s - online_simplify_s
+        if residual_s > 1e-9:
+            online_solve_s += residual_s
+    online_per_query_s = online_batch_s / query_count
+    online_solve_per_query_s = online_solve_s / query_count
+    online_simplify_per_query_s = online_simplify_s / query_count
+    amortized = {
+        f"amortized_s_k{k}": build_s / float(k) + online_per_query_s
+        for k in (1, 5, 10, 20, 50)
+    }
     return {
         "method": method,
         "seed": int(seed),
@@ -835,11 +902,20 @@ def summarize_method_run(
         "success_count": len(successes),
         "query_count": len(qrows),
         "planning_s": float(planning_s),
+        "build_s": build_s,
+        "offline_build_s": build_s,
+        "online_batch_s": online_batch_s,
+        "online_solve_s": online_solve_s,
+        "online_simplify_s": online_simplify_s,
+        "online_per_query_s": online_per_query_s,
+        "online_solve_per_query_s": online_solve_per_query_s,
+        "online_simplify_per_query_s": online_simplify_per_query_s,
+        **amortized,
         "audit_s": float(audit_s),
         "path_length_mean": mean(row["path_length"] for row in successes),
         "raw_segment_fraction": 0.0,
         "queries": qrows,
-        "diagnostics": dict(extra or {}),
+        "diagnostics": extra_dict,
     }
 
 
@@ -916,6 +992,20 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "deep_max_boxes": budget,
                 "runs": len(pending),
                 "success_runs": 0,
+                "success_queries": 0,
+                "total_queries": 0,
+                "offline_build_s_median": None,
+                "online_batch_s_median": None,
+                "online_solve_s_median": None,
+                "online_simplify_s_median": None,
+                "online_solve_per_query_s_median": None,
+                "online_simplify_per_query_s_median": None,
+                "online_per_query_s_median": None,
+                "amortized_s_k1": None,
+                "amortized_s_k5": None,
+                "amortized_s_k10": None,
+                "amortized_s_k20": None,
+                "amortized_s_k50": None,
                 "measured_time_s_median": None,
                 "planning_s_median": None,
                 "audit_s_median": None,
@@ -925,6 +1015,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             })
             continue
         planning_s_median = median(row["planning_s"] for row in items)
+        success_queries = sum(int(row.get("success_count", 0)) for row in items)
+        total_queries = sum(int(row.get("query_count", 0)) for row in items)
         out.append({
             "method": method,
             "method_label": METHOD_LABELS.get(method, method),
@@ -934,8 +1026,40 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "deep_max_boxes": budget if method == "sbf_leaf_rrt" else 0,
             "runs": len(items),
             "success_runs": sum(1 for row in items if int(row["success_count"]) == int(row["query_count"])),
+            "success_queries": success_queries,
+            "total_queries": total_queries,
             "source": "current_execution",
-            "build_s": median(row.get("build_s", row["planning_s"]) for row in items),
+            "build_s": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
+            "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
+            "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0))) for row in items),
+            "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) for row in items),
+            "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
+            "online_solve_per_query_s_median": median(
+                row.get(
+                    "online_solve_per_query_s",
+                    row.get("online_solve_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
+                )
+                for row in items
+            ),
+            "online_simplify_per_query_s_median": median(
+                row.get(
+                    "online_simplify_per_query_s",
+                    row.get("online_simplify_s", 0.0) / max(1, int(row.get("query_count", 1))),
+                )
+                for row in items
+            ),
+            "online_per_query_s_median": median(
+                row.get(
+                    "online_per_query_s",
+                    max(0.0, row["planning_s"] - row.get("build_s", 0.0)) / max(1, int(row.get("query_count", 1))),
+                )
+                for row in items
+            ),
+            "amortized_s_k1": median(row.get("amortized_s_k1", row["planning_s"]) for row in items),
+            "amortized_s_k5": median(row.get("amortized_s_k5", row["planning_s"] / 5.0) for row in items),
+            "amortized_s_k10": median(row.get("amortized_s_k10", row["planning_s"] / 10.0) for row in items),
+            "amortized_s_k20": median(row.get("amortized_s_k20", row["planning_s"] / 20.0) for row in items),
+            "amortized_s_k50": median(row.get("amortized_s_k50", row["planning_s"] / 50.0) for row in items),
             "query_s_median": median(median(q.get("query_ms", math.nan) / 1000.0 for q in row.get("queries", [])) for row in items),
             "measured_time_s_median": planning_s_median,
             "planning_s_median": planning_s_median,
@@ -949,7 +1073,16 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["method", "method_label", "stage_id", "budget_s", "timeout_cap_s", "deep_max_boxes", "runs", "success_runs", "source", "build_s", "query_s_median", "measured_time_s_median", "planning_s_median", "audit_s_median", "path_length_mean", "raw_segment_fraction_median", "status"]
+    fields = [
+        "method", "method_label", "stage_id", "budget_s", "timeout_cap_s", "deep_max_boxes",
+        "runs", "success_runs", "success_queries", "total_queries", "source",
+        "build_s", "offline_build_s_median", "online_batch_s_median", "online_per_query_s_median",
+        "online_solve_s_median", "online_simplify_s_median",
+        "online_solve_per_query_s_median", "online_simplify_per_query_s_median",
+        "amortized_s_k1", "amortized_s_k5", "amortized_s_k10", "amortized_s_k20", "amortized_s_k50",
+        "query_s_median", "measured_time_s_median", "planning_s_median", "audit_s_median",
+        "path_length_mean", "raw_segment_fraction_median", "status",
+    ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -969,6 +1102,8 @@ def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "audit_status",
         "path_length",
         "query_ms",
+        "solve_ms",
+        "simplify_ms",
         "audit_ms",
         "waypoint_count",
         "planner_status",
@@ -988,6 +1123,8 @@ def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
                     "audit_status": query.get("audit_status"),
                     "path_length": query.get("path_length"),
                     "query_ms": query.get("query_ms"),
+                    "solve_ms": query.get("solve_ms"),
+                    "simplify_ms": query.get("simplify_ms"),
                     "audit_ms": query.get("audit_ms"),
                     "waypoint_count": query.get("waypoint_count"),
                     "planner_status": query.get("planner_status"),
@@ -1023,7 +1160,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             selected_rbf = sorted(
                 rbf_rows,
                 key=lambda row: (
-                    float(row.get("planning_s_median") or row.get("build_s") or 1e9),
+                    finite_value(row.get("amortized_s_k5")),
+                    finite_value(row.get("online_per_query_s_median")),
                     int(float(row.get("deep_max_boxes", 0) or 0)),
                 ),
             )[0]
@@ -1051,7 +1189,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                 row_by_method[method] = sorted(
                     candidates,
                     key=lambda row: (
-                        finite_value(row.get("planning_s_median")),
+                        finite_value(row.get("amortized_s_k5")),
+                        finite_value(row.get("online_per_query_s_median")),
                         finite_value(row.get("budget_s")),
                     ),
                 )[0]
@@ -1066,25 +1205,27 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Shelf+IIWA cross-algorithm comparison under a common fixed-step final audit. RBF uses the leaf-sweep--RRT grower profile; non-RBF rows use the old TRO baseline budgets and are either current reruns or audited imported artifacts. Planning excludes final audit; BIT* reports observed return time under its timeout cap rather than the cap itself.}",
+        r"\caption{Shelf+IIWA cross-algorithm reusable-planner comparison under a common fixed-step final audit. RBF uses the Exp.4 two-stage profile. PRM and IRIS/GCS report reusable build/query timing; RRTConnect and BIT* are one-shot online baselines with zero build time. Solve/q and Simplify/q split online latency before the Online/q total; all timing excludes final audit. Amort@5 amortizes reusable build over the five shelf queries.}",
         r"\label{tab:tro-shelf-cross-algorithm}",
         r"\footnotesize",
         r"\setlength{\tabcolsep}{3.5pt}",
-        r"\begin{tabular}{lrrrrr}",
+        r"\begin{tabular}{lrrrrrrr}",
         r"\toprule",
-        r"Method & SR & Build/Plan (s) & Query (s) & Audit (s) & Len. \\",
+        r"Method & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & SR \\",
         r"\midrule",
     ]
     for row in selected_rows():
-        sr = f"{int(row.get('success_runs', 0))}/{int(row.get('runs', 0))}"
+        sr = f"{int(row.get('success_queries', row.get('success_runs', 0)) or 0)}/{int(row.get('total_queries', row.get('runs', 0)) or 0)}"
         method = str(row.get("method_label", row.get("method", ""))).replace("_", r"\_")
         if str(row.get("method")) == "sbf_leaf_rrt":
             method = rf"{method} (b{int(float(row.get('deep_max_boxes', 0) or 0))})"
         lines.append(
-            f"{method} & {sr} & "
-            f"{tex_num(row.get('planning_s_median') if str(row.get('method')) in {'rrtconnect', 'bitstar'} else row.get('build_s', row.get('planning_s_median')))} & {tex_num(row.get('query_s_median'))} & "
-            f"{tex_num(row.get('audit_s_median'))} & "
-            f"{tex_num(path_stat(row))} \\\\"
+            f"{method} & {tex_num(row.get('offline_build_s_median', row.get('build_s')))} & "
+            f"{tex_num(row.get('online_solve_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_per_query_s_median', row.get('query_s_median')))} & "
+            f"{tex_num(row.get('amortized_s_k5'))} & "
+            f"{tex_num(path_stat(row))} & {sr} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -1104,9 +1245,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.05)
+    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
     parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--sbf-box-budgets", default=",".join(str(item) for item in rbf_budget_grid("pilot")))
+    parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--offline-anchor-count", type=int, default=16)
+    parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
+    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
+    parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
     parser.add_argument("--rbf-cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
     parser.add_argument("--rrt-timeout-s", type=float, default=10.0)
@@ -1160,6 +1306,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     configure_thread_environment(int(args.threads))
+    rbf_profile = shelf_d23_rbf_profile()
+    rbf_profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
+    rbf_profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)
     seeds = [int(item) for item in csv_items(args.seeds)]
     methods = [item for item in csv_items(args.methods) if item in METHODS]
     sbf_budgets = [int(item) for item in csv_items(args.sbf_box_budgets)]
@@ -1259,7 +1408,10 @@ def main() -> int:
                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
             } if method == "bitstar" else None,
             "execution_policy": "import_old_audited_artifact" if method in IMPORTED_BASELINE_METHODS and not args.rerun_baselines else "current_execution",
-            "rbf_default_profile": shelf_d23_rbf_profile() if method == "sbf_leaf_rrt" else None,
+            "rbf_default_profile": rbf_profile if method == "sbf_leaf_rrt" else None,
+            "offline_query_agnostic_build": True if method == "sbf_leaf_rrt" else None,
+            "offline_anchor_count": int(args.offline_anchor_count) if method == "sbf_leaf_rrt" else None,
+            "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count) if method == "sbf_leaf_rrt" else None,
             "box_budgets": rbf_budget_grid(args.phase) if method == "sbf_leaf_rrt" else None,
         }
                 )
@@ -1358,13 +1510,14 @@ def main() -> int:
         "phase": args.phase,
         "status": "dry_run" if args.dry_run else "executed",
         "environment": environment_metadata(),
-        "rbf_default_profile": shelf_d23_rbf_profile(),
+        "rbf_default_profile": rbf_profile,
         "audit": {
             "segment_step": float(args.audit_segment_step),
             "collision_tolerance": float(args.audit_collision_tolerance),
         },
         "baseline_execution": {
             "threads": int(args.threads),
+            "thread_policy": "RBF, IRIS/GCS, and process math libraries use --threads=8 by default; OMPL RRTConnect, PRM, and BIT* are algorithmically single-thread in this runner unless OMPL exposes planner-internal parallelism.",
             "ompl_simplify_time_s": float(args.ompl_simplify_time_s),
             "bitstar": {
                 "timeout_s": float(bitstar_trace_timeout_s),
@@ -1385,7 +1538,7 @@ def main() -> int:
     if summary:
         write_csv(args.out_dir / "shelf_cross_algorithm_summary.csv", summary)
         write_per_query_csv(args.out_dir / "shelf_cross_algorithm_per_query.csv", rows)
-        if any(str(row.get("method")) == "sbf_leaf_rrt" for row in summary):
+        if str(args.phase) == "paper" and any(str(row.get("method")) == "sbf_leaf_rrt" for row in summary):
             write_tex(REPO_ROOT / "paper" / "generated" / "tab_tro_shelf_cross_algorithm.tex", summary)
     print(f"wrote {args.out_dir / 'shelf_cross_algorithm_manifest.json'}")
     return 0

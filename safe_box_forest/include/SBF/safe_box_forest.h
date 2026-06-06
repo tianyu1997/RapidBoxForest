@@ -253,6 +253,19 @@ enum class CorridorRefineMode : std::uint8_t {
 	BoxOnlyLongPath = 1,
 };
 
+struct EndpointMainBoxCorridorConfig {
+	int target_k = 8;
+	double coarse_step = 0.08;
+	double fine_step = 0.02;
+	int max_ffb_calls = 48;
+	int max_boxes = 64;
+	std::vector<int> adaptive_ffb_depths = {50, 58, 62};
+	double residual_segment_max_length = 0.25;
+	double lateral_offset = 0.03;
+	int lateral_rounds = 2;
+	double face_epsilon = 1e-6;
+};
+
 class RBFPlanningForest {
 public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
@@ -284,7 +297,8 @@ public:
 	LeafSweepRefineResult build_leaf_sweep_refined(
 		const std::vector<Obstacle>& obstacles,
 		const LeafSweepRefineConfig& refine_config = {},
-		const std::vector<Eigen::VectorXd>& priority_points = {});
+		const std::vector<Eigen::VectorXd>& priority_points = {},
+		const std::vector<Eigen::VectorXd>& offline_anchor_points = {});
 	/// Isolated FFB benchmark — no RRT, no grower, no adjacency.
 	/// Resets the oracle scene to @p obstacles, then calls ffb.find() once per
 	/// seed.  LECT evidence accumulates across repeated calls (same as build()).
@@ -298,6 +312,16 @@ public:
 	}
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					  const Eigen::Ref<const Eigen::VectorXd>& goal) const;
+	int anchor_query_endpoint(const Eigen::Ref<const Eigen::VectorXd>& point);
+	int connect_query_endpoint_to_main_island(const Eigen::Ref<const Eigen::VectorXd>& point,
+											  double max_segment_length);
+	int connect_query_endpoint_to_main_box_corridor(
+		const Eigen::Ref<const Eigen::VectorXd>& point,
+		const EndpointMainBoxCorridorConfig& corridor_config = {});
+	int add_offline_shortcut_edges(int max_edges,
+								   int candidate_limit,
+								   double min_gain_ratio,
+								   double max_segment_length);
 	int bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					 const Eigen::Ref<const Eigen::VectorXd>& goal);
 	int bridge_query_known_needed(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -358,6 +382,8 @@ private:
 	QueryResult run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
 								   const Eigen::Ref<const Eigen::VectorXd>& goal,
 								   bool allow_collision_shortcut) const;
+	int anchor_query_endpoint_box(const Eigen::Ref<const Eigen::VectorXd>& point,
+								  StageContext& context);
 	int bridge_query_with_waypoint_path(const Eigen::Ref<const Eigen::VectorXd>& start,
 										const Eigen::Ref<const Eigen::VectorXd>& goal,
 										const std::vector<Eigen::VectorXd>& waypoint_path,

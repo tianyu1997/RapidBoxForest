@@ -108,6 +108,7 @@ def run_query_once(args: argparse.Namespace) -> dict[str, Any]:
         int(args.allowed_failed_sampling_attempts),
     )
     path = [[float(value) for value in point] for point in raw.get("path", [])]
+    simplify_s = 0.0
     if float(args.simplify_time_s) > 0.0 and len(path) >= 2:
         simplified = sbf.ompl_simplify_path(
             robot,
@@ -116,6 +117,7 @@ def run_query_once(args: argparse.Namespace) -> dict[str, Any]:
             float(args.audit_segment_step),
             float(args.simplify_time_s),
         )
+        simplify_s = float(simplified.get("t_s", 0.0) or 0.0)
         maybe_path = [[float(value) for value in point] for point in simplified.get("path", [])]
         if bool(simplified.get("ok")) and len(maybe_path) >= 2:
             path = maybe_path
@@ -138,7 +140,9 @@ def run_query_once(args: argparse.Namespace) -> dict[str, Any]:
         "audit_passed": audit_passed,
         "audit_status": audit_status,
         "planner_status": str(raw.get("status", raw.get("reason", ""))),
-        "planning_s": float(raw.get("t_s", time.perf_counter() - t0)),
+        "planning_s": float(raw.get("solve_s", raw.get("t_s", time.perf_counter() - t0))) + simplify_s,
+        "solve_s": float(raw.get("solve_s", raw.get("t_s", time.perf_counter() - t0))),
+        "simplify_s": simplify_s,
         "audit_s": audit_s,
         "path_length": path_length(path) if ok else math.nan,
         "waypoint_count": len(path),
@@ -345,7 +349,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wall-timeout-factor", type=float, default=1.8)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--simplify-time-s", type=float, default=0.05)
+    parser.add_argument("--simplify-time-s", type=float, default=0.01)
     parser.add_argument("--stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--append", action="store_true")
     parser.add_argument("--worker", action="store_true")

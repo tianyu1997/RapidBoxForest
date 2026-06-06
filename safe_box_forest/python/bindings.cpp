@@ -998,6 +998,19 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("collision_overlap_prune_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_threshold)
         .def_readwrite("collision_overlap_prune_ratio_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_ratio_threshold);
 
+    py::class_<rbf::EndpointMainBoxCorridorConfig>(module, "EndpointMainBoxCorridorConfig")
+        .def(py::init<>())
+        .def_readwrite("target_k", &rbf::EndpointMainBoxCorridorConfig::target_k)
+        .def_readwrite("coarse_step", &rbf::EndpointMainBoxCorridorConfig::coarse_step)
+        .def_readwrite("fine_step", &rbf::EndpointMainBoxCorridorConfig::fine_step)
+        .def_readwrite("max_ffb_calls", &rbf::EndpointMainBoxCorridorConfig::max_ffb_calls)
+        .def_readwrite("max_boxes", &rbf::EndpointMainBoxCorridorConfig::max_boxes)
+        .def_readwrite("adaptive_ffb_depths", &rbf::EndpointMainBoxCorridorConfig::adaptive_ffb_depths)
+        .def_readwrite("residual_segment_max_length", &rbf::EndpointMainBoxCorridorConfig::residual_segment_max_length)
+        .def_readwrite("lateral_offset", &rbf::EndpointMainBoxCorridorConfig::lateral_offset)
+        .def_readwrite("lateral_rounds", &rbf::EndpointMainBoxCorridorConfig::lateral_rounds)
+        .def_readwrite("face_epsilon", &rbf::EndpointMainBoxCorridorConfig::face_epsilon);
+
     py::class_<rbf::LeafSweepRefineResult>(module, "LeafSweepRefineResult")
         .def_readonly("leaf_sweep", &rbf::LeafSweepRefineResult::leaf_sweep)
         .def_readonly("profile", &rbf::LeafSweepRefineResult::profile)
@@ -1465,15 +1478,18 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              [](rbf::RBFPlanningForest& forest,
                 const std::vector<rbf::Obstacle>& obstacles,
                 const rbf::LeafSweepRefineConfig& config,
-                const std::vector<std::vector<double>>& priority_points) {
+                const std::vector<std::vector<double>>& priority_points,
+                const std::vector<std::vector<double>>& offline_anchor_points) {
                  return forest.build_leaf_sweep_refined(
                      obstacles,
                      config,
-                     eigen_vectors_from_lists(priority_points));
+                     eigen_vectors_from_lists(priority_points),
+                     eigen_vectors_from_lists(offline_anchor_points));
              },
              py::arg("obstacles"),
              py::arg("config") = rbf::LeafSweepRefineConfig{},
-             py::arg("priority_points") = std::vector<std::vector<double>>{})
+             py::arg("priority_points") = std::vector<std::vector<double>>{},
+             py::arg("offline_anchor_points") = std::vector<std::vector<double>>{})
         .def("oracle_counters",
              [](const rbf::RBFPlanningForest& forest) {
                  const rbf::OracleCounters* counters = forest.oracle_counters();
@@ -1540,6 +1556,47 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                     return forest.bridge_query_known_needed(eigen_vector_from_list(start), eigen_vector_from_list(goal));
                          },
                          py::arg("start"), py::arg("goal"))
+                .def("anchor_query_endpoint_box",
+                        [](rbf::RBFPlanningForest& forest,
+                           const std::vector<double>& point) {
+                            return forest.anchor_query_endpoint(eigen_vector_from_list(point));
+                        },
+                        py::arg("point"))
+                .def("connect_query_endpoint_to_main_island",
+                        [](rbf::RBFPlanningForest& forest,
+                           const std::vector<double>& point,
+                           double max_segment_length) {
+                            return forest.connect_query_endpoint_to_main_island(
+                                eigen_vector_from_list(point),
+                                max_segment_length);
+                        },
+                        py::arg("point"),
+                        py::arg("max_segment_length") = 0.0)
+                .def("connect_query_endpoint_to_main_box_corridor",
+                        [](rbf::RBFPlanningForest& forest,
+                           const std::vector<double>& point,
+                           const rbf::EndpointMainBoxCorridorConfig& config) {
+                            return forest.connect_query_endpoint_to_main_box_corridor(
+                                eigen_vector_from_list(point),
+                                config);
+                        },
+                        py::arg("point"),
+                        py::arg("config") = rbf::EndpointMainBoxCorridorConfig{})
+                .def("add_offline_shortcut_edges",
+                        [](rbf::RBFPlanningForest& forest,
+                           int max_edges,
+                                int candidate_limit,
+                                double min_gain_ratio,
+                                double max_segment_length) {
+                                    return forest.add_offline_shortcut_edges(max_edges,
+                                                                             candidate_limit,
+                                                                             min_gain_ratio,
+                                                                             max_segment_length);
+                         },
+                         py::arg("max_edges"),
+                         py::arg("candidate_limit") = 48,
+                         py::arg("min_gain_ratio") = 1.6,
+                         py::arg("max_segment_length") = 3.0)
                 .def("bridge_queries",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<std::vector<double>>& starts,
@@ -3581,10 +3638,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const Eigen::VectorXd q_start_vec = eigen_vector_from_list(start);
             const Eigen::VectorXd q_goal_vec = eigen_vector_from_list(goal);
             if (checker->check_config(q_start_vec) || checker->check_config(q_goal_vec)) {
+                const double solve_s = elapsed_s();
                 result["ok"] = false;
                 result["reason"] = "endpoint_collision";
                 result["status"] = "endpoint_collision";
-                result["t_s"] = elapsed_s();
+                result["solve_s"] = solve_s;
+                result["simplify_s"] = 0.0;
+                result["t_s"] = solve_s;
                 result["path"] = std::vector<std::vector<double>>{};
                 result["nodes"] = 0;
                 return result;
@@ -3632,10 +3692,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const double timeout_s = std::max(0.0, timeout_ms) / 1000.0;
             const double ptc_interval_s = std::max(1e-3, std::min(0.05, timeout_s / 20.0));
             ob::PlannerStatus status = setup.solve(ob::timedPlannerTerminationCondition(timeout_s, ptc_interval_s));
+            const double solve_s = elapsed_s();
             const bool exact_solution = status == ob::PlannerStatus::EXACT_SOLUTION;
             bool ok = exact_solution;
+            double simplify_s = 0.0;
             if (ok && simplify_time_s > 0.0) {
+                const auto simplify_start = std::chrono::steady_clock::now();
                 setup.simplifySolution(simplify_time_s);
+                simplify_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - simplify_start).count();
             }
             std::vector<std::vector<double>> path;
             if (ok && setup.haveSolutionPath()) {
@@ -3653,7 +3717,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             result["reason"] = ok ? "connected" : std::string(status.asString());
             result["status"] = std::string(status.asString());
             result["exact_solution"] = exact_solution;
-            result["t_s"] = elapsed_s();
+            result["solve_s"] = solve_s;
+            result["simplify_s"] = simplify_s;
+            result["t_s"] = solve_s + simplify_s;
             result["path"] = path;
             result["nodes"] = static_cast<int>(planner_data.numVertices());
             result["checking_resolution"] = checking_resolution;
@@ -3754,6 +3820,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     row["ok"] = false;
                     row["reason"] = "endpoint_collision";
                     row["status"] = "endpoint_collision";
+                    row["solve_s"] = 0.0;
+                    row["simplify_s"] = 0.0;
                     row["t_s"] = 0.0;
                     row["path"] = std::vector<std::vector<double>>{};
                     query_results.append(row);
@@ -3776,7 +3844,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 }
                 ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
                 bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
-                double query_s = ompl_elapsed_s(query_start);
+                const double solve_s = ompl_elapsed_s(query_start);
+                double simplify_s = 0.0;
                 if (ok && simplify_time_s > 0.0) {
                     auto path_ptr = problem->getSolutionPath();
                     auto geometric_path = std::dynamic_pointer_cast<og::PathGeometric>(path_ptr);
@@ -3784,7 +3853,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                         const auto simplify_start = std::chrono::steady_clock::now();
                         og::PathSimplifier simplifier(si);
                         simplifier.simplify(*geometric_path, std::max(0.0, simplify_time_s));
-                        query_s += ompl_elapsed_s(simplify_start);
+                        simplify_s = ompl_elapsed_s(simplify_start);
                     }
                 }
                 auto path = ok ? path_from_problem_solution(problem, dimension) : std::vector<std::vector<double>>{};
@@ -3794,7 +3863,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 row["ok"] = ok;
                 row["reason"] = ok ? "connected" : std::string(status.asString());
                 row["status"] = std::string(status.asString());
-                row["t_s"] = query_s;
+                row["solve_s"] = solve_s;
+                row["simplify_s"] = simplify_s;
+                row["t_s"] = solve_s + simplify_s;
                 row["path"] = path;
                 query_results.append(row);
             }
@@ -3932,6 +4003,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     row["ok"] = false;
                     row["reason"] = "endpoint_collision";
                     row["status"] = "endpoint_collision";
+                    row["solve_s"] = 0.0;
+                    row["simplify_s"] = 0.0;
                     row["t_s"] = 0.0;
                     row["path"] = std::vector<std::vector<double>>{};
                     query_results.append(row);
@@ -3946,7 +4019,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 const auto query_start = std::chrono::steady_clock::now();
                 ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
                 bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
-                double query_s = ompl_elapsed_s(query_start);
+                const double solve_s = ompl_elapsed_s(query_start);
+                double simplify_s = 0.0;
                 if (ok && simplify_time_s > 0.0) {
                     auto path_ptr = problem->getSolutionPath();
                     auto geometric_path = std::dynamic_pointer_cast<og::PathGeometric>(path_ptr);
@@ -3954,7 +4028,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                         const auto simplify_start = std::chrono::steady_clock::now();
                         og::PathSimplifier simplifier(si);
                         simplifier.simplify(*geometric_path, std::max(0.0, simplify_time_s));
-                        query_s += ompl_elapsed_s(simplify_start);
+                        simplify_s = ompl_elapsed_s(simplify_start);
                     }
                 }
                 auto path = ok ? path_from_problem_solution(problem, dimension) : std::vector<std::vector<double>>{};
@@ -3964,7 +4038,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 row["ok"] = ok;
                 row["reason"] = ok ? "connected" : std::string(status.asString());
                 row["status"] = std::string(status.asString());
-                row["t_s"] = query_s;
+                row["solve_s"] = solve_s;
+                row["simplify_s"] = simplify_s;
+                row["t_s"] = solve_s + simplify_s;
                 row["path"] = path;
                 query_results.append(row);
             }
@@ -4027,10 +4103,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const auto t0 = std::chrono::steady_clock::now();
             auto checker = std::make_shared<rbf::CollisionChecker>(robot, rbf::Scene(obstacles));
             if (checker->check_config(eigen_vector_from_list(start)) || checker->check_config(eigen_vector_from_list(goal))) {
+                const double solve_s = ompl_elapsed_s(t0);
                 result["ok"] = false;
                 result["reason"] = "endpoint_collision";
                 result["status"] = "endpoint_collision";
-                result["t_s"] = ompl_elapsed_s(t0);
+                result["solve_s"] = solve_s;
+                result["simplify_s"] = 0.0;
+                result["t_s"] = solve_s;
                 result["path"] = std::vector<std::vector<double>>{};
                 result["nodes"] = 0;
                 return result;
@@ -4100,8 +4179,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 }
             }
             bool ok = exact_solution || setup.haveSolutionPath();
+            const double solve_s = ompl_elapsed_s(t0);
+            double simplify_s = 0.0;
             if (ok && simplify_time_s > 0.0) {
+                const auto simplify_start = std::chrono::steady_clock::now();
                 setup.simplifySolution(simplify_time_s);
+                simplify_s = ompl_elapsed_s(simplify_start);
             }
             std::vector<std::vector<double>> path;
             if (ok && setup.haveSolutionPath()) {
@@ -4114,12 +4197,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             if (path.size() < 2) {
                 ok = false;
             }
-            const double elapsed_before_diagnostics_s = ompl_elapsed_s(t0);
             result["ok"] = ok;
             result["reason"] = ok ? "connected" : std::string(status.asString());
             result["status"] = std::string(status.asString());
             result["exact_solution"] = exact_solution;
-            result["t_s"] = elapsed_before_diagnostics_s;
+            result["solve_s"] = solve_s;
+            result["simplify_s"] = simplify_s;
+            result["t_s"] = solve_s + simplify_s;
             result["path"] = path;
             result["nodes"] = 0;
             result["checking_resolution"] = checking_resolution;
@@ -4191,10 +4275,13 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const auto t0 = std::chrono::steady_clock::now();
             auto checker = std::make_shared<rbf::CollisionChecker>(robot, rbf::Scene(obstacles));
             if (checker->check_config(eigen_vector_from_list(start)) || checker->check_config(eigen_vector_from_list(goal))) {
+                const double solve_s = ompl_elapsed_s(t0);
                 result["ok"] = false;
                 result["reason"] = "endpoint_collision";
                 result["status"] = "endpoint_collision";
-                result["t_s"] = ompl_elapsed_s(t0);
+                result["solve_s"] = solve_s;
+                result["simplify_s"] = 0.0;
+                result["t_s"] = solve_s;
                 result["path"] = std::vector<std::vector<double>>{};
                 result["nodes"] = 0;
                 result["checkpoints"] = checkpoints;
@@ -4267,6 +4354,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 row["reason"] = ok ? "connected" : last_status;
                 row["status"] = ok ? "solution" : last_status;
                 row["exact_solution"] = ok || last_exact;
+                row["solve_s"] = elapsed_s;
+                row["simplify_s"] = 0.0;
                 row["t_s"] = elapsed_s;
                 row["path"] = path;
                 row["nodes"] = 0;
@@ -4317,7 +4406,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             result["reason"] = ok ? "connected" : last_status;
             result["status"] = ok ? "solution" : last_status;
             result["exact_solution"] = ok || last_exact;
-            result["t_s"] = ompl_elapsed_s(t0);
+            const double solve_s = ompl_elapsed_s(t0);
+            result["solve_s"] = solve_s;
+            result["simplify_s"] = 0.0;
+            result["t_s"] = solve_s;
             result["path"] = final_path;
             result["nodes"] = 0;
             result["checking_resolution"] = checking_resolution;

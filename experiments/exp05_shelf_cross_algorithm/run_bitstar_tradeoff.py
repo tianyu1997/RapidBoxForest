@@ -104,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wall-timeout-factor", type=float, default=1.5)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--simplify-time-s", type=float, default=0.05)
+    parser.add_argument("--simplify-time-s", type=float, default=0.01)
     parser.add_argument("--stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-k-nearest", type=int, default=-1)
     parser.add_argument("--pruning", type=int, default=-1)

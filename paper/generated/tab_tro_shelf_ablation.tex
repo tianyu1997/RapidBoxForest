@@ -1,20 +1,17 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA leaf-sweep--RRT grower ablation at the registered design point. Planning excludes final audit and equals build plus five-query graph search. SR counts seeds for which all five shelf queries pass strict audit. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction; the full measured-time trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}
+\captionof{table}{Shelf+IIWA reusable RBF ablation at the registered design point. Build is query-agnostic offline coverage. Solve/q charges online anchoring, query bridge, local repair, and graph search; Simplify/q is the fixed OMPL post-processing time actually consumed. Online/q is their sum, excluding final audit. Amort@5 amortizes build over the five shelf queries. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}
 \label{tab:tro-shelf-ablation}
-\begin{tabular}{lrrrrrrrrrr}
+\begin{tabular}{lrrrrrrrrr}
 \toprule
-Case & Boxes & SR & Plan & Build & Query & Leaf & Refine & Conn. & Len. & Seg. \\
+Case & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & Seg. & Boxes & SR \\
 \midrule
-RBF-SH d23 & 400 & 8/8 & 0.383 & 0.355 & 0.034 & 0.039 & 0.010 & 0.002 & 3.357 & 0.234 \\
-CritSample d23 & 400 & 8/8 & 0.342 & 0.308 & 0.034 & 0.003 & 0.009 & 0.000 & 3.357 & 0.218 \\
-CritSample & 400 & 8/8 & 0.671 & 0.633 & 0.038 & 0.249 & 0.013 & 0.004 & 3.419 & 0.211 \\
-Link AABB & 400 & 8/8 & 0.397 & 0.363 & 0.034 & 0.042 & 0.010 & 0.000 & 3.379 & 0.309 \\
-SH w/o broadphase & 400 & 8/8 & 0.540 & 0.506 & 0.034 & 0.069 & 0.017 & 0.000 & 3.388 & 0.236 \\
-No-cache full-root & 400 & 8/8 & 0.401 & 0.367 & 0.034 & 0.059 & 0.010 & 0.000 & 3.357 & 0.236 \\
-No LECT replay & 400 & 8/8 & 0.417 & 0.383 & 0.034 & 0.062 & 0.010 & 0.000 & 3.442 & 0.237 \\
-No LECT, 1 thread & 400 & 8/8 & 0.973 & 0.947 & 0.034 & 0.280 & 0.010 & 0.000 & 3.357 & 0.236 \\
+RBF-SH d23 & 0.359 & -- & -- & 0.168 & 0.531 & 2.538 & 0.021 & 1964.000 & 8/8 \\
+CritSample & 0.330 & -- & -- & 0.158 & 0.487 & 2.278 & 0.000 & 1590.000 & 8/8 \\
+Link AABB & 0.420 & -- & -- & 0.210 & 0.632 & 2.697 & 0.093 & 2010.000 & 8/8 \\
+No LECT replay & 0.435 & -- & -- & 0.231 & 0.670 & 2.774 & 0.091 & 2009.000 & 8/8 \\
+No LECT, 1 thread & 0.547 & -- & -- & 0.223 & 0.770 & 2.774 & 0.091 & 2009.000 & 8/8 \\
 \bottomrule
 \end{tabular}
 \par\endgroup

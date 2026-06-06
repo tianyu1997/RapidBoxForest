@@ -28,6 +28,7 @@ BALANCED_PROBE_SIMPLIFY_TIME_S = 0.0
 DEFAULT_RANDOM_ROBOTS = "iiwa,ur5,panda"
 DEFAULT_RANDOM_DIFFICULTIES = "easy,medium,hard"
 DEFAULT_RANDOM_SCENE_SEEDS = 50
+DEFAULT_QUERIES_PER_SCENE = 10
 RANDOM_DIFFICULTY_ORDER = ("easy", "medium", "hard")
 RANDOM_OBSTACLE_COUNTS = {"easy": 4, "medium": 8, "hard": 12}
 RANDOM_OBSTACLE_SCALES = {"easy": 0.12, "medium": 0.16, "hard": 0.20}
@@ -599,10 +600,118 @@ def scene_cache_key(robot_name: str, difficulty: str, scene_seed: int) -> str:
     return f"{robot_name}:{difficulty}:{int(scene_seed)}"
 
 
-def scene_to_record(scene: SceneSpec, *, scene_seed: int, generator_seed: int, scene_profile: str) -> dict[str, Any]:
+def query_record(
+    *,
+    label: str,
+    robot: Any,
+    start: list[float],
+    goal: list[float],
+    symmetry_shift: int = 0,
+    symmetry_sector: int = 0,
+) -> dict[str, Any]:
+    canonical_start = canonicalize_q(robot, list(start))
+    canonical_goal = canonicalize_q(robot, list(goal))
+    return {
+        "label": str(label),
+        "start": [float(value) for value in start],
+        "goal": [float(value) for value in goal],
+        "canonical_start": [float(value) for value in canonical_start],
+        "canonical_goal": [float(value) for value in canonical_goal],
+        "symmetry_shift": int(symmetry_shift),
+        "symmetry_sector": int(symmetry_sector),
+        "canonical_start_in_lect_root": q_in_intervals(canonical_start, canonical_root_intervals(robot)),
+        "canonical_goal_in_lect_root": q_in_intervals(canonical_goal, canonical_root_intervals(robot)),
+        "actual_start_in_lect_root": q_in_lect_root(robot, start),
+        "actual_goal_in_lect_root": q_in_lect_root(robot, goal),
+    }
+
+
+def sample_additional_query_records(
+    scene: SceneSpec,
+    *,
+    scene_seed: int,
+    generator_seed: int,
+    scene_profile: str,
+    queries_per_scene: int,
+    max_scene_tries: int,
+) -> list[dict[str, Any]]:
     robot = make_robot(str(scene.robot_name))
-    canonical_start = list(scene.canonical_start) if scene.canonical_start is not None else canonicalize_q(robot, list(scene.start))
-    canonical_goal = list(scene.canonical_goal) if scene.canonical_goal is not None else canonicalize_q(robot, list(scene.goal))
+    records = [
+        query_record(
+            label=f"q0",
+            robot=robot,
+            start=list(scene.start),
+            goal=list(scene.goal),
+            symmetry_shift=int(scene.symmetry_shift),
+            symmetry_sector=int(scene.symmetry_sector),
+        )
+    ]
+    target = max(1, int(queries_per_scene))
+    if target <= 1:
+        return records
+    rng = random.Random(int(generator_seed) + 7919 * int(scene_seed) + 104729)
+    attempts = 0
+    max_attempts = max(2000, int(max_scene_tries) * 250)
+    balanced = scene_profile_requires_balanced_probe(scene_profile)
+    while len(records) < target and attempts < max_attempts:
+        attempts += 1
+        try:
+            start, goal, _canonical_start, _canonical_goal, shift, sector = sample_free_pair_with_canonical_record(
+                robot,
+                list(scene.obstacles),
+                rng,
+            )
+        except RuntimeError:
+            continue
+        if segment_is_collision_free(robot, list(scene.obstacles), start, goal):
+            continue
+        if balanced and not scene_passes_balanced_probe(
+            robot,
+            list(scene.obstacles),
+            start,
+            goal,
+            int(generator_seed) + 8191 * attempts,
+        ):
+            continue
+        records.append(
+            query_record(
+                label=f"q{len(records)}",
+                robot=robot,
+                start=start,
+                goal=goal,
+                symmetry_shift=shift,
+                symmetry_sector=sector,
+            )
+        )
+    if len(records) < target:
+        raise RuntimeError(
+            f"could only sample {len(records)}/{target} queries for "
+            f"{scene.robot_name}/{scene.difficulty}/{scene_seed}"
+        )
+    return records
+
+
+def scene_to_record(
+    scene: SceneSpec,
+    *,
+    scene_seed: int,
+    generator_seed: int,
+    scene_profile: str,
+    queries_per_scene: int = DEFAULT_QUERIES_PER_SCENE,
+    max_scene_tries: int = 64,
+) -> dict[str, Any]:
+    robot = make_robot(str(scene.robot_name))
+    queries = sample_additional_query_records(
+        scene,
+        scene_seed=int(scene_seed),
+        generator_seed=int(generator_seed),
+        scene_profile=str(scene_profile),
+        queries_per_scene=int(queries_per_scene),
+        max_scene_tries=int(max_scene_tries),
+    )
+    first = queries[0]
+    canonical_start = [float(value) for value in first["canonical_start"]]
+    canonical_goal = [float(value) for value in first["canonical_goal"]]
     return {
         "schema": CATALOG_SCHEMA,
         "robot": str(scene.robot_name),
@@ -610,12 +719,14 @@ def scene_to_record(scene: SceneSpec, *, scene_seed: int, generator_seed: int, s
         "scene_seed": int(scene_seed),
         "generator_seed": int(generator_seed),
         "scene_profile": str(scene_profile),
-        "start": [float(value) for value in scene.start],
-        "goal": [float(value) for value in scene.goal],
+        "queries_per_scene": int(len(queries)),
+        "queries": queries,
+        "start": [float(value) for value in first["start"]],
+        "goal": [float(value) for value in first["goal"]],
         "canonical_start": [float(value) for value in canonical_start],
         "canonical_goal": [float(value) for value in canonical_goal],
-        "symmetry_shift": int(scene.symmetry_shift),
-        "symmetry_sector": int(scene.symmetry_sector),
+        "symmetry_shift": int(first.get("symmetry_shift", scene.symmetry_shift)),
+        "symmetry_sector": int(first.get("symmetry_sector", scene.symmetry_sector)),
         "obstacles": [obstacle_bounds(obstacle) for obstacle in scene.obstacles],
         "sample_domain": LECT_SAMPLE_DOMAIN,
         "canonical_cache": True,
@@ -652,6 +763,23 @@ def scene_from_record(record: dict[str, Any]) -> SceneSpec:
     )
 
 
+def query_records_from_record(record: dict[str, Any]) -> list[dict[str, Any]]:
+    queries = [dict(item) for item in record.get("queries", [])]
+    if queries:
+        return queries
+    return [
+        {
+            "label": "q0",
+            "start": [float(value) for value in record["start"]],
+            "goal": [float(value) for value in record["goal"]],
+            "canonical_start": [float(value) for value in record.get("canonical_start", record["start"])],
+            "canonical_goal": [float(value) for value in record.get("canonical_goal", record["goal"])],
+            "symmetry_shift": int(record.get("symmetry_shift", 0)),
+            "symmetry_sector": int(record.get("symmetry_sector", 0)),
+        }
+    ]
+
+
 def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
     if str(record.get("schema", "")) == "tro2026_random_scene_catalog_v5":
         return (
@@ -664,7 +792,7 @@ def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
         )
     try:
         robot = make_robot(str(record["robot"]))
-        return (
+        base_ok = (
             str(record.get("sample_domain", "")) == LECT_SAMPLE_DOMAIN
             and bool(record.get("canonical_cache", False))
             and q_in_lect_root(robot, [float(value) for value in record["start"]])
@@ -672,6 +800,21 @@ def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
             and q_close(canonicalize_q(robot, [float(value) for value in record["start"]]), [float(value) for value in record["canonical_start"]])
             and q_close(canonicalize_q(robot, [float(value) for value in record["goal"]]), [float(value) for value in record["canonical_goal"]])
         )
+        if not base_ok:
+            return False
+        for query in query_records_from_record(record):
+            start = [float(value) for value in query["start"]]
+            goal = [float(value) for value in query["goal"]]
+            canonical_start = [float(value) for value in query.get("canonical_start", canonicalize_q(robot, start))]
+            canonical_goal = [float(value) for value in query.get("canonical_goal", canonicalize_q(robot, goal))]
+            if not (
+                q_in_lect_root(robot, start)
+                and q_in_lect_root(robot, goal)
+                and q_close(canonicalize_q(robot, start), canonical_start)
+                and q_close(canonicalize_q(robot, goal), canonical_goal)
+            ):
+                return False
+        return True
     except Exception:
         return False
 
@@ -685,7 +828,7 @@ def expected_keys(robots: Iterable[str], difficulties: Iterable[str], scene_seed
     ]
 
 
-def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds: int, scene_profile: str, seed_base: int) -> dict[str, Any]:
+def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds: int, scene_profile: str, seed_base: int, queries_per_scene: int = DEFAULT_QUERIES_PER_SCENE) -> dict[str, Any]:
     return {
         "schema": CATALOG_SCHEMA,
         "robots": list(robots),
@@ -693,6 +836,7 @@ def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds:
         "scene_seeds": int(scene_seeds),
         "scene_profile": str(scene_profile),
         "seed_base": int(seed_base),
+        "queries_per_scene": int(queries_per_scene),
         "obstacle_counts": dict(RANDOM_OBSTACLE_COUNTS),
         "obstacle_scales": dict(RANDOM_OBSTACLE_SCALES),
         "max_query_l2": float(MAX_QUERY_L2),
@@ -745,6 +889,7 @@ def generate_catalog(
     scene_seeds: int,
     scene_profile: str,
     seed_base: int,
+    queries_per_scene: int = DEFAULT_QUERIES_PER_SCENE,
     max_scene_tries: int = 64,
     mode: str = "auto",
 ) -> dict[str, Any]:
@@ -765,11 +910,24 @@ def generate_catalog(
         invalid = [key for key in keys if not record_satisfies_lect_root(existing[key])]
         if invalid:
             raise RuntimeError(f"scene catalog {path} has {len(invalid)} records outside the canonical LECT root; first={invalid[0]}")
+        too_few_queries = [
+            key for key in keys
+            if len(query_records_from_record(existing[key])) < max(1, int(queries_per_scene))
+        ]
+        if too_few_queries:
+            raise RuntimeError(
+                f"scene catalog {path} has {len(too_few_queries)} records with too few queries; "
+                f"first={too_few_queries[0]}"
+            )
         return load_catalog(path)
     records = dict(existing) if mode == "auto" else {}
     total = len(keys)
     for key in keys:
-        if key in records and record_satisfies_lect_root(records[key]):
+        if (
+            key in records
+            and record_satisfies_lect_root(records[key])
+            and len(query_records_from_record(records[key])) >= max(1, int(queries_per_scene))
+        ):
             continue
         robot_name, difficulty, scene_seed_text = key.split(":")
         scene_seed = int(scene_seed_text)
@@ -785,9 +943,23 @@ def generate_catalog(
             max_scene_tries=int(max_scene_tries),
             scene_profile=scene_profile,
         )
-        records[key] = scene_to_record(scene, scene_seed=scene_seed, generator_seed=generator_seed, scene_profile=scene_profile)
+        records[key] = scene_to_record(
+            scene,
+            scene_seed=scene_seed,
+            generator_seed=generator_seed,
+            scene_profile=scene_profile,
+            queries_per_scene=int(queries_per_scene),
+            max_scene_tries=int(max_scene_tries),
+        )
     payload = {
-        **catalog_metadata(robots=robots, difficulties=difficulties, scene_seeds=int(scene_seeds), scene_profile=scene_profile, seed_base=int(seed_base)),
+        **catalog_metadata(
+            robots=robots,
+            difficulties=difficulties,
+            scene_seeds=int(scene_seeds),
+            scene_profile=scene_profile,
+            seed_base=int(seed_base),
+            queries_per_scene=int(queries_per_scene),
+        ),
         "records": [records[key] for key in keys],
     }
     write_catalog(path, payload)
@@ -800,3 +972,11 @@ def scene_for_key(payload: dict[str, Any], robot_name: str, difficulty: str, sce
     if key not in records:
         raise KeyError(f"scene catalog missing {key}")
     return scene_from_record(records[key])
+
+
+def queries_for_key(payload: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> list[dict[str, Any]]:
+    records = catalog_record_map(payload)
+    key = scene_cache_key(robot_name, difficulty, int(scene_seed))
+    if key not in records:
+        raise KeyError(f"scene catalog missing {key}")
+    return query_records_from_record(records[key])

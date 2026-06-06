@@ -196,15 +196,14 @@ def as_float(value: Any, default: float = math.nan) -> float:
 
 
 def method_time(row: dict[str, Any]) -> float:
-    method = str(row.get("method", ""))
-    if method == "sbf_leaf_rrt":
-        return as_float(row.get("planning_s_median", row.get("build_s")))
-    if method in {"rrtconnect", "bitstar"}:
-        planning_s = as_float(row.get("planning_s_median"))
-        if math.isfinite(planning_s):
-            return planning_s
-        return as_float(row.get("query_s_median"))
-    return as_float(row.get("build_s", row.get("planning_s_median"))) + as_float(row.get("query_s_median"), 0.0)
+    amortized = as_float(row.get("amortized_s_k5"))
+    if math.isfinite(amortized):
+        return amortized
+    online = as_float(row.get("online_per_query_s_median"))
+    build = as_float(row.get("offline_build_s_median", row.get("build_s")), 0.0)
+    if math.isfinite(online):
+        return build / 5.0 + online
+    return as_float(row.get("planning_s_median", row.get("build_s")))
 
 
 def measured_time_key(row: dict[str, Any]) -> float:
@@ -214,8 +213,8 @@ def measured_time_key(row: dict[str, Any]) -> float:
 
 
 def is_full_success(row: dict[str, Any]) -> bool:
-    success = as_float(row.get("success_runs", row.get("success_scenes")), 0.0)
-    total = as_float(row.get("runs", row.get("scenes")), 0.0)
+    success = as_float(row.get("success_queries", row.get("success_runs", row.get("success_scenes"))), 0.0)
+    total = as_float(row.get("total_queries", row.get("runs", row.get("scenes"))), 0.0)
     return total > 0.0 and success >= total
 
 
@@ -357,11 +356,11 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
             ]
             full = []
             for row in items:
-                success = as_float(row.get("success_scenes"), 0.0)
-                scenes = as_float(row.get("scenes"), 0.0)
-                plan = as_float(row.get("planning_s_median"))
+                success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
+                total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
+                plan = method_time(row)
                 path_len = path_length_stat(row)
-                if scenes > 0 and success >= scenes and math.isfinite(plan) and math.isfinite(path_len):
+                if total > 0 and success >= total and math.isfinite(plan) and math.isfinite(path_len):
                     full.append(row)
             if not full:
                 continue
@@ -377,16 +376,18 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
                     path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
                 ),
             )[0]
-            plan = as_float(chosen.get("planning_s_median"))
+            build_s = as_float(chosen.get("offline_build_s_median", chosen.get("build_s")), 0.0)
+            query_s = as_float(chosen.get("online_per_query_s_median", chosen.get("query_s_median")), method_time(chosen))
+            total_s = method_time(chosen)
             path_len = path_length_stat(chosen)
             out.setdefault((robot, difficulty), {})[method] = {
-                "build_s": 0.0,
-                "query_s": plan,
-                "total_s": plan,
+                "build_s": 0.0 if method in {"rrtconnect", "bitstar"} else build_s,
+                "query_s": query_s,
+                "total_s": total_s,
                 "path_length": path_len,
                 "source": "current_saved_catalog",
                 "stage_id": str(chosen.get("stage_id", "")),
-                "measured_time_s": plan,
+                "measured_time_s": total_s,
             }
     return out
 
@@ -426,11 +427,11 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
         difficulty = str(row.get("difficulty", "")).lower()
         if not robot or not difficulty:
             continue
-        success = as_float(row.get("success_scenes"), 0.0)
-        scenes = as_float(row.get("scenes"), 0.0)
-        plan = as_float(row.get("planning_s_median"))
+        success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
+        total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
+        plan = method_time(row)
         path_len = path_length_stat(row)
-        if scenes <= 0 or success < scenes or not math.isfinite(plan) or not math.isfinite(path_len):
+        if total <= 0 or success < total or not math.isfinite(plan) or not math.isfinite(path_len):
             continue
         out.setdefault((robot, difficulty), {}).setdefault(method, []).append(
             {
@@ -661,6 +662,28 @@ def find_exp05_current_baseline_manifest(out_dir: Path) -> Path | None:
     return None
 
 
+def find_exp05_current_iris_summary(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "current_iris_gcs" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "current_iris_gcs" / "shelf_cross_algorithm_summary.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_exp05_current_iris_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "current_iris_gcs" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "current_iris_gcs" / "shelf_cross_algorithm_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def find_exp05_bitstar_trace_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp05" / "bitstar_trace10" / "shelf_cross_algorithm_summary.csv",
@@ -805,8 +828,8 @@ def finite_or_inf(value: Any) -> float:
 
 
 def full_success(row: dict[str, Any]) -> bool:
-    success = int(float(row.get("success_scenes", row.get("success_runs", 0)) or 0))
-    total = int(float(row.get("scenes", row.get("runs", 0)) or 0))
+    success = int(float(row.get("success_queries", row.get("success_scenes", row.get("success_runs", 0))) or 0))
+    total = int(float(row.get("total_queries", row.get("scenes", row.get("runs", 0))) or 0))
     return total > 0 and success == total
 
 
@@ -1010,25 +1033,27 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA leaf-sweep--RRT grower ablation at the registered design point. Planning excludes final audit and equals build plus five-query graph search. SR counts seeds for which all five shelf queries pass strict audit. Len. is the success-only mean path length over the five shelf queries. Seg. is raw pre-simplification segment-edge length fraction; the full measured-time trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
+        r"\captionof{table}{Shelf+IIWA reusable RBF ablation at the registered design point. Build is query-agnostic offline coverage. Solve/q charges online anchoring, query bridge, local repair, and graph search; Simplify/q is the fixed OMPL post-processing time actually consumed. Online/q is their sum, excluding final audit. Amort@5 amortizes build over the five shelf queries. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
         r"\label{tab:tro-shelf-ablation}",
-        r"\begin{tabular}{lrrrrrrrrrr}",
+        r"\begin{tabular}{lrrrrrrrrr}",
         r"\toprule",
-        r"Case & Boxes & SR & Plan & Build & Query & Leaf & Refine & Conn. & Len. & Seg. \\",
+        r"Case & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & Seg. & Boxes & SR \\",
         r"\midrule",
     ]
     for row in table_rows:
-        runs = int(float(row.get("runs", 0) or 0))
-        success = int(float(row.get("success_runs", 0) or 0))
+        runs = int(float(row.get("total_queries", row.get("runs", 0)) or 0))
+        success = int(float(row.get("success_queries", row.get("success_runs", 0)) or 0))
         label = labels.get(str(row.get("case", "")), str(row.get("case", ""))).replace("_", r"\_")
         path_length = path_length_stat(row) if success == runs else None
         segment_fraction = row.get("raw_segment_fraction_median") if success == runs else None
         lines.append(
-            f"{label} & {int(float(row.get('deep_max_boxes', 0) or 0))} & {success}/{runs} & "
-            f"{tex_num(row.get('planning_s_median'))} & {tex_num(row.get('build_s_median', row.get('build_s')))} & "
-            f"{tex_num(row.get('query_s_median'))} & {tex_num(row.get('leaf_sweep_s_median'))} & "
-            f"{tex_num(row.get('deep_refine_s_median'))} & {tex_num(row.get('connector_s_median'))} & "
-            f"{tex_num(path_length)} & {tex_num(segment_fraction)} \\\\"
+            f"{label} & {tex_num(row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s'))))} & "
+            f"{tex_num(row.get('online_solve_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_per_query_s_median', row.get('query_s_median')))} & "
+            f"{tex_num(row.get('amortized_s_k5', method_time(row)))} & "
+            f"{tex_num(path_length)} & {tex_num(segment_fraction)} & "
+            f"{tex_num(row.get('final_boxes_median'))} & {success}/{runs} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -1153,8 +1178,8 @@ def generate_exp05_table(
         row = row_by_method.get(method)
         if row is None:
             continue
-        runs = int(float(row.get("runs", 0) or 0))
-        success = int(float(row.get("success_runs", 0) or 0))
+        runs = int(float(row.get("total_queries", row.get("runs", 0)) or 0))
+        success = int(float(row.get("success_queries", row.get("success_runs", 0)) or 0))
         if method == "sbf_leaf_rrt":
             deep_boxes = int(float(row.get("deep_max_boxes", 0) or 0))
             query_stats = query_stats_from_runs(
@@ -1165,7 +1190,7 @@ def generate_exp05_table(
                 ),
             )
             label = rf"{labels[method]} b{deep_boxes}"
-            build_s = row.get("planning_s_median", row.get("build_s"))
+            build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         elif method == "iris_np_gcs":
             stage_id = str(row.get("stage_id", method))
             query_stats = query_stats_from_runs(
@@ -1177,7 +1202,7 @@ def generate_exp05_table(
             if not any(math.isfinite(as_float(value.get("path"))) for value in query_stats.values()):
                 query_stats = old_shelf_iris_query_stats()
             label = labels[method]
-            build_s = method_time(row) if method in {"rrtconnect", "bitstar"} else row.get("build_s", row.get("planning_s_median"))
+            build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         else:
             stage_id = str(row.get("stage_id", method))
             query_stats = query_stats_from_runs(
@@ -1187,8 +1212,8 @@ def generate_exp05_table(
                 ),
             )
             label = labels[method]
-            build_s = method_time(row) if method in {"rrtconnect", "bitstar"} else row.get("build_s", row.get("planning_s_median"))
-        time_label = "Solve" if method in {"rrtconnect", "bitstar"} else "Build"
+            build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
+        time_label = "Build"
         methods.append({
             "label": label,
             "build_s": build_s,
@@ -1202,11 +1227,11 @@ def generate_exp05_table(
             r"Common-rule tabulated Shelf+IIWA rows from Fig.~\ref{fig:tro_shelf_cross_tradeoff}, "
             r"reported by query. Gold rings in the figure mark these rows only to expose detailed numeric values; "
             r"the full curves remain the primary evidence. RBF uses the current leaf-sweep--RRT grower profile. "
-            r"PRM, RRTConnect, BIT*, and IRIS-NP+GCS are current reruns with the registered settings when available; "
-            r"IRIS per-query entries fall back to the old audited artifact only if the current IRIS manifest is absent. "
+            r"PRM, RRTConnect, and BIT* are current reruns with the registered settings; "
+            r"IRIS-NP+GCS reuses the registered audited common-rule artifact. "
             r"For RRTConnect and BIT*, Solve is the observed "
             r"return time under the timeout cap rather than the cap itself. BIT* is run as a single timed trace with dense subsecond and sparse long-horizon incumbent checkpoints. "
-            r"Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. OMPL planning, final simplify, and fixed-resolution "
+            r"Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. The main table uses a 0.01~s common final-simplify budget; OMPL planning, final simplify, and fixed-resolution "
             r"final audit use the same 0.01 joint-space segment step with zero collision tolerance."
         ),
         label="tab:tro-shelf-cross-algorithm",
@@ -1282,7 +1307,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 zorder=5,
             )
     ax.set_xscale("log")
-    ax.set_xlabel("measured planning time (s, log)")
+    ax.set_xlabel("amortized time / query @5 (s, log)")
     ax.set_ylabel("mean audited path length")
     ax.set_title("(a) time / path", fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
@@ -1298,18 +1323,10 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if row is None:
             continue
         label = str(row.get("method_label") or METHOD_STYLE.get(method, {}).get("label", method))
-        if method == "sbf_leaf_rrt":
-            build_s = row.get("build_s", row.get("planning_s_median"))
-            per_query_s = row.get("query_s_median")
-        elif method == "iris_np_gcs":
-            build_s = row.get("build_s", row.get("planning_s_median"))
-            per_query_s = row.get("query_s_median")
-        elif method in {"prm"}:
-            build_s = row.get("build_s", row.get("planning_s_median"))
-            per_query_s = row.get("query_s_median")
-        else:
+        build_s = row.get("offline_build_s_median", row.get("build_s", 0.0))
+        per_query_s = row.get("online_per_query_s_median", row.get("query_s_median", method_time(row)))
+        if method in {"rrtconnect", "bitstar"}:
             build_s = 0.0
-            per_query_s = method_time(row)
         amortization_methods.append({
             "method": method,
             "label": label,
@@ -1358,7 +1375,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         selected = select_tradeoff_row(items, budget_field="deep_max_boxes")
         if selected is not None:
             selected_rows[case] = selected
-        xs = [as_float(row.get("planning_s_median")) for row in items]
+        xs = [method_time(row) for row in items]
         ys = [path_length_stat(row) for row in items]
         path_values.extend(ys)
         ax.plot(xs, ys, "-", color=color, alpha=0.62, linewidth=LINE_WIDTH)
@@ -1366,7 +1383,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         selected_path = None if selected is None else path_length_stat(selected)
         if selected is not None and math.isfinite(selected_path):
             ax.scatter(
-                [as_float(selected.get("planning_s_median"))],
+                [method_time(selected)],
                 [selected_path],
                 facecolors="none",
                 edgecolors="#d4a017",
@@ -1375,7 +1392,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 zorder=5,
             )
     ax.set_xscale("log")
-    ax.set_xlabel("measured planning time (s, log)")
+    ax.set_xlabel("amortized time / query @5 (s, log)")
     ax.set_ylabel("mean audited path length")
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
@@ -1435,11 +1452,13 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rbf_manifest = load_json_file(rbf_query_manifest_path)
     current_baseline_summary = find_exp05_current_baseline_summary(out_dir)
     current_baseline_manifest = find_exp05_current_baseline_manifest(out_dir)
+    current_iris_summary = find_exp05_current_iris_summary(out_dir)
+    current_iris_manifest = find_exp05_current_iris_manifest(out_dir)
     bitstar_trace_summary = find_exp05_bitstar_trace_summary(out_dir)
     bitstar_trace_manifest = find_exp05_bitstar_trace_manifest(out_dir)
     baseline_manifest = load_json_file(current_baseline_manifest)
     if current_baseline_summary is not None and current_baseline_summary != summary:
-        baseline_methods = {"iris_np_gcs", "rrtconnect", "prm", "bitstar"}
+        baseline_methods = {"rrtconnect", "prm", "bitstar"}
         current_baseline_rows = [
             row for row in read_csv_rows(current_baseline_summary)
             if str(row.get("method")) in baseline_methods
@@ -1447,6 +1466,14 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         if current_baseline_rows:
             rows = [row for row in rows if str(row.get("method")) not in baseline_methods]
             rows.extend(current_baseline_rows)
+    if current_iris_summary is not None:
+        current_iris_rows = [
+            row for row in read_csv_rows(current_iris_summary)
+            if str(row.get("method")) == "iris_np_gcs"
+        ]
+        if current_iris_rows:
+            rows = [row for row in rows if str(row.get("method")) != "iris_np_gcs"]
+            rows.extend(current_iris_rows)
     if bitstar_trace_summary is not None:
         bitstar_rows = [
             row for row in read_csv_rows(bitstar_trace_summary)
@@ -1465,6 +1492,18 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rows.extend(registered_rrt_rows)
     if isinstance(baseline_manifest, dict):
         manifest_rows = baseline_manifest.setdefault("rows", [])
+        if current_iris_manifest is not None:
+            iris_manifest = load_json_file(current_iris_manifest)
+            iris_manifest_rows = [
+                row for row in iris_manifest.get("rows", [])
+                if str(row.get("method")) == "iris_np_gcs"
+            ] if isinstance(iris_manifest, dict) else []
+            if iris_manifest_rows:
+                manifest_rows[:] = [
+                    row for row in manifest_rows
+                    if str(row.get("method")) != "iris_np_gcs"
+                ]
+                manifest_rows.extend(iris_manifest_rows)
         if bitstar_trace_manifest is not None:
             bitstar_manifest = load_json_file(bitstar_trace_manifest)
             bitstar_manifest_rows = [
@@ -1524,6 +1563,10 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "summary_sha256": file_sha256(summary),
         "current_baseline_summary": str(current_baseline_summary) if current_baseline_summary is not None else None,
         "current_baseline_manifest": str(current_baseline_manifest) if current_baseline_manifest is not None else None,
+        "current_iris_summary": str(current_iris_summary) if current_iris_summary is not None else None,
+        "current_iris_summary_sha256": file_sha256(current_iris_summary) if current_iris_summary is not None else None,
+        "current_iris_manifest": str(current_iris_manifest) if current_iris_manifest is not None else None,
+        "current_iris_manifest_sha256": file_sha256(current_iris_manifest) if current_iris_manifest is not None else None,
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_manifest": str(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
@@ -1551,11 +1594,7 @@ def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str])
             row for row in rows
             if tuple(str(row.get(field, "")) for field in group_fields) == key
         ]
-        full = [
-            row for row in items
-            if int(float(row.get("success_scenes", row.get("success_runs", 0)) or 0))
-            == int(float(row.get("scenes", row.get("runs", 0)) or 0))
-        ]
+        full = [row for row in items if full_success(row)]
         candidates = full or items
         if not candidates:
             continue
@@ -1574,7 +1613,8 @@ def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str])
         out.append(sorted(
             candidates,
             key=lambda row: (
-                measured_time_key(row),
+                as_float(row.get("online_per_query_s_median"), measured_time_key(row)),
+                as_float(row.get("amortized_s_k10"), measured_time_key(row)),
                 path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
                 int(float(row.get("deep_max_boxes", 0) or 0)),
             ),
@@ -1646,18 +1686,18 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\begingroup",
         r"\centering",
         (
-            r"\captionof{table}{Saved-catalog random-scene best measured-time trade-off points. RBF rows are selected from the current v5 saved catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to old balanced random-scene common-rule context. Current IRIS-NP+GCS rows use a fixed-order adaptive retry profile when needed, and the reported time is the measured sum of attempted stages up to the first audited success. Full current measured-time curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the current v6 multi-query catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to registered common-rule context. RBF Solve/q and Simplify/q split online latency before the Online/q total. Full current curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
             if has_current_baselines else
-            r"\captionof{table}{Saved-catalog random-scene RBF best measured-time trade-off points with the registered Exp.~6 baseline context. RBF rows are selected from the current v5 saved catalog; non-RBF columns are locked to the previously registered common-rule Exp.~6 values so later temporary reruns do not overwrite the manuscript. Full current measured-time curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene reusable RBF best trade-off points with registered Exp.~6 baseline context. RBF rows are selected from the current v6 multi-query catalog; non-RBF columns remain locked to registered common-rule values when current rows are unavailable. RBF Solve/q and Simplify/q split online latency before the Online/q total. Full current curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
         ),
         r"\label{tab:tro-random-summary}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{1.55pt}",
-        r"\begin{tabular}{lrrr|rr|rr|rr|rr}",
+        r"\begin{tabular}{lrrrrrr|rr|rr|rr|rr}",
         r"\toprule",
-        r"Scenario & \multicolumn{3}{c|}{Current RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
-        r"\cmidrule(lr){2-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}",
-        r" & Plan (s) & Path & Boxes & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\",
+        r"Scenario & \multicolumn{6}{c|}{Current RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
+        r"\cmidrule(lr){2-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}\cmidrule(lr){12-13}\cmidrule(lr){14-15}",
+        r" & Solve/q & Simplify/q & Online/q & Amort@10 & Path & Boxes & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\",
         r"\midrule",
     ]
     for robot in robot_order:
@@ -1671,8 +1711,15 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
             for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
                 item = scenario_context.get(method, {})
                 cells.extend([tex_num(item.get("total_s")), tex_num(item.get("path_length"), 2)])
+            online_q = row.get("online_per_query_s_median")
+            if online_q in (None, ""):
+                online_q = row.get("planning_s_median", row.get("measured_time_s_median"))
+            amortized_k10 = row.get("amortized_s_k10")
+            if amortized_k10 in (None, ""):
+                amortized_k10 = online_q
             lines.append(
-                f"{scenario} & {tex_num(row.get('planning_s_median'))} & "
+                f"{scenario} & {tex_num(row.get('online_solve_per_query_s_median'))} & {tex_num(row.get('online_simplify_per_query_s_median'))} & "
+                f"{tex_num(online_q)} & {tex_num(amortized_k10)} & "
                 f"{tex_num(path_length_stat(row), 2)} & {int(float(row.get('deep_max_boxes', 0) or 0))} & "
                 + " & ".join(cells)
                 + r" \\"
@@ -1736,7 +1783,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 key=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
             )
             if items:
-                xs = [as_float(row.get("planning_s_median")) for row in items]
+                xs = [as_float(row.get("amortized_s_k10", row.get("online_per_query_s_median"))) for row in items]
                 ys = [path_length_stat(row) for row in items]
                 axis.plot(xs, ys, "-", color=METHOD_STYLE["sbf_leaf_rrt"]["color"],
                           alpha=0.60, linewidth=LINE_WIDTH)
@@ -1745,7 +1792,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 first = first_full_success_row(items)
                 if first is not None:
                     axis.scatter(
-                        [as_float(first.get("planning_s_median"))],
+                        [as_float(first.get("amortized_s_k10", first.get("online_per_query_s_median")))],
                         [path_length_stat(first)],
                         facecolors="none",
                         edgecolors="black",
@@ -1756,7 +1803,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 selected = rbf_selected.get((robot, difficulty))
                 if selected is not None:
                     axis.scatter(
-                        [as_float(selected.get("planning_s_median"))],
+                        [as_float(selected.get("amortized_s_k10", selected.get("online_per_query_s_median")))],
                         [path_length_stat(selected)],
                         facecolors="none",
                         edgecolors="#d4a017",
@@ -1792,7 +1839,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 axis.scatter([item["total_s"]], [item["path_length"]],
                              marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.82)
             axis.set_xscale("log")
-            axis.set_xlabel("measured planning time (s, log)" if row_index == len(robot_order) - 1 else "")
+            axis.set_xlabel("amortized/online time per query (s, log)" if row_index == len(robot_order) - 1 else "")
             if row_index == 0:
                 axis.set_title(difficulty.capitalize(), fontsize=PANEL_TITLE_FONTSIZE)
             if col_index == 0:
@@ -1812,8 +1859,8 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     selected = rbf_selected.get((robot, difficulty))
                     if selected is None:
                         continue
-                    build_values.append(as_float(selected.get("planning_s_median"), 0.0))
-                    query_values.append(as_float(selected.get("audit_s_median"), 0.0))
+                    build_values.append(as_float(selected.get("offline_build_s_median"), 0.0))
+                    query_values.append(as_float(selected.get("online_per_query_s_median"), 0.0))
                 else:
                     item = context.get((robot, difficulty), {}).get(method)
                     if not item:
