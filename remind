@@ -1,6 +1,4 @@
-修改cache之前，No cache组就已经压到了0.5s  2.75平均路径的水平，理论上讲修改cache机制不应该影响其表现，为什么现在变差很多？尝试对比分析原因。
-table VI中显示SH体积在小box时远小于AABB，分析为什么消融组中SH没有明显优于AABB
-扫描critsample组最佳配置，深度和box数量等可以与baseline不一致
-生成一组Critsample的d23缓存。然后重新运行有缓存下的critsample组，如果明显优于原baseline组，则把crit sample作为baseline重跑实验4
+然后重新运行有缓存下的critsample组，如果明显优于原baseline组，则把crit sample作为baseline重跑实验4
 用优化后的RBF Baseline配置跑实验6，如果实验结果不理想的话可能需要在随机场景下重新扫描最优参数
 /goal 修改baseline，直到其表现明显优于其他消融对比组(可以差于critsample组)
+请你全局检查，其他的canonical映射部分还有没有类似潜在问题，需要完全排除。

@@ -819,6 +819,14 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 						static_cast<double>(counters.materialization_external_maybe_live_retry_free));
 			add_counter(result,
 						context,
+						"leaf_sweep.worker_oracle.canonical_frame_invalid",
+						static_cast<double>(counters.canonical_frame_invalid));
+			add_counter(result,
+						context,
+						"leaf_sweep.worker_oracle.canonical_reflected_seed_misses",
+						static_cast<double>(counters.canonical_reflected_seed_misses));
+			add_counter(result,
+						context,
 						"leaf_sweep.worker_oracle.validate_node_total_time_us",
 						counters.validate_node_total_time_us);
 			add_counter(result,

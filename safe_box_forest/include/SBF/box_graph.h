@@ -37,6 +37,7 @@ struct SegmentEdge {
 	int segment_resolution = 0;
 	double length = 0.0;
 	bool strict_audit_required = false;
+	int query_index = -1;
 };
 
 using SegmentEdgeList = std::vector<SegmentEdge>;
@@ -78,10 +79,11 @@ int add_segment_edge(SegmentEdgeList& edges,
 					 int source_box_id,
 					 int target_box_id,
 					 std::vector<Eigen::VectorXd> waypoints,
-					 SegmentEdgeType type,
-					 int segment_resolution,
-					 SegmentEdgeValidation validation,
-					 bool strict_audit_required = false);
+						 SegmentEdgeType type,
+						 int segment_resolution,
+						 SegmentEdgeValidation validation,
+						 bool strict_audit_required = false,
+						 int query_index = -1);
 void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges, AdjacencyGraph& graph);
 const SegmentEdge* find_segment_edge(const SegmentEdgeList& edges, int source_box_id, int target_box_id);
 const SegmentEdge* find_segment_edge(const QueryGraphCache& cache, int source_box_id, int target_box_id);
@@ -103,6 +105,11 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
 							   int start_box_id,
 							   int goal_box_id,
 							   const Eigen::VectorXd& goal_point = {});
+DijkstraResult dijkstra_search(const QueryGraphCache& cache,
+							   int start_box_id,
+							   int goal_box_id,
+							   const Eigen::VectorXd& start_point,
+							   const Eigen::VectorXd& goal_point);
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const AdjacencyGraph& graph);
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const QueryGraphCache& cache);
 std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_sequence,

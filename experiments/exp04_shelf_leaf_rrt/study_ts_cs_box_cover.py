@@ -68,7 +68,7 @@ def coverage(path: list[list[float]], boxes: list[list[list[float]]], step: floa
 
 def make_options(args: argparse.Namespace, *, connector_bridge_boxes: int, query_bridge_all: bool) -> RBFLeafRRTOptions:
     robot = sbf.load_iiwa14_robot()
-    root = robot_joint_limit_tuples(robot)
+    coverage = robot_joint_limit_tuples(robot)
     return RBFLeafRRTOptions(
         seed=int(args.seed),
         deep_max_boxes=int(args.box_budget),
@@ -88,12 +88,13 @@ def make_options(args: argparse.Namespace, *, connector_bridge_boxes: int, query
         leaf_threads=int(args.threads),
         envelope="support_hull",
         endpoint_source="ifk",
-        use_external_evidence=False,
+        use_external_evidence=bool(args.use_external_evidence),
         external_evidence_path=Path(args.rbf_cache_root) / str(args.warm_cache_label),
         external_evidence_verify_identity=False,
-        root_override_tuples=root,
-        coverage_override_tuples=root,
+        root_override_tuples=None,
+        coverage_override_tuples=coverage,
         database_canonical_mode=True,
+        symmetry_aligned_cache_schedule=False,
         connector_bridge_boxes=int(connector_bridge_boxes),
         connector_pair_timeout_ms=float(args.connector_pair_timeout_ms),
         connector_max_pairs_per_gap=int(args.connector_max_pairs_per_gap),
@@ -107,7 +108,7 @@ def make_options(args: argparse.Namespace, *, connector_bridge_boxes: int, query
         connector_pave_fill_gaps=True,
         connector_pave_require_connected_chain=True,
         final_collision_shortcut=True,
-        final_rrt_simplify=True,
+        final_rrt_simplify=bool(args.final_rrt_simplify),
         final_rrt_simplify_timeout_ms=50.0,
         final_rrt_simplify_max_iters=50000,
         final_rrt_simplify_attempts=4,
@@ -163,7 +164,14 @@ def make_reference_path(args: argparse.Namespace) -> dict[str, Any]:
     )
     query = ts_cs_query(queries)
     t0 = time.perf_counter()
-    added = int(forest.bridge_query([float(v) for v in query.start], [float(v) for v in query.goal]))
+    added = 0
+    if hasattr(forest, "bridge_queries"):
+        starts = [[float(v) for v in item.start] for item in queries]
+        goals = [[float(v) for v in item.goal] for item in queries]
+        added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+        added = sum(added_values)
+    if added <= 0:
+        added = int(forest.bridge_query([float(v) for v in query.start], [float(v) for v in query.goal]))
     bridge_s = time.perf_counter() - t0
     result = forest.query([float(v) for v in query.start], [float(v) for v in query.goal])
     waypoints = [[float(v) for v in point] for point in result.path_as_lists()]
@@ -196,28 +204,65 @@ def run_one(args: argparse.Namespace, ref: dict[str, Any], max_depth: int, max_c
         segment_edges_enabled=False,
     )
     t0 = time.perf_counter()
-    debug = dict(forest.debug_chain_pave_waypoints(
-        ref["path"],
-        max_chain=int(max_chain),
-        max_depth=int(max_depth),
-        max_gap_fill_steps=8,
-        fill_segment_gaps=True,
-        gap_fill_min_step=1e-4,
-        adjacency_tolerance=1e-9,
-        gap_fill_sample_step=float(step),
-        gap_fill_time_budget_ms=float(args.pave_timeout_ms),
-        gap_fill_max_ffb_calls=int(ffb_calls),
-        gap_fill_min_arc_gain=0.0,
-        require_connected_chain=bool(require_connected),
-        commit_certified_only=bool(args.commit_certified_only),
-    ))
+    if str(args.cover_mode) == "direct-ffb":
+        ffb_options = sbf.FindFreeBoxOptions()
+        ffb_options.max_depth = int(max_depth)
+        ffb_options.start_depth = int(args.ffb_start_depth)
+        ffb_options.skip_to_depth = int(args.ffb_start_depth)
+        if hasattr(sbf, "FindFreeBoxSearchMode"):
+            mode = str(args.ffb_search_mode).strip().lower().replace("-", "_")
+            if mode in {"linear", "incremental"}:
+                ffb_options.search_mode = sbf.FindFreeBoxSearchMode.LinearDescent
+            elif mode in {"binary", "binary_depth"}:
+                ffb_options.search_mode = sbf.FindFreeBoxSearchMode.BinaryDepth
+            else:
+                raise ValueError(f"unsupported --ffb-search-mode: {args.ffb_search_mode}")
+        ffb_options.split_reserved_leaf = True
+        ffb_options.split_unknown_leaf = True
+        ffb_options.reject_seed_collision = False
+        debug = dict(forest.debug_cover_path_with_ffb(
+            ref["path"],
+            list(sbf.make_combined_obstacles()),
+            ffb_options,
+            float(step),
+            int(ffb_calls),
+            1e-9,
+            bool(args.include_existing_boxes),
+            bool(args.cover_disable_caches),
+            64,
+            [float(v) for v in str(args.cover_refine_steps).split(",") if v.strip()],
+            int(args.cover_parallel_workers),
+            bool(args.repair_corridor_adjacency),
+            int(args.repair_rounds),
+            int(args.repair_segment_subdivisions),
+        ))
+    else:
+        debug = dict(forest.debug_chain_pave_waypoints(
+            ref["path"],
+            max_chain=int(max_chain),
+            max_depth=int(max_depth),
+            max_gap_fill_steps=8,
+            fill_segment_gaps=True,
+            gap_fill_min_step=1e-4,
+            adjacency_tolerance=1e-9,
+            gap_fill_sample_step=float(step),
+            gap_fill_time_budget_ms=float(args.pave_timeout_ms),
+            gap_fill_max_ffb_calls=int(ffb_calls),
+            gap_fill_min_arc_gain=0.0,
+            require_connected_chain=bool(require_connected),
+            commit_certified_only=bool(args.commit_certified_only),
+        ))
     pave_s = time.perf_counter() - t0
-    cov_all, uncovered_all, samples = coverage(ref["path"], list(debug.get("all_boxes", [])), float(args.coverage_step))
-    cov_new, uncovered_new, _ = coverage(ref["path"], list(debug.get("committed_boxes", [])), float(args.coverage_step))
+    all_boxes = list(debug.get("boxes", [])) if str(args.cover_mode) == "direct-ffb" else list(debug.get("all_boxes", []))
+    new_boxes = all_boxes[int(debug.get("initial_box_count", 0)):] if str(args.cover_mode) == "direct-ffb" else list(debug.get("committed_boxes", []))
+    cov_all, uncovered_all, samples = coverage(ref["path"], all_boxes, float(args.coverage_step))
+    cov_new, uncovered_new, _ = coverage(ref["path"], new_boxes, float(args.coverage_step))
     query = forest.query(ref["start"], ref["goal"])
     raw = float(getattr(query, "raw_path_length", query.path_length)) if bool(query.success) else math.nan
     seg_len = float(query.segment_edge_length) if bool(query.success) else 0.0
+    counters = dict(debug.get("counters", {})) if str(args.cover_mode) == "direct-ffb" else {}
     return {
+        "cover_mode": str(args.cover_mode),
         "max_depth": int(max_depth),
         "max_chain": int(max_chain),
         "ffb_calls": int(ffb_calls),
@@ -225,10 +270,41 @@ def run_one(args: argparse.Namespace, ref: dict[str, Any], max_depth: int, max_c
         "require_connected_chain": bool(require_connected),
         "build_s": float(build.total_ms) / 1000.0,
         "pave_s": pave_s,
+        "debug_cover_total_ms": float(debug.get("total_ms", 0.0)),
         "total_s": float(build.total_ms) / 1000.0 + pave_s,
-        "added": int(debug.get("added", 0)),
+        "use_external_evidence": bool(args.use_external_evidence),
+        "cover_disable_caches": bool(args.cover_disable_caches),
+        "ffb_search_mode": str(args.ffb_search_mode),
+        "added": int(debug.get("added", debug.get("added_box_count", 0))),
         "fast_gap_fill_ffb_calls": int(debug.get("fast_gap_fill_ffb_calls", 0)),
         "fast_gap_fill_ms": float(debug.get("fast_gap_fill_ms", 0.0)),
+        "boundary_ffb_calls": int(debug.get("boundary_ffb_calls", debug.get("ffb_calls", 0))),
+        "boundary_commits": int(debug.get("boundary_commits", debug.get("ffb_found", 0))),
+        "boundary_reject_not_free": int(debug.get("boundary_reject_not_free", 0)),
+        "boundary_reject_non_adjacent": int(debug.get("boundary_reject_non_adjacent", 0)),
+        "boundary_stall": int(debug.get("boundary_stall", 0)),
+        "boundary_target_hits": int(debug.get("boundary_target_hits", 0)),
+        "oracle_external_exact_hits": int(counters.get("materialization_external_exact_hits", 0)),
+        "oracle_external_exact_misses": int(counters.get("materialization_external_exact_misses", 0)),
+        "oracle_canonical_frame_invalid": int(counters.get("canonical_frame_invalid", 0)),
+        "oracle_canonical_reflected_seed_misses": int(counters.get("canonical_reflected_seed_misses", 0)),
+        "direct_cover_uncovered_samples": int(debug.get("uncovered_samples", -1)),
+        "direct_cover_sample_count": int(debug.get("sample_count", -1)),
+        "direct_cover_fail_counts": list(debug.get("fail_counts", [])),
+        "direct_cover_first_failures": list(debug.get("failures", []))[:8],
+        "direct_cover_pass_summaries": list(debug.get("pass_summaries", [])),
+        "direct_cover_final_sample_step": float(debug.get("final_sample_step", step)),
+        "direct_cover_presplit_ms": float(debug.get("presplit_ms", 0.0)),
+        "direct_cover_parallel_workers": int(debug.get("parallel_workers", 1)),
+        "repair_corridor_adjacency": bool(debug.get("repair_corridor_adjacency", False)),
+        "repair_ms": float(debug.get("repair_ms", 0.0)),
+        "repair_calls": int(debug.get("repair_calls", 0)),
+        "repair_added": int(debug.get("repair_added", 0)),
+        "repair_bad_transitions_initial": int(debug.get("repair_bad_transitions_initial", 0)),
+        "repair_bad_transitions_final": int(debug.get("repair_bad_transitions_final", 0)),
+        "repair_bad_transition_length_initial": float(debug.get("repair_bad_transition_length_initial", 0.0)),
+        "repair_bad_transition_length_final": float(debug.get("repair_bad_transition_length_final", 0.0)),
+        "repair_bad_transition_fraction_final": float(debug.get("repair_bad_transition_fraction_final", math.nan)),
         "coverage_all": cov_all,
         "coverage_new": cov_new,
         "uncovered_all": int(uncovered_all),
@@ -247,6 +323,7 @@ def run_one(args: argparse.Namespace, ref: dict[str, Any], max_depth: int, max_c
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", type=Path, default=Path("outputs/exp04_ts_cs_box_cover_study"))
+    parser.add_argument("--reference-json", type=Path, default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--box-budget", type=int, default=200)
     parser.add_argument("--threads", type=int, default=8)
@@ -256,6 +333,7 @@ def main() -> int:
     parser.add_argument("--leaf-max-depth", type=int, default=18)
     parser.add_argument("--deep-ffb-depth", type=int, default=40)
     parser.add_argument("--ffb-start-depth", type=int, default=23)
+    parser.add_argument("--ffb-search-mode", choices=["binary", "linear"], default="binary")
     parser.add_argument("--validation-batch-size", type=int, default=512)
     parser.add_argument("--audit-segment-step", type=float, default=0.01)
     parser.add_argument("--connector-pair-timeout-ms", type=float, default=10.0)
@@ -267,18 +345,35 @@ def main() -> int:
     parser.add_argument("--collision-overlap-prune-ratio-threshold", type=float, default=0.0)
     parser.add_argument("--rbf-cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
+    parser.add_argument("--use-external-evidence", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--depths", default="40,56,72,96")
     parser.add_argument("--chains", default="40,80,160")
     parser.add_argument("--ffb-calls", default="64,128,256")
     parser.add_argument("--sample-steps", default="0.04,0.02")
     parser.add_argument("--require-connected", default="0,1")
+    parser.add_argument("--cover-mode", choices=["direct-ffb", "chain-pave"], default="direct-ffb")
+    parser.add_argument("--include-existing-boxes", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--cover-disable-caches", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--cover-refine-steps",
+        default="",
+        help="Optional comma-separated coarse-to-fine FFB seed steps; final coverage uses the finest step.",
+    )
+    parser.add_argument("--cover-parallel-workers", type=int, default=1)
+    parser.add_argument("--repair-corridor-adjacency", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--repair-rounds", type=int, default=2)
+    parser.add_argument("--repair-segment-subdivisions", type=int, default=8)
     parser.add_argument("--coverage-step", type=float, default=0.01)
     parser.add_argument("--pave-timeout-ms", type=float, default=250.0)
     parser.add_argument("--commit-certified-only", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--final-rrt-simplify", action=argparse.BooleanOptionalAction, default=True)
     args = parser.parse_args()
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    ref = make_reference_path(args)
+    if args.reference_json is not None and args.reference_json.exists():
+        ref = json.loads(args.reference_json.read_text(encoding="utf-8"))
+    else:
+        ref = make_reference_path(args)
     depths = [int(v) for v in str(args.depths).split(",") if v.strip()]
     chains = [int(v) for v in str(args.chains).split(",") if v.strip()]
     ffb_calls = [int(v) for v in str(args.ffb_calls).split(",") if v.strip()]
@@ -297,7 +392,14 @@ def main() -> int:
         rows.append(run_one(args, ref, depth, chain, calls, step, req))
 
     write_json(args.out_dir / "ts_cs_reference_path.json", ref)
-    write_json(args.out_dir / "ts_cs_box_cover_manifest.json", {"reference": ref, "rows": rows})
+    write_json(args.out_dir / "ts_cs_box_cover_manifest.json", {
+        "state_space": "native_joint_space",
+        "cache_scope": "full_robot_joint_limits",
+        "canonical_mapping_scope": "LECT_internal_only",
+        "external_evidence_path": str(Path(args.rbf_cache_root) / str(args.warm_cache_label)),
+        "reference": ref,
+        "rows": rows,
+    })
     if rows:
         with (args.out_dir / "ts_cs_box_cover_summary.csv").open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))

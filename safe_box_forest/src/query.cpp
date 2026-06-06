@@ -33,7 +33,7 @@ QueryResult CorridorQuery::run(const QueryGraphCache& cache,
         result.query_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return result;
     }
-    auto dijkstra = dijkstra_search(cache, result.start_box_id, result.goal_box_id, goal);
+    auto dijkstra = dijkstra_search(cache, result.start_box_id, result.goal_box_id, start, goal);
     if (!dijkstra.found) {
         result.query_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return result;

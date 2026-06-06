@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstdlib>
 #include <cmath>
 #include <functional>
@@ -24,6 +25,13 @@ namespace {
 bool legacy_query_boxcorridor_enabled() {
     const char* value = std::getenv("RBF_LEGACY_QUERY_BOX_CORRIDOR");
     return value != nullptr && value[0] == '1';
+}
+
+double boundary_max_depth_failure_count_local(const StageContext& context) {
+    const auto& diagnostics = context.diagnostics();
+    return diagnostics.value("connector.chain_pave_boundary_fail_depth_cap", 0.0) +
+           diagnostics.value("connector.chain_pave_boundary_fail_unknown_depth_cap", 0.0) +
+           diagnostics.value("connector.chain_pave_boundary_fail_reserved_depth_cap", 0.0);
 }
 
 std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::VectorXd>& path,
@@ -124,8 +132,10 @@ RBFPlanningConfig::RBFPlanningConfig() {
     envelope_type.n_subdivisions = 4;
     envelope_type.kdop_config.direction_set = KdopDirectionSet::DOP26;
     envelope_type.kdop_config.safety_epsilon = 1e-9;
+    envelope_type.kdop_config.overlap_tolerance = 1e-5;
     envelope_type.support_hull_config.keep_kdop = true;
     envelope_type.support_hull_config.safety_epsilon = 1e-9;
+    envelope_type.support_hull_config.overlap_tolerance = 1e-5;
 
     validation.mode = OracleValidationMode::CoverageHeuristic;
     validation.accept_unsafe_free = true;
@@ -199,6 +209,105 @@ const BoxNode* find_box_by_id(const std::vector<BoxNode>& boxes, int box_id) {
     return nullptr;
 }
 
+std::optional<std::pair<double, double>> segment_box_parameter_interval(
+    const Eigen::Ref<const Eigen::VectorXd>& a,
+    const Eigen::Ref<const Eigen::VectorXd>& b,
+    const BoxNode& box,
+    double tolerance) {
+    if (box.n_dims() != a.size() || b.size() != a.size()) {
+        return std::nullopt;
+    }
+    double lo = 0.0;
+    double hi = 1.0;
+    const Eigen::VectorXd delta = b - a;
+    for (int dim = 0; dim < a.size(); ++dim) {
+        const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+        const double slab_lo = interval.lo - tolerance;
+        const double slab_hi = interval.hi + tolerance;
+        if (std::abs(delta[dim]) < 1e-15) {
+            if (a[dim] < slab_lo || a[dim] > slab_hi) {
+                return std::nullopt;
+            }
+            continue;
+        }
+        double t0 = (slab_lo - a[dim]) / delta[dim];
+        double t1 = (slab_hi - a[dim]) / delta[dim];
+        if (t0 > t1) {
+            std::swap(t0, t1);
+        }
+        lo = std::max(lo, t0);
+        hi = std::min(hi, t1);
+        if (lo > hi) {
+            return std::nullopt;
+        }
+    }
+    lo = std::max(0.0, lo);
+    hi = std::min(1.0, hi);
+    if (lo > hi) {
+        return std::nullopt;
+    }
+    return std::pair<double, double>{lo, hi};
+}
+
+double certified_box_covered_segment_length(const Eigen::Ref<const Eigen::VectorXd>& a,
+                                            const Eigen::Ref<const Eigen::VectorXd>& b,
+                                            const std::vector<BoxNode>& boxes,
+                                            double tolerance = 1e-9) {
+    const double segment_length = (b - a).norm();
+    if (segment_length <= 1e-15) {
+        return 0.0;
+    }
+    std::vector<std::pair<double, double>> covered;
+    covered.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        if (box.safety_status != BoxSafetyStatus::CertifiedFree ||
+            box.strict_audit_required) {
+            continue;
+        }
+        auto interval = segment_box_parameter_interval(a, b, box, tolerance);
+        if (interval && interval->second > interval->first) {
+            covered.push_back(*interval);
+        }
+    }
+    if (covered.empty()) {
+        return 0.0;
+    }
+    std::sort(covered.begin(), covered.end());
+    double covered_param = 0.0;
+    double cur_lo = covered.front().first;
+    double cur_hi = covered.front().second;
+    for (std::size_t index = 1; index < covered.size(); ++index) {
+        const auto [next_lo, next_hi] = covered[index];
+        if (next_lo <= cur_hi + 1e-12) {
+            cur_hi = std::max(cur_hi, next_hi);
+        } else {
+            covered_param += std::max(0.0, cur_hi - cur_lo);
+            cur_lo = next_lo;
+            cur_hi = next_hi;
+        }
+    }
+    covered_param += std::max(0.0, cur_hi - cur_lo);
+    return std::min(segment_length, std::max(0.0, covered_param) * segment_length);
+}
+
+double uncovered_segment_edge_length(const SegmentEdge& edge,
+                                     const std::vector<BoxNode>& boxes,
+                                     double tolerance = 1e-9) {
+    if (edge.waypoints.size() < 2) {
+        return edge.length;
+    }
+    double uncovered = 0.0;
+    for (std::size_t index = 1; index < edge.waypoints.size(); ++index) {
+        const auto& a = edge.waypoints[index - 1];
+        const auto& b = edge.waypoints[index];
+        const double segment_length = (b - a).norm();
+        const double covered =
+            certified_box_covered_segment_length(a, b, boxes, tolerance);
+        uncovered += std::max(0.0, segment_length - covered);
+    }
+    return uncovered;
+}
+
 bool same_waypoint(const Eigen::VectorXd& lhs, const Eigen::VectorXd& rhs) {
     return lhs.size() == rhs.size() && (lhs - rhs).norm() <= 1e-10;
 }
@@ -207,6 +316,79 @@ void append_waypoint_unique(std::vector<Eigen::VectorXd>& path, const Eigen::Vec
     if (path.empty() || !same_waypoint(path.back(), waypoint)) {
         path.push_back(waypoint);
     }
+}
+
+std::vector<Eigen::VectorXd> densify_waypoint_path_local(const std::vector<Eigen::VectorXd>& path,
+                                                         double max_step) {
+    if (path.size() <= 1 || !(max_step > 0.0) || !std::isfinite(max_step)) {
+        return path;
+    }
+    std::vector<Eigen::VectorXd> out;
+    out.push_back(path.front());
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        const Eigen::VectorXd& a = path[index - 1];
+        const Eigen::VectorXd& b = path[index];
+        const double length = (b - a).norm();
+        const int count = std::max(1, static_cast<int>(std::ceil(length / max_step)));
+        for (int sample = 1; sample <= count; ++sample) {
+            const double u = static_cast<double>(sample) / static_cast<double>(count);
+            Eigen::VectorXd point = a + u * (b - a);
+            if ((out.back() - point).norm() > 1e-12) {
+                out.push_back(std::move(point));
+            }
+        }
+    }
+    return out;
+}
+
+int env_int_or_default(const char* name, int fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long value = std::strtol(raw, &end, 10);
+    if (end == raw) {
+        return fallback;
+    }
+    return static_cast<int>(value);
+}
+
+double env_double_or_default(const char* name, double fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(raw, &end);
+    if (end == raw || !std::isfinite(value)) {
+        return fallback;
+    }
+    return value;
+}
+
+bool env_index_list_contains(const char* name, std::size_t target) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return false;
+    }
+    std::stringstream stream(raw);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (item.empty()) {
+            continue;
+        }
+        char* end = nullptr;
+        const long value = std::strtol(item.c_str(), &end, 10);
+        if (end != item.c_str() && value >= 0 &&
+            static_cast<std::size_t>(value) == target) {
+            return true;
+        }
+    }
+    return false;
 }
 
 struct PathAuditCheck {
@@ -2603,7 +2785,8 @@ void summarize_query_path(QueryResult& result,
         }
         if (const SegmentEdge* edge = find_segment_edge_by_id(segment_edges, edge_id)) {
             if (counts_as_segment_edge(edge->type)) {
-                result.segment_edge_length += edge->length;
+                result.segment_edge_length +=
+                    uncovered_segment_edge_length(*edge, boxes);
             }
         }
     }
@@ -3107,6 +3290,8 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().set_value("oracle.materialization_external_live_fallbacks", static_cast<double>(oracle_counters.materialization_external_live_fallbacks));
     context.diagnostics().set_value("oracle.materialization_external_maybe_live_retries", static_cast<double>(oracle_counters.materialization_external_maybe_live_retries));
     context.diagnostics().set_value("oracle.materialization_external_maybe_live_retry_free", static_cast<double>(oracle_counters.materialization_external_maybe_live_retry_free));
+    context.diagnostics().set_value("oracle.canonical_frame_invalid", static_cast<double>(oracle_counters.canonical_frame_invalid));
+    context.diagnostics().set_value("oracle.canonical_reflected_seed_misses", static_cast<double>(oracle_counters.canonical_reflected_seed_misses));
     context.diagnostics().set_value("oracle.materialization_reused_shared_endpoint_cache", static_cast<double>(oracle_counters.materialization_reused_shared_endpoint_cache));
     context.diagnostics().set_value("oracle.materialization_stored_shared_endpoint_cache", static_cast<double>(oracle_counters.materialization_stored_shared_endpoint_cache));
     if (const auto* shared_cache = oracle_->shared_endpoint_cache_peek()) {
@@ -3521,6 +3706,11 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         result.fail_code = 5;
         return result;
     }
+    if (point_covered_by_existing_box_local(boxes_, seed)) {
+        context.diagnostics().add_counter("forest.find_free_box_in_domain_seed_already_covered");
+        result.fail_code = 7;
+        return result;
+    }
     if (options.reject_seed_collision && oracle_->point_in_collision(seed)) {
         result.seed_collision = true;
         result.fail_code = 1;
@@ -3851,11 +4041,16 @@ int RBFPlanningForest::refill_removed_box_with_leaf_sweep(const BoxNode& removed
             continue;
         }
         std::vector<Interval> tree_intervals = oracle_->node_intervals(item.node);
-        std::vector<Interval> intervals = oracle_->query_intervals_for_node(
-            item.node,
-            tree_intervals,
-            removed_reference);
-        if (!intervals_subset_local(intervals, removed_box.joint_intervals, 1e-12)) {
+        std::vector<Interval> intervals;
+        bool found_matching_native_copy = false;
+        for (auto candidate : oracle_->native_interval_copies_for_node(item.node, tree_intervals)) {
+            if (intervals_subset_local(candidate, removed_box.joint_intervals, 1e-12)) {
+                intervals = std::move(candidate);
+                found_matching_native_copy = true;
+                break;
+            }
+        }
+        if (!found_matching_native_copy) {
             continue;
         }
         if (oracle_->is_reserved(item.node)) {
@@ -4508,6 +4703,15 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
+    struct QueryBridgeDiagnosticsFlush {
+        BuildProfile& profile;
+        StageContext& context;
+        ~QueryBridgeDiagnosticsFlush() {
+            for (const auto& [key, value] : context.diagnostics().snapshot()) {
+                profile.diagnostics[key] = value;
+            }
+        }
+    } diagnostics_flush{last_build_, context};
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
@@ -4544,9 +4748,7 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
                                         static_cast<double>(short_local_profiles.size()));
     }
     const int bridge_attempts =
-        short_local_bridge
-            ? std::max(16, config_.connector.max_pairs_per_gap)
-            : std::max(1, config_.connector.max_pairs_per_gap);
+        std::max(1, config_.connector.max_pairs_per_gap);
     const int run_seed = config_.grower.rng_seed;
     const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
     context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
@@ -4579,7 +4781,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     const Eigen::Ref<const Eigen::VectorXd>& goal,
     const std::vector<Eigen::VectorXd>& waypoint_path,
     bool short_local_bridge,
-    const RRTConnectConfig& bridge_rrt) {
+    const RRTConnectConfig& bridge_rrt,
+    int query_index) {
     if (waypoint_path.empty() || boxes_.empty() || !oracle_) {
         return 0;
     }
@@ -4592,10 +4795,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return 0;
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
+    struct QueryBridgePaveDiagnosticsFlush {
+        BuildProfile& profile;
+        StageContext& context;
+        ~QueryBridgePaveDiagnosticsFlush() {
+            for (const auto& [key, value] : context.diagnostics().snapshot()) {
+                profile.diagnostics[key] = value;
+            }
+        }
+    } pave_diagnostics_flush{last_build_, context};
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     int direct_segment_edges_added = 0;
     int box_corridor_edges_added = 0;
     const bool defer_query_segment_edge = true;
+    const double query_bridge_depth_failures_before =
+        boundary_max_depth_failure_count_local(context);
     int next_id = next_box_id();
     auto waypoint_length = [](const std::vector<Eigen::VectorXd>& path) {
         double total = 0.0;
@@ -4614,8 +4828,71 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             : config_.connector.pave.find_free_box.max_depth);
     context.diagnostics().set_value("query_bridge.pave_ffb_depth",
                                     static_cast<double>(query_bridge_ffb_depth));
+    auto set_query_bridge_task_value = [&](const std::string& suffix, double value) {
+        if (query_index < 0) {
+            return;
+        }
+        context.diagnostics().set_value(
+            "query_bridge.batch_task." + std::to_string(query_index) + "." + suffix,
+            value);
+    };
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
-    if (config_.query.final_rrt_simplify &&
+    auto locate_query_boxes = [&]() {
+        invalidate_query_cache();
+        return std::pair<int, int>{
+            locate_containing_box(query_cache(), start, config_.query.nearest_if_outside),
+            locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside)};
+    };
+    auto query_boxes_connected = [&](int source_box_id, int target_box_id) {
+        return source_box_id >= 0 &&
+               target_box_id >= 0 &&
+               graph_has_certified_box_path_local(boxes_,
+                                                  adjacency_,
+                                                  source_box_id,
+                                                  target_box_id,
+                                                  config_.query.adjacency_tolerance);
+    };
+    auto try_reverse_boundary_pave =
+        [&](const ChainPaveConfig& forward_config,
+            int forward_added,
+            int& accumulated_added) -> std::pair<int, int> {
+        auto [source_box_id, target_box_id] = locate_query_boxes();
+        if (query_boxes_connected(source_box_id, target_box_id)) {
+            return {source_box_id, target_box_id};
+        }
+        const int remaining_chain = forward_config.max_chain - std::max(0, forward_added);
+        if (target_box_id < 0 || remaining_chain <= 0) {
+            return {source_box_id, target_box_id};
+        }
+        ChainPaveConfig reverse_config = forward_config;
+        reverse_config.max_chain = remaining_chain;
+        std::vector<Eigen::VectorXd> reverse_path(corridor_path.rbegin(),
+                                                  corridor_path.rend());
+        context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_attempts");
+        const int reverse_added = chain_pave_along_path(reverse_path,
+                                                        target_box_id,
+                                                        boxes_,
+                                                        *oracle_,
+                                                        adjacency_,
+                                                        next_id,
+                                                        context,
+                                                        reverse_config);
+        if (reverse_added > 0) {
+            accumulated_added += reverse_added;
+            context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_added",
+                                              static_cast<double>(reverse_added));
+            context.diagnostics().add_counter(
+                "query_bridge.full_adjacency_rebuilds_avoided");
+            invalidate_query_cache();
+        }
+        return locate_query_boxes();
+    };
+    const bool bridge_internal_simplify =
+        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY", 1) != 0;
+    context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
+                                    bridge_internal_simplify ? 1.0 : 0.0);
+    if (bridge_internal_simplify &&
+        config_.query.final_rrt_simplify &&
         config_.query.final_rrt_simplify_timeout_ms > 0.0 &&
         corridor_path.size() >= 2) {
         using Clock = std::chrono::steady_clock;
@@ -4674,22 +4951,598 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     int dense_repair_added = 0;
     bool dense_repair_attempted = false;
     const double audited_bridge_length = waypoint_length(corridor_path);
+    const double dense_box_corridor_max_length =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH", 6.5));
     const bool dense_box_corridor_candidate =
         defer_query_segment_edge &&
         audited_bridge_length > 0.0 &&
-        audited_bridge_length <= 6.0;
+        audited_bridge_length <= dense_box_corridor_max_length;
+    auto try_direct_ffb_corridor = [&]() -> int {
+        using Clock = std::chrono::steady_clock;
+        const auto t0 = Clock::now();
+        const double audit_step = config_.query.audit_segment_step > 0.0
+            ? config_.query.audit_segment_step
+            : 0.01;
+        const double sample_step =
+            std::max(1e-4,
+                     env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
+                                           audit_step));
+        context.diagnostics().set_value("query_bridge.direct_corridor_sample_step",
+                                        sample_step);
+        const std::vector<Eigen::VectorXd> samples =
+            densify_waypoint_path_local(corridor_path, sample_step);
+        if (samples.size() < 2) {
+            return 0;
+        }
+
+        std::vector<std::vector<int>> sample_layers(samples.size());
+        std::vector<bool> covered(samples.size(), false);
+        auto mark_from_index = [&](std::size_t from_index) {
+            const auto mark_t0 = Clock::now();
+            int changed = 0;
+            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                for (std::size_t box_index = from_index; box_index < boxes_.size(); ++box_index) {
+                    if (!intervals_contain_point_local(boxes_[box_index].joint_intervals,
+                                                       samples[sample_index],
+                                                       config_.query.adjacency_tolerance)) {
+                        continue;
+                    }
+                    auto& layer = sample_layers[sample_index];
+                    const int index_value = static_cast<int>(box_index);
+                    if (std::find(layer.begin(), layer.end(), index_value) == layer.end()) {
+                        layer.push_back(index_value);
+                    }
+                    if (!covered[sample_index]) {
+                        covered[sample_index] = true;
+                        changed += 1;
+                    }
+                    if (from_index == 0) {
+                        break;
+                    }
+                }
+            }
+            context.diagnostics().record_timing(
+                from_index == 0
+                    ? "query_bridge.direct_corridor_mark_initial_ms"
+                    : "query_bridge.direct_corridor_mark_incremental_ms",
+                std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
+            return changed;
+        };
+        mark_from_index(0);
+
+        struct LocalDsu {
+            std::vector<int> parent;
+            explicit LocalDsu(std::size_t count = 0) : parent(count) {
+                for (std::size_t index = 0; index < parent.size(); ++index) {
+                    parent[index] = static_cast<int>(index);
+                }
+            }
+            int add() {
+                const int id = static_cast<int>(parent.size());
+                parent.push_back(id);
+                return id;
+            }
+            int find(int value) {
+                int root = value;
+                while (parent[static_cast<std::size_t>(root)] != root) {
+                    root = parent[static_cast<std::size_t>(root)];
+                }
+                while (parent[static_cast<std::size_t>(value)] != value) {
+                    const int next = parent[static_cast<std::size_t>(value)];
+                    parent[static_cast<std::size_t>(value)] = root;
+                    value = next;
+                }
+                return root;
+            }
+            void unite(int lhs, int rhs) {
+                if (lhs < 0 || rhs < 0 ||
+                    lhs >= static_cast<int>(parent.size()) ||
+                    rhs >= static_cast<int>(parent.size())) {
+                    return;
+                }
+                const int left = find(lhs);
+                const int right = find(rhs);
+                if (left != right) {
+                    parent[static_cast<std::size_t>(right)] = left;
+                }
+            }
+        };
+        LocalDsu dsu(boxes_.size());
+        auto transition_connected = [&](int transition) {
+            if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
+                return false;
+            }
+            const auto& lhs_layer = sample_layers[static_cast<std::size_t>(transition)];
+            const auto& rhs_layer = sample_layers[static_cast<std::size_t>(transition + 1)];
+            if (lhs_layer.empty() || rhs_layer.empty()) {
+                return false;
+            }
+            for (int lhs : lhs_layer) {
+                const int root = dsu.find(lhs);
+                for (int rhs : rhs_layer) {
+                    if (root == dsu.find(rhs)) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        };
+        auto bad_transitions = [&]() {
+            std::vector<int> bad;
+            for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
+                if (!transition_connected(static_cast<int>(sample_index))) {
+                    bad.push_back(static_cast<int>(sample_index));
+                }
+            }
+            return bad;
+        };
+        auto endpoint_layers_connected = [&]() {
+            if (sample_layers.empty() ||
+                sample_layers.front().empty() ||
+                sample_layers.back().empty()) {
+                return false;
+            }
+            const int root = dsu.find(sample_layers.front().front());
+            for (int index : sample_layers.back()) {
+                if (root == dsu.find(index)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto initialize_dsu = [&]() {
+            const auto dsu_t0 = Clock::now();
+            for (const auto& layer : sample_layers) {
+                if (layer.empty()) {
+                    continue;
+                }
+                const int root = layer.front();
+                for (int index : layer) {
+                    dsu.unite(root, index);
+                }
+            }
+            for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
+                for (int lhs : sample_layers[sample_index]) {
+                    for (int rhs : sample_layers[sample_index + 1]) {
+                        if (boxes_connected(boxes_[static_cast<std::size_t>(lhs)],
+                                            boxes_[static_cast<std::size_t>(rhs)],
+                                            config_.query.adjacency_tolerance)) {
+                            dsu.unite(lhs, rhs);
+                            append_local_edge(adjacency_,
+                                              boxes_[static_cast<std::size_t>(lhs)].id,
+                                              boxes_[static_cast<std::size_t>(rhs)].id);
+                        }
+                    }
+                }
+            }
+            context.diagnostics().record_timing(
+                "query_bridge.direct_corridor_initialize_dsu_ms",
+                std::chrono::duration<double, std::milli>(Clock::now() - dsu_t0).count());
+        };
+        initialize_dsu();
+
+        auto find_duplicate_box_index = [&](const std::vector<Interval>& intervals) {
+            for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
+                const auto& box = boxes_[box_index];
+                if (box.joint_intervals.size() != intervals.size()) {
+                    continue;
+                }
+                bool same = true;
+                for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
+                    if (std::abs(box.joint_intervals[dim].lo - intervals[dim].lo) > 1e-12 ||
+                        std::abs(box.joint_intervals[dim].hi - intervals[dim].hi) > 1e-12) {
+                        same = false;
+                        break;
+                    }
+                }
+                if (same) {
+                    return static_cast<int>(box_index);
+                }
+            }
+            return -1;
+        };
+        std::vector<int> repair_indices;
+        auto assimilate_box = [&](int box_index, int transition_hint) {
+            const auto assimilate_t0 = Clock::now();
+            const int box_id = boxes_[static_cast<std::size_t>(box_index)].id;
+            adjacency_[box_id];
+            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                if (!intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
+                                                   samples[sample_index],
+                                                   config_.query.adjacency_tolerance)) {
+                    continue;
+                }
+                auto& layer = sample_layers[sample_index];
+                if (!layer.empty()) {
+                    dsu.unite(box_index, layer.front());
+                }
+                if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
+                    layer.push_back(box_index);
+                }
+                covered[sample_index] = true;
+            }
+            std::vector<int> candidates;
+            auto add_layer = [&](int layer_index) {
+                if (layer_index < 0 || layer_index >= static_cast<int>(sample_layers.size())) {
+                    return;
+                }
+                const auto& layer = sample_layers[static_cast<std::size_t>(layer_index)];
+                candidates.insert(candidates.end(), layer.begin(), layer.end());
+            };
+            add_layer(transition_hint - 1);
+            add_layer(transition_hint);
+            add_layer(transition_hint + 1);
+            add_layer(transition_hint + 2);
+            candidates.insert(candidates.end(), repair_indices.begin(), repair_indices.end());
+            std::sort(candidates.begin(), candidates.end());
+            candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+            for (int candidate : candidates) {
+                if (candidate == box_index ||
+                    candidate < 0 ||
+                    candidate >= static_cast<int>(boxes_.size())) {
+                    continue;
+                }
+                if (boxes_connected(boxes_[static_cast<std::size_t>(box_index)],
+                                    boxes_[static_cast<std::size_t>(candidate)],
+                                    config_.query.adjacency_tolerance)) {
+                    dsu.unite(box_index, candidate);
+                    append_local_edge(adjacency_,
+                                      box_id,
+                                      boxes_[static_cast<std::size_t>(candidate)].id);
+                }
+            }
+            int global_edges = 0;
+            const std::size_t box_count = boxes_.size();
+            for (std::size_t candidate_index = 0; candidate_index < box_count; ++candidate_index) {
+                if (candidate_index == static_cast<std::size_t>(box_index)) {
+                    continue;
+                }
+                if (!boxes_connected(boxes_[static_cast<std::size_t>(box_index)],
+                                     boxes_[candidate_index],
+                                     config_.query.adjacency_tolerance)) {
+                    continue;
+                }
+                const std::size_t before = adjacency_[box_id].size();
+                dsu.unite(box_index, static_cast<int>(candidate_index));
+                append_local_edge(adjacency_,
+                                  box_id,
+                                  boxes_[candidate_index].id);
+                if (adjacency_[box_id].size() > before) {
+                    global_edges += 1;
+                }
+            }
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_incremental_adjacency_checks",
+                static_cast<double>(box_count > 0 ? box_count - 1 : 0));
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_incremental_adjacency_edges",
+                static_cast<double>(global_edges));
+            context.diagnostics().record_timing(
+                "query_bridge.direct_corridor_assimilate_ms",
+                std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
+        };
+        auto commit_result = [&](FindFreeBoxResult result,
+                                 const Eigen::VectorXd& seed,
+                                 int transition_hint) -> int {
+            if (!result.found ||
+                !intervals_contain_point_local(result.intervals,
+                                               seed,
+                                               config_.query.adjacency_tolerance)) {
+                return -1;
+            }
+            const int duplicate_index = find_duplicate_box_index(result.intervals);
+            if (duplicate_index >= 0) {
+                assimilate_box(duplicate_index, transition_hint);
+                return duplicate_index;
+            }
+            if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
+                return -1;
+            }
+            BoxNode box;
+            box.id = next_id++;
+            box.joint_intervals = result.intervals;
+            box.seed_config = seed;
+            box.tree_id = result.node;
+            box.parent_box_id = -1;
+            box.root_id = box.id;
+            box.safety_status = result.validation_detail.safety_status;
+            box.strict_audit_required = result.validation_detail.strict_audit_required;
+            box.compute_volume();
+            oracle_->reserve_node(box.tree_id, box.id);
+            const int box_index = static_cast<int>(boxes_.size());
+            boxes_.push_back(box);
+            raw_boxes_.push_back(box);
+            dsu.add();
+            assimilate_box(box_index, transition_hint);
+            return box_index;
+        };
+        auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
+            for (const auto& box : boxes_) {
+                if (intervals_contain_point_local(box.joint_intervals,
+                                                   point,
+                                                   config_.query.adjacency_tolerance)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto nearest_transition_hint = [&](const Eigen::VectorXd& point) {
+            if (samples.empty()) {
+                return 0;
+            }
+            int best_index = 0;
+            double best_distance = std::numeric_limits<double>::infinity();
+            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                const double distance = (samples[sample_index] - point).squaredNorm();
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best_index = static_cast<int>(sample_index);
+                }
+            }
+            return std::max(0, std::min(best_index,
+                                        static_cast<int>(samples.size()) - 2));
+        };
+
+        FindFreeBoxOptions direct_options = config_.connector.pave.find_free_box;
+        direct_options.max_depth = query_bridge_ffb_depth;
+        direct_options.reject_seed_collision = false;
+        int direct_calls = 0;
+        int direct_added = 0;
+        struct DirectFfbTask {
+            Eigen::VectorXd seed;
+            int transition_hint = 0;
+        };
+        std::vector<DirectFfbTask> direct_tasks;
+        direct_tasks.reserve(samples.size());
+        for (const auto& seed : samples) {
+            if (!current_boxes_cover_point(seed)) {
+                direct_tasks.push_back({seed, nearest_transition_hint(seed)});
+            }
+        }
+        context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
+                                        static_cast<double>(direct_tasks.size()));
+        for (const auto& task : direct_tasks) {
+            const auto direct_ffb_t0 = Clock::now();
+            const FindFreeBoxResult result = find_free_box_in_domain(
+                task.seed,
+                oracle_->planning_intervals(),
+                context,
+                direct_options);
+            context.diagnostics().record_timing(
+                "query_bridge.direct_corridor_direct_ffb_ms",
+                std::chrono::duration<double, std::milli>(Clock::now() - direct_ffb_t0).count());
+            direct_calls += 1;
+            const std::size_t before_boxes = boxes_.size();
+            const int box_index = commit_result(std::move(result),
+                                                task.seed,
+                                                task.transition_hint);
+            if (box_index >= 0 && boxes_.size() > before_boxes) {
+                direct_added += 1;
+            }
+        }
+        std::vector<double> fractions;
+        const int subdivisions =
+            std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS", 6));
+        for (int item = 1; item < subdivisions; ++item) {
+            fractions.push_back(static_cast<double>(item) / static_cast<double>(subdivisions));
+        }
+        std::stable_sort(fractions.begin(), fractions.end(), [](double lhs, double rhs) {
+            return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
+        });
+        int repair_calls = 0;
+        int repair_added = 0;
+        const auto initial_bad = bad_transitions();
+        if (subdivisions > 1) {
+            for (int transition : initial_bad) {
+                if (transition_connected(transition)) {
+                    continue;
+                }
+                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
+                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
+                for (double u : fractions) {
+                    const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
+                    const auto repair_ffb_t0 = Clock::now();
+                    const FindFreeBoxResult result = find_free_box_in_domain(
+                        seed,
+                        oracle_->planning_intervals(),
+                        context,
+                        direct_options);
+                    context.diagnostics().record_timing(
+                        "query_bridge.direct_corridor_repair_ffb_ms",
+                        std::chrono::duration<double, std::milli>(Clock::now() - repair_ffb_t0).count());
+                    repair_calls += 1;
+                    const std::size_t before_boxes = boxes_.size();
+                    const int box_index = commit_result(std::move(result), seed, transition);
+                    if (box_index >= 0) {
+                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
+                            repair_indices.end()) {
+                            repair_indices.push_back(box_index);
+                        }
+                        if (boxes_.size() > before_boxes) {
+                            repair_added += 1;
+                        }
+                        if (transition_connected(transition)) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        const auto final_bad = bad_transitions();
+        int local_segment_edges_added = 0;
+        int local_segment_gap_samples_max = 0;
+        auto nearest_nonempty_layer = [&](int start_index, int direction) {
+            int index = start_index;
+            while (index >= 0 && index < static_cast<int>(sample_layers.size())) {
+                if (!sample_layers[static_cast<std::size_t>(index)].empty()) {
+                    return index;
+                }
+                index += direction;
+            }
+            return -1;
+        };
+        if (!final_bad.empty() &&
+            config_.connector.segment_edges_enabled &&
+            config_.connector.rrt_segment_edges) {
+            for (int transition : final_bad) {
+                if (transition < 0 ||
+                    transition + 1 >= static_cast<int>(sample_layers.size())) {
+                    continue;
+                }
+                const int lhs_sample =
+                    nearest_nonempty_layer(transition, -1);
+                const int rhs_sample =
+                    nearest_nonempty_layer(transition + 1, 1);
+                if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
+                    continue;
+                }
+                const auto& lhs_layer = sample_layers[static_cast<std::size_t>(lhs_sample)];
+                const auto& rhs_layer = sample_layers[static_cast<std::size_t>(rhs_sample)];
+                if (lhs_layer.empty() || rhs_layer.empty()) {
+                    continue;
+                }
+                const int lhs_index = lhs_layer.front();
+                const int rhs_index = rhs_layer.front();
+                if (lhs_index < 0 || rhs_index < 0 ||
+                    lhs_index >= static_cast<int>(boxes_.size()) ||
+                    rhs_index >= static_cast<int>(boxes_.size())) {
+                    continue;
+                }
+                std::vector<Eigen::VectorXd> gap_path{
+                    samples[static_cast<std::size_t>(lhs_sample)],
+                    samples[static_cast<std::size_t>(rhs_sample)]};
+                const int edge_id = add_segment_edge(segment_edges_,
+                                                     adjacency_,
+                                                     boxes_[static_cast<std::size_t>(lhs_index)].id,
+                                                     boxes_[static_cast<std::size_t>(rhs_index)].id,
+                                                     std::move(gap_path),
+                                                     SegmentEdgeType::QueryBridge,
+                                                     bridge_rrt.segment_resolution,
+                                                     SegmentEdgeValidation::CollisionChecked,
+                                                     true,
+                                                     query_index);
+                if (edge_id >= 0) {
+                    local_segment_edges_added += 1;
+                    local_segment_gap_samples_max =
+                        std::max(local_segment_gap_samples_max,
+                                 rhs_sample - lhs_sample);
+                }
+            }
+        }
+        context.diagnostics().set_value("query_bridge.direct_corridor_ms",
+                                        std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+        context.diagnostics().set_value("query_bridge.direct_corridor_samples",
+                                        static_cast<double>(samples.size()));
+        context.diagnostics().set_value("query_bridge.direct_corridor_ffb_calls",
+                                        static_cast<double>(direct_calls));
+        context.diagnostics().set_value("query_bridge.direct_corridor_added",
+                                        static_cast<double>(direct_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_repair_calls",
+                                        static_cast<double>(repair_calls));
+        context.diagnostics().set_value("query_bridge.direct_corridor_repair_added",
+                                        static_cast<double>(repair_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_repair_subdivisions",
+                                        static_cast<double>(subdivisions));
+        context.diagnostics().set_value("query_bridge.direct_corridor_bad_initial",
+                                        static_cast<double>(initial_bad.size()));
+        context.diagnostics().set_value("query_bridge.direct_corridor_bad_final",
+                                        static_cast<double>(final_bad.size()));
+        context.diagnostics().set_value("query_bridge.direct_corridor_segment_edges",
+                                        static_cast<double>(local_segment_edges_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_segment_gap_samples_max",
+                                        static_cast<double>(local_segment_gap_samples_max));
+        invalidate_query_cache();
+        auto [source_box_id, target_box_id] = locate_query_boxes();
+        const bool local_corridor_connected =
+            final_bad.empty() && endpoint_layers_connected();
+        context.diagnostics().set_value("query_bridge.direct_corridor_local_connected",
+                                        local_corridor_connected ? 1.0 : 0.0);
+        set_query_bridge_task_value("direct_corridor_ms",
+                                    std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+        set_query_bridge_task_value("direct_corridor_added",
+                                    static_cast<double>(direct_added));
+        set_query_bridge_task_value("direct_corridor_repair_added",
+                                    static_cast<double>(repair_added));
+        set_query_bridge_task_value("direct_corridor_bad_initial",
+                                    static_cast<double>(initial_bad.size()));
+        set_query_bridge_task_value("direct_corridor_bad_final",
+                                    static_cast<double>(final_bad.size()));
+        set_query_bridge_task_value("direct_corridor_segment_edges",
+                                    static_cast<double>(local_segment_edges_added));
+        set_query_bridge_task_value("direct_corridor_local_connected",
+                                    local_corridor_connected ? 1.0 : 0.0);
+        if (final_bad.empty() &&
+            source_box_id >= 0 &&
+            target_box_id >= 0 &&
+            (local_corridor_connected ||
+             graph_has_certified_box_path_local(boxes_,
+                                                adjacency_,
+                                                source_box_id,
+                                                target_box_id,
+                                                config_.query.adjacency_tolerance))) {
+            const int edge_id = add_segment_edge(segment_edges_,
+                                                 adjacency_,
+                                                 source_box_id,
+                                                 target_box_id,
+                                                 corridor_path,
+                                                 SegmentEdgeType::BoxCorridor,
+                                                 bridge_rrt.segment_resolution,
+                                                 SegmentEdgeValidation::CollisionChecked,
+                                                 false,
+                                                 query_index);
+            if (edge_id >= 0) {
+                invalidate_query_cache();
+                return direct_added + repair_added + local_segment_edges_added + 1;
+            }
+            return direct_added + repair_added + local_segment_edges_added;
+        }
+        if (!final_bad.empty() &&
+            local_segment_edges_added > 0 &&
+            source_box_id >= 0 &&
+            target_box_id >= 0 &&
+            graph_has_box_path_local(adjacency_, source_box_id, target_box_id)) {
+            const int edge_id = add_segment_edge(segment_edges_,
+                                                 adjacency_,
+                                                 source_box_id,
+                                                 target_box_id,
+                                                 corridor_path,
+                                                 SegmentEdgeType::QueryBridge,
+                                                 bridge_rrt.segment_resolution,
+                                                 SegmentEdgeValidation::CollisionChecked,
+                                                 true,
+                                                 query_index);
+            if (edge_id >= 0) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_full_residual_edges");
+                set_query_bridge_task_value("direct_corridor_full_residual_edge",
+                                            1.0);
+            }
+            invalidate_query_cache();
+            return direct_added + repair_added + local_segment_edges_added +
+                   (edge_id >= 0 ? 1 : 0);
+        }
+        return 0;
+    };
     if (dense_box_corridor_candidate) {
+        const int direct_corridor_added = try_direct_ffb_corridor();
+        if (direct_corridor_added > 0) {
+            return direct_corridor_added;
+        }
         dense_repair_attempted = true;
         ChainPaveConfig dense_config = config_.connector.pave;
         dense_config.max_chain = std::max(dense_config.max_chain, 256);
         dense_config.refine_covered_waypoints = true;
         dense_config.fill_gaps = true;
         dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
+        dense_config.adaptive_ffb_depths =
+            config_.query_bridge_adaptive_ffb_depths.empty()
+                ? dense_config.adaptive_ffb_depths
+                : config_.query_bridge_adaptive_ffb_depths;
         dense_config.gap_fill_sample_step = 0.0025;
         dense_config.gap_fill_time_budget_ms = 0.0;
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
-        dense_config.require_connected_chain = false;
+        dense_config.require_connected_chain = true;
         dense_repair_added = chain_pave_along_path(
             corridor_path,
             start_box_id,
@@ -4700,11 +5553,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context,
             dense_config);
         if (dense_repair_added > 0) {
-            rebuild_adjacency();
+            context.diagnostics().add_counter(
+                "query_bridge.full_adjacency_rebuilds_avoided");
+            invalidate_query_cache();
         }
-        invalidate_query_cache();
-        const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
-        const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+        auto [source_box_id, target_box_id] =
+            try_reverse_boundary_pave(dense_config,
+                                      dense_repair_added,
+                                      dense_repair_added);
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
             graph_has_certified_box_path_local(boxes_,
@@ -4720,7 +5576,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                  SegmentEdgeType::BoxCorridor,
                                                  bridge_rrt.segment_resolution,
                                                  SegmentEdgeValidation::CollisionChecked,
-                                                 false);
+                                                 false,
+                                                 query_index);
             box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
@@ -4734,6 +5591,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         pave_config.refine_covered_waypoints = true;
         pave_config.fill_gaps = true;
         pave_config.find_free_box.max_depth = query_bridge_ffb_depth;
+        pave_config.adaptive_ffb_depths =
+            config_.query_bridge_adaptive_ffb_depths.empty()
+                ? pave_config.adaptive_ffb_depths
+                : config_.query_bridge_adaptive_ffb_depths;
         pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
         pave_config.gap_fill_time_budget_ms =
             std::max(pave_config.gap_fill_time_budget_ms, short_local_bridge ? 350.0 : 200.0);
@@ -4742,7 +5603,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         pave_config.gap_fill_min_arc_gain = 0.0;
         pave_config.require_connected_chain = true;
     }
-    const int added = chain_pave_along_path(
+    int added = chain_pave_along_path(
         corridor_path,
         start_box_id,
         boxes_,
@@ -4752,11 +5613,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         context,
         pave_config);
     if (added > 0) {
-        rebuild_adjacency();
+        context.diagnostics().add_counter(
+            "query_bridge.full_adjacency_rebuilds_avoided");
+        invalidate_query_cache();
     }
-    invalidate_query_cache();
-    int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
-    int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    auto [source_box_id, target_box_id] =
+        try_reverse_boundary_pave(pave_config, added, added);
     if (added > 0 &&
         source_box_id >= 0 &&
         target_box_id >= 0 &&
@@ -4774,7 +5636,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                              SegmentEdgeType::BoxCorridor,
                                              bridge_rrt.segment_resolution,
                                              SegmentEdgeValidation::CollisionChecked,
-                                             false);
+                                             false,
+                                             query_index);
         box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
@@ -4787,11 +5650,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         dense_config.refine_covered_waypoints = true;
         dense_config.fill_gaps = true;
         dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
+        dense_config.adaptive_ffb_depths =
+            config_.query_bridge_adaptive_ffb_depths.empty()
+                ? dense_config.adaptive_ffb_depths
+                : config_.query_bridge_adaptive_ffb_depths;
         dense_config.gap_fill_sample_step = 0.0025;
         dense_config.gap_fill_time_budget_ms = 0.0;
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
-        dense_config.require_connected_chain = false;
+        dense_config.require_connected_chain = true;
         dense_repair_added = chain_pave_along_path(
             corridor_path,
             start_box_id,
@@ -4802,11 +5669,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context,
             dense_config);
         if (dense_repair_added > 0) {
-            rebuild_adjacency();
+            context.diagnostics().add_counter(
+                "query_bridge.full_adjacency_rebuilds_avoided");
+            invalidate_query_cache();
         }
-        invalidate_query_cache();
-        source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
-        target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+        std::tie(source_box_id, target_box_id) =
+            try_reverse_boundary_pave(dense_config,
+                                      dense_repair_added,
+                                      dense_repair_added);
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
             graph_has_certified_box_path_local(boxes_,
@@ -4822,7 +5692,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                  SegmentEdgeType::BoxCorridor,
                                                  bridge_rrt.segment_resolution,
                                                  SegmentEdgeValidation::CollisionChecked,
-                                                 false);
+                                                 false,
+                                                 query_index);
             box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
@@ -4855,7 +5726,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                              SegmentEdgeType::BoxCorridor,
                                              bridge_rrt.segment_resolution,
                                              SegmentEdgeValidation::CollisionChecked,
-                                             false);
+                                             false,
+                                             query_index);
         box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
@@ -4863,22 +5735,32 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return added + box_corridor_edges_added;
     }
     if (defer_query_segment_edge) {
-        if (config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges) {
+        const bool max_depth_ffb_failed =
+            boundary_max_depth_failure_count_local(context) >
+            query_bridge_depth_failures_before + 0.5;
+        if (config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges &&
+            max_depth_ffb_failed) {
             if (source_box_id >= 0 && target_box_id >= 0) {
                 const int edge_id = add_segment_edge(segment_edges_,
                                                      adjacency_,
                                                      source_box_id,
                                                      target_box_id,
-                                 waypoint_path,
+                                                     corridor_path,
                                                      SegmentEdgeType::QueryBridge,
                                                      bridge_rrt.segment_resolution,
                                                      SegmentEdgeValidation::CollisionChecked,
-                                                     true);
+                                                     true,
+                                                     query_index);
                 direct_segment_edges_added = edge_id >= 0 ? 1 : 0;
                 if (direct_segment_edges_added > 0) {
                     invalidate_query_cache();
                 }
             }
+        } else if (config_.connector.segment_edges_enabled &&
+                   config_.connector.rrt_segment_edges &&
+                   !max_depth_ffb_failed) {
+            context.diagnostics().add_counter(
+                "query_bridge.segment_edge_blocked_no_max_depth_ffb_failure");
         }
     }
     return added + dense_repair_added + box_corridor_edges_added + direct_segment_edges_added;
@@ -4964,35 +5846,86 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             add_profile(0.35, 0.10, 1.00);
             add_profile(0.25, 0.08, 0.45);
         }
-        task.attempts = task.short_local_bridge
-            ? std::max(16, config_.connector.max_pairs_per_gap)
-            : std::max(1, config_.connector.max_pairs_per_gap);
+        task.attempts = std::max(1, config_.connector.max_pairs_per_gap);
         tasks.push_back(std::move(task));
     }
+
+    std::stable_sort(tasks.begin(), tasks.end(), [](const BridgeSearchTask& lhs,
+                                                    const BridgeSearchTask& rhs) {
+        const bool lhs_deferred_optional =
+            lhs.index == 2 || (lhs.short_local_bridge && lhs.index != 1);
+        const bool rhs_deferred_optional =
+            rhs.index == 2 || (rhs.short_local_bridge && rhs.index != 1);
+        if (lhs_deferred_optional != rhs_deferred_optional) {
+            return !lhs_deferred_optional && rhs_deferred_optional;
+        }
+        return lhs.index < rhs.index;
+    });
 
     if (tasks.empty()) {
         return added_by_query;
     }
-
-    std::vector<BridgeSearchJob> jobs;
-    for (std::size_t task_index = 0; task_index < tasks.size(); ++task_index) {
-        const int attempts = std::max(1, tasks[task_index].attempts);
-        for (int attempt = 0; attempt < attempts; ++attempt) {
-            jobs.push_back(BridgeSearchJob{task_index, attempt});
-        }
-    }
-    std::vector<std::vector<Eigen::VectorXd>> job_paths(jobs.size());
-
+    using Clock = std::chrono::steady_clock;
+    const auto batch_t0 = Clock::now();
     StageContext batch_context = StageContext::from_runtime(config_.runtime);
-    auto run_job = [&](int job_index) {
-        const auto& job = jobs[static_cast<std::size_t>(job_index)];
-        const auto& task = tasks[job.task_index];
+    struct BatchBridgeDiagnosticsFlush {
+        BuildProfile& profile;
+        StageContext& context;
+        ~BatchBridgeDiagnosticsFlush() {
+            for (const auto& [key, value] : context.diagnostics().snapshot()) {
+                profile.diagnostics[key] = value;
+            }
+        }
+    } batch_diagnostics_flush{last_build_, batch_context};
+    auto elapsed_ms_since = [](Clock::time_point t0) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    };
+    auto task_key = [](std::size_t index, const std::string& suffix) {
+        return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
+    };
+    batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
+                                          static_cast<double>(tasks.size()));
+    const bool skip_deferred_short_edges =
+        env_int_or_default("RBF_QUERY_BRIDGE_SKIP_DEFERRED_SHORT", 1) != 0;
+    batch_context.diagnostics().set_value(
+        "query_bridge.skip_deferred_short_edges",
+        skip_deferred_short_edges ? 1.0 : 0.0);
+    const int segment_only_retry_attempts =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
+    batch_context.diagnostics().set_value(
+        "query_bridge.segment_only_retry_attempts_default",
+        static_cast<double>(segment_only_retry_attempts));
+    const int no_path_retry_attempts =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS", 1));
+    batch_context.diagnostics().set_value(
+        "query_bridge.no_path_retry_attempts_default",
+        static_cast<double>(no_path_retry_attempts));
+    const int forced_query_attempts =
+        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
+    auto query_bridge_forced = [&](const BridgeSearchTask& task) {
+        return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", task.index);
+    };
+    auto current_query_good = [&](const BridgeSearchTask& task) {
+        if (env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index)) {
+            return false;
+        }
+        if (query_bridge_forced(task)) {
+            return false;
+        }
+        const bool deferred_optional_edge =
+            task.index == 2 || (task.short_local_bridge && task.index != 1);
+        if (!deferred_optional_edge) {
+            return false;
+        }
+        return skip_deferred_short_edges;
+    };
+    auto run_task_attempt = [&](const BridgeSearchTask& task, int attempt) {
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
             task.short_local_profiles.empty()
                 ? task.bridge_rrt
                 : task.short_local_profiles[
-                      static_cast<std::size_t>(job.attempt) % task.short_local_profiles.size()];
+                      static_cast<std::size_t>(attempt) % task.short_local_profiles.size()];
         config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
         std::vector<Eigen::VectorXd> path = rrt_connect(
             task.start,
@@ -5002,68 +5935,231 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             config,
             derived_planner_seed(config_.grower.rng_seed,
                                  kSeedBatchBridgeOffset,
-                                 job.attempt,
-                                 static_cast<int>(job.task_index),
+                                 attempt,
+                                 static_cast<int>(task.index),
                                  task.short_local_bridge ? 0 : kSeedAttemptStride),
             batch_context.native_cancel_flag());
         if (path.empty()) {
-            return;
+            return std::vector<Eigen::VectorXd>{};
         }
         const PathAuditCheck audit =
             audit_waypoint_path(path, checker, config_.query.audit_resolution, config_.query.audit_segment_step);
         if (!audit.passed) {
-            return;
+            return std::vector<Eigen::VectorXd>{};
         }
-        job_paths[static_cast<std::size_t>(job_index)] = std::move(path);
+        return path;
     };
 
-    if (batch_context.executor().n_threads() > 1 && jobs.size() > 1) {
-        batch_context.executor().parallel_for(0, static_cast<int>(jobs.size()), [&](int job_index) {
-            run_job(job_index);
-        });
-    } else {
-        for (int job_index = 0; job_index < static_cast<int>(jobs.size()); ++job_index) {
-            run_job(job_index);
-        }
-    }
-
-    std::vector<double> best_lengths(tasks.size(), std::numeric_limits<double>::infinity());
-    for (std::size_t job_index = 0; job_index < jobs.size(); ++job_index) {
-        auto& path = job_paths[job_index];
-        if (path.empty()) {
+    for (auto& task : tasks) {
+        const auto task_t0 = Clock::now();
+        const auto probe_t0 = Clock::now();
+        if (current_query_good(task)) {
+            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
+            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                      elapsed_ms_since(probe_t0));
+            batch_context.diagnostics().set_value(task_key(task.index, "skipped"),
+                                                  1.0);
+            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
             continue;
         }
-        const std::size_t task_index = jobs[job_index].task_index;
-        const double length = path_length(path);
-        if (length < best_lengths[task_index]) {
-            best_lengths[task_index] = length;
-            tasks[task_index].waypoint_path = std::move(path);
+        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                  elapsed_ms_since(probe_t0));
+        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
+        const bool forced_task = query_bridge_forced(task);
+        const int attempts = forced_task
+            ? std::max(std::max(1, task.attempts), forced_query_attempts)
+            : std::max(1, task.attempts);
+        if (forced_task) {
+            batch_context.diagnostics().set_value(task_key(task.index, "forced"),
+                                                  1.0);
         }
-    }
-
-    for (const auto& task : tasks) {
-        if (task.waypoint_path.empty()) {
-            continue;
-        }
-        QueryResult current = query(task.start, task.goal);
-        if (current.success && current.repair_count == 0) {
-            const double direct = (task.goal - task.start).norm();
-            const bool graph_only = current.segment_edges_used == 0;
-            const bool short_enough =
-                direct <= 1e-9 ||
-                current.path_length <= std::max(direct * 1.35, direct + 0.35);
-            if (graph_only && short_enough) {
-                continue;
+        batch_context.diagnostics().set_value(task_key(task.index, "attempts"),
+                                              static_cast<double>(attempts));
+        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(attempts));
+        const auto rrt_t0 = Clock::now();
+        if (batch_context.executor().n_threads() > 1 && attempts > 1) {
+            batch_context.executor().parallel_for(0, attempts, [&](int attempt) {
+                attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt);
+            });
+        } else {
+            for (int attempt = 0; attempt < attempts; ++attempt) {
+                attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt);
             }
         }
+        const double rrt_ms = elapsed_ms_since(rrt_t0);
+        batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
+                                                  rrt_ms);
+        batch_context.diagnostics().set_value(task_key(task.index, "rrt_ms"),
+                                              rrt_ms);
+        double best_length = std::numeric_limits<double>::infinity();
+        for (auto& path : attempt_paths) {
+            if (path.empty()) {
+                continue;
+            }
+            const double length = path_length(path);
+            if (length < best_length) {
+                best_length = length;
+                task.waypoint_path = std::move(path);
+            }
+        }
+        const bool segment_only_task =
+            env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index);
+        if (task.waypoint_path.empty() && segment_only_task &&
+            segment_only_retry_attempts > 0) {
+            const auto retry_t0 = Clock::now();
+            int retry_successes = 0;
+            for (int retry = 0; retry < segment_only_retry_attempts; ++retry) {
+                auto retry_path = run_task_attempt(task, attempts + retry);
+                if (retry_path.empty()) {
+                    continue;
+                }
+                retry_successes += 1;
+                const double length = path_length(retry_path);
+                if (length < best_length) {
+                    best_length = length;
+                    task.waypoint_path = std::move(retry_path);
+                }
+            }
+            const double retry_ms = elapsed_ms_since(retry_t0);
+            batch_context.diagnostics().record_timing(
+                "query_bridge.batch_segment_only_retry_ms_total",
+                retry_ms);
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_segment_only_retry_attempts",
+                static_cast<double>(segment_only_retry_attempts));
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_segment_only_retry_successes",
+                static_cast<double>(retry_successes));
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "segment_only_retry_attempts"),
+                static_cast<double>(segment_only_retry_attempts));
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "segment_only_retry_ms"),
+                retry_ms);
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "segment_only_retry_successes"),
+                static_cast<double>(retry_successes));
+        }
+        if (task.waypoint_path.empty() && !segment_only_task &&
+            no_path_retry_attempts > 0) {
+            const auto retry_t0 = Clock::now();
+            int retry_successes = 0;
+            for (int retry = 0; retry < no_path_retry_attempts; ++retry) {
+                auto retry_path = run_task_attempt(task, attempts + retry);
+                if (retry_path.empty()) {
+                    continue;
+                }
+                retry_successes += 1;
+                const double length = path_length(retry_path);
+                if (length < best_length) {
+                    best_length = length;
+                    task.waypoint_path = std::move(retry_path);
+                }
+            }
+            const double retry_ms = elapsed_ms_since(retry_t0);
+            batch_context.diagnostics().record_timing(
+                "query_bridge.batch_no_path_retry_ms_total",
+                retry_ms);
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_no_path_retry_attempts",
+                static_cast<double>(no_path_retry_attempts));
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_no_path_retry_successes",
+                static_cast<double>(retry_successes));
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "no_path_retry_attempts"),
+                static_cast<double>(no_path_retry_attempts));
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "no_path_retry_ms"),
+                retry_ms);
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "no_path_retry_successes"),
+                static_cast<double>(retry_successes));
+        }
+        if (task.waypoint_path.empty()) {
+            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
+            batch_context.diagnostics().set_value(task_key(task.index, "no_path"),
+                                                  1.0);
+            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
+            continue;
+        }
+        batch_context.diagnostics().set_value(task_key(task.index, "waypoint_length"),
+                                              best_length);
+        const auto second_probe_t0 = Clock::now();
+        if (current_query_good(task)) {
+            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                      elapsed_ms_since(second_probe_t0));
+            batch_context.diagnostics().set_value(task_key(task.index, "skipped_after_rrt"),
+                                                  1.0);
+            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
+            continue;
+        }
+        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                  elapsed_ms_since(second_probe_t0));
+        if (segment_only_task) {
+            const int source_box_id = locate_containing_box(query_cache(),
+                                                            task.start,
+                                                            config_.query.nearest_if_outside);
+            const int target_box_id = locate_containing_box(query_cache(),
+                                                            task.goal,
+                                                            config_.query.nearest_if_outside);
+            int edge_id = -1;
+            if (source_box_id >= 0 && target_box_id >= 0) {
+                edge_id = add_segment_edge(segment_edges_,
+                                           adjacency_,
+                                           source_box_id,
+                                           target_box_id,
+                                           task.waypoint_path,
+                                           SegmentEdgeType::QueryBridge,
+                                           task.bridge_rrt.segment_resolution,
+                                           SegmentEdgeValidation::CollisionChecked,
+                                           true,
+                                           static_cast<int>(task.index));
+            }
+            if (edge_id >= 0) {
+                added_by_query[task.index] = 1;
+                invalidate_query_cache();
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.batch_tasks_segment_only");
+                batch_context.diagnostics().set_value(task_key(task.index, "segment_only"),
+                                                      1.0);
+                batch_context.diagnostics().set_value(task_key(task.index, "added"),
+                                                      1.0);
+            } else {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.batch_tasks_segment_only_failures");
+                batch_context.diagnostics().set_value(task_key(task.index, "segment_only_failure"),
+                                                      1.0);
+            }
+            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
+            continue;
+        }
+        const auto pave_t0 = Clock::now();
         added_by_query[task.index] =
             bridge_query_with_waypoint_path(task.start,
                                             task.goal,
                                             task.waypoint_path,
                                             task.short_local_bridge,
-                                            task.bridge_rrt);
+                                            task.bridge_rrt,
+                                            static_cast<int>(task.index));
+        const double pave_ms = elapsed_ms_since(pave_t0);
+        batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
+                                                  pave_ms);
+        batch_context.diagnostics().set_value(task_key(task.index, "pave_ms"),
+                                              pave_ms);
+        batch_context.diagnostics().set_value(task_key(task.index, "added"),
+                                              static_cast<double>(added_by_query[task.index]));
+        batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                              elapsed_ms_since(task_t0));
     }
 
+    batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
+                                          elapsed_ms_since(batch_t0));
     return added_by_query;
 }
 
@@ -5116,6 +6212,8 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
                            .passed;
     const std::size_t boxes_before = boxes_.size();
     int next_id = next_box_id();
+    ChainPaveConfig debug_pave = pave;
+    debug_pave.debug_boundary_failures = &out.boundary_failures;
     out.added = chain_pave_along_path(
         waypoint_path,
         start_box_id,
@@ -5124,11 +6222,43 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
         adjacency_,
         next_id,
         context,
-        pave);
+        debug_pave);
     out.fast_gap_fill_ffb_calls = static_cast<int>(
         context.diagnostics().value("connector.chain_pave_fast_ffb_calls", 0.0));
     out.fast_gap_fill_ms =
         context.diagnostics().value("connector.chain_pave_fast_ms", 0.0);
+    out.boundary_ffb_calls = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_ffb_calls", 0.0));
+    out.boundary_commits = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_commits", 0.0));
+    out.boundary_reject_not_free = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_reject_not_free", 0.0));
+    out.boundary_reject_non_adjacent = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_reject_non_adjacent", 0.0));
+    out.boundary_fail_seed_collision = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_seed_collision", 0.0));
+    out.boundary_fail_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_depth_cap", 0.0));
+    out.boundary_fail_unknown_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_unknown_depth_cap", 0.0));
+    out.boundary_fail_reserved_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_reserved_depth_cap", 0.0));
+    out.boundary_fail_occupied = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_occupied", 0.0));
+    out.boundary_fail_deadline = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_deadline", 0.0));
+    out.boundary_fail_out_of_domain = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_out_of_domain", 0.0));
+    out.boundary_fail_split = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_split", 0.0));
+    out.boundary_failed_seed_memoized = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_failed_seed_memoized", 0.0));
+    out.boundary_skip_failed_seed = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_skip_failed_seed", 0.0));
+    out.boundary_stall = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_stall", 0.0));
+    out.boundary_target_hits = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_target_hits", 0.0));
     for (std::size_t i = boxes_before; i < boxes_.size(); ++i) {
         out.committed_boxes.push_back(boxes_[i].joint_intervals);
     }
@@ -5141,7 +6271,7 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
         out.all_boxes.push_back(box.joint_intervals);
     }
     if (out.added > 0) {
-        rebuild_adjacency();
+        invalidate_query_cache();
     }
     invalidate_query_cache();
     return out;
@@ -5185,6 +6315,8 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
     StageContext context = StageContext::from_runtime(config_.runtime);
     const std::size_t boxes_before = boxes_.size();
     int next_id = next_box_id();
+    ChainPaveConfig debug_pave = pave;
+    debug_pave.debug_boundary_failures = &out.boundary_failures;
     out.added = chain_pave_along_path(
         waypoint_path,
         start_box_id,
@@ -5193,11 +6325,43 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
         adjacency_,
         next_id,
         context,
-        pave);
+        debug_pave);
     out.fast_gap_fill_ffb_calls = static_cast<int>(
         context.diagnostics().value("connector.chain_pave_fast_ffb_calls", 0.0));
     out.fast_gap_fill_ms =
         context.diagnostics().value("connector.chain_pave_fast_ms", 0.0);
+    out.boundary_ffb_calls = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_ffb_calls", 0.0));
+    out.boundary_commits = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_commits", 0.0));
+    out.boundary_reject_not_free = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_reject_not_free", 0.0));
+    out.boundary_reject_non_adjacent = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_reject_non_adjacent", 0.0));
+    out.boundary_fail_seed_collision = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_seed_collision", 0.0));
+    out.boundary_fail_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_depth_cap", 0.0));
+    out.boundary_fail_unknown_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_unknown_depth_cap", 0.0));
+    out.boundary_fail_reserved_depth_cap = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_reserved_depth_cap", 0.0));
+    out.boundary_fail_occupied = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_occupied", 0.0));
+    out.boundary_fail_deadline = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_deadline", 0.0));
+    out.boundary_fail_out_of_domain = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_out_of_domain", 0.0));
+    out.boundary_fail_split = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_fail_split", 0.0));
+    out.boundary_failed_seed_memoized = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_failed_seed_memoized", 0.0));
+    out.boundary_skip_failed_seed = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_skip_failed_seed", 0.0));
+    out.boundary_stall = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_stall", 0.0));
+    out.boundary_target_hits = static_cast<int>(
+        context.diagnostics().value("connector.chain_pave_boundary_target_hits", 0.0));
     for (std::size_t i = boxes_before; i < boxes_.size(); ++i) {
         out.committed_boxes.push_back(boxes_[i].joint_intervals);
     }
@@ -5206,7 +6370,7 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
         out.all_boxes.push_back(box.joint_intervals);
     }
     if (out.added > 0) {
-        rebuild_adjacency();
+        invalidate_query_cache();
     }
     invalidate_query_cache();
     return out;
@@ -5358,7 +6522,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         context,
         pave_config);
     if (added > 0) {
-        rebuild_adjacency();
+        invalidate_query_cache();
         if (add_query_segment_edge &&
             config_.connector.segment_edges_enabled &&
             config_.connector.rrt_segment_edges &&

@@ -18,9 +18,6 @@ from experiments.common.rbf_defaults import (
     CANONICAL_SYMMETRY_DESCRIPTOR,
     D23_CACHE_ROOT,
     D23_CACHE_LABEL,
-    D23_NATIVE_DIM0_ROOT_INTERVALS,
-    D23_ROOT_INTERVALS,
-    robot_sector_expanded_root_tuples,
 )
 from experiments.common.rbf_leaf_rrt import make_aafk_split_policy
 from experiments.common.sbf_import import import_sbf
@@ -39,11 +36,25 @@ def directory_size(path: Path) -> int:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
-def make_config(cache_path: Path, *, max_depth: int, threads: int, root_mode: str) -> Any:
+def endpoint_source_value(name: str) -> Any:
+    key = str(name).strip().lower().replace("_", "").replace("-", "")
+    if key in {"ifk", "aafk", "ifkaa"}:
+        return sbf.EndpointSource.IFK
+    if key in {"crit", "critsample", "criticalsample"}:
+        return sbf.EndpointSource.CritSample
+    raise ValueError(f"unsupported endpoint source: {name}")
+
+
+def endpoint_source_label(name: str) -> str:
+    key = str(name).strip().lower().replace("_", "").replace("-", "")
+    return "critsample" if key in {"crit", "critsample", "criticalsample"} else "ifk"
+
+
+def make_config(cache_path: Path, *, max_depth: int, threads: int, endpoint_source: str) -> Any:
     robot = sbf.load_iiwa14_robot()
     cfg = sbf.SBFConfig()
     cfg.enable_connector = False
-    cfg.endpoint_source.source = sbf.EndpointSource.IFK
+    cfg.endpoint_source.source = endpoint_source_value(endpoint_source)
     cfg.envelope_type.type = sbf.EnvelopeType.SupportHull
     cfg.validation.mode = sbf.OracleValidationMode.StrictCertificate
     cfg.validation.accept_unsafe_free = False
@@ -56,33 +67,7 @@ def make_config(cache_path: Path, *, max_depth: int, threads: int, root_mode: st
     cfg.database.canonical_mode = True
     cfg.database.symmetry_descriptor = CANONICAL_SYMMETRY_DESCRIPTOR
     cfg.database.online_cache.allow_database_backfill = True
-    if root_mode == "shelf_dim0q4":
-        root_tuples = list(D23_ROOT_INTERVALS)
-        coverage_tuples = robot_sector_expanded_root_tuples("iiwa", robot) or root_tuples
-        root_intervals = [sbf.Interval(float(lo), float(hi)) for lo, hi in root_tuples]
-        cfg.database.root_intervals_override = root_intervals
-        cfg.database.coverage_intervals_override = [
-            sbf.Interval(float(lo), float(hi)) for lo, hi in coverage_tuples
-        ]
-        cfg.database.split_policy = make_aafk_split_policy(robot, int(max_depth), root_intervals)
-    elif root_mode == "shelf_native_dim0_forced_q4":
-        root_tuples = list(D23_NATIVE_DIM0_ROOT_INTERVALS)
-        coverage_tuples = robot_sector_expanded_root_tuples("iiwa", robot) or list(D23_ROOT_INTERVALS)
-        root_intervals = [sbf.Interval(float(lo), float(hi)) for lo, hi in root_tuples]
-        cfg.database.root_intervals_override = root_intervals
-        cfg.database.coverage_intervals_override = [
-            sbf.Interval(float(lo), float(hi)) for lo, hi in coverage_tuples
-        ]
-        cfg.database.split_policy = make_aafk_split_policy(
-            robot,
-            int(max_depth),
-            root_intervals,
-            force_dim0_first_two=True,
-        )
-    elif root_mode == "full_root":
-        cfg.database.split_policy = make_aafk_split_policy(robot, int(max_depth), None)
-    else:
-        raise ValueError(f"unsupported root mode: {root_mode}")
+    cfg.database.split_policy = make_aafk_split_policy(robot, int(max_depth), None)
 
     n_threads = max(1, int(threads))
     cfg.runtime.mode = sbf.ExecutionMode.Parallel if n_threads > 1 else sbf.ExecutionMode.Inline
@@ -105,14 +90,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cache-label", default=D23_CACHE_LABEL)
     parser.add_argument("--depth", type=int, default=23)
     parser.add_argument("--max-depth", type=int, default=40)
-    parser.add_argument("--root-mode", choices=["shelf_dim0q4", "shelf_native_dim0_forced_q4", "full_root"], default="shelf_dim0q4")
+    parser.add_argument("--root-mode", choices=["full_root"], default="full_root")
+    parser.add_argument("--endpoint-source", choices=["ifk", "critsample"], default="ifk")
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--clean", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--publish-snapshot", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--streaming", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--resident-cap", type=int, default=500_000)
-    parser.add_argument("--checkpoint-seconds", type=float, default=30.0)
+    parser.add_argument("--checkpoint-seconds", type=float, default=0.0)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out-json", type=Path, default=None)
     return parser.parse_args()
@@ -124,14 +110,12 @@ def main() -> int:
         raise SystemExit(
             "Refusing to prewarm depth > 23 for Exp4 cache. Depth is canonical LECT tree depth; use depth <= 23."
         )
+    endpoint_label = endpoint_source_label(str(args.endpoint_source))
+    if endpoint_label == "critsample" and str(args.cache_label) == D23_CACHE_LABEL:
+        args.cache_label = "iiwa_critsample_p23_canonical_full_root"
     cache_path = Path(args.cache_root) / str(args.cache_label)
-    if args.root_mode == "full_root":
-        root_tag = "full_root"
-    elif args.root_mode == "shelf_native_dim0_forced_q4":
-        root_tag = "native_dim0_full_forced_dim0q4_shelf_tail"
-    else:
-        root_tag = "canonical_dim0q4_fixed_root"
-    out_json = args.out_json or (cache_path.parent.parent / f"d{int(args.depth)}_prewarm_{root_tag}_aafk_volume_min.json")
+    root_tag = "full_root"
+    out_json = args.out_json or (cache_path.parent.parent / f"d{int(args.depth)}_prewarm_{root_tag}_{endpoint_label}_volume_min.json")
     if bool(args.clean) and cache_path.exists():
         shutil.rmtree(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +137,7 @@ def main() -> int:
     print(
         "prewarm config: "
         f"depth={int(args.depth)} max_depth={int(args.max_depth)} threads={int(args.threads)} "
-        f"root_mode={args.root_mode} "
+        f"root_mode={args.root_mode} endpoint_source={endpoint_label} "
         f"streaming={bool(args.streaming)} resident_cap={int(args.resident_cap)} "
         f"checkpoint_s={float(args.checkpoint_seconds)} progress={bool(args.progress)} "
         f"cache={cache_path}",
@@ -161,7 +145,12 @@ def main() -> int:
         flush=True,
     )
 
-    robot, cfg = make_config(cache_path, max_depth=int(args.max_depth), threads=int(args.threads), root_mode=str(args.root_mode))
+    robot, cfg = make_config(
+        cache_path,
+        max_depth=int(args.max_depth),
+        threads=int(args.threads),
+        endpoint_source=str(args.endpoint_source),
+    )
     forest = sbf.SafeBoxForest(robot, cfg)
     t0 = time.perf_counter()
     prewarm = dict(forest.prewarm_lifelong_cache(int(args.depth), [far_obstacle()]))
@@ -178,18 +167,12 @@ def main() -> int:
         "threads": int(args.threads),
         "canonical_mode": True,
         "depth_semantics": "canonical_lect_tree",
+        "endpoint_source": endpoint_label,
         "symmetry_descriptor": CANONICAL_SYMMETRY_DESCRIPTOR,
         "root_mode": str(args.root_mode),
-        "root_intervals": (
-            "shelf_task_root_dim0_minus_pi_to_pi"
-            if args.root_mode == "shelf_native_dim0_forced_q4"
-            else ("shelf_task_root_primary_sector" if args.root_mode == "shelf_dim0q4" else "robot_joint_limits_with_canonical_symmetry")
-        ),
-        "coverage_intervals": (
-            "shelf_task_root_reflected_dim0_all_sectors"
-            if args.root_mode in {"shelf_dim0q4", "shelf_native_dim0_forced_q4"}
-            else "full_robot_joint_limits"
-        ),
+        "root_intervals": "robot_joint_limits_with_canonical_symmetry",
+        "coverage_intervals": "full_robot_joint_limits",
+        "split_schedule": "full_joint_canonical_aafk",
         "wall_s": wall_s,
         "prewarm": prewarm,
         "verify_ok": verify_ok,

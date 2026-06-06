@@ -522,6 +522,13 @@ bool point_covered_by_existing_box(const std::vector<BoxNode>& boxes,
     });
 }
 
+double boundary_max_depth_failure_count(const StageContext& context) {
+    const auto& diagnostics = context.diagnostics();
+    return diagnostics.value("connector.chain_pave_boundary_fail_depth_cap", 0.0) +
+           diagnostics.value("connector.chain_pave_boundary_fail_unknown_depth_cap", 0.0) +
+           diagnostics.value("connector.chain_pave_boundary_fail_reserved_depth_cap", 0.0);
+}
+
 bool can_step_outside_face(const BoxNode& box,
                            const std::vector<Interval>& root,
                            int dim,
@@ -1002,6 +1009,10 @@ bool add_frontier_bridge_box(const FrontierBridgeCandidate& candidate,
     if (source_it == map.end()) {
         return false;
     }
+    if (point_covered_by_existing_box(boxes, candidate.seed)) {
+        context.diagnostics().add_counter("connector.frontier_bridge_seed_already_covered");
+        return false;
+    }
     FindFreeBoxOptions options = config.pave.find_free_box;
     if (candidate.ffb_depth_override > options.max_depth) {
         options.max_depth = candidate.ffb_depth_override;
@@ -1044,8 +1055,24 @@ bool add_frontier_bridge_box(const FrontierBridgeCandidate& candidate,
         return false;
     }
     oracle.reserve_node(result.node, box.id);
+    const int new_box_id = box.id;
+    const std::size_t new_box_index = boxes.size();
     boxes.push_back(std::move(box));
-    graph = compute_adjacency(boxes, config.pave.adjacency_tolerance);
+    graph[new_box_id] = {};
+    int local_edges = 0;
+    for (std::size_t index = 0; index < new_box_index; ++index) {
+        if (boxes_connected(boxes[index], boxes.back(), config.pave.adjacency_tolerance)) {
+            const std::size_t before = graph[new_box_id].size();
+            append_graph_edge_unique(graph, boxes[index].id, new_box_id);
+            if (graph[new_box_id].size() > before) {
+                local_edges += 1;
+            }
+        }
+    }
+    context.diagnostics().add_counter("connector.frontier_bridge_incremental_adjacency_checks",
+                                      static_cast<double>(new_box_index));
+    context.diagnostics().add_counter("connector.frontier_bridge_incremental_edges",
+                                      static_cast<double>(local_edges));
     context.diagnostics().add_counter("connector.frontier_bridge_successes");
     return true;
 }
@@ -1339,6 +1366,87 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return 0;
     }
     FindFreeBoxService ffb(oracle);
+    std::vector<int> adaptive_depths;
+    adaptive_depths.reserve(config.adaptive_ffb_depths.size() + 1);
+    int last_depth = -1;
+    for (int depth : config.adaptive_ffb_depths) {
+        depth = std::min(config.find_free_box.max_depth, depth);
+        if (depth <= 0 || depth == last_depth) {
+            continue;
+        }
+        adaptive_depths.push_back(depth);
+        last_depth = depth;
+    }
+    if (adaptive_depths.empty() ||
+        adaptive_depths.back() != config.find_free_box.max_depth) {
+        adaptive_depths.push_back(config.find_free_box.max_depth);
+    }
+    auto find_at_depth = [&](const Eigen::VectorXd& seed,
+                             StageContext& stage_context,
+                             int depth) {
+        FindFreeBoxOptions options = config.find_free_box;
+        options.max_depth = std::max(1, depth);
+        return ffb.find(seed, stage_context, options);
+    };
+    auto segment_coverage_fraction =
+        [&](const std::vector<Interval>& intervals,
+            const Eigen::VectorXd& a,
+            const Eigen::VectorXd& b) -> double {
+        if (intervals.size() != static_cast<std::size_t>(a.size()) ||
+            b.size() != a.size()) {
+            return 0.0;
+        }
+        double lo = 0.0;
+        double hi = 1.0;
+        const Eigen::VectorXd delta = b - a;
+        for (int dim = 0; dim < a.size(); ++dim) {
+            const auto& interval = intervals[static_cast<std::size_t>(dim)];
+            if (std::abs(delta[dim]) < 1e-15) {
+                if (a[dim] < interval.lo - config.adjacency_tolerance ||
+                    a[dim] > interval.hi + config.adjacency_tolerance) {
+                    return 0.0;
+                }
+                continue;
+            }
+            double t0 = (interval.lo - config.adjacency_tolerance - a[dim]) /
+                        delta[dim];
+            double t1 = (interval.hi + config.adjacency_tolerance - a[dim]) /
+                        delta[dim];
+            if (t0 > t1) {
+                std::swap(t0, t1);
+            }
+            lo = std::max(lo, t0);
+            hi = std::min(hi, t1);
+            if (lo > hi) {
+                return 0.0;
+            }
+        }
+        return std::max(0.0, std::min(1.0, hi) - std::max(0.0, lo));
+    };
+    auto passes_adaptive_segment_gate =
+        [&](const FindFreeBoxResult& result,
+            const Eigen::VectorXd& a,
+            const Eigen::VectorXd& b,
+            int depth) {
+        if (adaptive_depths.size() <= 1 ||
+            depth >= config.find_free_box.max_depth ||
+            config.adaptive_min_segment_fraction <= 0.0) {
+            return true;
+        }
+        if ((b - a).norm() <= std::max(config.gap_fill_min_step, 1e-9)) {
+            return true;
+        }
+        const double fraction =
+            segment_coverage_fraction(result.intervals, a, b);
+        if (fraction + 1e-12 >= config.adaptive_min_segment_fraction) {
+            context.diagnostics().add_counter(
+                "connector.chain_pave_adaptive_early_accepts");
+            return true;
+        }
+        context.diagnostics().add_counter(
+            "connector.chain_pave_adaptive_depth_skips");
+        return false;
+    };
     int current_box_id = anchor_box_id;
     int added = 0;
 
@@ -1360,6 +1468,35 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         auto it = box_index.find(id);
         return it == box_index.end() ? nullptr : &boxes[it->second];
     };
+    auto append_graph_edge = [&](int lhs, int rhs) {
+        if (lhs == rhs) {
+            return;
+        }
+        auto append_one = [&](int from, int to) {
+            auto& list = graph[from];
+            if (std::find(list.begin(), list.end(), to) == list.end()) {
+                list.push_back(to);
+            }
+        };
+        append_one(lhs, rhs);
+        append_one(rhs, lhs);
+    };
+    auto find_existing_cover = [&](const Eigen::VectorXd& p,
+                                   int preferred_id = -1) -> int {
+        if (preferred_id >= 0) {
+            if (BoxNode* preferred = box_by_id(preferred_id)) {
+                if (preferred->contains(p, config.adjacency_tolerance)) {
+                    return preferred_id;
+                }
+            }
+        }
+        for (const auto& box : boxes) {
+            if (box.contains(p, config.adjacency_tolerance)) {
+                return box.id;
+            }
+        }
+        return -1;
+    };
     auto find_box_owning_node_covering = [&](int node, const Eigen::VectorXd& p) -> int {
         for (const auto& box : boxes) {
             if (box.tree_id == node && box.contains(p, config.adjacency_tolerance)) {
@@ -1368,7 +1505,6 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         }
         return -1;
     };
-
     // Commit a certified-free FFB result as a new box parented to `parent_id`.
     // Returns the new box id on success, or -1 if the result cannot be committed
     // (already-committed node, commit-policy rejection, or not adjacent to the
@@ -1377,7 +1513,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
     auto commit_box = [&](FindFreeBoxResult& result,
                           const Eigen::VectorXd& seed,
                           int parent_id,
-                          bool require_adjacency,
+                          bool /*require_adjacency*/,
                           bool allow_duplicate_node = false) -> int {
         BoxNode* parent_box = box_by_id(parent_id);
         if (parent_box == nullptr) {
@@ -1410,7 +1546,6 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         box.strict_audit_required = result.validation_detail.strict_audit_required;
         box.compute_volume();
         const bool adjacent = boxes_connected(*parent_box, box, config.adjacency_tolerance);
-        (void)require_adjacency;
         if (!adjacent) {
             return -1;
         }
@@ -1503,7 +1638,10 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
     // of the furthest box reached (== from_id when no progress was made). With
     // budget == 0 this reduces to a single direct-commit attempt at to_pt.
     std::function<int(int, const Eigen::VectorXd&, const Eigen::VectorXd&, int)> cover =
-        [&](int from_id, const Eigen::VectorXd& from_pt, const Eigen::VectorXd& to_pt, int budget) -> int {
+        [&](int from_id,
+            const Eigen::VectorXd& from_pt,
+            const Eigen::VectorXd& to_pt,
+            int budget) -> int {
         if (added >= config.max_chain || context.should_stop()) {
             return from_id;
         }
@@ -1511,11 +1649,38 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         // existing box that already owns that canonical cell (so the chain can
         // follow the bridge through previously paved regions).
         int to_id = from_id;
-        auto result = ffb.find(to_pt, context, config.find_free_box);
-        if (result.found) {
+        bool saw_certifiable = false;
+        bool rejection_counted = false;
+        bool bridge_to_existing_cover = false;
+        const int added_before = added;
+        const int existing_cover = find_existing_cover(to_pt, from_id);
+        if (existing_cover >= 0) {
+            if (existing_cover == from_id) {
+                context.diagnostics().add_counter("connector.chain_pave_existing_cover_current");
+                to_id = from_id;
+            } else {
+                BoxNode* from_box = box_by_id(from_id);
+                BoxNode* cover_box = box_by_id(existing_cover);
+                if (from_box != nullptr && cover_box != nullptr &&
+                    boxes_connected(*from_box, *cover_box, config.adjacency_tolerance)) {
+                    append_graph_edge(from_id, existing_cover);
+                    context.diagnostics().add_counter("connector.chain_pave_existing_cover_adjacent");
+                    to_id = existing_cover;
+                } else {
+                    context.diagnostics().add_counter("connector.chain_pave_existing_cover_non_adjacent");
+                    bridge_to_existing_cover = true;
+                }
+            }
+        }
+        auto consume_result = [&](FindFreeBoxResult& result) {
+            saw_certifiable = true;
             const int committed = commit_box(result, to_pt, from_id, true);
             if (committed >= 0) {
                 to_id = committed;
+                if (added > added_before) {
+                    context.diagnostics().add_counter("connector.chain_pave_boundary_commits");
+                }
+                return true;
             } else {
                 const int owner = find_box_owning_node_covering(result.node, to_pt);
                 if (owner >= 0) {
@@ -1524,9 +1689,126 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                     if (owner_box != nullptr && from_box != nullptr &&
                         boxes_connected(*from_box, *owner_box, config.adjacency_tolerance)) {
                         to_id = owner;
+                        return true;
+                    }
+                }
+                if (!result.found &&
+                    result.hit_reserved_depth_cap &&
+                    intervals_contain_point(result.intervals,
+                                            to_pt,
+                                            config.adjacency_tolerance)) {
+                    const int duplicate = commit_reserved_cap_box(result,
+                                                                  to_pt,
+                                                                  from_id);
+                    if (duplicate >= 0) {
+                        to_id = duplicate;
+                        if (added > added_before) {
+                            context.diagnostics().add_counter("connector.chain_pave_boundary_commits");
+                        }
+                        return true;
                     }
                 }
             }
+            return false;
+        };
+        auto record_boundary_ffb_failure = [&](const FindFreeBoxResult& result) {
+            context.diagnostics().add_counter(
+                "connector.chain_pave_boundary_fail_code." + std::to_string(result.fail_code));
+            if (result.seed_collision || result.fail_code == 1) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_seed_collision");
+            }
+            if (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap ||
+                result.fail_code == 2) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_depth_cap");
+            }
+            if (result.hit_unknown_depth_cap) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_unknown_depth_cap");
+            }
+            if (result.hit_reserved_depth_cap) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_reserved_depth_cap");
+            }
+            if (result.fail_code == 3) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_occupied");
+            }
+            if (result.deadline_reached || result.fail_code == 4) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_deadline");
+            }
+            if (result.fail_code == 5) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_out_of_domain");
+            }
+            if (result.fail_code == 6) {
+                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_split");
+            }
+            if (config.debug_boundary_failures != nullptr &&
+                (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap)) {
+                DebugBoundaryFfbFailure failure;
+                failure.seed.assign(to_pt.data(), to_pt.data() + to_pt.size());
+                failure.intervals = result.intervals;
+                failure.validation_detail = result.validation_detail;
+                failure.node = result.node;
+                failure.depth = result.node >= 0 ? oracle.depth(result.node) : -1;
+                failure.changed_dim = result.changed_dim;
+                failure.fail_code = result.fail_code;
+                failure.hit_unknown_depth_cap = result.hit_unknown_depth_cap;
+                failure.hit_reserved_depth_cap = result.hit_reserved_depth_cap;
+                config.debug_boundary_failures->push_back(std::move(failure));
+            }
+        };
+        if (existing_cover < 0 && adaptive_depths.size() > 1) {
+            context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
+            FindFreeBoxOptions options = config.find_free_box;
+            options.adaptive_depths = adaptive_depths;
+            auto result = ffb.find_incremental(
+                to_pt,
+                context,
+                options,
+                [&](const FindFreeBoxResult& candidate) {
+                    return passes_adaptive_segment_gate(candidate,
+                                                        from_pt,
+                                                        to_pt,
+                                                        oracle.depth(candidate.node));
+                });
+            if (result.seed_collision) {
+                record_boundary_ffb_failure(result);
+                context.diagnostics().add_counter("connector.chain_pave_adaptive_seed_collision_stops");
+                context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
+                rejection_counted = true;
+            } else if (result.found ||
+                       (result.hit_reserved_depth_cap &&
+                        intervals_contain_point(result.intervals,
+                                                to_pt,
+                                                config.adjacency_tolerance))) {
+                consume_result(result);
+            } else {
+                record_boundary_ffb_failure(result);
+            }
+        } else if (existing_cover < 0) {
+            context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
+            auto result = find_at_depth(to_pt, context, adaptive_depths.front());
+            if (result.seed_collision) {
+                record_boundary_ffb_failure(result);
+                context.diagnostics().add_counter("connector.chain_pave_adaptive_seed_collision_stops");
+                context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
+                rejection_counted = true;
+            } else if (result.found ||
+                       (result.hit_reserved_depth_cap &&
+                        intervals_contain_point(result.intervals,
+                                                to_pt,
+                                                config.adjacency_tolerance))) {
+                consume_result(result);
+            } else {
+                record_boundary_ffb_failure(result);
+            }
+        }
+        if (bridge_to_existing_cover && budget <= 0 && config.fill_gaps) {
+            budget = std::max(1, config.max_gap_fill_depth);
+            context.diagnostics().add_counter("connector.chain_pave_existing_cover_bridge_attempts");
+        }
+        if (to_id == from_id && !rejection_counted && !bridge_to_existing_cover) {
+            context.diagnostics().add_counter(
+                saw_certifiable
+                    ? "connector.chain_pave_boundary_reject_non_adjacent"
+                    : "connector.chain_pave_boundary_reject_not_free");
         }
         if (budget <= 0) {
             return to_id;
@@ -1562,142 +1844,6 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return cover(via, mid, to_pt, budget - 1);
     };
 
-    // When filling gaps we traverse each bridge segment under a fixed probe
-    // budget. We still reuse the current box and opportunistically jump across
-    // any long span it covers, but we only SEED at coarse arc-length samples
-    // (`gap_fill_sample_step`, else max_steps_per_waypoint subdivisions). This
-    // keeps runtime and box count near O(samples) instead of O(thin certified
-    // slabs), which is the right trade-off when we want broad, cheap coverage
-    // rather than exhaustive full coverage.
-
-    // Seed a *fresh* certified-free box covering point `p` (no reuse of an
-    // existing box). FFB returns the canonical cell containing `p`; because `p`
-    // lies inside that cell, the cell extends forward along any travel direction,
-    // guaranteeing progress for the sweep below. Returns the new box id or -1.
-    auto seed_fresh = [&](const Eigen::VectorXd& p, int parent_id) -> int {
-        auto result = ffb.find(p, context, config.find_free_box);
-        if (!result.found) {
-            // FFB can cap out on a reserved canonical leaf an earlier box already
-            // owns; `result.intervals` is that certified-free cell mapped to this
-            // sample's symmetry sector, so it contains the sample even though the
-            // existing box covers a different sector.
-            if (result.hit_reserved_depth_cap &&
-                intervals_contain_point(result.intervals, p,
-                                        config.adjacency_tolerance)) {
-                return commit_reserved_cap_box(result, p, parent_id);
-            }
-            return -1;
-        }
-        int committed = commit_box(result, p, parent_id, true);
-        if (committed < 0) {
-            const int owner = find_box_owning_node_covering(result.node, p);
-            if (owner >= 0) {
-                BoxNode* owner_box = box_by_id(owner);
-                BoxNode* parent_box = box_by_id(parent_id);
-                const bool adjacent_owner =
-                    owner_box != nullptr && parent_box != nullptr &&
-                    boxes_connected(*parent_box, *owner_box,
-                                    config.adjacency_tolerance);
-                if (owner_box != nullptr && owner_box->contains(p) &&
-                    (!config.require_connected_chain || adjacent_owner)) {
-                    committed = owner;
-                }
-            }
-        }
-        if (committed < 0 && !config.require_connected_chain) {
-            committed = commit_box(result, p, parent_id,
-                                   /*require_adjacency=*/false,
-                                   /*allow_duplicate_node=*/true);
-        }
-        return committed;
-    };
-
-    auto find_existing_cover = [&](const Eigen::VectorXd& p,
-                                   int preferred_id) -> int {
-        BoxNode* preferred_box = box_by_id(preferred_id);
-        if (preferred_box != nullptr && preferred_box->contains(p)) {
-            return preferred_id;
-        }
-        auto graph_it = graph.find(preferred_id);
-        if (graph_it != graph.end()) {
-            for (const int neighbor_id : graph_it->second) {
-                BoxNode* neighbor = box_by_id(neighbor_id);
-                if (neighbor != nullptr && neighbor->contains(p)) {
-                    return neighbor_id;
-                }
-            }
-        }
-        for (const auto& box : boxes) {
-            BoxNode* preferred_box_again = box_by_id(preferred_id);
-            if (preferred_box_again != nullptr &&
-                boxes_connected(*preferred_box_again, box, config.adjacency_tolerance) &&
-                box.contains(p)) {
-                return box.id;
-            }
-        }
-        return -1;
-    };
-
-    // Return a box covering point `p`, reusing existing boxes first, else
-    // seeding a fresh box. Returns -1 if none could be obtained.
-    auto cover_point = [&](const Eigen::VectorXd& p, int parent_id) -> int {
-        const int existing = find_existing_cover(p, parent_id);
-        return existing >= 0 ? existing : seed_fresh(p, parent_id);
-    };
-
-    auto owned_node_covering_point = [&](const Eigen::VectorXd& p) -> int {
-        if (p.size() != oracle.n_dims()) {
-            return -1;
-        }
-        OracleNodeId node = oracle.root_node();
-        if (!oracle.contains_point(node, p)) {
-            return -1;
-        }
-        int best = -1;
-        auto owner_it = tree_owner.find(node);
-        if (owner_it != tree_owner.end()) {
-            best = static_cast<int>(node);
-        }
-        int guard = 0;
-        while (!oracle.is_leaf(node) && guard++ <= oracle.max_tree_depth() + 2) {
-            const OracleNodeId child = oracle.child_containing_point(node, p);
-            if (child == kInvalidOracleNodeId ||
-                !oracle.contains_point(child, p)) {
-                break;
-            }
-            node = child;
-            owner_it = tree_owner.find(node);
-            if (owner_it != tree_owner.end()) {
-                best = static_cast<int>(node);
-            }
-        }
-        return best;
-    };
-
-    auto clone_owned_node_cover = [&](const Eigen::VectorXd& p,
-                                      int parent_id) -> int {
-        const int existing = find_existing_cover(p, parent_id);
-        if (existing >= 0) {
-            return existing;
-        }
-        const int node = owned_node_covering_point(p);
-        if (node < 0) {
-            return -1;
-        }
-        const auto tree_intervals = oracle.node_intervals(node);
-        auto query_intervals = oracle.query_intervals_for_node(
-            node, tree_intervals, p);
-        if (!intervals_contain_point(query_intervals, p,
-                                     config.adjacency_tolerance)) {
-            return -1;
-        }
-        FindFreeBoxResult result;
-        result.node = node;
-        result.intervals = std::move(query_intervals);
-        result.hit_reserved_depth_cap = true;
-        return commit_reserved_cap_box(result, p, parent_id);
-    };
-
     // Max parameter u in [u0, 1] such that a + u*(b - a) stays inside `box`.
     auto segment_exit_param = [](const BoxNode& box, const Eigen::VectorXd& a,
                                  const Eigen::VectorXd& b, double u0) -> double {
@@ -1718,16 +1864,21 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
 
     auto boundary_seed_from_box = [&](const BoxNode& box,
                                       const Eigen::VectorXd& from,
-                                      const Eigen::VectorXd& target,
-                                      double requested_step) -> Eigen::VectorXd {
+                                      const Eigen::VectorXd& target) -> Eigen::VectorXd {
         const double seg_len = (target - from).norm();
         if (seg_len < 1e-12) {
             return target;
         }
         const double u_exit = segment_exit_param(box, from, target, 0.0);
+        // `requested_step` controls how far the front tries to advance along the
+        // corridor. The FFB seed itself should only step just outside the current
+        // box face; otherwise FFB often certifies a free box beyond a tiny gap and
+        // the result is free but non-adjacent to `box`.
+        const double face_epsilon =
+            std::max(16.0 * std::max(0.0, config.adjacency_tolerance),
+                     std::min(1e-6, std::max(config.gap_fill_min_step, 1e-12)));
         const double u_step =
-            std::max(1e-9, std::max(requested_step, config.gap_fill_min_step) /
-                                  std::max(seg_len, 1e-12));
+            std::max(1e-12, face_epsilon / std::max(seg_len, 1e-12));
         const double u_seed = std::min(1.0, u_exit + u_step);
         return (from + u_seed * (target - from)).eval();
     };
@@ -1738,7 +1889,8 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                                         double requested_step)
         -> std::vector<Eigen::VectorXd> {
         std::vector<Eigen::VectorXd> seeds;
-        seeds.push_back(boundary_seed_from_box(box, from, target, requested_step));
+        const Eigen::VectorXd forward_seed = boundary_seed_from_box(box, from, target);
+        seeds.push_back(forward_seed);
         if (from.size() != target.size() || box.n_dims() != from.size()) {
             return seeds;
         }
@@ -1795,46 +1947,68 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return seeds;
     };
 
-    struct ParamSpan {
-        bool hit = false;
-        double lo = 0.0;
-        double hi = 0.0;
+    auto closest_point_in_box = [&](const BoxNode& box,
+                                    const Eigen::VectorXd& point) -> Eigen::VectorXd {
+        Eigen::VectorXd out(point.size());
+        for (int dim = 0; dim < point.size(); ++dim) {
+            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+            out[dim] = std::clamp(point[dim], interval.lo, interval.hi);
+        }
+        return out;
     };
-
-    auto segment_interval_span = [&](const std::vector<Interval>& intervals,
-                                     const Eigen::VectorXd& a,
-                                     const Eigen::VectorXd& b) -> ParamSpan {
-        double u_lo = 0.0;
-        double u_hi = 1.0;
-        const Eigen::VectorXd v = b - a;
-        for (int d = 0; d < a.size(); ++d) {
-            const double lo = intervals[static_cast<std::size_t>(d)].lo -
-                              config.adjacency_tolerance;
-            const double hi = intervals[static_cast<std::size_t>(d)].hi +
-                              config.adjacency_tolerance;
-            if (std::abs(v[d]) < 1e-15) {
-                if (a[d] < lo || a[d] > hi) {
-                    return {};
-                }
-                continue;
+    std::unordered_set<std::uint64_t> failed_boundary_seed_keys;
+    auto boundary_seed_key = [&](int parent_id,
+                                 std::size_t segment_index,
+                                 const BoxNode& parent_box,
+                                 const Eigen::VectorXd& cursor,
+                                 const Eigen::VectorXd& seed) {
+        int face_dim = 0;
+        int side = 1;
+        double best_gap = -1.0;
+        for (int dim = 0; dim < seed.size(); ++dim) {
+            const auto& interval = parent_box.joint_intervals[static_cast<std::size_t>(dim)];
+            double gap = 0.0;
+            int candidate_side = seed[dim] >= cursor[dim] ? 1 : 0;
+            if (seed[dim] > interval.hi + config.adjacency_tolerance) {
+                gap = seed[dim] - interval.hi;
+                candidate_side = 1;
+            } else if (seed[dim] < interval.lo - config.adjacency_tolerance) {
+                gap = interval.lo - seed[dim];
+                candidate_side = 0;
+            } else {
+                gap = std::abs(seed[dim] - cursor[dim]) * 1e-3;
             }
-            const double t1 = (lo - a[d]) / v[d];
-            const double t2 = (hi - a[d]) / v[d];
-            u_lo = std::max(u_lo, std::min(t1, t2));
-            u_hi = std::min(u_hi, std::max(t1, t2));
-            if (u_lo > u_hi) {
-                return {};
+            if (gap > best_gap) {
+                best_gap = gap;
+                face_dim = dim;
+                side = candidate_side;
             }
         }
-        return {true, std::max(0.0, u_lo), std::min(1.0, u_hi)};
+        auto mix = [](std::uint64_t value) {
+            value ^= value >> 33;
+            value *= 0xff51afd7ed558ccdULL;
+            value ^= value >> 33;
+            value *= 0xc4ceb9fe1a85ec53ULL;
+            value ^= value >> 33;
+            return value;
+        };
+        std::uint64_t key = mix(static_cast<std::uint64_t>(static_cast<std::uint32_t>(parent_id)));
+        key ^= mix(static_cast<std::uint64_t>(segment_index + 0x9e3779b97f4a7c15ULL));
+        key ^= mix(static_cast<std::uint64_t>((face_dim & 0xff) |
+                                             ((side & 0x1) << 8)));
+        const double bucket =
+            std::max(1e-6, std::max(config.gap_fill_min_step, 1e-9) * 0.25);
+        for (int dim = 0; dim < seed.size(); ++dim) {
+            const auto quantized =
+                static_cast<std::int64_t>(std::llround(seed[dim] / bucket));
+            key ^= mix(static_cast<std::uint64_t>(
+                quantized + 0x9e3779b97f4a7c15LL +
+                static_cast<std::int64_t>(dim) * 0x100000001b3LL));
+        }
+        return key;
     };
 
-    const bool fast_gap_fill =
-        config.gap_fill_time_budget_ms > 0.0 ||
-        config.gap_fill_max_ffb_calls >= 0;
-
-    if (config.require_connected_chain && config.fill_gaps &&
-        waypoint_path.size() >= 2) {
+    if (waypoint_path.size() >= 2) {
         int connected_segments = 0;
         int connected_steps = 0;
         int connected_reach_failures = 0;
@@ -1854,7 +2028,8 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             if (current_box == nullptr) {
                 break;
             }
-            Eigen::VectorXd cursor = current_box->contains(a) ? a : current_box->center();
+            Eigen::VectorXd cursor =
+                current_box->contains(a) ? a : closest_point_in_box(*current_box, a);
             const double front_step = std::max(
                 config.gap_fill_sample_step > 0.0 ? config.gap_fill_sample_step
                                                   : config.gap_fill_min_step,
@@ -1875,7 +2050,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 }
                 connected_steps += 1;
                 if (!current_box->contains(cursor)) {
-                    cursor = current_box->center();
+                    cursor = closest_point_in_box(*current_box, cursor);
                 }
                 int reached = current_box_id;
                 double attempt_step = front_step;
@@ -1883,13 +2058,28 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                      ++attempt) {
                     const auto seeds =
                         boundary_seed_candidates(*current_box, cursor, b, attempt_step);
+                    const double min_seed_motion =
+                        std::max(4.0 * std::max(0.0, config.adjacency_tolerance), 1e-12);
                     if (seeds.empty() ||
-                        (seeds.front() - cursor).norm() <
-                            std::max(config.gap_fill_min_step, 1e-6) * 0.25) {
+                        (seeds.front() - cursor).norm() < min_seed_motion) {
                         break;
                     }
-                    for (const auto& seed : seeds) {
+                    for (std::size_t seed_rank = 0; seed_rank < seeds.size(); ++seed_rank) {
+                        const auto& seed = seeds[seed_rank];
+                        const auto key = boundary_seed_key(current_box_id,
+                                                           seg,
+                                                           *current_box,
+                                                           cursor,
+                                                           seed);
+                        if (failed_boundary_seed_keys.find(key) != failed_boundary_seed_keys.end()) {
+                            context.diagnostics().add_counter("connector.chain_pave_boundary_skip_failed_seed");
+                            continue;
+                        }
                         reached = cover(current_box_id, cursor, seed, 0);
+                        if (reached == current_box_id) {
+                            failed_boundary_seed_keys.insert(key);
+                            context.diagnostics().add_counter("connector.chain_pave_boundary_failed_seed_memoized");
+                        }
                         if (reached != current_box_id ||
                             added >= config.max_chain || context.should_stop()) {
                             break;
@@ -1899,11 +2089,12 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 }
                 if (reached == current_box_id) {
                     connected_reach_failures += 1;
+                    context.diagnostics().add_counter("connector.chain_pave_boundary_stall");
                     break;
                 }
                 current_box_id = reached;
                 if (BoxNode* reached_box = box_by_id(current_box_id)) {
-                    cursor = reached_box->center();
+                    cursor = closest_point_in_box(*reached_box, b);
                 }
             }
         }
@@ -1917,411 +2108,14 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                                         static_cast<double>(connected_reach_failures));
         context.diagnostics().set_value("connector.chain_pave_connected_target_hits",
                                         static_cast<double>(connected_target_hits));
+        context.diagnostics().set_value("connector.chain_pave_boundary_target_hits",
+                                        static_cast<double>(connected_target_hits));
         if (added >= config.max_chain) {
             context.diagnostics().add_counter("connector.chain_pave_connected_max_chain_hits");
         }
         return added;
     }
 
-    if (config.fill_gaps && waypoint_path.size() >= 2 && fast_gap_fill) {
-        using Clock = std::chrono::steady_clock;
-        const auto fast_start = Clock::now();
-        auto elapsed_ms = [&]() {
-            return std::chrono::duration<double, std::milli>(Clock::now() -
-                                                            fast_start)
-                .count();
-        };
-        auto remaining_ms = [&]() {
-            return config.gap_fill_time_budget_ms <= 0.0
-                       ? std::numeric_limits<double>::infinity()
-                       : std::max(0.0,
-                                  config.gap_fill_time_budget_ms - elapsed_ms());
-        };
-        auto deadline_reached = [&]() {
-            return context.should_stop() ||
-                   (config.gap_fill_time_budget_ms > 0.0 &&
-                    elapsed_ms() >= config.gap_fill_time_budget_ms);
-        };
-
-        struct GapCandidate {
-            std::size_t seg = 0;
-            double u = 0.0;
-            double arc = 0.0;
-            int rank = 0;
-        };
-
-        auto candidate_key = [](std::size_t seg, double u) -> std::size_t {
-            const auto bin = static_cast<std::size_t>(
-                std::max(0.0, std::min(1000000.0, std::round(u * 1000000.0))));
-            return seg * 1000003ULL + bin;
-        };
-
-        std::unordered_set<std::size_t> rejected_candidates;
-        const double probe_step = config.gap_fill_sample_step > 0.0
-                                      ? config.gap_fill_sample_step
-                                      : 0.05;
-
-        auto clone_existing_leaf_coverage = [&]() {
-            bool progressed = false;
-            for (std::size_t seg = 1;
-                 seg < waypoint_path.size() && !deadline_reached() &&
-                 added < config.max_chain;
-                 ++seg) {
-                const Eigen::VectorXd& a = waypoint_path[seg - 1];
-                const Eigen::VectorXd& b = waypoint_path[seg];
-                const double seg_len = (b - a).norm();
-                if (seg_len < 1e-12) {
-                    continue;
-                }
-                const int n =
-                    std::max(1, static_cast<int>(std::ceil(seg_len / probe_step)));
-                for (int i = 0; i <= n && !deadline_reached() &&
-                                added < config.max_chain;
-                     ++i) {
-                    const double u = static_cast<double>(i) / static_cast<double>(n);
-                    const Eigen::VectorXd p = a + u * (b - a);
-                    const int cover_id = clone_owned_node_cover(p, current_box_id);
-                    if (cover_id >= 0) {
-                        current_box_id = cover_id;
-                        progressed = true;
-                    }
-                }
-            }
-            return progressed;
-        };
-
-        auto build_gap_candidates = [&]() {
-            std::vector<GapCandidate> candidates;
-            for (std::size_t seg = 1; seg < waypoint_path.size(); ++seg) {
-                if (deadline_reached()) {
-                    break;
-                }
-                const Eigen::VectorXd& a = waypoint_path[seg - 1];
-                const Eigen::VectorXd& b = waypoint_path[seg];
-                const double seg_len = (b - a).norm();
-                if (seg_len < 1e-12) {
-                    continue;
-                }
-                const int n =
-                    std::max(1, static_cast<int>(std::ceil(seg_len / probe_step)));
-                int run_begin = -1;
-                int preferred_id = current_box_id;
-                auto close_run = [&](int run_end) {
-                    if (run_begin < 0 || run_end < run_begin) {
-                        return;
-                    }
-                    const double arc =
-                        (static_cast<double>(run_end - run_begin + 1) /
-                         static_cast<double>(n)) *
-                        seg_len;
-                    const int mid = (run_begin + run_end) / 2;
-                    for (int offset = 0; offset <= run_end - run_begin; ++offset) {
-                        const int left = mid - offset;
-                        const int right = mid + offset;
-                        const int ids[2] = {left, right};
-                        for (int side = 0; side < 2; ++side) {
-                            const int sample_id = ids[side];
-                            if (sample_id < run_begin || sample_id > run_end ||
-                                (side == 1 && right == left)) {
-                                continue;
-                            }
-                            const double u = static_cast<double>(sample_id) /
-                                         static_cast<double>(n);
-                            if (rejected_candidates.find(candidate_key(seg, u)) !=
-                                rejected_candidates.end()) {
-                                continue;
-                            }
-                            bool duplicate = false;
-                            for (const auto& c : candidates) {
-                                if (c.seg == seg && std::abs(c.u - u) < 1e-12) {
-                                    duplicate = true;
-                                    break;
-                                }
-                            }
-                            if (!duplicate) {
-                                candidates.push_back({seg, u, arc, offset});
-                            }
-                        }
-                    }
-                    run_begin = -1;
-                };
-                for (int i = 0; i <= n; ++i) {
-                    const double u = static_cast<double>(i) / static_cast<double>(n);
-                    const Eigen::VectorXd p = a + u * (b - a);
-                    const int cover_id = find_existing_cover(p, preferred_id);
-                    if (cover_id >= 0) {
-                        preferred_id = cover_id;
-                        close_run(i - 1);
-                    } else if (run_begin < 0) {
-                        run_begin = i;
-                    }
-                }
-                close_run(n);
-            }
-            std::sort(candidates.begin(), candidates.end(),
-                      [](const GapCandidate& lhs, const GapCandidate& rhs) {
-                          if (lhs.rank != rhs.rank) {
-                              return lhs.rank < rhs.rank;
-                          }
-                          return lhs.arc > rhs.arc;
-                      });
-            return candidates;
-        };
-
-        int ffb_calls = 0;
-        const int max_ffb_calls = config.gap_fill_max_ffb_calls < 0
-                                      ? std::numeric_limits<int>::max()
-                                      : config.gap_fill_max_ffb_calls;
-
-        clone_existing_leaf_coverage();
-
-        struct EvaluatedCandidate {
-            GapCandidate candidate;
-            Eigen::VectorXd seed;
-            FindFreeBoxResult result;
-            double arc_gain = 0.0;
-            bool reserved_cap_contains = false;
-        };
-
-        auto evaluate_candidate = [&](const GapCandidate& candidate,
-                                      EvaluatedCandidate& evaluated) -> bool {
-            const Eigen::VectorXd& a = waypoint_path[candidate.seg - 1];
-            const Eigen::VectorXd& b = waypoint_path[candidate.seg];
-            const double seg_len = (b - a).norm();
-            if (seg_len < 1e-12) {
-                return false;
-            }
-            const Eigen::VectorXd p = a + candidate.u * (b - a);
-            const int existing = find_existing_cover(p, current_box_id);
-            if (existing >= 0) {
-                current_box_id = existing;
-                return true;
-            }
-
-            FindFreeBoxOptions ffb_options = config.find_free_box;
-            if (config.gap_fill_time_budget_ms > 0.0) {
-                const double ms_left = remaining_ms();
-                if (ms_left <= 0.0) {
-                    return false;
-                }
-                ffb_options.deadline_ms = ms_left;
-            }
-            ++ffb_calls;
-            auto result = ffb.find(p, context, ffb_options);
-            const bool reserved_cap_contains =
-                !result.found && result.hit_reserved_depth_cap &&
-                intervals_contain_point(result.intervals, p,
-                                        config.adjacency_tolerance);
-            if (!result.found && !reserved_cap_contains) {
-                return false;
-            }
-
-            const ParamSpan span = segment_interval_span(result.intervals, a, b);
-            const double arc_gain = span.hit ? (span.hi - span.lo) * seg_len : 0.0;
-            if (config.gap_fill_min_arc_gain > 0.0 &&
-                arc_gain + 1e-12 < config.gap_fill_min_arc_gain) {
-                return false;
-            }
-
-            evaluated.candidate = candidate;
-            evaluated.seed = p;
-            evaluated.result = std::move(result);
-            evaluated.arc_gain = arc_gain;
-            evaluated.reserved_cap_contains = reserved_cap_contains;
-            return true;
-        };
-
-        auto commit_evaluated = [&](EvaluatedCandidate& evaluated) -> bool {
-            if (deadline_reached() || added >= config.max_chain) {
-                return false;
-            }
-            const int existing = find_existing_cover(evaluated.seed,
-                                                     current_box_id);
-            if (existing >= 0) {
-                current_box_id = existing;
-                return true;
-            }
-
-            int committed = -1;
-            if (evaluated.result.found) {
-                committed = commit_box(evaluated.result, evaluated.seed,
-                                       current_box_id,
-                                       /*require_adjacency=*/true);
-                if (committed < 0) {
-                    const int owner = find_box_owning_node_covering(evaluated.result.node, evaluated.seed);
-                    BoxNode* owner_box = box_by_id(owner);
-                    BoxNode* current_box = box_by_id(current_box_id);
-                    const bool adjacent_owner =
-                        owner_box != nullptr && current_box != nullptr &&
-                        boxes_connected(*current_box, *owner_box,
-                                        config.adjacency_tolerance);
-                    if (owner_box != nullptr &&
-                        owner_box->contains(evaluated.seed) &&
-                        (!config.require_connected_chain || adjacent_owner)) {
-                        committed = owner;
-                    }
-                }
-                if (committed < 0 && !config.require_connected_chain) {
-                    committed = commit_box(evaluated.result, evaluated.seed,
-                                           current_box_id,
-                                           /*require_adjacency=*/false,
-                                           /*allow_duplicate_node=*/true);
-                }
-            } else {
-                committed = commit_reserved_cap_box(evaluated.result,
-                                                    evaluated.seed,
-                                                    current_box_id);
-            }
-            if (committed >= 0) {
-                current_box_id = committed;
-                return true;
-            }
-            return false;
-        };
-
-        while (!deadline_reached() && added < config.max_chain &&
-               ffb_calls < max_ffb_calls) {
-            auto candidates = build_gap_candidates();
-            if (candidates.empty()) {
-                break;
-            }
-            std::vector<EvaluatedCandidate> evaluated;
-            for (const auto& candidate : candidates) {
-                if (deadline_reached() || added >= config.max_chain ||
-                    ffb_calls >= max_ffb_calls) {
-                    break;
-                }
-                if (config.gap_fill_time_budget_ms > 0.0 &&
-                    remaining_ms() <= 0.25) {
-                    break;
-                }
-                EvaluatedCandidate item;
-                if (evaluate_candidate(candidate, item)) {
-                    evaluated.push_back(std::move(item));
-                }
-                rejected_candidates.insert(candidate_key(candidate.seg,
-                                                         candidate.u));
-            }
-            std::sort(evaluated.begin(), evaluated.end(),
-                      [](const EvaluatedCandidate& lhs,
-                         const EvaluatedCandidate& rhs) {
-                          return lhs.arc_gain > rhs.arc_gain;
-                      });
-            bool progressed = false;
-            for (auto& item : evaluated) {
-                if (commit_evaluated(item)) {
-                    progressed = true;
-                }
-            }
-            if (!progressed) {
-                break;
-            }
-        }
-        context.diagnostics().set_value("connector.chain_pave_fast_ffb_calls",
-                                        static_cast<double>(ffb_calls));
-        context.diagnostics().set_value("connector.chain_pave_fast_ms",
-                                        elapsed_ms());
-        return added;
-    }
-
-    if (config.fill_gaps && waypoint_path.size() >= 2) {
-        for (std::size_t seg = 1;
-             seg < waypoint_path.size() && added < config.max_chain &&
-             !context.should_stop();
-             ++seg) {
-            const Eigen::VectorXd& a = waypoint_path[seg - 1];
-            const Eigen::VectorXd& b = waypoint_path[seg];
-            const double seg_len = (b - a).norm();
-            if (seg_len < 1e-12) {
-                continue;
-            }
-            // Step in parameter space that corresponds to gap_fill_min_step in
-            // C-space, so we never stall yet never overshoot the box face.
-            const double param_eps =
-                std::max(1e-9, config.gap_fill_min_step / seg_len);
-            const double sample_param =
-                config.gap_fill_sample_step > 0.0
-                    ? std::min(1.0, std::max(param_eps,
-                                             config.gap_fill_sample_step /
-                                                 seg_len))
-                    : std::min(1.0, std::max(param_eps,
-                                             1.0 / std::max(
-                                                       1,
-                                                       config
-                                                           .max_steps_per_waypoint)));
-            double u = 0.0;
-            int guard = 0;
-            const int guard_max =
-                std::max(1, static_cast<int>(std::ceil(1.0 / sample_param))) +
-                1;
-            while (u < 1.0 - param_eps && added < config.max_chain &&
-                   !context.should_stop() && guard++ < guard_max) {
-                const Eigen::VectorXd p = a + u * (b - a);
-                int box_id = cover_point(p, current_box_id);
-                if (box_id < 0) {
-                    u = std::min(1.0, u + sample_param);
-                    continue;
-                }
-                current_box_id = box_id;
-                auto compute_exit = [&](int id) -> double {
-                    auto map = make_box_map(boxes);
-                    auto it = map.find(id);
-                    return it != map.end()
-                               ? segment_exit_param(*it->second, a, b, u)
-                               : u;
-                };
-                const double u_exit = compute_exit(box_id);
-                const double u_next_sample = std::min(1.0, u + sample_param);
-                if (u_exit > u_next_sample + param_eps) {
-                    // This box spans well beyond the next planned probe, so skip
-                    // the already-covered region instead of spending budget there.
-                    u = std::min(1.0, u_exit + param_eps);
-                } else {
-                    u = u_next_sample;
-                }
-            }
-            // Ensure the segment endpoint itself is covered.
-            if (added < config.max_chain && !context.should_stop()) {
-                const int box_id = cover_point(b, current_box_id);
-                if (box_id >= 0) {
-                    current_box_id = box_id;
-                }
-            }
-        }
-        return added;
-    }
-
-    for (const auto& waypoint : waypoint_path) {
-        if (context.should_stop()) {
-            break;
-        }
-        if (added >= config.max_chain) {
-            break;
-        }
-        auto map = make_box_map(boxes);
-        auto current_it = map.find(current_box_id);
-        if (current_it == map.end()) {
-            break;
-        }
-        const bool covered_by_current = current_it->second->contains(waypoint);
-        if (covered_by_current && !config.refine_covered_waypoints) {
-            continue;
-        }
-        const Eigen::VectorXd start = current_it->second->center();
-        const int step_count = covered_by_current ? 1 : config.max_steps_per_waypoint;
-        for (int step = 1; step <= step_count && added < config.max_chain; ++step) {
-            if (context.should_stop()) {
-                break;
-            }
-            const double alpha = static_cast<double>(step) / static_cast<double>(step_count);
-            const Eigen::VectorXd seed = covered_by_current ? waypoint : start + alpha * (waypoint - start);
-            const int reached = cover(current_box_id, start, seed, 0);
-            if (reached != current_box_id) {
-                current_box_id = reached;
-                break;
-            }
-        }
-    }
     return added;
 }
 
@@ -2678,6 +2472,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             }
             int added = 0;
             bool box_connected = false;
+            double pair_depth_failures_before = boundary_max_depth_failure_count(context);
             if (result.bridge_boxes_added < config_.max_total_bridge_boxes) {
                 context.diagnostics().add_counter("connector.chain_pave_attempts");
                 const int first_new_box_id = next_box_id;
@@ -2704,8 +2499,8 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     }
                     box_connected = graph_has_path(graph, chosen.source_box_id, chosen.target_box_id);
                     if (!box_connected) {
-                        context.diagnostics().add_counter("connector.chain_pave_full_adjacency_checks");
-                        graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+                        context.diagnostics().add_counter("connector.chain_pave_full_adjacency_rebuilds_avoided");
+                        context.diagnostics().add_counter("connector.chain_pave_incremental_path_misses");
                         box_connected = graph_has_path(graph, chosen.source_box_id, chosen.target_box_id);
                     }
                     if (box_connected) {
@@ -2715,10 +2510,13 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     }
                 }
             }
+            const bool pair_had_max_depth_ffb_failure =
+                boundary_max_depth_failure_count(context) > pair_depth_failures_before + 0.5;
             bool added_segment_edge = false;
             if (!box_connected &&
                 config_.segment_edges_enabled && config_.rrt_segment_edges &&
-                !config_.segment_edges_fallback_only) {
+                !config_.segment_edges_fallback_only &&
+                pair_had_max_depth_ffb_failure) {
                 const int edge_id = add_segment_edge(segment_edges,
                                                      graph,
                                                      chosen.source_box_id,
@@ -2735,6 +2533,11 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
                     context.diagnostics().add_counter("connector.segment_edges_added");
                     context.diagnostics().add_counter("connector.rrt_segment_edges_added");
                 }
+            } else if (!box_connected &&
+                       config_.segment_edges_enabled && config_.rrt_segment_edges &&
+                       !config_.segment_edges_fallback_only &&
+                       !pair_had_max_depth_ffb_failure) {
+                context.diagnostics().add_counter("connector.segment_edge_blocked_no_max_depth_ffb_failure");
             }
             if (box_connected) {
                 context.diagnostics().add_counter("connector.chain_pave_successes");
@@ -2757,7 +2560,7 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
             }
         }
         if (boxes_added_this_round) {
-            graph = compute_adjacency(boxes, config_.pave.adjacency_tolerance);
+            context.diagnostics().add_counter("connector.round_full_adjacency_rebuilds_avoided");
         }
         apply_segment_edges_to_adjacency(segment_edges, graph);
         if (!progressed) {
@@ -2766,6 +2569,10 @@ IslandConnectorResult IslandConnector::connect_all(std::vector<BoxNode>& boxes,
         islands = find_islands(graph);
     }
     while (find_islands(graph).size() > 1) {
+        if (boundary_max_depth_failure_count(context) <= 0.5) {
+            context.diagnostics().add_counter("connector.point_gap_segment_blocked_no_max_depth_ffb_failure");
+            break;
+        }
         const std::size_t edge_count_before = segment_edges.size();
         if (!try_point_validated_gap_edge(boxes, graph, &segment_edges, checker_, config_, context)) {
             break;

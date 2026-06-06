@@ -711,6 +711,10 @@ void record_worker_oracle_counters(StageContext& context,
                                       counters.materialization_stored_shared_endpoint_cache);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_reused_cached_envelope",
                                       counters.materialization_reused_cached_envelope);
+    context.diagnostics().add_counter("grower.worker_oracle.canonical_frame_invalid",
+                                      counters.canonical_frame_invalid);
+    context.diagnostics().add_counter("grower.worker_oracle.canonical_reflected_seed_misses",
+                                      counters.canonical_reflected_seed_misses);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_endpoint_time_us",
                                       counters.materialization_endpoint_time_us);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_endpoint_wall_time_us",

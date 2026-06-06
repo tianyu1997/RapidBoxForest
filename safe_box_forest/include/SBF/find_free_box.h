@@ -3,15 +3,29 @@
 #include <SBF/oracle.h>
 #include <SBF/runtime.h>
 
+#include <functional>
 #include <vector>
 
 namespace rbf {
 
+enum class FindFreeBoxSearchMode {
+	Linear = 0,
+	BinaryDepth = 1,
+};
+
 struct FindFreeBoxOptions {
 	int max_depth = 64;
+	/// Minimum depth considered by depth-search modes. Kept as an alias-friendly
+	/// complement to skip_to_depth for restored BinaryDepth experiments.
+	int start_depth = 0;
 	/// Leaf nodes at depth < skip_to_depth are always Unknown; bypass validate_node
 	/// for them and split directly.  Should match lect_build_policy.skip_top_depth.
 	int skip_to_depth = 0;
+	FindFreeBoxSearchMode search_mode = FindFreeBoxSearchMode::Linear;
+	/// Optional scheduled-depth checkpoints for a single incremental descent.
+	/// Empty means use search_mode with max_depth only. Values are sanitized and
+	/// capped by max_depth.
+	std::vector<int> adaptive_depths;
 	bool split_unknown_leaf = true;
 	bool split_reserved_leaf = true;
 	bool reject_seed_collision = false;
@@ -37,12 +51,17 @@ struct FindFreeBoxResult {
 
 class FindFreeBoxService {
 public:
+	using AcceptCandidate = std::function<bool(const FindFreeBoxResult&)>;
 	explicit FindFreeBoxService(BoxOracle& oracle) : oracle_(oracle) {}
 	FindFreeBoxResult find(const Eigen::Ref<const Eigen::VectorXd>& seed,
 						   const FindFreeBoxOptions& options = {});
 	FindFreeBoxResult find(const Eigen::Ref<const Eigen::VectorXd>& seed,
 						   StageContext& context,
 						   const FindFreeBoxOptions& options = {});
+	FindFreeBoxResult find_incremental(const Eigen::Ref<const Eigen::VectorXd>& seed,
+										StageContext& context,
+										const FindFreeBoxOptions& options,
+										const AcceptCandidate& accept);
 
 private:
 	BoxOracle& oracle_;

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import csv
 import math
 import sys
@@ -20,7 +21,19 @@ from experiments.common.random_scene_catalog import generate_catalog, make_robot
 from experiments.common.rbf_defaults import (
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+    DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
+    DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
+    DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
+    DEFAULT_RBF_DEEP_FFB_DEPTH,
     DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_FFB_SEARCH_MODE,
+    DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
+    DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
+    DEFAULT_RBF_LEAF_MAX_DEPTH,
+    DEFAULT_RBF_LEAF_START_DEPTH,
+    DEFAULT_RBF_MAX_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
     rbf_budget_grid,
@@ -35,6 +48,38 @@ from experiments.common.sbf_import import import_sbf
 
 METHODS = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
 sbf = import_sbf()
+
+
+def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | None = None) -> dict[str, Any]:
+    profile = copy.deepcopy(default_rbf_profile())
+    inherited_profile = str(profile.get("profile", "registered_exp4_profile"))
+    profile["profile"] = (
+        f"exp06_leaf{int(args.leaf_max_depth)}"
+        f"_ffb{int(args.deep_ffb_depth)}"
+        f"_bridge{int(args.query_bridge_pave_depth)}"
+    )
+    profile["inherits_from"] = inherited_profile
+    profile["override_reason"] = "Exp.6 controlled depth trade-off scan on saved random-scene catalog."
+    profile["leaf_sweep"]["leaf_start_depth"] = int(args.leaf_start_depth)
+    profile["leaf_sweep"]["leaf_max_depth"] = int(args.leaf_max_depth)
+    profile["leaf_sweep"]["leaf_threads"] = int(args.threads)
+    profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
+    profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
+    profile["deep_refine"]["ffb_start_depth"] = int(args.ffb_start_depth)
+    profile["deep_refine"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["connector"]["pave_depth"] = int(args.connector_pave_depth)
+    profile["connector"]["max_pairs_per_gap"] = int(DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP)
+    profile["connector"]["per_pair_timeout_ms"] = int(DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS)
+    profile["query_bridge"]["pave_depth"] = int(args.query_bridge_pave_depth)
+    profile["query_bridge"]["all_queries"] = bool(args.query_bridge_all)
+    profile["query_bridge"]["adaptive_all"] = bool(args.query_bridge_adaptive_all)
+    profile["query_bridge"]["adaptive_max_path_length"] = float(args.query_bridge_adaptive_max_path_length)
+    profile["query_bridge"]["direct_sample_step"] = float(args.query_bridge_direct_sample_step)
+    profile["query_bridge"]["repair_subdivisions"] = int(args.query_bridge_repair_subdivisions)
+    profile["query_bridge"]["direct_max_length"] = float(args.query_bridge_direct_max_length)
+    if box_budgets is not None:
+        profile["box_budget_grid"] = [int(value) for value in box_budgets]
+    return profile
 
 
 def parse_args() -> argparse.Namespace:
@@ -53,7 +98,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--methods", default="sbf_leaf_rrt")
     parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--box-budgets", default="")
+    parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
+    parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
+    parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
+    parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
+    parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
+    parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE)
     parser.add_argument("--connector-segment-resolution", type=int, default=None)
+    parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-adaptive-all", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-adaptive-max-path-length", type=float, default=4.5)
+    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.04)
+    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=1)
+    parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
@@ -68,12 +127,54 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
     parser.add_argument("--prm-planner-kind", default="prm")
     parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--bitstar-timeout-s", type=float, default=5.0)
-    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=5.0)
+    parser.add_argument("--bitstar-timeout-s", type=float, default=0.5)
+    parser.add_argument("--bitstar-timeout-grid-s", default="")
+    parser.add_argument("--bitstar-checkpoint-grid-s", default="")
+    parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=0.005)
     parser.add_argument("--bitstar-samples-per-batch", type=int, default=100)
     parser.add_argument("--bitstar-rewire-factor", type=float, default=5.0)
-    parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args()
+
+
+def bitstar_checkpoint_grid_from_args(args: argparse.Namespace, timeout_s: float) -> list[float]:
+    raw_grid = str(getattr(args, "bitstar_checkpoint_grid_s", "")).strip()
+    if not raw_grid and str(getattr(args, "bitstar_timeout_grid_s", "")).strip():
+        raw_grid = str(args.bitstar_timeout_grid_s)
+    if raw_grid:
+        values = sorted({float(value) for value in csv_list(raw_grid) if float(value) > 0.0})
+        values = [min(float(timeout_s), value) for value in values if value <= float(timeout_s) + 1e-9]
+        if not values or abs(values[-1] - float(timeout_s)) > 1e-9:
+            values.append(float(timeout_s))
+        return values
+    interval_s = max(float(args.bitstar_checkpoint_interval_s), 1e-9)
+    values: list[float] = []
+    target_s = interval_s
+    while target_s < float(timeout_s) - 1e-9:
+        values.append(float(target_s))
+        target_s += interval_s
+    values.append(float(timeout_s))
+    return values
+
+
+def bitstar_trace_interval_for_grid(args: argparse.Namespace, checkpoint_grid_s: list[float], timeout_s: float) -> float:
+    deltas = [
+        float(b) - float(a)
+        for a, b in zip([0.0] + checkpoint_grid_s[:-1], checkpoint_grid_s)
+        if float(b) - float(a) > 1e-9
+    ]
+    if deltas:
+        return max(1e-9, min(deltas))
+    return max(1e-9, min(float(args.bitstar_checkpoint_interval_s), float(timeout_s)))
+
+
+def checkpoint_at_or_after(checkpoints: list[dict[str, Any]], target_s: float) -> dict[str, Any]:
+    if not checkpoints:
+        return {}
+    for checkpoint in checkpoints:
+        if float(checkpoint.get("checkpoint_s", 0.0) or 0.0) >= float(target_s) - 1e-9:
+            return checkpoint
+    return checkpoints[-1]
 
 
 def path_length(path: list[list[float]]) -> float:
@@ -126,6 +227,27 @@ def audit_path(
     return True, time.perf_counter() - t0, "passed"
 
 
+def simplify_path_if_requested(
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    segment_step: float,
+    simplify_time_s: float,
+) -> tuple[list[list[float]], float, str]:
+    if len(path) < 2 or simplify_time_s <= 0.0:
+        return path, 0.0, "skipped"
+    result = sbf.ompl_simplify_path(
+        robot,
+        obstacles,
+        path,
+        float(segment_step),
+        float(simplify_time_s),
+    )
+    if bool(result.get("ok")):
+        return [[float(value) for value in point] for point in result.get("path", [])], float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
+    return path, float(result.get("t_s", 0.0) or 0.0), str(result.get("reason", "simplify_failed"))
+
+
 def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
@@ -146,7 +268,15 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         options=RBFLeafRRTOptions(
             seed=int(scene_seed),
             deep_max_boxes=int(args.deep_max_boxes),
+            rbf_max_depth=int(args.rbf_max_depth),
             threads=int(args.threads),
+            leaf_start_depth=int(args.leaf_start_depth),
+            leaf_max_depth=int(args.leaf_max_depth),
+            deep_ffb_depth=int(args.deep_ffb_depth),
+            connector_pave_depth=int(args.connector_pave_depth),
+            query_bridge_pave_depth=int(args.query_bridge_pave_depth),
+            ffb_start_depth=int(args.ffb_start_depth),
+            ffb_search_mode=str(args.ffb_search_mode),
             use_external_evidence=True,
             external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
             external_evidence_verify_identity=False,
@@ -156,15 +286,25 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             symmetry_aligned_cache_schedule=str(robot_name) == "iiwa",
             database_canonical_mode=True,
             case_label=f"rbf_{robot_name}_{difficulty}",
-            parallel_virtual_validation=False,
-            leaf_threads=1,
+            parallel_virtual_validation=True,
+            leaf_threads=int(args.threads),
             canonicalize_queries=False,
             audit_collision_tolerance=float(args.audit_collision_tolerance),
+            connector_pair_timeout_ms=DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
+            connector_max_pairs_per_gap=DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
+            query_bridge_all=bool(args.query_bridge_all),
+            query_bridge_adaptive_all=bool(args.query_bridge_adaptive_all),
+            query_bridge_adaptive_max_path_length=float(args.query_bridge_adaptive_max_path_length),
+            query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
+            query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
+            query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
             connector_segment_resolution=(
                 int(args.connector_segment_resolution)
                 if args.connector_segment_resolution is not None
                 else RBFLeafRRTOptions().connector_segment_resolution
             ),
+            final_rrt_simplify_timeout_ms=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
+            final_rrt_simplify_attempts=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
         ),
     )
     row.update(
@@ -401,6 +541,92 @@ def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_n
     )
 
 
+def run_bitstar_scene_trace(args: argparse.Namespace,
+                            catalog: dict[str, Any],
+                            robot_name: str,
+                            difficulty: str,
+                            scene_seed: int,
+                            timeout_s: float,
+                            checkpoint_interval_s: float,
+                            checkpoint_grid_s: list[float]) -> list[dict[str, Any]]:
+    scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
+    robot = make_robot(robot_name)
+    result = sbf.ompl_bitstar_trace(
+        robot,
+        list(scene.obstacles),
+        list(scene.start),
+        list(scene.goal),
+        float(timeout_s) * 1000.0,
+        float(checkpoint_interval_s) * 1000.0,
+        float(args.audit_segment_step),
+        int(args.seed_base) + 20011 * int(scene_seed),
+        int(args.bitstar_samples_per_batch),
+        float(args.bitstar_rewire_factor),
+        bool(args.bitstar_stop_on_solution_improvement),
+    )
+    rows: list[dict[str, Any]] = []
+    checkpoints = [dict(item) for item in result.get("checkpoints", [])]
+    for target_checkpoint_s in checkpoint_grid_s:
+        checkpoint = checkpoint_at_or_after(checkpoints, target_checkpoint_s)
+        checkpoint_s = float(checkpoint.get("checkpoint_s", 0.0) or 0.0)
+        path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
+        path, simplify_s, simplify_status = simplify_path_if_requested(
+            robot,
+            list(scene.obstacles),
+            path,
+            float(args.audit_segment_step),
+            float(args.ompl_simplify_time_s),
+        )
+        audit_passed, audit_s, audit_status = audit_path(
+            robot,
+            list(scene.obstacles),
+            path,
+            float(args.audit_segment_step),
+            start=list(scene.start),
+            goal=list(scene.goal),
+            collision_tolerance=float(args.audit_collision_tolerance),
+        )
+        ok = bool(checkpoint.get("ok")) and audit_passed
+        rows.append(summarize_single_query_method(
+            "bitstar",
+            robot_name,
+            difficulty,
+            scene_seed,
+            scene,
+            float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) + simplify_s,
+            audit_s,
+            bool(checkpoint.get("ok")),
+            audit_passed,
+            audit_status,
+            path_length(path) if ok else math.nan,
+            path,
+            {
+                "planner": "OMPL_BITstar_trace",
+                "status": str(checkpoint.get("status", checkpoint.get("reason", ""))),
+                "reason": str(checkpoint.get("reason", checkpoint.get("status", ""))),
+                "iterations": int(checkpoint.get("iterations", 0) or 0),
+                "batches": int(checkpoint.get("batches", 0) or 0),
+                "timeout_s": float(timeout_s),
+                "checkpoint_interval_s": float(checkpoint_interval_s),
+                "checkpoint_grid_s": checkpoint_grid_s,
+                "checkpoint_s": checkpoint_s,
+                "target_checkpoint_s": float(target_checkpoint_s),
+                "samples_per_batch": int(args.bitstar_samples_per_batch),
+                "rewire_factor": float(args.bitstar_rewire_factor),
+                "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+                "simplify_time_s": float(args.ompl_simplify_time_s),
+                "simplify_status": simplify_status,
+            },
+            stage_id=(
+                f"batch{int(args.bitstar_samples_per_batch)}"
+                f"_rw{float(args.bitstar_rewire_factor):g}"
+                f"_trace{float(timeout_s):g}s_t{target_checkpoint_s:g}s"
+            ),
+            budget_s=float(target_checkpoint_s),
+        ))
+    return rows
+
+
 def run_baseline_scene(args: argparse.Namespace, catalog: dict[str, Any], method: str, robot: str, difficulty: str, seed: int, budget_s: float | None = None) -> dict[str, Any]:
     if method == "rrtconnect":
         row = run_rrtconnect_scene(args, catalog, robot, difficulty, seed)
@@ -432,6 +658,17 @@ def run_baseline_scene(args: argparse.Namespace, catalog: dict[str, Any], method
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def timeout_cap(row: dict[str, Any]) -> float:
+        diagnostics = row.get("diagnostics", {})
+        if isinstance(diagnostics, dict):
+            try:
+                value = float(diagnostics.get("timeout_s", math.nan))
+            except (TypeError, ValueError):
+                value = math.nan
+            if math.isfinite(value):
+                return value
+        return math.nan
+
     out: list[dict[str, Any]] = []
     keys = sorted({
         (
@@ -460,10 +697,12 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "difficulty": difficulty,
                 "stage_id": stage_id,
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
+                "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
                 "deep_max_boxes": budget,
                 "scenes": len(items),
                 "success_scenes": len(success_items),
                 "obstacles_median": median(row.get("obstacle_count", math.nan) for row in items),
+                "measured_time_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "audit_s_median": median(row.get("audit_s", math.nan) for row in items),
                 "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success_items),
@@ -483,10 +722,12 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "difficulty",
         "stage_id",
         "budget_s",
+        "timeout_cap_s",
         "deep_max_boxes",
         "scenes",
         "success_scenes",
         "obstacles_median",
+        "measured_time_s_median",
         "planning_s_median",
         "audit_s_median",
         "path_length_mean",
@@ -579,19 +820,19 @@ def main() -> int:
     methods = csv_list(args.methods)
     box_budgets = [int(item) for item in csv_list(args.box_budgets)] if str(args.box_budgets).strip() else rbf_budget_grid(args.phase)
     prm_build_grid_s = [float(item) for item in csv_list(args.prm_build_grid_s)] if str(args.prm_build_grid_s).strip() else [float(args.prm_build_s)]
-    bitstar_stage_s: list[float] = []
-    interval_s = max(1e-9, float(args.bitstar_checkpoint_interval_s))
-    target = interval_s
-    while target < float(args.bitstar_timeout_s) - 1e-9:
-        bitstar_stage_s.append(float(target))
-        target += interval_s
-    bitstar_stage_s.append(float(args.bitstar_timeout_s))
+    bitstar_explicit_grid = [float(item) for item in csv_list(args.bitstar_timeout_grid_s)] if str(args.bitstar_timeout_grid_s).strip() else []
+    bitstar_checkpoint_grid = [float(item) for item in csv_list(args.bitstar_checkpoint_grid_s)] if str(args.bitstar_checkpoint_grid_s).strip() else bitstar_explicit_grid
+    bitstar_trace_timeout_s = max(bitstar_checkpoint_grid or bitstar_explicit_grid) if (bitstar_checkpoint_grid or bitstar_explicit_grid) else float(args.bitstar_timeout_s)
+    bitstar_stage_s = bitstar_checkpoint_grid_from_args(args, bitstar_trace_timeout_s)
+    args.bitstar_checkpoint_interval_s = bitstar_trace_interval_for_grid(args, bitstar_stage_s, bitstar_trace_timeout_s)
     if args.phase == "smoke":
         robots = robots[:1]
         difficulties = difficulties[:1]
         box_budgets = [int(args.deep_max_boxes)]
         prm_build_grid_s = [min(float(args.prm_build_s), 0.25)]
-        bitstar_stage_s = [min(float(args.bitstar_timeout_s), 0.25)]
+        bitstar_trace_timeout_s = min(float(args.bitstar_timeout_s), 0.25)
+        bitstar_stage_s = [bitstar_trace_timeout_s]
+    rbf_profile = effective_rbf_profile(args, box_budgets)
     catalog_path = args.scene_catalog or (args.out_dir / "random_scene_catalog.json")
     catalog_summary: dict[str, Any] = {"path": str(catalog_path), "mode": args.scene_catalog_mode, "records": None}
     catalog: dict[str, Any] | None = None
@@ -627,7 +868,7 @@ def main() -> int:
         elif method == "prm":
             budgets = prm_build_grid_s
         elif method == "bitstar":
-            budgets = bitstar_stage_s
+            budgets = [bitstar_trace_timeout_s]
         elif method == "rrtconnect":
             budgets = [float(args.rrt_timeout_s)]
         else:
@@ -647,7 +888,7 @@ def main() -> int:
                             else (
                                 f"batch{int(args.bitstar_samples_per_batch)}"
                                 f"_rw{float(args.bitstar_rewire_factor):g}"
-                                f"_t{float(budget):g}s"
+                                f"_trace{float(budget):g}s_dt{float(args.bitstar_checkpoint_interval_s):g}s"
                             ) if method == "bitstar"
                             else f"timeout{float(args.rrt_timeout_s):g}s" if method == "rrtconnect"
                             else method
@@ -667,7 +908,7 @@ def main() -> int:
                             "coverage_root": "full_robot_joint_limits",
                             "canonical_mapping_scope": "LECT_internal_only",
                             "status": "planned" if args.dry_run else "planned_for_execution",
-                            "rbf_default_profile": default_rbf_profile() if method == "sbf_leaf_rrt" else None,
+                            "rbf_default_profile": copy.deepcopy(rbf_profile) if method == "sbf_leaf_rrt" else None,
                             "rbf_robot_lectdb": robot_lectdb_profile(robot) if method == "sbf_leaf_rrt" else None,
                             "rbf_box_budgets": box_budgets if method == "sbf_leaf_rrt" else None,
                             "ompl_registered_profile": "exp05_registered" if method in {"prm", "bitstar"} else None,
@@ -681,6 +922,9 @@ def main() -> int:
                             } if method == "prm" else None,
                             "bitstar_config": {
                                 "timeout_s": float(budget) if method == "bitstar" else None,
+                                "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
+                                "checkpoint_grid_s": bitstar_stage_s,
+                                "checkpoint_stage_s": bitstar_stage_s,
                                 "samples_per_batch": int(args.bitstar_samples_per_batch),
                                 "rewire_factor": float(args.bitstar_rewire_factor),
                                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
@@ -694,6 +938,18 @@ def main() -> int:
                 print(f"[exp06] method=sbf_leaf_rrt robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']} budget={row['deep_max_boxes']}", flush=True)
                 args.deep_max_boxes = int(row["deep_max_boxes"])
                 run_rows.append(run_rbf_scene(args, catalog, str(row["robot"]), str(row["difficulty"]), int(row["scene_seed"])))
+            elif row["method"] == "bitstar":
+                print(f"[exp06] method=bitstar stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
+                run_rows.extend(run_bitstar_scene_trace(
+                    args,
+                    catalog,
+                    str(row["robot"]),
+                    str(row["difficulty"]),
+                    int(row["scene_seed"]),
+                    float(row["budget_s"]) if row.get("budget_s") is not None else float(args.bitstar_timeout_s),
+                    float(args.bitstar_checkpoint_interval_s),
+                    bitstar_stage_s,
+                ))
             else:
                 print(f"[exp06] method={row['method']} stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
                 run_rows.append(run_baseline_scene(
@@ -712,7 +968,7 @@ def main() -> int:
         "phase": args.phase,
         "status": "dry_run" if args.dry_run else "executed",
         "environment": environment_metadata(),
-        "rbf_default_profile": default_rbf_profile(),
+        "rbf_default_profile": rbf_profile,
         "audit": {
             "segment_step": float(args.audit_segment_step),
             "collision_tolerance": float(args.audit_collision_tolerance),
@@ -730,8 +986,9 @@ def main() -> int:
             },
             "bitstar": {
                 "stage_s": bitstar_stage_s,
-                "timeout_s": float(args.bitstar_timeout_s),
+                "timeout_s": float(bitstar_trace_timeout_s),
                 "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
+                "checkpoint_grid_s": bitstar_stage_s,
                 "samples_per_batch": int(args.bitstar_samples_per_batch),
                 "rewire_factor": float(args.bitstar_rewire_factor),
                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),

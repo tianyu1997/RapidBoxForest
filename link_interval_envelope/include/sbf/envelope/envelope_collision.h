@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 
 namespace rbf {
 
@@ -34,6 +35,7 @@ struct EnvelopeCollisionOptions {
     bool direct_support_hull_collision = false;
     bool count_all_pairs = false;
     double safety_epsilon = 0.0;
+    double overlap_tolerance = 0.0;
 };
 
 struct EnvelopeCollisionStats {
@@ -50,6 +52,7 @@ struct EnvelopeCollisionStats {
     int64_t gjk_rejects = 0;
     int64_t gjk_iterations = 0;
     int64_t maybe_pairs = 0;
+    int64_t overlap_tolerance_rejects = 0;
     double maybe_pair_overlap_depth_sum = 0.0;
     double maybe_pair_overlap_depth_max = 0.0;
     double maybe_pair_overlap_volume_sum = 0.0;
@@ -187,6 +190,104 @@ inline float aabb_overlap_volume_ratio_padded(const float* a, const float* b, fl
     return std::max(0.0f, std::min(1.0f, overlap_volume / volume));
 }
 
+inline double point_aabb_distance_sq_at_t(const double origin[3],
+                                          const double dir[3],
+                                          const float* obstacle,
+                                          double t) {
+    double dist_sq = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double lo = static_cast<double>(obstacle[axis]);
+        const double hi = static_cast<double>(obstacle[axis + 3]);
+        const double value = origin[axis] + t * dir[axis];
+        if (value < lo) {
+            const double delta = lo - value;
+            dist_sq += delta * delta;
+        } else if (value > hi) {
+            const double delta = value - hi;
+            dist_sq += delta * delta;
+        }
+    }
+    return dist_sq;
+}
+
+inline double segment_aabb_distance_sq(const double origin[3],
+                                       const double dir[3],
+                                       const float* obstacle) {
+    std::array<double, 8> breaks{};
+    int n_breaks = 0;
+    auto append_break = [&](double value) {
+        if (value >= 0.0 && value <= 1.0 && n_breaks < static_cast<int>(breaks.size())) {
+            breaks[static_cast<std::size_t>(n_breaks++)] = value;
+        }
+    };
+    append_break(0.0);
+    append_break(1.0);
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(dir[axis]) < 1e-15) {
+            continue;
+        }
+        const double inv = 1.0 / dir[axis];
+        const double t_lo = (static_cast<double>(obstacle[axis]) - origin[axis]) * inv;
+        const double t_hi = (static_cast<double>(obstacle[axis + 3]) - origin[axis]) * inv;
+        if (t_lo > 0.0 && t_lo < 1.0) append_break(t_lo);
+        if (t_hi > 0.0 && t_hi < 1.0) append_break(t_hi);
+    }
+    std::sort(breaks.begin(), breaks.begin() + n_breaks);
+    int unique_count = 0;
+    for (int idx = 0; idx < n_breaks; ++idx) {
+        if (unique_count == 0 ||
+            std::abs(breaks[static_cast<std::size_t>(idx)] -
+                     breaks[static_cast<std::size_t>(unique_count - 1)]) > 1e-14) {
+            breaks[static_cast<std::size_t>(unique_count++)] = breaks[static_cast<std::size_t>(idx)];
+        }
+    }
+
+    double best = std::numeric_limits<double>::infinity();
+    auto eval = [&](double t) {
+        best = std::min(best, point_aabb_distance_sq_at_t(origin, dir, obstacle, t));
+    };
+    for (int idx = 0; idx < unique_count; ++idx) {
+        eval(breaks[static_cast<std::size_t>(idx)]);
+    }
+    for (int idx = 0; idx + 1 < unique_count; ++idx) {
+        const double left = breaks[static_cast<std::size_t>(idx)];
+        const double right = breaks[static_cast<std::size_t>(idx + 1)];
+        if (right - left <= 1e-14) {
+            continue;
+        }
+        const double mid = 0.5 * (left + right);
+        bool inside_all_axes = true;
+        double numerator = 0.0;
+        double denominator = 0.0;
+        for (int axis = 0; axis < 3; ++axis) {
+            const double lo = static_cast<double>(obstacle[axis]);
+            const double hi = static_cast<double>(obstacle[axis + 3]);
+            const double value = origin[axis] + mid * dir[axis];
+            double bound = 0.0;
+            if (value < lo) {
+                bound = lo;
+            } else if (value > hi) {
+                bound = hi;
+            } else {
+                continue;
+            }
+            inside_all_axes = false;
+            numerator += dir[axis] * (origin[axis] - bound);
+            denominator += dir[axis] * dir[axis];
+        }
+        if (inside_all_axes) {
+            return 0.0;
+        }
+        if (denominator > 0.0) {
+            const double t_star = -numerator / denominator;
+            if (t_star >= left && t_star <= right) {
+                eval(t_star);
+            }
+        }
+    }
+    return best;
+}
+
 inline void include_aabb(float dst[6], const float* src) {
     dst[0] = std::min(dst[0], src[0]);
     dst[1] = std::min(dst[1], src[1]);
@@ -237,6 +338,36 @@ inline Vec3 support_minkowski_support_hull_vs_obstacle(
     const Vec3& dir)
 {
     return support_support_hull(record, dir) - support_aabb(obstacle, -dir, xyz_pad);
+}
+
+inline bool support_hull_capsule_bound_separates_obstacle(
+    const float* record,
+    const float* obstacle,
+    float xyz_pad)
+{
+    double origin[3];
+    double target[3];
+    double bound_radius_sq = 0.0;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double p_lo = static_cast<double>(record[axis]);
+        const double p_hi = static_cast<double>(record[axis + 3]);
+        const double d_lo = static_cast<double>(record[axis + 6]);
+        const double d_hi = static_cast<double>(record[axis + 9]);
+        origin[axis] = 0.5 * (p_lo + p_hi);
+        target[axis] = 0.5 * (d_lo + d_hi);
+        const double p_half = 0.5 * std::max(0.0, p_hi - p_lo);
+        const double d_half = 0.5 * std::max(0.0, d_hi - d_lo);
+        bound_radius_sq += std::max(p_half, d_half) * std::max(p_half, d_half);
+    }
+    const double dir[3] = {
+        target[0] - origin[0],
+        target[1] - origin[1],
+        target[2] - origin[2],
+    };
+    const double distance_sq = segment_aabb_distance_sq(origin, dir, obstacle);
+    const double effective_radius = static_cast<double>(std::max(0.0f, xyz_pad)) +
+        std::sqrt(bound_radius_sq);
+    return distance_sq > effective_radius * effective_radius + 1e-14;
 }
 
 inline bool handle_line(Simplex& simplex, Vec3& direction) {
@@ -449,6 +580,11 @@ inline bool support_hull_separates_obstacle(
 
     const float* record = envelope.support_hulls.data() +
         static_cast<std::size_t>(box_index * kSupportHullRecordSize);
+    if (support_hull_capsule_bound_separates_obstacle(record, obstacle, xyz_pad)) {
+        stats.gjk_tests += 1;
+        stats.gjk_rejects += 1;
+        return true;
+    }
     Vec3 direction = obstacle_center(obstacle) -
         (box_center(record) + box_center(record + 6)) * 0.5f;
     if (norm_sq(direction) <= kCollisionEps) {
@@ -582,9 +718,13 @@ inline CollisionResultKind collide_envelope_aabbs(
                 continue;
             }
 
-            s.maybe_pairs += 1;
             const double overlap_depth =
                 static_cast<double>(detail::aabb_overlap_depth_padded(link_box, obstacle, pad));
+            if (overlap_depth <= std::max(0.0, options.overlap_tolerance)) {
+                s.overlap_tolerance_rejects += 1;
+                continue;
+            }
+            s.maybe_pairs += 1;
             s.maybe_pair_overlap_depth_sum += overlap_depth;
             s.maybe_pair_overlap_depth_max =
                 std::max(s.maybe_pair_overlap_depth_max, overlap_depth);

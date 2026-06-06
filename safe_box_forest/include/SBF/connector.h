@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace rbf {
@@ -34,6 +35,18 @@ struct RRTConnectConfig {
 	bool shortcut_path = true;
 	double domain_tolerance = 1e-3;
 	std::vector<Interval> domain_intervals;
+};
+
+struct DebugBoundaryFfbFailure {
+	std::vector<double> seed;
+	std::vector<Interval> intervals;
+	OracleValidationDetail validation_detail;
+	int node = -1;
+	int depth = -1;
+	int changed_dim = -1;
+	int fail_code = 0;
+	bool hit_unknown_depth_cap = false;
+	bool hit_reserved_depth_cap = false;
 };
 
 struct ChainPaveConfig {
@@ -68,14 +81,23 @@ struct ChainPaveConfig {
 	// Maximum fresh FFB calls in fast gap-fill. <0 means unlimited (subject to
 	// max_chain/time); 0 means reuse-only coverage.
 	int gap_fill_max_ffb_calls = 32;
-	// Do not spend a fresh FFB result unless its certified box covers at least this
-	// much bridge arc length. <=0 accepts any containing certified box.
+	// Deprecated: boundary-only chain paving no longer ranks global uncovered
+	// samples by arc gain. Kept for API/config compatibility.
 	double gap_fill_min_arc_gain = 0.01;
-	// When true, chain_pave advances only through graph-adjacent boxes and seeds
-	// new boxes from the current connected front instead of globally ranking
-	// uncovered segment samples.
+	// Deprecated: chain_pave_along_path now treats this as always true. Connector
+	// box commits must be graph-adjacent to the current parent/front box.
 	bool require_connected_chain = false;
+	// Optional shallow-to-deep FFB schedule for each seed. Empty means use
+	// find_free_box.max_depth directly. Values above find_free_box.max_depth are
+	// capped, and duplicate/nonpositive values are ignored.
+	std::vector<int> adaptive_ffb_depths;
+	// When adaptive_ffb_depths is non-empty, accept a non-final-depth FFB result
+	// only if its box covers at least this fraction of the local path segment
+	// currently being paved. This prevents shallow early exits that certify a
+	// free box but do not materially advance the corridor.
+	double adaptive_min_segment_fraction = 0.75;
 	FindFreeBoxOptions find_free_box;
+	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;
 };
 
 struct IslandConnectorConfig {

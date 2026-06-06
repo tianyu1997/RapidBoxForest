@@ -5,6 +5,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ from experiments.common.rbf_leaf_rrt import (
     run_leaf_rrt,
 )
 from experiments.common.rbf_defaults import (
+    CRITSAMPLE_D23_CACHE_LABEL,
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
     DEFAULT_RBF_AUDIT_RESOLUTION,
@@ -40,6 +42,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
+    DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
@@ -59,6 +63,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
@@ -66,11 +71,9 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
-    D23_CACHE_LABEL,
-    D23_ROOT_INTERVALS,
     rbf_budget_grid,
     robot_joint_limit_tuples,
-    robot_sector_expanded_root_tuples,
+    robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
 )
 from experiments.common.sbf_import import import_sbf
@@ -81,6 +84,7 @@ sbf = import_sbf()
 
 ABLATIONS = [
     "baseline_d23_aafk_support_hull_8t",
+    "critsample_d23_cache",
     "no_cache_full_root_ts",
     "critsample_support_hull",
     "no_external_lect",
@@ -91,6 +95,7 @@ ABLATIONS = [
 
 CASE_LABELS = {
     "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
+    "critsample_d23_cache": "CritSample d23",
     "no_cache_full_root_ts": "No-cache full-root TS",
     "critsample_support_hull": "CritSample endpoints",
     "no_external_lect": "No LECT replay",
@@ -126,6 +131,10 @@ THREAD_DIFF_KEYS = {
 
 ALLOWED_CONFIG_DIFFS = {
     "baseline_d23_aafk_support_hull_8t": set(),
+    "critsample_d23_cache": {
+        "option.endpoint_source",
+        "cfg.endpoint_source.source",
+    },
     "no_cache_full_root_ts": set(),
     "no_external_lect": set(),
     "support_hull_no_aabb": {
@@ -146,10 +155,18 @@ ALLOWED_CONFIG_DIFFS = {
 
 def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for query in queries:
+    for query_index, query in enumerate(queries):
         start = [float(value) for value in query.start]
         goal = [float(value) for value in query.goal]
-        result = forest.query(start, goal)
+        previous_active_query = os.environ.get("RBF_ACTIVE_QUERY_INDEX")
+        os.environ["RBF_ACTIVE_QUERY_INDEX"] = str(query_index)
+        try:
+            result = forest.query(start, goal)
+        finally:
+            if previous_active_query is None:
+                os.environ.pop("RBF_ACTIVE_QUERY_INDEX", None)
+            else:
+                os.environ["RBF_ACTIVE_QUERY_INDEX"] = previous_active_query
         path_length = float(result.path_length) if bool(result.success) else math.nan
         raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0
@@ -178,12 +195,12 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
 def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.Namespace) -> tuple[Any, RBFLeafRRTOptions]:
     robot = sbf.load_iiwa14_robot()
     threads = 1 if case == "single_thread" else int(args.threads)
-    if str(args.root_scope) == "full":
-        task_root = robot_joint_limit_tuples(robot)
-        coverage_root = task_root
-    else:
-        task_root = list(D23_ROOT_INTERVALS)
-        coverage_root = robot_sector_expanded_root_tuples("iiwa", robot) or task_root
+    task_root = robot_joint_limit_tuples(robot)
+    active_root = robot_symmetry_aligned_root_tuples(robot)
+    coverage_root = task_root
+    warm_cache_label = str(args.warm_cache_label)
+    if case == "critsample_d23_cache" and warm_cache_label == D23_CACHE_LABEL:
+        warm_cache_label = CRITSAMPLE_D23_CACHE_LABEL
     options = RBFLeafRRTOptions(
         seed=int(seed),
         deep_max_boxes=int(deep_max_boxes),
@@ -199,6 +216,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         domain_attempt_cap=int(args.domain_attempt_cap),
         validation_batch_size=int(args.validation_batch_size),
         ffb_start_depth=int(args.ffb_start_depth),
+        ffb_search_mode=str(args.ffb_search_mode),
         audit_resolution=int(args.audit_resolution),
         audit_segment_step=float(args.audit_segment_step),
         audit_collision_tolerance=float(args.audit_collision_tolerance),
@@ -209,17 +227,17 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         envelope="link_aabb" if case == "link_aabb" else "support_hull",
         support_hull_skip_aabb_broadphase=(case == "support_hull_no_aabb"),
         support_hull_direct_collision=(case == "support_hull_direct"),
-        endpoint_source="critsample" if case == "critsample_support_hull" else "ifk",
+        endpoint_source="critsample" if case in {"critsample_support_hull", "critsample_d23_cache"} else "ifk",
         unsafe_sampling_validation=False,
-        use_external_evidence=case.startswith("baseline_d23"),
+        use_external_evidence=case.startswith("baseline_d23") or case == "critsample_d23_cache",
         external_evidence_live_retry_on_maybe=False,
-        external_evidence_path=Path(args.rbf_cache_root) / str(args.warm_cache_label),
+        external_evidence_path=Path(args.rbf_cache_root) / warm_cache_label,
         external_evidence_verify_identity=False,
         use_shelf_root_override=False,
-        root_override_tuples=task_root,
+        root_override_tuples=active_root,
         coverage_override_tuples=coverage_root,
         symmetry_aligned_native_root=False,
-        symmetry_aligned_cache_schedule=False,
+        symmetry_aligned_cache_schedule=True,
         case_label=case,
         segment_edges_fallback_only=bool(args.segment_edges_fallback_only),
         connector_birrt=bool(args.connector_birrt),
@@ -235,7 +253,14 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         connector_pave_max_chain=int(args.connector_pave_max_chain),
         connector_pave_steps=int(args.connector_pave_steps),
         connector_pave_depth=int(args.connector_pave_depth),
+        connector_adaptive_min_segment_fraction=float(args.connector_adaptive_min_segment_fraction),
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
+        query_bridge_adaptive_ffb_depths=str(args.query_bridge_adaptive_ffb_depths),
+        query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
+        query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
+        query_bridge_force_indices=str(args.query_bridge_force_indices),
+        query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
+        query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
         connector_pave_fill_gaps=bool(args.connector_pave_fill_gaps),
         connector_pave_require_connected_chain=bool(args.connector_pave_require_connected_chain),
         final_collision_shortcut=bool(args.final_collision_shortcut),
@@ -254,6 +279,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         corridor_refine_min_delta=float(args.corridor_refine_min_delta),
         query_bridge_all=bool(args.query_bridge_all),
         query_bridge_labels=str(args.query_bridge_labels),
+        query_bridge_segment_only_indices=str(args.query_bridge_segment_only_indices),
         allow_anchor_roots=True,
         use_priority_points=True,
         run_rrt_grower=bool(args.run_rrt_grower),
@@ -304,6 +330,12 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.leaf_threads": int(options.leaf_threads),
         "option.query_bridge_all": bool(options.query_bridge_all),
         "option.query_bridge_labels": str(options.query_bridge_labels),
+        "option.query_bridge_segment_only_indices": str(options.query_bridge_segment_only_indices),
+        "option.query_bridge_direct_sample_step": float(options.query_bridge_direct_sample_step),
+        "option.query_bridge_repair_subdivisions": int(options.query_bridge_repair_subdivisions),
+        "option.query_bridge_force_indices": str(options.query_bridge_force_indices),
+        "option.query_bridge_forced_attempts": int(options.query_bridge_forced_attempts),
+        "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
         "cfg.endpoint_source.source": str(cfg.endpoint_source.source),
         "cfg.envelope_type.type": str(cfg.envelope_type.type),
         "cfg.envelope_type.support_hull_config.skip_aabb_broadphase": bool(getattr(cfg.envelope_type.support_hull_config, "skip_aabb_broadphase", False)),
@@ -345,8 +377,15 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "cfg.connector.pave.max_chain": int(cfg.connector.pave.max_chain),
         "cfg.connector.pave.max_steps_per_waypoint": int(cfg.connector.pave.max_steps_per_waypoint),
         "cfg.connector.pave.find_free_box.max_depth": int(cfg.connector.pave.find_free_box.max_depth),
+        "cfg.connector.pave.adaptive_min_segment_fraction": float(
+            getattr(cfg.connector.pave, "adaptive_min_segment_fraction", 0.0)
+        ),
         "cfg.query_bridge_pave_depth": int(cfg.query_bridge_pave_depth),
+        "cfg.query_bridge_adaptive_ffb_depths": list(
+            getattr(cfg, "query_bridge_adaptive_ffb_depths", [])
+        ),
         "cfg.connector.pave.find_free_box.skip_to_depth": int(cfg.connector.pave.find_free_box.skip_to_depth),
+        "cfg.connector.pave.find_free_box.search_mode": str(cfg.connector.pave.find_free_box.search_mode),
         "cfg.connector.pave.fill_gaps": bool(cfg.connector.pave.fill_gaps),
         "cfg.connector.pave.require_connected_chain": bool(cfg.connector.pave.require_connected_chain),
         "cfg.query.audit_resolution": int(cfg.query.audit_resolution),
@@ -430,7 +469,14 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "audit_s_median": median(row["audit_s"] for row in items),
             "path_length_mean": mean(row["path_length_mean"] for row in items),
             "raw_segment_fraction_median": median(row["raw_segment_fraction"] for row in items),
+            "build_final_boxes_median": median(row.get("build_final_boxes", row["final_boxes"]) for row in items),
+            "after_corridor_boxes_median": median(row.get("after_corridor_boxes", row["final_boxes"]) for row in items),
+            "query_bridge_boxes_added_observed_median": median(row.get("query_bridge_boxes_added_observed", 0) for row in items),
+            "query_bridge_added_reported_median": median(row.get("query_bridge_added", 0) for row in items),
             "final_boxes_median": median(row["final_boxes"] for row in items),
+            "build_segment_edges_median": median(row.get("build_segment_edges", row["segment_edges"]) for row in items),
+            "query_bridge_segment_edges_added_observed_median": median(row.get("query_bridge_segment_edges_added_observed", 0) for row in items),
+            "final_segment_edges_median": median(row.get("final_segment_edges", row["segment_edges"]) for row in items),
             "segment_edges_median": median(row["segment_edges"] for row in items),
             "adjacency_islands_median": median(row["adjacency_islands"] for row in items),
             "external_hits_median": median(row["external_hits"] for row in items),
@@ -441,7 +487,35 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["case", "deep_max_boxes", "runs", "success_runs", "planning_s_median", "build_s_median", "query_s_median", "leaf_sweep_s_median", "deep_refine_s_median", "connector_s_median", "corridor_refine_s_median", "corridor_refine_added_median", "audit_s_median", "path_length_mean", "raw_segment_fraction_median", "final_boxes_median", "segment_edges_median", "adjacency_islands_median", "external_hits_median", "unsafe_sampling_validation"]
+    fields = [
+        "case",
+        "deep_max_boxes",
+        "runs",
+        "success_runs",
+        "planning_s_median",
+        "build_s_median",
+        "query_s_median",
+        "leaf_sweep_s_median",
+        "deep_refine_s_median",
+        "connector_s_median",
+        "corridor_refine_s_median",
+        "corridor_refine_added_median",
+        "audit_s_median",
+        "path_length_mean",
+        "raw_segment_fraction_median",
+        "build_final_boxes_median",
+        "after_corridor_boxes_median",
+        "query_bridge_boxes_added_observed_median",
+        "query_bridge_added_reported_median",
+        "final_boxes_median",
+        "build_segment_edges_median",
+        "query_bridge_segment_edges_added_observed_median",
+        "final_segment_edges_median",
+        "segment_edges_median",
+        "adjacency_islands_median",
+        "external_hits_median",
+        "unsafe_sampling_validation",
+    ]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -501,6 +575,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain-attempt-cap", type=int, default=DEFAULT_RBF_DOMAIN_ATTEMPT_CAP)
     parser.add_argument("--validation-batch-size", type=int, default=DEFAULT_RBF_VALIDATION_BATCH_SIZE)
     parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
+    parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE, choices=["linear", "binary", "binary-depth", "BinaryDepth", "Linear"])
     parser.add_argument("--audit-resolution", type=int, default=DEFAULT_RBF_AUDIT_RESOLUTION)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
@@ -519,7 +594,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-pave-max-chain", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN)
     parser.add_argument("--connector-pave-steps", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_STEPS)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
+    parser.add_argument("--connector-adaptive-min-segment-fraction", type=float, default=DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
+    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.0)
+    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=-1)
+    parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--connector-pave-fill-gaps", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS)
     parser.add_argument("--connector-pave-require-connected-chain", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN)
     parser.add_argument("--final-collision-shortcut", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_FINAL_COLLISION_SHORTCUT)
@@ -538,6 +618,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-min-delta", type=float, default=0.25)
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ALL)
     parser.add_argument("--query-bridge-labels", default=DEFAULT_RBF_QUERY_BRIDGE_LABELS)
+    parser.add_argument(
+        "--query-bridge-segment-only-indices",
+        default="",
+        help="Comma-separated zero-based shelf query indices to connect with audited QueryBridge segment edges instead of box paving.",
+    )
+    parser.add_argument(
+        "--query-bridge-force-indices",
+        default="",
+        help="Comma-separated zero-based shelf query indices that must run query bridge even if normally deferred.",
+    )
+    parser.add_argument("--query-bridge-forced-attempts", type=int, default=1)
     parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
     parser.add_argument("--rrt-grower-timeout-ms", type=float, default=DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS)
@@ -549,7 +640,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--parallel-virtual-validation", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rbf-cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
-    parser.add_argument("--root-scope", choices=["shelf", "full"], default="shelf")
     return parser.parse_args()
 
 
@@ -580,11 +670,13 @@ def main() -> int:
             "grower_mode": "rrt",
             "cache_depth_semantics": "canonical_lect_tree",
             "planner_depth_semantics": "lect_active_tree",
-            "lect_cache_root": "shelf_task_root_primary_sector",
+            "lect_cache_root": "full_robot_joint_limits",
             "planner_state_space": "native_joint_space",
-            "active_planning_root": "shelf_task_root_primary_sector",
-            "coverage_root": "shelf_task_root_reflected_dim0_all_sectors",
-            "valid_planning_root": "shelf_task_root_reflected_dim0_all_sectors",
+            "active_planning_root": "full_robot_joint_limits",
+            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "coverage_root": "full_robot_joint_limits",
+            "valid_planning_root": "full_robot_joint_limits",
+            "split_schedule": "active_dim0_first_two_then_cache_tail",
             "canonical_mapping_scope": "LECT_internal_only",
             "audit_collision_tolerance": float(args.audit_collision_tolerance),
         }
@@ -609,22 +701,28 @@ def main() -> int:
             "cache_depth_semantics": "canonical_lect_tree",
             "planner_depth_semantics": "lect_active_tree",
             "prewarm_depth": 23,
-            "lect_cache_root": "shelf_task_root_primary_sector",
+            "lect_cache_root": "full_robot_joint_limits",
             "planner_state_space": "native_joint_space",
-            "active_planning_root": "shelf_task_root_primary_sector",
-            "coverage_root": "shelf_task_root_reflected_dim0_all_sectors",
-            "valid_planning_root": "shelf_task_root_reflected_dim0_all_sectors",
+            "active_planning_root": "full_robot_joint_limits",
+            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "coverage_root": "full_robot_joint_limits",
+            "valid_planning_root": "full_robot_joint_limits",
+            "split_schedule": "active_dim0_first_two_then_cache_tail",
             "canonical_mapping_scope": "LECT_internal_only",
             "leaf_start_depth": int(args.leaf_start_depth),
             "leaf_max_depth": int(args.leaf_max_depth),
             "deep_ffb_depth": int(args.deep_ffb_depth),
             "ffb_start_depth": int(args.ffb_start_depth),
+            "ffb_search_mode": str(args.ffb_search_mode),
             "lect_leaf_start_depth": int(args.leaf_start_depth),
             "lect_leaf_max_depth": int(args.leaf_max_depth),
             "lect_deep_ffb_depth": int(args.deep_ffb_depth),
             "lect_ffb_start_depth": int(args.ffb_start_depth),
+            "lect_ffb_search_mode": str(args.ffb_search_mode),
             "lect_connector_pave_depth": int(args.connector_pave_depth),
+            "lect_connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),
             "lect_query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+            "lect_query_bridge_adaptive_ffb_depths": str(args.query_bridge_adaptive_ffb_depths),
             "lect_rbf_max_depth": int(args.rbf_max_depth),
             "audit_segment_step": float(args.audit_segment_step),
             "audit_collision_tolerance": float(args.audit_collision_tolerance),
@@ -640,7 +738,14 @@ def main() -> int:
             "connector_pave_max_chain": int(args.connector_pave_max_chain),
             "connector_pave_fill_gaps": bool(args.connector_pave_fill_gaps),
             "connector_pave_require_connected_chain": bool(args.connector_pave_require_connected_chain),
+            "connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+            "query_bridge_adaptive_ffb_depths": str(args.query_bridge_adaptive_ffb_depths),
+            "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
+            "query_bridge_repair_subdivisions": int(args.query_bridge_repair_subdivisions),
+            "query_bridge_force_indices": str(args.query_bridge_force_indices),
+            "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
+            "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "final_collision_shortcut": bool(args.final_collision_shortcut),
             "final_rrt_simplify": bool(args.final_rrt_simplify),
             "final_rrt_simplify_timeout_ms": float(args.final_rrt_simplify_timeout_ms),
@@ -656,6 +761,10 @@ def main() -> int:
             "corridor_refine_min_delta": float(args.corridor_refine_min_delta),
             "query_bridge_all": bool(args.query_bridge_all),
             "query_bridge_labels": str(args.query_bridge_labels),
+            "query_bridge_segment_only_indices": str(args.query_bridge_segment_only_indices),
+            "query_bridge_force_indices": str(args.query_bridge_force_indices),
+            "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
+            "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "run_rrt_grower": bool(args.run_rrt_grower),
             "rrt_grower_extra_boxes": int(args.rrt_grower_extra_boxes),
             "rrt_grower_timeout_ms": float(args.rrt_grower_timeout_ms),

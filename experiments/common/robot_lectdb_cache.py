@@ -83,7 +83,9 @@ def ensure_robot_lectdb_cache(
             "cache_label": path.name,
             "cache_path": str(path),
             "dry_run": bool(dry_run),
-            "restricted_root": True,
+            "restricted_root": False,
+            "coverage_domain": "full_robot_joint_limits",
+            "canonical_mapping_scope": "LECT_internal_only",
         }
         if dry_run:
             payload["ok"] = True

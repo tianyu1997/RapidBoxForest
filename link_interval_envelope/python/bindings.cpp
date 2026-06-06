@@ -310,14 +310,16 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
     py::class_<rbf::KdopConfig>(module, "KdopConfig")
         .def(py::init<>())
         .def_readwrite("direction_set", &rbf::KdopConfig::direction_set)
-        .def_readwrite("safety_epsilon", &rbf::KdopConfig::safety_epsilon);
+        .def_readwrite("safety_epsilon", &rbf::KdopConfig::safety_epsilon)
+        .def_readwrite("overlap_tolerance", &rbf::KdopConfig::overlap_tolerance);
 
     py::class_<rbf::SupportHullConfig>(module, "SupportHullConfig")
         .def(py::init<>())
         .def_readwrite("keep_kdop", &rbf::SupportHullConfig::keep_kdop)
         .def_readwrite("skip_aabb_broadphase", &rbf::SupportHullConfig::skip_aabb_broadphase)
         .def_readwrite("direct_collision", &rbf::SupportHullConfig::direct_collision)
-        .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon);
+        .def_readwrite("safety_epsilon", &rbf::SupportHullConfig::safety_epsilon)
+        .def_readwrite("overlap_tolerance", &rbf::SupportHullConfig::overlap_tolerance);
 
     py::class_<rbf::EnvelopeTypeConfig>(module, "EnvelopeTypeConfig")
         .def(py::init<>())
@@ -541,6 +543,10 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
             options.skip_aabb_broadphase = envelope_config.support_hull_config.skip_aabb_broadphase;
             options.direct_support_hull_collision = envelope_config.support_hull_config.direct_collision;
             options.count_all_pairs = count_all_pairs;
+            options.safety_epsilon = std::max(envelope_config.kdop_config.safety_epsilon,
+                                              envelope_config.support_hull_config.safety_epsilon);
+            options.overlap_tolerance = std::max(envelope_config.kdop_config.overlap_tolerance,
+                                                 envelope_config.support_hull_config.overlap_tolerance);
             collision_start = Clock::now();
             collision = rbf::collide_envelope_aabbs(
                 envelope,
@@ -561,6 +567,7 @@ PYBIND11_MODULE(_link_interval_envelope_cpp, module) {
         result["is_definitely_free"] = collision == rbf::CollisionResultKind::DefinitelyFree;
         result["collision_mode"] = collision_mode;
         result["maybe_pairs"] = stats.maybe_pairs;
+        result["overlap_tolerance_rejects"] = stats.overlap_tolerance_rejects;
         result["link_aabb_tests"] = stats.link_aabb_tests;
         result["link_aabb_rejects"] = stats.link_aabb_rejects;
         result["gjk_tests"] = stats.gjk_tests;

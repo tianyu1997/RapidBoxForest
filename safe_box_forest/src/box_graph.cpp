@@ -3,6 +3,7 @@
 #include <sbf/core/union_find.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -15,6 +16,32 @@
 
 namespace rbf {
 namespace {
+
+double env_double_or_default(const char* name, double fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const double value = std::strtod(raw, &end);
+    if (end == raw || !std::isfinite(value)) {
+        return fallback;
+    }
+    return value;
+}
+
+int env_int_or_default(const char* name, int fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long value = std::strtol(raw, &end, 10);
+    if (end == raw) {
+        return fallback;
+    }
+    return static_cast<int>(value);
+}
 
 std::unordered_map<int, const BoxNode*> box_map(const std::vector<BoxNode>& boxes) {
     std::unordered_map<int, const BoxNode*> map;
@@ -368,7 +395,8 @@ int add_segment_edge(SegmentEdgeList& edges,
                      SegmentEdgeType type,
                      int segment_resolution,
                      SegmentEdgeValidation validation,
-                     bool strict_audit_required) {
+                     bool strict_audit_required,
+                     int query_index) {
     if (source_box_id < 0 || target_box_id < 0) {
         return -1;
     }
@@ -386,6 +414,7 @@ int add_segment_edge(SegmentEdgeList& edges,
     edge.segment_resolution = segment_resolution;
     edge.length = waypoint_path_length(edge.waypoints);
     edge.strict_audit_required = strict_audit_required;
+    edge.query_index = query_index;
     edges.push_back(std::move(edge));
     append_graph_edge(graph, source_box_id, target_box_id);
     return next_id;
@@ -526,6 +555,15 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
                                int start_box_id,
                                int goal_box_id,
                                const Eigen::VectorXd& goal_point) {
+    static const Eigen::VectorXd no_start_point;
+    return dijkstra_search(cache, start_box_id, goal_box_id, no_start_point, goal_point);
+}
+
+DijkstraResult dijkstra_search(const QueryGraphCache& cache,
+                               int start_box_id,
+                               int goal_box_id,
+                               const Eigen::VectorXd& start_point,
+                               const Eigen::VectorXd& goal_point) {
     DijkstraResult result;
     if (cache.boxes == nullptr || cache.graph == nullptr) {
         return result;
@@ -578,6 +616,51 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
     dist[start_box_id] = 0.0;
     representative[start_box_id] = box_ptr(start_box_id)->center();
     open.push({start_box_id, heuristic(start_box_id)});
+    const double box_transition_penalty =
+        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_EDGE_COST_PENALTY", 0.0));
+    const double box_nonprogress_penalty =
+        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_NONPROGRESS_PENALTY", 0.0));
+    const double box_line_deviation_penalty =
+        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY", 0.0));
+    const double query_bridge_penalty =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_EDGE_COST_PENALTY", 0.0));
+    const int active_query_index = env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
+    const double foreign_query_edge_penalty =
+        active_query_index >= 0
+            ? std::max(0.0,
+                       env_double_or_default("RBF_QUERY_FOREIGN_EDGE_COST_PENALTY", 0.0))
+            : 0.0;
+    const bool line_deviation_enabled =
+        box_line_deviation_penalty > 0.0 &&
+        start_point.size() == goal_point.size() &&
+        start_point.size() > 0;
+    const Eigen::VectorXd query_delta =
+        line_deviation_enabled ? (goal_point - start_point) : Eigen::VectorXd{};
+    const double query_delta_norm_sq =
+        line_deviation_enabled ? query_delta.squaredNorm() : 0.0;
+    auto distance_to_query_line = [&](const Eigen::VectorXd& point) {
+        if (!line_deviation_enabled ||
+            point.size() != start_point.size() ||
+            query_delta_norm_sq <= 1e-18) {
+            return 0.0;
+        }
+        const double u = std::clamp((point - start_point).dot(query_delta) /
+                                        query_delta_norm_sq,
+                                    0.0,
+                                    1.0);
+        return (point - (start_point + u * query_delta)).norm();
+    };
+    auto edge_line_deviation = [&](const SegmentEdge& edge,
+                                   const Eigen::VectorXd& fallback_point) {
+        if (!line_deviation_enabled) {
+            return 0.0;
+        }
+        double max_deviation = distance_to_query_line(fallback_point);
+        for (const auto& waypoint : edge.waypoints) {
+            max_deviation = std::max(max_deviation, distance_to_query_line(waypoint));
+        }
+        return max_deviation;
+    };
 
     while (!open.empty()) {
         const int current = open.top().id;
@@ -603,7 +686,21 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             }
             const Eigen::VectorXd current_rep = representative.at(current);
             Eigen::VectorXd next_rep = transition_waypoint_toward_goal(*current_box, *next_box, current_rep, goal_point);
-            double edge_cost = (current_rep - next_rep).norm() + 1e-6;
+            const double transition_length = (current_rep - next_rep).norm();
+            double edge_cost = transition_length + 1e-6 + box_transition_penalty;
+            if (box_nonprogress_penalty > 0.0 &&
+                goal_point.size() == current_rep.size() &&
+                goal_point.size() == next_rep.size()) {
+                const double current_goal_distance = (current_rep - goal_point).norm();
+                const double next_goal_distance = (next_rep - goal_point).norm();
+                edge_cost += box_nonprogress_penalty *
+                             std::max(0.0, next_goal_distance - current_goal_distance);
+            }
+            if (line_deviation_enabled) {
+                edge_cost += box_line_deviation_penalty *
+                             distance_to_query_line(next_rep) *
+                             std::max(transition_length, 1e-6);
+            }
             if (next == goal_box_id && goal_point.size() == next_box->n_dims()) {
                 edge_cost += (next_rep - goal_point).norm();
                 next_rep = goal_point;
@@ -611,9 +708,22 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             const SegmentEdge* edge = find_segment_edge(cache, current, next);
             if (edge != nullptr) {
                 edge_cost = edge->length > 0.0 ? edge->length : edge_cost;
+                if (line_deviation_enabled) {
+                    edge_cost += box_line_deviation_penalty *
+                                 edge_line_deviation(*edge, next_box->center()) *
+                                 std::max(edge->length, 1e-6);
+                }
                 if (counts_as_segment_edge(edge->type) &&
                     edge->type != SegmentEdgeType::QueryBridge) {
                     edge_cost += 100.0;
+                }
+                if (edge->type == SegmentEdgeType::QueryBridge) {
+                    edge_cost += query_bridge_penalty;
+                }
+                if (foreign_query_edge_penalty > 0.0 &&
+                    edge->query_index >= 0 &&
+                    edge->query_index != active_query_index) {
+                    edge_cost += foreign_query_edge_penalty;
                 }
                 if (edge->strict_audit_required &&
                     edge->type == SegmentEdgeType::QueryBridge &&
@@ -665,6 +775,51 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
         return sequence;
     }
 
+    const bool cost_aware_shortcut =
+        env_int_or_default("RBF_QUERY_SHORTCUT_COST_AWARE", 1) != 0 &&
+        cache.boxes != nullptr;
+    const double shortcut_cost_factor =
+        std::max(1.0, env_double_or_default("RBF_QUERY_SHORTCUT_COST_FACTOR", 1.05));
+    auto transition_cost = [&](int lhs, int rhs) {
+        if (const SegmentEdge* edge = find_segment_edge(cache, lhs, rhs)) {
+            return edge->length > 0.0 ? edge->length : 0.0;
+        }
+        if (cache.boxes == nullptr) {
+            return 0.0;
+        }
+        const auto lhs_it = cache.box_index_by_id.find(lhs);
+        const auto rhs_it = cache.box_index_by_id.find(rhs);
+        if (lhs_it == cache.box_index_by_id.end() ||
+            rhs_it == cache.box_index_by_id.end()) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return ((*cache.boxes)[lhs_it->second].center() -
+                (*cache.boxes)[rhs_it->second].center()).norm();
+    };
+    auto sequence_cost = [&](std::size_t begin, std::size_t end) {
+        double total = 0.0;
+        for (std::size_t k = begin + 1; k <= end; ++k) {
+            total += transition_cost(sequence[k - 1], sequence[k]);
+        }
+        return total;
+    };
+    auto shortcut_acceptable = [&](std::size_t begin,
+                                   std::size_t end,
+                                   int bridge) {
+        if (!cost_aware_shortcut) {
+            return true;
+        }
+        const double original_cost = sequence_cost(begin, end);
+        const double shortcut_cost =
+            bridge >= 0
+                ? transition_cost(sequence[begin], bridge) +
+                      transition_cost(bridge, sequence[end])
+                : transition_cost(sequence[begin], sequence[end]);
+        return std::isfinite(original_cost) &&
+               std::isfinite(shortcut_cost) &&
+               shortcut_cost <= original_cost * shortcut_cost_factor + 1e-9;
+    };
+
     std::vector<int> shortened;
     shortened.reserve(sequence.size());
     std::size_t i = 0;
@@ -679,7 +834,9 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
         int bridge = -1;
         const auto it_i = cache.adjacency_sets.find(sequence[i]);
         for (std::size_t j = sequence.size() - 1; j > i + 1; --j) {
-            if (it_i != cache.adjacency_sets.end() && it_i->second.count(sequence[j]) > 0) {
+            if (it_i != cache.adjacency_sets.end() &&
+                it_i->second.count(sequence[j]) > 0 &&
+                shortcut_acceptable(i, j, -1)) {
                 best = j;
                 bridge = -1;
                 break;
@@ -692,7 +849,10 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
                 continue;
             }
             for (int candidate : it_i->second) {
-                if (candidate != sequence[i] && candidate != sequence[j] && it_j->second.count(candidate) > 0) {
+                if (candidate != sequence[i] &&
+                    candidate != sequence[j] &&
+                    it_j->second.count(candidate) > 0 &&
+                    shortcut_acceptable(i, j, candidate)) {
                     best = j;
                     bridge = candidate;
                     break;

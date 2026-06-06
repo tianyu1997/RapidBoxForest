@@ -29,6 +29,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES,
     DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
     DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
+    DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
     DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
     DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS,
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
@@ -49,9 +50,11 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
     DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
@@ -201,6 +204,7 @@ def make_args(base: argparse.Namespace, leaf_start: int, leaf_max: int, deep_ffb
         domain_attempt_cap=int(base.domain_attempt_cap),
         validation_batch_size=int(base.validation_batch_size),
         ffb_start_depth=int(ffb_start),
+        ffb_search_mode=str(base.ffb_search_mode),
         audit_resolution=int(base.audit_resolution),
         audit_segment_step=float(base.audit_segment_step),
         audit_collision_tolerance=float(base.audit_collision_tolerance),
@@ -219,7 +223,9 @@ def make_args(base: argparse.Namespace, leaf_start: int, leaf_max: int, deep_ffb
         connector_pave_max_chain=int(base.connector_pave_max_chain),
         connector_pave_steps=int(base.connector_pave_steps),
         connector_pave_depth=int(base.connector_pave_depth),
+        connector_adaptive_min_segment_fraction=float(base.connector_adaptive_min_segment_fraction),
         query_bridge_pave_depth=int(base.query_bridge_pave_depth),
+        query_bridge_adaptive_ffb_depths=str(base.query_bridge_adaptive_ffb_depths),
         connector_pave_fill_gaps=bool(base.connector_pave_fill_gaps),
         connector_pave_require_connected_chain=bool(base.connector_pave_require_connected_chain),
         final_collision_shortcut=bool(base.final_collision_shortcut),
@@ -261,6 +267,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--depth-configs", default=f"{DEFAULT_RBF_LEAF_START_DEPTH}-{DEFAULT_RBF_LEAF_MAX_DEPTH}")
     parser.add_argument("--deep-ffb-depths", default=str(DEFAULT_RBF_DEEP_FFB_DEPTH))
     parser.add_argument("--ffb-start-depths", default=str(DEFAULT_RBF_FFB_START_DEPTH))
+    parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE, choices=["linear", "binary", "binary-depth", "BinaryDepth", "Linear"])
     parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--timeout-ms", type=float, default=8000.0)
     parser.add_argument("--rbf-max-depth", type=int, default=60)
@@ -285,7 +292,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-pave-max-chain", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN)
     parser.add_argument("--connector-pave-steps", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_STEPS)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
+    parser.add_argument("--connector-adaptive-min-segment-fraction", type=float, default=DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
     parser.add_argument("--connector-pave-fill-gaps", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS)
     parser.add_argument("--connector-pave-require-connected-chain", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN)
     parser.add_argument("--final-collision-shortcut", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_FINAL_COLLISION_SHORTCUT)

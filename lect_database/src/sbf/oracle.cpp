@@ -1,6 +1,7 @@
 #include <LECTDatabase/sbf/oracle.h>
 
 #include <sbf/core/joint_symmetry.h>
+#include <sbf/envelope/crit_source.h>
 #include <sbf/envelope/endpoint_source.h>
 #include <sbf/envelope/ifk_aa_source.h>
 
@@ -41,6 +42,30 @@ std::mutex& external_direct_lookup_mutex() {
 
 double elapsed_us(Clock::time_point start) {
     return std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+}
+
+bool same_interval_exact(const Interval& a, const Interval& b) {
+    return a.lo == b.lo && a.hi == b.hi;
+}
+
+bool differs_only_in_dim_exact(const std::vector<Interval>& lhs,
+                               const std::vector<Interval>& rhs,
+                               int changed_dim) {
+    if (changed_dim < 0 || lhs.size() != rhs.size()) {
+        return false;
+    }
+    bool saw_change = false;
+    for (int index = 0; index < static_cast<int>(lhs.size()); ++index) {
+        if (same_interval_exact(lhs[static_cast<std::size_t>(index)],
+                                rhs[static_cast<std::size_t>(index)])) {
+            continue;
+        }
+        if (index != changed_dim || saw_change) {
+            return false;
+        }
+        saw_change = true;
+    }
+    return saw_change;
 }
 
 double interval_volume(const std::vector<Interval>& intervals) {
@@ -224,21 +249,95 @@ double normalized_joint_value(double value, double origin) {
     return normalized + origin;
 }
 
+lect_database::SectorId interval_sector_for_value(const JointSymmetry& symmetry,
+                                                  double value) {
+    const double rel = normalized_joint_value(value, symmetry.canonical_lo) -
+        symmetry.canonical_lo;
+    const int n_sectors = std::max(1, static_cast<int>(std::round(TWO_PI / symmetry.period)));
+    const int boundary = static_cast<int>(std::llround(rel / symmetry.period));
+    if (boundary >= 0 && boundary <= n_sectors) {
+        const double boundary_value = static_cast<double>(boundary) * symmetry.period;
+        if (std::abs(rel - boundary_value) <= 1e-14) {
+            if (boundary <= 0 || boundary >= n_sectors) {
+                return 0;
+            }
+            return std::clamp(boundary - 1, 0, n_sectors - 1);
+        }
+    }
+    int sector = static_cast<int>(std::floor(rel / symmetry.period));
+    if (sector >= n_sectors) {
+        sector = 0;
+    }
+    return std::clamp(sector, 0, n_sectors - 1);
+}
+
+std::optional<lect_database::SectorId> interval_sector_for_interval(
+    const JointSymmetry& symmetry,
+    const Interval& interval) {
+    const double width = interval.hi - interval.lo;
+    if (width < -1e-14) {
+        return std::nullopt;
+    }
+    if (width <= 1e-14) {
+        return interval_sector_for_value(symmetry, interval.center());
+    }
+    if (width > symmetry.period + 1e-12) {
+        return std::nullopt;
+    }
+    const double eps = std::min(0.25 * width, std::max(1e-12, width * 1e-12));
+    const auto sector_lo = interval_sector_for_value(symmetry, interval.lo + eps);
+    const auto sector_hi = interval_sector_for_value(symmetry, interval.hi - eps);
+    if (normalize_sector(sector_lo) != normalize_sector(sector_hi)) {
+        return std::nullopt;
+    }
+    return sector_lo;
+}
+
 double canonical_value_in_sector(const JointSymmetry& symmetry,
                                  double value,
                                  lect_database::SectorId sector) {
-    return normalized_joint_value(value, symmetry.canonical_lo) -
-        static_cast<double>(normalize_sector(sector)) * symmetry.period;
+    const int normalized_sector = normalize_sector(sector);
+    const double sector_lo =
+        symmetry.canonical_lo + static_cast<double>(normalized_sector) * symmetry.period;
+    const double sector_hi = sector_lo + symmetry.period;
+    double shifted = value;
+    while (shifted < sector_lo - 1e-12) {
+        shifted += TWO_PI;
+    }
+    while (shifted > sector_hi + 1e-12) {
+        shifted -= TWO_PI;
+    }
+    return shifted - static_cast<double>(normalized_sector) * symmetry.period;
 }
 
-Interval canonical_interval_for_sector(const JointSymmetry& symmetry,
-                                       const Interval& interval,
-                                       lect_database::SectorId sector) {
+std::pair<lect_database::SectorId, double> canonicalize_value_no_snap(
+    const JointSymmetry& symmetry,
+    double value) {
+    const lect_database::SectorId sector = interval_sector_for_value(symmetry, value);
+    return {sector, canonical_value_in_sector(symmetry, value, sector)};
+}
+
+std::optional<Interval> canonical_interval_for_sector(const JointSymmetry& symmetry,
+                                                      const Interval& interval,
+                                                      lect_database::SectorId sector) {
     const double lo = canonical_value_in_sector(symmetry, interval.lo, sector);
     const double hi = canonical_value_in_sector(symmetry, interval.hi, sector);
-    Interval canonical{std::min(lo, hi), std::max(lo, hi)};
-    canonical.lo = std::max(canonical.lo, symmetry.canonical_lo);
-    canonical.hi = std::min(canonical.hi, symmetry.canonical_hi);
+    if (lo > hi + 1e-12) {
+        return std::nullopt;
+    }
+    if (hi < symmetry.canonical_lo - 1e-12 ||
+        lo > symmetry.canonical_hi + 1e-12) {
+        return std::nullopt;
+    }
+    Interval canonical{
+        std::max(lo, symmetry.canonical_lo),
+        std::min(hi, symmetry.canonical_hi)};
+    if (canonical.lo > canonical.hi + 1e-12) {
+        return std::nullopt;
+    }
+    if (canonical.lo > canonical.hi) {
+        canonical.lo = canonical.hi = 0.5 * (canonical.lo + canonical.hi);
+    }
     return canonical;
 }
 
@@ -247,30 +346,54 @@ Interval map_canonical_interval_to_sector(const JointSymmetry& symmetry,
                                           lect_database::SectorId sector,
                                           const Interval& limit,
                                           double reference_value) {
-    double lo = 0.0;
-    double hi = 0.0;
-    symmetry.map_interval(canonical.lo, canonical.hi, normalize_sector(sector), lo, hi);
-    while (hi > limit.hi + 1e-12) {
-        lo -= TWO_PI;
-        hi -= TWO_PI;
+    double base_lo = 0.0;
+    double base_hi = 0.0;
+    symmetry.map_interval(canonical.lo, canonical.hi, normalize_sector(sector), base_lo, base_hi);
+
+    Interval best{1.0, 0.0};
+    double best_score = std::numeric_limits<double>::infinity();
+    for (int shift = -2; shift <= 2; ++shift) {
+        const double lo = base_lo + static_cast<double>(shift) * TWO_PI;
+        const double hi = base_hi + static_cast<double>(shift) * TWO_PI;
+        const double clipped_lo = std::max(lo, limit.lo);
+        const double clipped_hi = std::min(hi, limit.hi);
+        if (clipped_lo > clipped_hi + 1e-12) {
+            continue;
+        }
+        const bool contains_reference =
+            reference_value >= clipped_lo - 1e-9 && reference_value <= clipped_hi + 1e-9;
+        const double distance_to_reference =
+            contains_reference
+                ? 0.0
+                : std::min(std::abs(reference_value - clipped_lo),
+                           std::abs(reference_value - clipped_hi));
+        const double score = (contains_reference ? -1.0 : 0.0) + distance_to_reference;
+        if (score < best_score) {
+            best_score = score;
+            best = {clipped_lo, clipped_hi};
+        }
     }
-    while (lo < limit.lo - 1e-12) {
-        lo += TWO_PI;
-        hi += TWO_PI;
+    return best;
+}
+
+std::optional<lect_database::SectorId> sector_for_reflected_interval_containing_seed(
+    const JointSymmetry& symmetry,
+    const Interval& canonical,
+    const Interval& limit,
+    double seed_value) {
+    const int n_sectors = std::max(1, static_cast<int>(std::round(TWO_PI / symmetry.period)));
+    for (lect_database::SectorId sector = 0; sector < n_sectors; ++sector) {
+        const Interval native = map_canonical_interval_to_sector(
+            symmetry,
+            canonical,
+            sector,
+            limit,
+            seed_value);
+        if (native.lo <= native.hi + 1e-12 && native.contains(seed_value, 1e-9)) {
+            return sector;
+        }
     }
-    const double center = 0.5 * (lo + hi);
-    const double lower_shift_center = center - TWO_PI;
-    const double upper_shift_center = center + TWO_PI;
-    if (std::abs(reference_value - lower_shift_center) < std::abs(reference_value - center) &&
-        lo - TWO_PI >= limit.lo - 1e-12) {
-        lo -= TWO_PI;
-        hi -= TWO_PI;
-    } else if (std::abs(reference_value - upper_shift_center) < std::abs(reference_value - center) &&
-               hi + TWO_PI <= limit.hi + 1e-12) {
-        lo += TWO_PI;
-        hi += TWO_PI;
-    }
-    return {std::max(lo, limit.lo), std::min(hi, limit.hi)};
+    return std::nullopt;
 }
 
 using EnvelopeScoreFn = std::function<double(const std::vector<Interval>&)>;
@@ -724,6 +847,7 @@ struct CanonicalEvidenceFrame {
     std::vector<Interval> lookup_intervals;
     lect_database::SectorId sector = lect_database::kPrimarySector;
     std::optional<JointSymmetry> symmetry;
+    bool valid = true;
 };
 
 CanonicalEvidenceFrame canonical_evidence_frame_for_intervals(const Robot& robot,
@@ -741,12 +865,31 @@ CanonicalEvidenceFrame canonical_evidence_frame_for_intervals(const Robot& robot
         frame.symmetry.reset();
         return frame;
     }
-    double canonical_center = query_intervals[joint_index].center();
-    frame.sector = symmetry.canonicalize(canonical_center, canonical_center);
-    frame.lookup_intervals[joint_index] = canonical_interval_for_sector(
+    const auto sector = interval_sector_for_interval(symmetry, query_intervals[joint_index]);
+    if (!sector) {
+        frame.lookup_intervals = query_intervals;
+        frame.sector = lect_database::kPrimarySector;
+        frame.valid = false;
+        return frame;
+    }
+    frame.sector = *sector;
+    const auto canonical_interval = canonical_interval_for_sector(
         symmetry,
         query_intervals[joint_index],
         frame.sector);
+    if (!canonical_interval) {
+        frame.lookup_intervals = query_intervals;
+        frame.sector = lect_database::kPrimarySector;
+        frame.valid = false;
+        return frame;
+    }
+    frame.lookup_intervals[joint_index] = *canonical_interval;
+    if (frame.lookup_intervals[joint_index].lo > frame.lookup_intervals[joint_index].hi) {
+        frame.lookup_intervals = query_intervals;
+        frame.sector = lect_database::kPrimarySector;
+        frame.valid = false;
+        frame.symmetry.reset();
+    }
     return frame;
 }
 
@@ -760,18 +903,7 @@ bool intervals_straddle_sector_boundary(const JointSymmetry& symmetry,
     if (joint_index >= intervals.size()) {
         return false;
     }
-    const Interval& interval = intervals[joint_index];
-    const double width = interval.hi - interval.lo;
-    if (width <= 1e-14) {
-        return false;
-    }
-    const double eps = std::min(0.25 * width, std::max(1e-12, width * 1e-12));
-    const double lo_probe = interval.lo + eps;
-    const double hi_probe = interval.hi - eps;
-    double dummy = 0.0;
-    const int sector_lo = symmetry.canonicalize(lo_probe, dummy);
-    const int sector_hi = symmetry.canonicalize(hi_probe, dummy);
-    return normalize_sector(sector_lo) != normalize_sector(sector_hi);
+    return !interval_sector_for_interval(symmetry, intervals[joint_index]).has_value();
 }
 
 }  // namespace
@@ -782,6 +914,7 @@ struct DatabaseBoxOracle::Impl {
     // reuses per-leaf AA-FK states when the split schedule is deterministic.
     // Not shared across threads (each worker owns its own oracle).
     AaFkPrefixState aa_fk_prefix_state;
+    CritSampleState crit_sample_state;
     HifkAaState hifk_aa_state;
 };
 
@@ -871,11 +1004,14 @@ std::vector<Interval> DatabaseBoxOracle::node_intervals(OracleNodeId node) const
 Eigen::VectorXd DatabaseBoxOracle::tree_configuration_for_query(const Eigen::Ref<const Eigen::VectorXd>& q) const {
     Eigen::VectorXd tree_q = q;
     if (active_tree_is_primary_canonical_sector(robot_, database_) && tree_q.size() > 0) {
-        lect_database::canonicalize_configuration_for_robot(
-            robot_,
-            true,
-            database_.identity().symmetry_descriptor,
-            std::span<double>(tree_q.data(), static_cast<std::size_t>(tree_q.size())));
+        auto symmetry = primary_database_symmetry(robot_, database_);
+        if (symmetry && symmetry->joint_index >= 0 &&
+            symmetry->joint_index < tree_q.size()) {
+            const auto [sector, canonical_value] =
+                canonicalize_value_no_snap(*symmetry, tree_q[symmetry->joint_index]);
+            (void)sector;
+            tree_q[symmetry->joint_index] = canonical_value;
+        }
     }
     return tree_q;
 }
@@ -954,7 +1090,13 @@ std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId n
         return tree_intervals;
     }
     double canonical_value = q[static_cast<int>(joint_index)];
-    const lect_database::SectorId sector = symmetry->canonicalize(canonical_value, canonical_value);
+    const double seed_value = q[static_cast<int>(joint_index)];
+    lect_database::SectorId sector =
+        sector_for_reflected_interval_containing_seed(*symmetry,
+                                                      tree_intervals[joint_index],
+                                                      limits[joint_index],
+                                                      seed_value)
+            .value_or(interval_sector_for_value(*symmetry, canonical_value));
     std::vector<Interval> query_intervals = tree_intervals;
     query_intervals[joint_index] = map_canonical_interval_to_sector(
         *symmetry,
@@ -962,10 +1104,37 @@ std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId n
         sector,
         limits[joint_index],
         q[static_cast<int>(joint_index)]);
+    if (!query_intervals[joint_index].contains(seed_value, 1e-9)) {
+        counters_.canonical_reflected_seed_misses += 1;
+        if (const char* dbg = std::getenv("RBF_CANONICAL_DEBUG"); dbg != nullptr && dbg[0] == '1') {
+            std::fprintf(stderr,
+                         "[CANONICAL] reflected interval misses seed: seed=%.17g sector=%d interval=[%.17g, %.17g] tree=[%.17g, %.17g]\n",
+                         seed_value,
+                         static_cast<int>(normalize_sector(sector)),
+                         query_intervals[joint_index].lo,
+                         query_intervals[joint_index].hi,
+                         tree_intervals[joint_index].lo,
+                         tree_intervals[joint_index].hi);
+        }
+        throw std::runtime_error(
+            "canonical reflected native interval does not contain the query seed");
+    }
     return query_intervals;
 }
 
 bool DatabaseBoxOracle::contains_point(OracleNodeId node, const Eigen::Ref<const Eigen::VectorXd>& q) const {
+    if (active_tree_is_primary_canonical_sector(robot_, database_) &&
+        q.size() == static_cast<int>(n_dims())) {
+        const auto native_domain = planning_intervals();
+        if (native_domain.size() != static_cast<std::size_t>(q.size())) {
+            return false;
+        }
+        for (int dim = 0; dim < q.size(); ++dim) {
+            if (!native_domain[static_cast<std::size_t>(dim)].contains(q[dim], 1e-12)) {
+                return false;
+            }
+        }
+    }
     const Eigen::VectorXd tree_q = tree_configuration_for_query(q);
     const auto box = database_.node_box(to_database_node(node));
     if (!box || tree_q.size() != static_cast<int>(box->size())) {
@@ -1164,24 +1333,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     const auto evidence_frame = canonical_evidence_frame_for_intervals(robot_, database_, intervals);
     const int normalized_sector = normalize_sector(evidence_frame.sector);
     const std::uint64_t envelope_cache_key = make_envelope_cache_key(key.node_id, normalized_sector);
-    if (evidence_frame.symmetry &&
-        intervals_straddle_sector_boundary(*evidence_frame.symmetry, intervals)) {
-        // The query box spans a sector boundary; a single canonical sector cannot
-        // represent it. Compute the envelope directly on the native query box so
-        // validation never has to remember a sector for boundary boxes.
-        const auto endpoint_start = Clock::now();
-        EndpointSourceConfig materialization_config =
-            hifk_config_for_materialization(*this, node, endpoint_config_);
-        EndpointIAABBResult endpoint =
-            compute_endpoint_iaabb(robot_, intervals, materialization_config, nullptr, changed_dim);
-        counters_.materialization_endpoint_wall_time_us += elapsed_us(endpoint_start);
-        if (endpoint.endpoint_iaabbs.empty()) {
-            return std::nullopt;
-        }
-        EndpointPayload payload;
-        payload.owned_payload = std::move(endpoint.endpoint_iaabbs);
-        payload.payload = payload.owned_payload;
-        return payload;
+    if (!evidence_frame.valid ||
+        (evidence_frame.symmetry &&
+         intervals_straddle_sector_boundary(*evidence_frame.symmetry, intervals))) {
+        counters_.canonical_frame_invalid += 1;
+        throw std::runtime_error(
+            "canonical evidence frame is invalid: native interval cannot be represented as one canonical sector");
     }
     auto reflect_payload = [&](EndpointPayload payload) -> EndpointPayload {
         if (!evidence_frame.symmetry || normalize_sector(evidence_frame.sector) == 0 || payload.payload.empty()) {
@@ -1222,7 +1379,12 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         const bool direct_external_keys_match =
             direct_external_evidence_database_ != nullptr &&
             database_.identity().root_domain_fingerprint == direct_external_evidence_database_->identity().root_domain_fingerprint &&
-            database_.identity().split_policy_hash == direct_external_evidence_database_->identity().split_policy_hash;
+            database_.identity().split_policy_hash == direct_external_evidence_database_->identity().split_policy_hash &&
+            database_.identity().canonical_mode == direct_external_evidence_database_->identity().canonical_mode &&
+            database_.identity().symmetry_descriptor == direct_external_evidence_database_->identity().symmetry_descriptor &&
+            database_.identity().endpoint_descriptor == direct_external_evidence_database_->identity().endpoint_descriptor &&
+            database_.identity().envelope_descriptor == direct_external_evidence_database_->identity().envelope_descriptor &&
+            database_.identity().payload_layout == direct_external_evidence_database_->identity().payload_layout;
         if (direct_external_keys_match) {
             std::lock_guard<std::mutex> lock(external_direct_lookup_mutex());
             cached = direct_external_evidence_database_->evidence(key);
@@ -1348,6 +1510,24 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         endpoint = compute_endpoint_iaabb_ifk_aa_stateful(
             robot_, evidence_frame.lookup_intervals, impl_->aa_fk_prefix_state, &used_source_incremental_state);
     } else if (!validation_config_.stateless_materialization_context &&
+               materialization_config.source == EndpointSource::CritSample) {
+        const bool can_use_incremental_crit =
+            impl_->crit_sample_state.valid &&
+            differs_only_in_dim_exact(impl_->crit_sample_state.intervals,
+                                      evidence_frame.lookup_intervals,
+                                      changed_dim);
+        endpoint = compute_endpoint_iaabb_crit_incremental(
+            robot_,
+            evidence_frame.lookup_intervals,
+            materialization_config.n_samples_crit,
+            42,
+            can_use_incremental_crit ? changed_dim : -1,
+            nullptr,
+            &impl_->crit_sample_state,
+            materialization_config.n_threads,
+            materialization_config.parallel_min_combos);
+        used_source_incremental_state = can_use_incremental_crit;
+    } else if (!validation_config_.stateless_materialization_context &&
                materialization_config.source == EndpointSource::HIFK) {
         endpoint = compute_endpoint_iaabb_hifk_aa_stateful(
             robot_, evidence_frame.lookup_intervals, materialization_config, impl_->hifk_aa_state, &used_source_incremental_state);
@@ -1366,6 +1546,11 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
     }
     if (used_source_incremental_state) {
         counters_.materialization_source_incremental_state += 1;
+    }
+    counters_.materialization_candidate_dirty_count += endpoint.candidate_dirty_count;
+    counters_.materialization_predh_rebuild_count += endpoint.predh_rebuild_count;
+    if (endpoint.endpoint_cache_reused) {
+        counters_.materialization_reused_endpoint_cache += 1;
     }
     counters_.materialization_endpoint_wall_time_us += elapsed_us(endpoint_start);
     if (endpoint.endpoint_iaabbs.empty()) {
@@ -1451,6 +1636,8 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     EnvelopeCollisionOptions collision_options;
     collision_options.safety_epsilon = std::max(envelope_config_.kdop_config.safety_epsilon,
                                                 envelope_config_.support_hull_config.safety_epsilon);
+    collision_options.overlap_tolerance = std::max(envelope_config_.kdop_config.overlap_tolerance,
+                                                   envelope_config_.support_hull_config.overlap_tolerance);
     collision_options.skip_aabb_broadphase =
         envelope_config_.support_hull_config.skip_aabb_broadphase;
     collision_options.direct_support_hull_collision =

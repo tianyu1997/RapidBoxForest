@@ -13,8 +13,9 @@ RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_overlapd14o005_bridg
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
-D23_CACHE_ROOT = REPO_ROOT / "outputs" / "new_experiments" / "exp04_shelf_ablation_d23" / "cache"
-D23_CACHE_LABEL = "iiwa_shelf_endpoint_only_p23_canonical_dim0q4_fixed_root"
+D23_CACHE_ROOT = REPO_ROOT / "outputs" / "new_experiments" / "exp04_full_root_d23" / "cache"
+D23_CACHE_LABEL = "iiwa_endpoint_only_p23_canonical_full_root"
+CRITSAMPLE_D23_CACHE_LABEL = "iiwa_critsample_p23_canonical_full_root"
 ROBOT_LECTDB_CACHE_ROOT = REPO_ROOT / "outputs" / "new_experiments" / "tro2026" / "lectdb_defaults" / "cache"
 ROBOT_LECTDB_MAX_DEPTH = 40
 ROBOT_DEFAULT_LECTDB_DEPTHS: dict[str, int] = {
@@ -22,25 +23,11 @@ ROBOT_DEFAULT_LECTDB_DEPTHS: dict[str, int] = {
     "ur5": 20,
     "panda": 20,
 }
-D23_ROOT_INTERVALS: list[tuple[float, float]] = [
-    (0.0, 1.5707963267948966),
-    (0.3194, 0.8645),
-    (-0.5077, 0.5073),
-    (-1.98947519, -0.33002121),
-    (-0.447, 0.4473),
-    (-1.34734773, 1.51007653),
-    (1.262, 1.8794),
-]
-
-D23_NATIVE_DIM0_ROOT_INTERVALS: list[tuple[float, float]] = [
-    (-math.pi, math.pi),
-    *D23_ROOT_INTERVALS[1:],
-]
-
 DEFAULT_RBF_LEAF_START_DEPTH = 8
 DEFAULT_RBF_LEAF_MAX_DEPTH = 14
+DEFAULT_RBF_MAX_DEPTH = 64
 DEFAULT_RBF_DEEP_MAX_BOXES = 400
-DEFAULT_RBF_DEEP_FFB_DEPTH = 60
+DEFAULT_RBF_DEEP_FFB_DEPTH = 62
 DEFAULT_RBF_REFINE_TIMEOUT_MS = 800.0
 DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES = 1
 DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS = 1.0
@@ -49,10 +36,11 @@ DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 2
 DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 3
 DEFAULT_RBF_VALIDATION_BATCH_SIZE = 512
 DEFAULT_RBF_THREADS = 8
-DEFAULT_RBF_FFB_START_DEPTH = 15
+DEFAULT_RBF_FFB_START_DEPTH = 5
+DEFAULT_RBF_FFB_SEARCH_MODE = "binary"
 
-DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 20.0
-DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP = 4
+DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 30.0
+DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP = 2
 DEFAULT_RBF_CONNECTOR_RRT_ITERS = 50000
 DEFAULT_RBF_CONNECTOR_RRT_TIMEOUT_MS = 2000.0
 DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE = 0.5
@@ -61,8 +49,10 @@ DEFAULT_RBF_CONNECTOR_SEGMENT_RESOLUTION = 16
 DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES = 200
 DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN = 160
 DEFAULT_RBF_CONNECTOR_PAVE_STEPS = 12
-DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 60
-DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 60
+DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 62
+DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION = 0.75
+DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 62
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS = ""
 DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS = True
 DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN = True
 
@@ -71,18 +61,14 @@ DEFAULT_RBF_AUDIT_SEGMENT_STEP = 0.01
 DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE = 0.0
 DEFAULT_RBF_FINAL_COLLISION_SHORTCUT = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY = True
-DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 50.0
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 10.0
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS = 50000
-DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 4
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 1
 DEFAULT_RBF_QUERY_BRIDGE_ALL = True
 DEFAULT_RBF_QUERY_BRIDGE_LABELS = "AS->TS,TS->CS,CS->LB,LB->RB,RB->AS"
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH = 14
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD = 0.05
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD = 0.0
-
-
-def root_override_intervals(sbf: Any) -> list[Any]:
-    return [sbf.Interval(float(lo), float(hi)) for lo, hi in D23_ROOT_INTERVALS]
 
 
 def robot_joint_limit_tuples(robot: Any) -> list[tuple[float, float]]:
@@ -133,6 +119,7 @@ def default_rbf_profile() -> dict[str, Any]:
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
             "deep_ffb_depth": DEFAULT_RBF_DEEP_FFB_DEPTH,
             "ffb_start_depth": DEFAULT_RBF_FFB_START_DEPTH,
+            "ffb_search_mode": DEFAULT_RBF_FFB_SEARCH_MODE,
             "domain_seed_cap": DEFAULT_RBF_DOMAIN_SEED_CAP,
             "domain_success_cap": DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
             "domain_attempt_cap": DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
@@ -158,13 +145,15 @@ def default_rbf_profile() -> dict[str, Any]:
             "pave_max_chain": DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
             "pave_steps": DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
             "pave_depth": DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
+            "adaptive_min_segment_fraction": DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
             "pave_fill_gaps": DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS,
             "pave_require_connected_chain": DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
         },
         "query_bridge": {
             "depth_semantics": "lect_active_tree",
             "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
-            "note": "Query bridge may use a deeper FFB cap than global connector while leaf/deep/connector stay at their registered depths.",
+            "adaptive_ffb_depths": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
+            "note": "Query bridge may use a deeper FFB cap than global connector while leaf/deep/connector stay at their registered depths. Adaptive shallow-to-deep schedules are supported for sweeps but disabled by default because the registered 8-seed scan preserved better quality/time with direct d60.",
         },
         "query": {
             "state_space": "native_joint_space",
@@ -203,10 +192,12 @@ def shelf_d23_rbf_profile() -> dict[str, Any]:
         "depth_semantics": "lect_canonical_tree",
         "root": str(D23_CACHE_ROOT),
         "label": D23_CACHE_LABEL,
-        "root_intervals": [[lo, hi] for lo, hi in D23_ROOT_INTERVALS],
-        "active_planning_root": "native_query_space",
-        "coverage_root": "shelf_task_root_reflected_dim0_all_sectors",
-        "split_schedule": "primary_sector_shelf_aafk",
+        "root_intervals": "canonical_root_internal_to_LECT",
+        "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+        "active_planning_root": "full_robot_joint_limits",
+        "coverage_root": "full_robot_joint_limits",
+        "split_schedule": "active_dim0_first_two_then_cache_tail",
+        "cache_split_schedule": "full_joint_canonical_aafk",
         "canonical_mapping_scope": "LECT_internal_only",
     }
     return profile
@@ -231,18 +222,20 @@ def robot_lectdb_profile(robot_name: str) -> dict[str, Any]:
     depth = robot_lectdb_depth(robot_name)
     if str(robot_name) == "iiwa":
         return {
-            "mode": "restricted_d23_external_evidence",
+            "mode": "full_joint_d23_external_evidence",
             "depth_semantics": "lect_canonical_tree",
             "robot": "iiwa",
             "depth": 23,
             "root": str(D23_CACHE_ROOT),
             "label": D23_CACHE_LABEL,
             "path": str(D23_CACHE_ROOT / D23_CACHE_LABEL),
-            "root_intervals": [[lo, hi] for lo, hi in D23_ROOT_INTERVALS],
-            "coverage_domain": "reflected_canonical_lect_root_sections",
+            "root_intervals": "canonical_root_internal_to_LECT",
+            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "coverage_domain": "full_robot_joint_limits",
             "canonical_mode": True,
-            "active_planning_root": "native_query_space",
-            "split_schedule": "primary_sector_shelf_aafk",
+            "active_planning_root": "full_robot_joint_limits",
+            "split_schedule": "active_dim0_first_two_then_cache_tail",
+            "cache_split_schedule": "full_joint_canonical_aafk",
             "canonical_mapping_scope": "LECT_internal_only",
             "symmetry_descriptor": CANONICAL_SYMMETRY_DESCRIPTOR,
         }
@@ -267,25 +260,22 @@ def robot_root_override_tuples(robot_name: str) -> list[tuple[float, float]] | N
 
 
 def robot_sector_expanded_root_tuples(robot_name: str, robot: Any | None = None) -> list[tuple[float, float]] | None:
-    if str(robot_name) == "iiwa":
-        intervals = list(D23_ROOT_INTERVALS)
-    else:
-        if robot is None:
-            return None
-        try:
-            from experiments.common.sbf_import import import_sbf
+    if robot is None:
+        return None
+    try:
+        from experiments.common.sbf_import import import_sbf
 
-            sbf = import_sbf()
-            intervals = [
-                (float(interval.lo), float(interval.hi))
-                for interval in sbf.canonical_root_intervals_for_robot(
-                    robot,
-                    True,
-                    CANONICAL_SYMMETRY_DESCRIPTOR,
-                )
-            ]
-        except Exception:
-            return None
+        sbf = import_sbf()
+        intervals = [
+            (float(interval.lo), float(interval.hi))
+            for interval in sbf.canonical_root_intervals_for_robot(
+                robot,
+                True,
+                CANONICAL_SYMMETRY_DESCRIPTOR,
+            )
+        ]
+    except Exception:
+        return None
     width = intervals[0][1] - intervals[0][0]
     if width <= 1e-12:
         return intervals

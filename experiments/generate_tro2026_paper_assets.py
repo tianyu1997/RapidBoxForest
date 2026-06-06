@@ -44,6 +44,7 @@ OLD_TRO_PAPER_ROOT = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewr
 OLD_RANDOM_TABLE = OLD_TRO_PAPER_ROOT / "generated" / "tab_tro_main_random_best_tradeoff.tex"
 REGISTERED_EXP05_RRTCONNECT_SUMMARY = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_summary.csv"
 REGISTERED_EXP05_RRTCONNECT_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_manifest.json"
+REGISTERED_EXP04_QUERY_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp04" / "shelf_leaf_rrt_manifest.json"
 
 METHOD_STYLE = {
     "sbf_leaf_rrt": {"label": "RBF", "color": "#1f77b4", "marker": "o"},
@@ -391,6 +392,31 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
 
 
 def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, list[dict[str, float]]]]:
+    def sparse_bitstar_points(points: list[dict[str, float]]) -> list[dict[str, float]]:
+        if len(points) <= 8:
+            return points
+        targets = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
+        out_points: list[dict[str, float]] = []
+        used: set[int] = set()
+        for target in targets:
+            candidates = [
+                (index, point)
+                for index, point in enumerate(points)
+                if index not in used and point["total_s"] >= target - 1e-9
+            ]
+            if not candidates:
+                candidates = [
+                    (index, point)
+                    for index, point in enumerate(points)
+                    if index not in used
+                ]
+            if not candidates:
+                continue
+            index, point = min(candidates, key=lambda item: abs(item[1]["total_s"] - target))
+            used.add(index)
+            out_points.append(point)
+        return sorted(out_points, key=lambda item: item["total_s"])
+
     out: dict[tuple[str, str], dict[str, list[dict[str, float]]]] = {}
     for row in rows:
         method = str(row.get("method", ""))
@@ -415,7 +441,8 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
         )
     for scenario in out.values():
         for method, points in scenario.items():
-            scenario[method] = sorted(points, key=lambda item: item["total_s"])
+            points = sorted(points, key=lambda item: item["total_s"])
+            scenario[method] = sparse_bitstar_points(points) if method == "bitstar" else points
     return out
 
 
@@ -634,6 +661,30 @@ def find_exp05_current_baseline_manifest(out_dir: Path) -> Path | None:
     return None
 
 
+def find_exp05_bitstar_trace_summary(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "bitstar_trace10" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "exp05_bitstar_trace10" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "bitstar_trace10" / "shelf_cross_algorithm_summary.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_exp05_bitstar_trace_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "bitstar_trace10" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "exp05_bitstar_trace10" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "bitstar_trace10" / "shelf_cross_algorithm_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def find_exp06_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "random_robot_summary.csv",
@@ -662,6 +713,21 @@ def find_exp06_ompl_curve_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp06" / "ompl_tradeoff_curves" / "random_robot_summary.csv",
         out_dir / "ompl_tradeoff_curves" / "random_robot_summary.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_exp06_bitstar_trace_summary(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp06" / "bitstar_trace05" / "random_robot_summary.csv",
+        out_dir / "exp06_bitstar_trace05" / "random_robot_summary.csv",
+        out_dir / "bitstar_trace05" / "random_robot_summary.csv",
+        out_dir / "exp06" / "bitstar_trace10" / "random_robot_summary.csv",
+        out_dir / "exp06_bitstar_trace10" / "random_robot_summary.csv",
+        out_dir / "bitstar_trace10" / "random_robot_summary.csv",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -755,7 +821,7 @@ def path_length_stat(row: dict[str, Any]) -> float:
 
 def select_tradeoff_row(rows: list[dict[str, Any]], *, budget_field: str = "budget_s") -> dict[str, Any] | None:
     full = [row for row in rows if full_success(row)]
-    candidates = full or rows
+    candidates = full
     finite_path = [
         path_length_stat(row)
         for row in candidates
@@ -776,6 +842,22 @@ def select_tradeoff_row(rows: list[dict[str, Any]], *, budget_field: str = "budg
             measured_time_key(row),
             path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
             finite_or_inf(row.get("deep_max_boxes")),
+        ),
+    )[0]
+
+
+def first_full_success_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    full = [
+        row for row in rows
+        if full_success(row) and math.isfinite(measured_time_key(row))
+    ]
+    if not full:
+        return None
+    return sorted(
+        full,
+        key=lambda row: (
+            measured_time_key(row),
+            path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
         ),
     )[0]
 
@@ -908,6 +990,8 @@ def grouped_query_table(
 def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
     labels = {
         "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
+        "critsample_d23_cache": "CritSample d23",
+        "no_cache_full_root_ts": "No-cache full-root",
         "critsample_support_hull": "CritSample",
         "critsample_support_hull_unsafe": "CritSample",
         "no_external_lect": "No LECT replay",
@@ -1093,7 +1177,7 @@ def generate_exp05_table(
             if not any(math.isfinite(as_float(value.get("path"))) for value in query_stats.values()):
                 query_stats = old_shelf_iris_query_stats()
             label = labels[method]
-            build_s = row.get("build_s", row.get("planning_s_median"))
+            build_s = method_time(row) if method in {"rrtconnect", "bitstar"} else row.get("build_s", row.get("planning_s_median"))
         else:
             stage_id = str(row.get("stage_id", method))
             query_stats = query_stats_from_runs(
@@ -1103,7 +1187,7 @@ def generate_exp05_table(
                 ),
             )
             label = labels[method]
-            build_s = row.get("build_s", row.get("planning_s_median"))
+            build_s = method_time(row) if method in {"rrtconnect", "bitstar"} else row.get("build_s", row.get("planning_s_median"))
         time_label = "Solve" if method in {"rrtconnect", "bitstar"} else "Build"
         methods.append({
             "label": label,
@@ -1121,8 +1205,8 @@ def generate_exp05_table(
             r"PRM, RRTConnect, BIT*, and IRIS-NP+GCS are current reruns with the registered settings when available; "
             r"IRIS per-query entries fall back to the old audited artifact only if the current IRIS manifest is absent. "
             r"For RRTConnect and BIT*, Solve is the observed "
-            r"return time under the timeout cap rather than the cap itself; BIT* uses a 5\,s cap with early stopping. "
-            r"OMPL planning, final simplify, and fixed-resolution "
+            r"return time under the timeout cap rather than the cap itself. BIT* is run as a single timed trace with dense subsecond and sparse long-horizon incumbent checkpoints. "
+            r"Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. OMPL planning, final simplify, and fixed-resolution "
             r"final audit use the same 0.01 joint-space segment step with zero collision tolerance."
         ),
         label="tab:tro-shelf-cross-algorithm",
@@ -1146,7 +1230,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             [
                 row for row in rows
                 if str(row.get("method")) == method
-                and (method not in {"prm", "bitstar"} or is_full_success(row))
+                and is_full_success(row)
             ],
             key=lambda row: (measured_time_key(row), finite_or_inf(row.get("deep_max_boxes"))),
         )
@@ -1176,6 +1260,17 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             ax.plot(xs, ys, "-", color=style["color"], alpha=0.62, linewidth=LINE_WIDTH)
         ax.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.78, label=style["label"])
         selected = selected_rows.get(method)
+        first = first_full_success_row(items)
+        if first is not None:
+            ax.scatter(
+                [method_time(first)],
+                [path_length_stat(first)],
+                facecolors="none",
+                edgecolors="black",
+                linewidths=0.9,
+                s=28,
+                zorder=4,
+            )
         if selected is not None:
             ax.scatter(
                 [method_time(selected)],
@@ -1255,7 +1350,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     path_values: list[float] = []
     for case, label, color, marker in case_order:
         items = sorted(
-            [row for row in rows if str(row.get("case")) == case],
+            [row for row in rows if str(row.get("case")) == case and full_success(row)],
             key=measured_time_key,
         )
         if not items:
@@ -1331,8 +1426,17 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     rows = read_csv_rows(summary)
     rbf_manifest_path = find_exp04_manifest(out_dir)
     rbf_manifest = load_json_file(rbf_manifest_path)
+    rbf_query_manifest_path: Path | None = None
+    if (
+        (not isinstance(rbf_manifest, dict) or not rbf_manifest.get("rows"))
+        and REGISTERED_EXP04_QUERY_MANIFEST.exists()
+    ):
+        rbf_query_manifest_path = REGISTERED_EXP04_QUERY_MANIFEST
+        rbf_manifest = load_json_file(rbf_query_manifest_path)
     current_baseline_summary = find_exp05_current_baseline_summary(out_dir)
     current_baseline_manifest = find_exp05_current_baseline_manifest(out_dir)
+    bitstar_trace_summary = find_exp05_bitstar_trace_summary(out_dir)
+    bitstar_trace_manifest = find_exp05_bitstar_trace_manifest(out_dir)
     baseline_manifest = load_json_file(current_baseline_manifest)
     if current_baseline_summary is not None and current_baseline_summary != summary:
         baseline_methods = {"iris_np_gcs", "rrtconnect", "prm", "bitstar"}
@@ -1343,6 +1447,14 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         if current_baseline_rows:
             rows = [row for row in rows if str(row.get("method")) not in baseline_methods]
             rows.extend(current_baseline_rows)
+    if bitstar_trace_summary is not None:
+        bitstar_rows = [
+            row for row in read_csv_rows(bitstar_trace_summary)
+            if str(row.get("method")) == "bitstar"
+        ]
+        if bitstar_rows:
+            rows = [row for row in rows if str(row.get("method")) != "bitstar"]
+            rows.extend(bitstar_rows)
     registered_rrt_rows: list[dict[str, Any]] = []
     registered_rrt_manifest_rows: list[dict[str, Any]] = []
     if not any(str(row.get("method")) == "rrtconnect" for row in rows) and REGISTERED_EXP05_RRTCONNECT_SUMMARY.exists():
@@ -1353,6 +1465,18 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rows.extend(registered_rrt_rows)
     if isinstance(baseline_manifest, dict):
         manifest_rows = baseline_manifest.setdefault("rows", [])
+        if bitstar_trace_manifest is not None:
+            bitstar_manifest = load_json_file(bitstar_trace_manifest)
+            bitstar_manifest_rows = [
+                row for row in bitstar_manifest.get("rows", [])
+                if str(row.get("method")) == "bitstar"
+            ] if isinstance(bitstar_manifest, dict) else []
+            if bitstar_manifest_rows:
+                manifest_rows[:] = [
+                    row for row in manifest_rows
+                    if str(row.get("method")) != "bitstar"
+                ]
+                manifest_rows.extend(bitstar_manifest_rows)
         if (
             not any(str(row.get("method")) == "rrtconnect" for row in manifest_rows)
             and REGISTERED_EXP05_RRTCONNECT_MANIFEST.exists()
@@ -1400,11 +1524,17 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "summary_sha256": file_sha256(summary),
         "current_baseline_summary": str(current_baseline_summary) if current_baseline_summary is not None else None,
         "current_baseline_manifest": str(current_baseline_manifest) if current_baseline_manifest is not None else None,
+        "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
+        "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
+        "bitstar_trace_manifest": str(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
+        "bitstar_trace_manifest_sha256": file_sha256(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
         "registered_rrtconnect_summary": str(REGISTERED_EXP05_RRTCONNECT_SUMMARY) if registered_rrt_rows else None,
         "registered_rrtconnect_rows": len(registered_rrt_rows),
         "registered_rrtconnect_manifest": str(REGISTERED_EXP05_RRTCONNECT_MANIFEST) if registered_rrt_manifest_rows else None,
         "registered_rrtconnect_manifest_rows": len(registered_rrt_manifest_rows),
         "rbf_manifest": str(rbf_manifest_path) if rbf_manifest_path is not None else None,
+        "rbf_query_manifest": str(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
+        "rbf_query_manifest_sha256": file_sha256(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
         "exp04_registered_summary": str(exp04_summary) if exp04_summary is not None else None,
         "rows": len(rows),
         "table": str(table_path),
@@ -1601,6 +1731,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     if str(row.get("method")) == "sbf_leaf_rrt"
                     and str(row.get("robot")).lower() == robot
                     and str(row.get("difficulty")).lower() == difficulty
+                    and full_success(row)
                 ],
                 key=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
             )
@@ -1611,6 +1742,17 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                           alpha=0.60, linewidth=LINE_WIDTH)
                 axis.scatter(xs, ys, marker=METHOD_STYLE["sbf_leaf_rrt"]["marker"],
                              color=METHOD_STYLE["sbf_leaf_rrt"]["color"], s=POINT_SIZE, alpha=0.82)
+                first = first_full_success_row(items)
+                if first is not None:
+                    axis.scatter(
+                        [as_float(first.get("planning_s_median"))],
+                        [path_length_stat(first)],
+                        facecolors="none",
+                        edgecolors="black",
+                        linewidths=0.9,
+                        s=28,
+                        zorder=4,
+                    )
                 selected = rbf_selected.get((robot, difficulty))
                 if selected is not None:
                     axis.scatter(
@@ -1633,6 +1775,15 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 ys = [point["path_length"] for point in points]
                 axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
                 axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
+                axis.scatter(
+                    [xs[0]],
+                    [ys[0]],
+                    facecolors="none",
+                    edgecolors="black",
+                    linewidths=0.8,
+                    s=24,
+                    zorder=4,
+                )
             for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
                 item = scenario_context.get(method)
                 if not item:
@@ -1722,6 +1873,7 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     rows = read_csv_rows(summary)
     baseline_summary = find_exp06_current_baseline_summary(out_dir) if include_current_baselines else None
     curve_summary = find_exp06_ompl_curve_summary(out_dir)
+    bitstar_trace_summary = find_exp06_bitstar_trace_summary(out_dir)
     iris_summaries = find_exp06_iris_summaries(out_dir)
     baseline_rows: list[dict[str, Any]] = []
     if baseline_summary is not None:
@@ -1741,6 +1893,14 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             row for row in read_csv_rows(curve_summary)
             if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
         ]
+    if bitstar_trace_summary is not None:
+        bitstar_rows = [
+            row for row in read_csv_rows(bitstar_trace_summary)
+            if str(row.get("method")) == "bitstar" and is_full_success(row)
+        ]
+        if bitstar_rows:
+            curve_rows = [row for row in curve_rows if str(row.get("method")) != "bitstar"]
+            curve_rows.extend(bitstar_rows)
     table_rows = rows + baseline_rows + curve_rows + iris_rows
     figure_rows = rows + baseline_rows + curve_rows + iris_rows
     table_path = generated / "tab_tro_random_summary.tex"
@@ -1761,6 +1921,8 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "current_iris_rows": len(iris_rows),
         "ompl_curve_summary": str(curve_summary) if curve_summary is not None else None,
         "ompl_curve_summary_sha256": file_sha256(curve_summary) if curve_summary is not None else None,
+        "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
+        "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "ompl_curve_rows_100pct": len(curve_rows),
         "registered_baseline_context": True,
         "old_random_context_table": str(OLD_RANDOM_TABLE) if OLD_RANDOM_TABLE.exists() else None,

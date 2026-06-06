@@ -1,4 +1,5 @@
 #include <LECTDatabase/sbf/oracle.h>
+#include <rbf/lect_database/canonicalization.h>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -9,6 +10,7 @@
 #include <filesystem>
 #include <limits>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace ld = rbf::lect_database;
@@ -25,10 +27,25 @@ rbf::Robot make_toy_robot() {
     return rbf::Robot("toy2", dh, limits, std::nullopt, {0.03, 0.03});
 }
 
+rbf::Robot make_z4_robot() {
+    std::vector<rbf::DHParam> dh = {
+        {0.0, 0.35, 0.0, 0.0, 0},
+        {0.0, 0.30, 0.0, 0.0, 0},
+    };
+    constexpr double kPi = 3.141592653589793238462643383279502884;
+    rbf::JointLimits limits;
+    limits.limits = {{-kPi, kPi}, {-1.0, 1.0}};
+    return rbf::Robot("z4_toy2", dh, limits, std::nullopt, {0.03, 0.03});
+}
+
 void require(bool condition) {
     if (!condition) {
         std::abort();
     }
+}
+
+bool interval_contains(const rbf::Interval& interval, double value, double tol = 1e-9) {
+    return value >= interval.lo - tol && value <= interval.hi + tol;
 }
 
 ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
@@ -55,6 +72,24 @@ ld::LectDatabaseConfig make_test_db_config(const std::filesystem::path& dir,
     db_config.split_policy = split;
     db_config.identity = identity;
     return db_config;
+}
+
+ld::LectDatabaseConfig make_canonical_test_db_config(const std::filesystem::path& dir,
+                                                     const rbf::Robot& robot) {
+    constexpr double kHalfPi = 1.570796326794896619231321691639751442;
+    auto canonical_root = robot.joint_limits().limits;
+    canonical_root[0] = {0.0, kHalfPi};
+    ld::LectDatabaseConfig config = make_test_db_config(
+        dir,
+        robot,
+        canonical_root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+    config.coverage_intervals = robot.joint_limits().limits;
+    config.identity.canonical_mode = true;
+    config.identity.symmetry_descriptor = std::string(ld::kJointSymmetryNativeV1);
+    config.identity.symmetry_hash = std::hash<std::string>{}(config.identity.symmetry_descriptor);
+    return config;
 }
 
 void test_database_box_oracle_topology_and_cache() {
@@ -234,6 +269,184 @@ void test_database_box_oracle_supports_deep_path_keys() {
     std::filesystem::remove_all(dir);
 }
 
+void test_canonical_native_query_mapping_contains_native_seed() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_mapping_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_z4_robot();
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_canonical_test_db_config(dir, robot), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::DatabaseBoxOracle oracle(robot, database, rbf::Scene{}, endpoint_config, envelope_config, {});
+
+    const auto root = oracle.root_intervals();
+    const std::vector<double> seeds = {
+        -1e-4,
+        -1e-6,
+        0.0,
+        1e-6,
+        1.5707963267948966 - 1e-6,
+        1.5707963267948966 + 1e-6,
+        3.141592653589793,
+        -1.5707963267948966,
+    };
+    for (double q0 : seeds) {
+        Eigen::VectorXd q(2);
+        q << q0, 0.0;
+        const Eigen::VectorXd tree_q = oracle.tree_configuration_for_query(q);
+        require(interval_contains(root[0], tree_q[0]));
+        const auto native = oracle.query_intervals_for_node(oracle.root_node(), root, q);
+        require(native.size() == root.size());
+        require(interval_contains(native[0], q0));
+        require(native[0].width() <= 1.5707963267948966 + 1e-9);
+    }
+    require(oracle.counters().canonical_reflected_seed_misses == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_canonical_invalid_cross_sector_interval_errors() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_cross_sector_error_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_z4_robot();
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_canonical_test_db_config(dir, robot), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.external_evidence_materialization = true;
+    validation_config.external_evidence_backfill_active = false;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(100.0f, 100.0f, 100.0f, 101.0f, 101.0f, 101.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config);
+
+    auto invalid = oracle.root_intervals();
+    invalid[0] = {-1e-4, 1e-4};
+    bool threw = false;
+    try {
+        (void)oracle.validate_node(oracle.root_node(), invalid, -1);
+    } catch (const std::runtime_error&) {
+        threw = true;
+    }
+    require(threw);
+    require(oracle.counters().canonical_frame_invalid == 1);
+    require(oracle.counters().materialization_reused_external_evidence == 0);
+    require(oracle.counters().materializations == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_canonical_external_cache_matches_live_native_validation() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_active_cache_test";
+    const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_external_cache_test";
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+    auto robot = make_z4_robot();
+
+    ld::LectDatabase external_database;
+    std::string reason;
+    require(external_database.open(make_canonical_test_db_config(external_dir, robot), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(100.0f, 100.0f, 100.0f, 101.0f, 101.0f, 101.0f)};
+
+    {
+        rbf::OracleValidationConfig store_config;
+        store_config.external_evidence_materialization = false;
+        store_config.store_endpoint_evidence_cache = true;
+        rbf::DatabaseBoxOracle external_oracle(
+            robot,
+            external_database,
+            rbf::Scene(obstacles),
+            endpoint_config,
+            envelope_config,
+            store_config);
+        const auto validation = external_oracle.validate_node(
+            external_oracle.root_node(),
+            external_oracle.root_intervals(),
+            -1);
+        require(validation == rbf::BoxValidation::Free);
+        require(external_database.evidence_count() > 0);
+        require(external_database.checkpoint());
+    }
+
+    ld::LectDatabase active_database;
+    require(active_database.open(make_canonical_test_db_config(active_dir, robot), &reason));
+    ld::LectDatabaseEvidenceSource external_source(external_database);
+
+    rbf::OracleValidationConfig cache_config;
+    cache_config.external_evidence_materialization = true;
+    cache_config.external_evidence_backfill_active = false;
+    rbf::DatabaseBoxOracle cached_oracle(
+        robot,
+        active_database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        cache_config,
+        &external_source,
+        &external_database);
+
+    rbf::OracleValidationConfig live_config;
+    live_config.external_evidence_materialization = false;
+    live_config.enable_endpoint_evidence_cache = false;
+    rbf::DatabaseBoxOracle live_oracle(
+        robot,
+        active_database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        live_config);
+
+    const std::vector<double> seeds = {
+        -1e-4,
+        1e-6,
+        1.5707963267948966 + 1e-6,
+        3.141592653589793,
+        -1.5707963267948966,
+    };
+    int previous_hits = 0;
+    for (double q0 : seeds) {
+        Eigen::VectorXd q(2);
+        q << q0, 0.0;
+        const auto native_box = cached_oracle.query_intervals_for_node(
+            cached_oracle.root_node(),
+            cached_oracle.root_intervals(),
+            q);
+        require(interval_contains(native_box[0], q0));
+        const auto cached = cached_oracle.validate_node(cached_oracle.root_node(), native_box, -1);
+        const auto live = live_oracle.validate_node(live_oracle.root_node(), native_box, -1);
+        require(cached == live);
+        require(cached_oracle.counters().materialization_reused_external_evidence > previous_hits);
+        previous_hits = cached_oracle.counters().materialization_reused_external_evidence;
+    }
+    require(cached_oracle.counters().canonical_frame_invalid == 0);
+    require(cached_oracle.counters().canonical_reflected_seed_misses == 0);
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
 void test_external_evidence_reuses_when_handles_differ() {
     const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_active_mismatch_test";
     const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_external_mismatch_test";
@@ -406,6 +619,9 @@ int main() {
     test_database_box_oracle_topology_and_cache();
     test_database_box_oracle_sessions_commit_and_remap();
     test_database_box_oracle_supports_deep_path_keys();
+    test_canonical_native_query_mapping_contains_native_seed();
+    test_canonical_invalid_cross_sector_interval_errors();
+    test_canonical_external_cache_matches_live_native_validation();
     test_external_evidence_reuses_when_handles_differ();
     test_external_child_hull_reuses_unified_envelope_evidence();
     return 0;

@@ -183,6 +183,8 @@ struct OracleCounters {
     int materialization_reused_cached_envelope = 0;
     int materialization_candidate_dirty_count = 0;
     int materialization_predh_rebuild_count = 0;
+    int canonical_frame_invalid = 0;
+    int canonical_reflected_seed_misses = 0;
     int scoring_evaluations = 0;
     int scoring_changed_dim_inferred = 0;
     int scoring_incremental_fk = 0;
@@ -479,7 +481,7 @@ private:
     OracleValidationConfig validation_config_;
     Scene scene_;
     CollisionChecker checker_;
-    OracleCounters counters_;
+    mutable OracleCounters counters_;
     OracleValidationDetail last_validation_detail_;
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;

@@ -288,9 +288,18 @@ void test_leaf_sweep_empty_scene() {
     rbf::RBFPlanningForest forest(robot, config);
     rbf::LeafSweepConfig sweep_config;
     auto result = forest.build_leaf_sweep({}, 2, 2, sweep_config);
-    assert(result.free_boxes.size() == 4);
+    assert(result.free_boxes.size() == 8);
     assert(result.collision_boxes.empty());
     assert(forest.boxes().size() == result.free_boxes.size());
+    bool saw_negative_dim0 = false;
+    bool saw_positive_dim0 = false;
+    for (const auto& box : result.free_boxes) {
+        assert(!box.joint_intervals.empty());
+        saw_negative_dim0 = saw_negative_dim0 || box.joint_intervals[0].lo < -1e-12;
+        saw_positive_dim0 = saw_positive_dim0 || box.joint_intervals[0].hi > 1e-12;
+    }
+    assert(saw_negative_dim0);
+    assert(saw_positive_dim0);
     assert(result.diagnostics.at("leaf_sweep.start_depth") == 2.0);
     bool threw = false;
     try {
@@ -326,6 +335,7 @@ void test_leaf_sweep_single_obstacle_collision() {
 void test_leaf_sweep_grouping_and_composition() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_leaf_sweep_grouping");
+    config.database.canonical_mode = false;
     config.endpoint_source.source = rbf::EndpointSource::IFK;
     config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
     const std::vector<rbf::Obstacle> obstacles = {
@@ -335,6 +345,7 @@ void test_leaf_sweep_grouping_and_composition() {
     };
     rbf::LeafSweepConfig sweep_config;
     sweep_config.obstacle_cluster_gap = 0.0;
+    sweep_config.use_virtual_topology = false;
     rbf::RBFPlanningForest forest(robot, config);
     auto result = forest.build_leaf_sweep(obstacles, 1, 1, sweep_config);
     assert(result.groups.size() == 2);
@@ -345,7 +356,9 @@ void test_leaf_sweep_grouping_and_composition() {
 
     rbf::LeafSweepConfig merged_config;
     merged_config.obstacle_cluster_gap = 1000.0;
+    merged_config.use_virtual_topology = false;
     auto merged_base = base_config("sbf_leaf_sweep_grouping_merged");
+    merged_base.database.canonical_mode = false;
     merged_base.endpoint_source.source = rbf::EndpointSource::IFK;
     merged_base.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
     rbf::RBFPlanningForest merged_forest(robot, merged_base);
@@ -391,13 +404,14 @@ void test_leaf_sweep_refined_empty_scene() {
     refine_config.leaf_start_depth = 1;
     refine_config.leaf_max_depth = 1;
     refine_config.deep_max_boxes = 4;
+    refine_config.use_virtual_topology = false;
     auto result = forest.build_leaf_sweep_refined({}, refine_config);
-    assert(result.leaf_free_count == 2);
+    assert(result.leaf_free_count == 4);
     assert(result.leaf_collision_count == 0);
     assert(result.deep_boxes_added == 0);
-    assert(result.profile.final_boxes == 2);
-    assert(forest.boxes().size() == 2);
-    assert(result.diagnostics.at("leaf_refine.leaf_free_count") == 2.0);
+    assert(result.profile.final_boxes == 4);
+    assert(forest.boxes().size() == 4);
+    assert(result.diagnostics.at("leaf_refine.leaf_free_count") == 4.0);
 }
 
 void test_leaf_sweep_refined_domain_invariant() {

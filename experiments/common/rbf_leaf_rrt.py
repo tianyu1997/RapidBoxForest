@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import os
 import shutil
 import time
 from dataclasses import dataclass
@@ -21,6 +22,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
+    DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
@@ -29,6 +32,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_SEGMENT_RESOLUTION,
     DEFAULT_RBF_DEEP_FFB_DEPTH,
     DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_MAX_DEPTH,
     DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
     DEFAULT_RBF_DOMAIN_SEED_CAP,
     DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
@@ -40,6 +44,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
@@ -47,7 +52,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
-    root_override_intervals,
     robot_symmetry_aligned_root_tuples,
 )
 from experiments.common.sbf_import import import_sbf
@@ -69,7 +73,7 @@ class QuerySpec:
 class RBFLeafRRTOptions:
     seed: int = 0
     deep_max_boxes: int = DEFAULT_RBF_DEEP_MAX_BOXES
-    rbf_max_depth: int = 60
+    rbf_max_depth: int = DEFAULT_RBF_MAX_DEPTH
     timeout_ms: float = 8000.0
     threads: int = DEFAULT_RBF_THREADS
     leaf_start_depth: int = DEFAULT_RBF_LEAF_START_DEPTH
@@ -88,13 +92,14 @@ class RBFLeafRRTOptions:
     collision_overlap_prune_ratio_threshold: float = 0.0
     validation_batch_size: int = DEFAULT_RBF_VALIDATION_BATCH_SIZE
     ffb_start_depth: int = DEFAULT_RBF_FFB_START_DEPTH
+    ffb_search_mode: str = DEFAULT_RBF_FFB_SEARCH_MODE
     audit_resolution: int = DEFAULT_RBF_AUDIT_RESOLUTION
     audit_segment_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP
     audit_collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE
     query_shortcut_boxes: bool = False
     use_virtual_topology: bool = True
-    parallel_virtual_validation: bool = False
-    leaf_threads: int = 1
+    parallel_virtual_validation: bool = True
+    leaf_threads: int = DEFAULT_RBF_THREADS
     envelope: str = "support_hull"
     support_hull_skip_aabb_broadphase: bool = False
     support_hull_direct_collision: bool = False
@@ -125,7 +130,9 @@ class RBFLeafRRTOptions:
     connector_pave_max_chain: int = DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN
     connector_pave_steps: int = DEFAULT_RBF_CONNECTOR_PAVE_STEPS
     connector_pave_depth: int = DEFAULT_RBF_CONNECTOR_PAVE_DEPTH
+    connector_adaptive_min_segment_fraction: float = DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION
     query_bridge_pave_depth: int = DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH
+    query_bridge_adaptive_ffb_depths: str = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS
     connector_pave_fill_gaps: bool = DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS
     connector_pave_require_connected_chain: bool = DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN
     final_collision_shortcut: bool = DEFAULT_RBF_FINAL_COLLISION_SHORTCUT
@@ -143,7 +150,15 @@ class RBFLeafRRTOptions:
     corridor_refine_long_path_ratio: float = 1.25
     corridor_refine_min_delta: float = 0.25
     query_bridge_all: bool = DEFAULT_RBF_QUERY_BRIDGE_ALL
+    query_bridge_adaptive_all: bool = False
+    query_bridge_adaptive_max_path_length: float = math.inf
     query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
+    query_bridge_segment_only_indices: str = ""
+    query_bridge_force_indices: str = ""
+    query_bridge_forced_attempts: int = 1
+    query_bridge_direct_sample_step: float = 0.0
+    query_bridge_repair_subdivisions: int = -1
+    query_bridge_direct_max_length: float = 6.5
     allow_anchor_roots: bool = True
     use_priority_points: bool = True
     canonicalize_queries: bool = False
@@ -191,7 +206,7 @@ def query_point(robot: Any, q: Iterable[float], canonicalize: bool) -> list[floa
     return canonical_q(robot, q) if canonicalize else [float(item) for item in q]
 
 
-def canonical_priority_points(robot: Any, queries: Iterable[Any], canonicalize: bool = True) -> list[list[float]]:
+def canonical_priority_points(robot: Any, queries: Iterable[Any], canonicalize: bool = False) -> list[list[float]]:
     points: list[list[float]] = []
     for raw in queries:
         query = query_spec(raw)
@@ -328,8 +343,10 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         ]
         cfg.database.root_intervals_override = root_intervals
     elif options.use_shelf_root_override:
-        root_intervals = root_override_intervals(sbf)
-        cfg.database.root_intervals_override = root_intervals
+        raise RuntimeError(
+            "use_shelf_root_override is deprecated: current experiments use native full-joint "
+            "space outside LECT and canonical mapping only inside LECT."
+        )
     if options.coverage_override_tuples is not None:
         cfg.database.coverage_intervals_override = [
             sbf.Interval(float(lo), float(hi)) for lo, hi in options.coverage_override_tuples
@@ -339,6 +356,13 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         if bool(options.symmetry_aligned_cache_schedule)
         else []
     )
+    if (
+        bool(options.symmetry_aligned_cache_schedule)
+        and len(forced_tail_schedule) >= 2
+        and int(forced_tail_schedule[0]) == 0
+        and int(forced_tail_schedule[1]) == 0
+    ):
+        forced_tail_schedule = forced_tail_schedule[2:]
     cfg.database.split_policy = make_aafk_split_policy(
         robot,
         int(options.rbf_max_depth),
@@ -404,8 +428,29 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.connector.pave.max_chain = int(options.connector_pave_max_chain)
     cfg.connector.pave.max_steps_per_waypoint = int(options.connector_pave_steps)
     cfg.connector.pave.find_free_box.max_depth = int(options.connector_pave_depth)
+    if hasattr(cfg.connector.pave, "adaptive_min_segment_fraction"):
+        cfg.connector.pave.adaptive_min_segment_fraction = float(options.connector_adaptive_min_segment_fraction)
     cfg.query_bridge_pave_depth = int(options.query_bridge_pave_depth)
+    if hasattr(cfg, "query_bridge_adaptive_ffb_depths"):
+        cfg.query_bridge_adaptive_ffb_depths = [
+            int(item.strip())
+            for item in str(options.query_bridge_adaptive_ffb_depths).split(",")
+            if item.strip()
+        ]
+    mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
+    ffb_search_mode = None
+    if hasattr(sbf, "FindFreeBoxSearchMode"):
+        if mode_name in {"binary", "binary-depth", "binarydepth"}:
+            ffb_search_mode = sbf.FindFreeBoxSearchMode.BinaryDepth
+        elif mode_name in {"linear", ""}:
+            ffb_search_mode = sbf.FindFreeBoxSearchMode.Linear
+        else:
+            raise ValueError(f"unknown FFB search mode: {options.ffb_search_mode}")
     cfg.connector.pave.find_free_box.skip_to_depth = int(options.ffb_start_depth)
+    if hasattr(cfg.connector.pave.find_free_box, "start_depth"):
+        cfg.connector.pave.find_free_box.start_depth = int(options.ffb_start_depth)
+    if ffb_search_mode is not None and hasattr(cfg.connector.pave.find_free_box, "search_mode"):
+        cfg.connector.pave.find_free_box.search_mode = ffb_search_mode
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
     cfg.connector.pave.find_free_box.split_unknown_leaf = True
     cfg.connector.pave.find_free_box.reject_seed_collision = False
@@ -418,6 +463,11 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.query.audit_collision_tolerance = float(options.audit_collision_tolerance)
     cfg.query.shortcut_boxes = bool(options.query_shortcut_boxes)
     cfg.query.collision_shortcut = bool(options.final_collision_shortcut)
+    cfg.grower.find_free_box.skip_to_depth = int(options.ffb_start_depth)
+    if hasattr(cfg.grower.find_free_box, "start_depth"):
+        cfg.grower.find_free_box.start_depth = int(options.ffb_start_depth)
+    if ffb_search_mode is not None and hasattr(cfg.grower.find_free_box, "search_mode"):
+        cfg.grower.find_free_box.search_mode = ffb_search_mode
     if hasattr(cfg.query, "final_rrt_simplify"):
         cfg.query.final_rrt_simplify = bool(options.final_rrt_simplify)
     if hasattr(cfg.query, "final_rrt_simplify_timeout_ms"):
@@ -532,11 +582,19 @@ def query_rows(
     canonicalize_queries: bool = False,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
-    for raw in queries:
+    for query_index, raw in enumerate(queries):
         query = query_spec(raw)
         start = query_point(robot, query.start, canonicalize_queries)
         goal = query_point(robot, query.goal, canonicalize_queries)
-        result = forest.query(start, goal)
+        previous_active_query = os.environ.get("RBF_ACTIVE_QUERY_INDEX")
+        os.environ["RBF_ACTIVE_QUERY_INDEX"] = str(query_index)
+        try:
+            result = forest.query(start, goal)
+        finally:
+            if previous_active_query is None:
+                os.environ.pop("RBF_ACTIVE_QUERY_INDEX", None)
+            else:
+                os.environ["RBF_ACTIVE_QUERY_INDEX"] = previous_active_query
         canonical_path = result.path_as_lists()
         actual_path, reflected_ok, reflection_status = reflect_path_to_actual(query, canonical_path, start, goal)
         actual_audit_passed = bool(result.audit_passed)
@@ -643,6 +701,7 @@ def bridge_all_queries(
     queries: Iterable[Any],
     options: RBFLeafRRTOptions,
 ) -> tuple[float, int, int, dict[str, float], dict[str, int]]:
+    adaptive_all = bool(getattr(options, "query_bridge_adaptive_all", False))
     if not bool(options.query_bridge_all):
         labels = {item.strip() for item in str(options.query_bridge_labels).split(",") if item.strip()}
         if not labels:
@@ -661,13 +720,18 @@ def bridge_all_queries(
             continue
         start = query_point(robot, query.start, bool(options.canonicalize_queries))
         goal = query_point(robot, query.goal, bool(options.canonicalize_queries))
-        if labels:
+        if labels or adaptive_all:
             probe = forest.query(start, goal)
             direct = point_distance(start, goal)
             graph_only = int(getattr(probe, "segment_edges_used", 0)) == 0
+            path_length_value = float(getattr(probe, "path_length", math.inf))
+            absolute_short_enough = path_length_value <= float(
+                getattr(options, "query_bridge_adaptive_max_path_length", math.inf)
+            )
             short_enough = (
                 direct <= 1e-9 or
-                float(getattr(probe, "path_length", math.inf)) <= max(direct * 1.35, direct + 0.35)
+                path_length_value <= max(direct * 1.35, direct + 0.35) or
+                absolute_short_enough
             )
             if bool(probe.success) and bool(probe.audit_passed) and graph_only and short_enough:
                 continue
@@ -676,7 +740,34 @@ def bridge_all_queries(
     if len(selected) > 1 and hasattr(forest, "bridge_queries"):
         starts = [item[1] for item in selected]
         goals = [item[2] for item in selected]
-        added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+        env_updates: dict[str, str | None] = {
+            "RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES":
+                str(options.query_bridge_segment_only_indices).strip() or None,
+            "RBF_QUERY_BRIDGE_FORCE_INDICES":
+                str(options.query_bridge_force_indices).strip() or None,
+        }
+        if int(options.query_bridge_forced_attempts) > 1:
+            env_updates["RBF_QUERY_BRIDGE_FORCED_ATTEMPTS"] = str(int(options.query_bridge_forced_attempts))
+        if float(options.query_bridge_direct_sample_step) > 0.0:
+            env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
+        if int(options.query_bridge_repair_subdivisions) >= 0:
+            env_updates["RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS"] = str(int(options.query_bridge_repair_subdivisions))
+        if float(options.query_bridge_direct_max_length) > 0.0:
+            env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
+        previous_env = {name: os.environ.get(name) for name in env_updates}
+        for name, value in env_updates.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        try:
+            added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+        finally:
+            for name, previous_value in previous_env.items():
+                if previous_value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = previous_value
         elapsed = time.perf_counter() - t0
         timing_by_label["__batch_total__"] = elapsed
         for (label, _start, _goal), added in zip(selected, added_values, strict=True):
@@ -718,12 +809,16 @@ def run_leaf_rrt(
             else []
         ),
     )
+    build_final_boxes = int(build.profile.final_boxes)
+    build_segment_edges = int(build.profile.segment_edges)
     corridor_refine_s, corridor_refine_added, corridor_refine_attempts = refine_corridors(
         forest,
         robot,
         query_list,
         options,
     )
+    after_corridor_boxes = len(list(forest.boxes()))
+    after_corridor_segment_edges = len(list(forest.segment_edges()))
     (
         query_bridge_s,
         query_bridge_added,
@@ -736,6 +831,8 @@ def run_leaf_rrt(
         query_list,
         options,
     )
+    final_boxes = len(list(forest.boxes()))
+    final_segment_edges = len(list(forest.segment_edges()))
     build_wall_s = time.perf_counter() - t0
     qrows = query_rows(
         forest,
@@ -746,10 +843,11 @@ def run_leaf_rrt(
         audit_collision_tolerance=float(options.audit_collision_tolerance),
         canonicalize_queries=bool(options.canonicalize_queries),
     )
+    build_for_diagnostics = forest.last_build_profile() if hasattr(forest, "last_build_profile") else build
     successes = [row for row in qrows if bool(row["audit_passed"])]
     total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))
     total_seg = sum(float(row["segment_edge_length"]) for row in successes)
-    diagnostics = {str(k): float(v) for k, v in dict(build.diagnostics).items()}
+    diagnostics = {str(k): float(v) for k, v in dict(build_for_diagnostics.diagnostics).items()}
     build_s = float(build.total_ms) / 1000.0 + float(corridor_refine_s) + float(query_bridge_s)
     query_s = sum(float(row["query_ms"]) for row in qrows) / 1000.0
     external_hits = max(
@@ -795,8 +893,15 @@ def run_leaf_rrt(
         "leaf_collision_count": int(build.leaf_collision_count),
         "deep_boxes_added": int(build.deep_boxes_added),
         "rrt_grower_boxes_added": int(getattr(build, "rrt_grower_boxes_added", 0)),
-        "final_boxes": int(build.profile.final_boxes),
-        "segment_edges": int(build.profile.segment_edges),
+        "build_final_boxes": build_final_boxes,
+        "build_segment_edges": build_segment_edges,
+        "after_corridor_boxes": int(after_corridor_boxes),
+        "after_corridor_segment_edges": int(after_corridor_segment_edges),
+        "query_bridge_boxes_added_observed": int(final_boxes - after_corridor_boxes),
+        "query_bridge_segment_edges_added_observed": int(final_segment_edges - after_corridor_segment_edges),
+        "final_boxes": int(final_boxes),
+        "final_segment_edges": int(final_segment_edges),
+        "segment_edges": int(final_segment_edges),
         "adjacency_islands": int(build.profile.adjacency_islands),
         "external_hits": external_hits,
         "database_root_intervals": interval_pairs(forest.database_root_intervals()),

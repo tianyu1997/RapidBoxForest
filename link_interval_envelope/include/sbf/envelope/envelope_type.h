@@ -42,6 +42,7 @@ enum class KdopDirectionSet : uint8_t {
 struct KdopConfig {
     KdopDirectionSet direction_set = KdopDirectionSet::DOP26;
     double safety_epsilon = 0.0;
+    double overlap_tolerance = 0.0;
 };
 
 struct SupportHullConfig {
@@ -49,6 +50,7 @@ struct SupportHullConfig {
     bool skip_aabb_broadphase = false;  // keep KDOP/GJK but bypass envelope/link AABB broadphases
     bool direct_collision = false;  // bypass AABB/KDOP broadphases and run support-hull GJK directly
     double safety_epsilon = 0.0;
+    double overlap_tolerance = 0.0;
 };
 
 struct EnvelopeTypeConfig {
