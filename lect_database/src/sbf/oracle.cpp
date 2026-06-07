@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -38,6 +39,35 @@ using Clock = std::chrono::steady_clock;
 std::mutex& external_direct_lookup_mutex() {
     static std::mutex mutex;
     return mutex;
+}
+
+std::uint64_t hash_mix(std::uint64_t seed, std::uint64_t value) {
+    seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+    return seed;
+}
+
+std::uint64_t hash_double_bits(double value) {
+    if (value == 0.0) {
+        value = 0.0;
+    }
+    std::uint64_t bits = 0;
+    static_assert(sizeof(bits) == sizeof(value));
+    std::memcpy(&bits, &value, sizeof(value));
+    return bits;
+}
+
+std::uint64_t validation_cache_key(OracleNodeId node,
+                                   const std::vector<Interval>& intervals,
+                                   int changed_dim) {
+    std::uint64_t key = 0xcbf29ce484222325ull;
+    key = hash_mix(key, static_cast<std::uint64_t>(node));
+    key = hash_mix(key, static_cast<std::uint64_t>(changed_dim + 4096));
+    key = hash_mix(key, static_cast<std::uint64_t>(intervals.size()));
+    for (const auto& interval : intervals) {
+        key = hash_mix(key, hash_double_bits(interval.lo));
+        key = hash_mix(key, hash_double_bits(interval.hi));
+    }
+    return key;
 }
 
 double elapsed_us(Clock::time_point start) {
@@ -1727,6 +1757,33 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
         counters_.validate_node_overhead_time_us += std::max(0.0, total_us - preamble_us);
         return BoxValidation::Free;
     }
+    const bool use_validation_cache =
+        validation_config_.enable_validation_cache &&
+        validation_config_.validation_cache_max_entries > 0;
+    const std::uint64_t cache_key =
+        use_validation_cache ? validation_cache_key(node, intervals, changed_dim) : 0;
+    if (use_validation_cache) {
+        const auto cache_it = validation_cache_.find(cache_key);
+        if (cache_it != validation_cache_.end()) {
+            counters_.validation_cache_hits += 1;
+            last_validation_detail_ = cache_it->second.detail;
+            const double total_us = elapsed_us(total_start);
+            counters_.validate_node_total_time_us += total_us;
+            counters_.validate_node_overhead_time_us += std::max(0.0, total_us - preamble_us);
+            return cache_it->second.result;
+        }
+        counters_.validation_cache_misses += 1;
+    }
+    auto store_validation_cache = [&](BoxValidation result) {
+        if (!use_validation_cache) {
+            return;
+        }
+        if (validation_cache_.size() >=
+            static_cast<std::size_t>(validation_config_.validation_cache_max_entries)) {
+            validation_cache_.clear();
+        }
+        validation_cache_[cache_key] = ValidationCacheEntry{result, last_validation_detail_};
+    };
     const auto endpoint_path_start = Clock::now();
     auto payload = endpoint_payload_for_node(node, intervals, changed_dim);
     const double endpoint_path_us = elapsed_us(endpoint_path_start);
@@ -1739,6 +1796,7 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
         const double total_us = elapsed_us(total_start);
         counters_.validate_node_total_time_us += total_us;
         counters_.validate_node_overhead_time_us += std::max(0.0, total_us - preamble_us - endpoint_path_us);
+        store_validation_cache(BoxValidation::Unknown);
         return BoxValidation::Unknown;
     }
     const auto classify_start = Clock::now();
@@ -1763,6 +1821,7 @@ BoxValidation DatabaseBoxOracle::validate_node(OracleNodeId node,
     counters_.validate_node_total_time_us += total_us;
     counters_.validate_node_overhead_time_us +=
         std::max(0.0, total_us - preamble_us - endpoint_path_us - classify_us);
+    store_validation_cache(result);
     return result;
 }
 
@@ -1888,6 +1947,7 @@ std::shared_ptr<lect_database::SharedEndpointEvidenceCache> DatabaseBoxOracle::s
 void DatabaseBoxOracle::set_scene(Scene scene) {
     scene_ = std::move(scene);
     checker_.set_scene(scene_);
+    validation_cache_.clear();
 }
 
 DatabaseBoxOracleSession::DatabaseBoxOracleSession(DatabaseBoxOracle& master,

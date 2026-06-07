@@ -1,17 +1,17 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA reusable RBF ablation at the registered design point. Build is query-agnostic offline coverage. Solve/q charges online anchoring, query bridge, local repair, and graph search; Simplify/q is the fixed OMPL post-processing time actually consumed. Online/q is their sum, excluding final audit. Amort@5 amortizes build over the five shelf queries. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}
+\captionof{table}{Shelf+IIWA reusable RBF ablation at the selected design point. Build is query-agnostic offline coverage. Online/q charges online anchoring, query bridge, local repair, and graph search, excluding final simplification. Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget and is not included in Online/q. Amort@5 amortizes Build over the five shelf queries plus Online/q. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}
 \label{tab:tro-shelf-ablation}
-\begin{tabular}{lrrrrrrrrr}
+\begin{tabular}{lrrrrrrrr}
 \toprule
-Case & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & Seg. & Boxes & SR \\
+Case & Build & Online/q & Simplify/q & Amort@5 & Path & Seg. & Boxes & SR \\
 \midrule
-RBF-SH d23 & 0.359 & -- & -- & 0.168 & 0.531 & 2.538 & 0.021 & 1964.000 & 8/8 \\
-CritSample & 0.330 & -- & -- & 0.158 & 0.487 & 2.278 & 0.000 & 1590.000 & 8/8 \\
-Link AABB & 0.420 & -- & -- & 0.210 & 0.632 & 2.697 & 0.093 & 2010.000 & 8/8 \\
-No LECT replay & 0.435 & -- & -- & 0.231 & 0.670 & 2.774 & 0.091 & 2009.000 & 8/8 \\
-No LECT, 1 thread & 0.547 & -- & -- & 0.223 & 0.770 & 2.774 & 0.091 & 2009.000 & 8/8 \\
+RBF-SH d23 & 0.226 & 0.034 & 0.007 & 0.079 & 2.978 & 0.371 & 361.500 & 40/40 \\
+CritSample & 0.385 & 0.037 & 0.007 & 0.114 & 3.016 & 0.335 & 458.500 & 40/40 \\
+Link AABB & 0.295 & 0.036 & 0.007 & 0.095 & 2.966 & 0.423 & 311.000 & 40/40 \\
+No LECT replay & 0.319 & 0.035 & 0.007 & 0.099 & 3.011 & 0.385 & 359.500 & 40/40 \\
+SH w/o broadphase & 0.387 & 0.052 & 0.007 & 0.129 & 2.978 & 0.385 & 348.000 & 40/40 \\
 \bottomrule
 \end{tabular}
 \par\endgroup

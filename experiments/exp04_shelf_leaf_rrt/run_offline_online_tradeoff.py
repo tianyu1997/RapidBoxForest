@@ -42,7 +42,6 @@ def base_exp04_args(out_dir: Path, threads: int) -> argparse.Namespace:
     args.out_dir = out_dir
     args.threads = int(threads)
     args.only = "baseline_d23_aafk_support_hull_8t"
-    args.final_rrt_simplify_timeout_ms = 10.0
     args.active_cache_tag = ""
     return args
 
@@ -310,7 +309,8 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "endpoint_main_fallback_to_e2e_median": median(row.get("endpoint_main_fallback_to_e2e", 0) for row in items),
             "online_solve_per_query_s_median": median(row.get("online_solve_per_query_s", math.nan) for row in items),
             "online_simplify_per_query_s_median": median(row.get("online_simplify_per_query_s", math.nan) for row in items),
-            "online_per_query_s_median": median(row.get("online_per_query_s", math.nan) for row in items),
+            "online_per_query_s_median": median(row.get("online_per_query_s", row.get("online_solve_per_query_s", math.nan)) for row in items),
+            "online_total_per_query_s_median": median(row.get("online_total_per_query_s", row.get("online_per_query_s", math.nan)) for row in items),
             "amortized_s_k5": median(row.get("amortized_s_k5", math.nan) for row in items),
             "amortized_s_k10": median(row.get("amortized_s_k10", math.nan) for row in items),
             "amortized_s_k20": median(row.get("amortized_s_k20", math.nan) for row in items),
@@ -552,7 +552,7 @@ def main() -> int:
         "endpoint_main_s", "endpoint_main_per_query_s",
         "endpoint_main_success_count", "endpoint_main_fallback_to_e2e",
         "online_solve_per_query_s", "online_simplify_per_query_s",
-        "online_per_query_s", "amortized_s_k5", "amortized_s_k10", "path_length_mean",
+        "online_per_query_s", "online_total_per_query_s", "amortized_s_k5", "amortized_s_k10", "path_length_mean",
         "raw_segment_fraction", "leaf_free_count", "leaf_collision_count",
         "offline_anchor_roots_added", "offline_segment_edges_added",
         "offline_shortcut_edges_requested", "offline_shortcut_edges_added",
@@ -582,7 +582,7 @@ def main() -> int:
         "endpoint_main_s_median", "endpoint_main_per_query_s_median",
         "endpoint_main_success_count_median", "endpoint_main_fallback_to_e2e_median",
         "online_solve_per_query_s_median", "online_simplify_per_query_s_median",
-        "online_per_query_s_median", "amortized_s_k5", "amortized_s_k10", "amortized_s_k20",
+        "online_per_query_s_median", "online_total_per_query_s_median", "amortized_s_k5", "amortized_s_k10", "amortized_s_k20",
         "path_length_mean", "raw_segment_fraction_median", "leaf_free_count_median",
         "leaf_collision_count_median", "offline_anchor_roots_added_median",
         "offline_segment_edges_added_median", "offline_shortcut_edges_requested_median",

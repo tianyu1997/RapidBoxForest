@@ -8,8 +8,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
-RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_overlapd14o005_bridge_allbox_simplify10ms"
-RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_overlapd14o005_bridge_allbox_simplify10ms"
+RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_step010_a6o3_line2"
+RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_step010_a6o3_line2"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
@@ -39,7 +39,7 @@ DEFAULT_RBF_THREADS = 8
 DEFAULT_RBF_FFB_START_DEPTH = 5
 DEFAULT_RBF_FFB_SEARCH_MODE = "binary"
 
-DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 30.0
+DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 18.0
 DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP = 2
 DEFAULT_RBF_CONNECTOR_RRT_ITERS = 50000
 DEFAULT_RBF_CONNECTOR_RRT_TIMEOUT_MS = 2000.0
@@ -51,8 +51,21 @@ DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN = 160
 DEFAULT_RBF_CONNECTOR_PAVE_STEPS = 12
 DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 62
 DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION = 0.75
-DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 62
+DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 56
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS = ""
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP = 0.10
+DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS = 1
+DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED = True
+DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS = 6
+DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET = 3
+DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS = 0
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR = True
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP = 0.08
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS = 2
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS = 32
+DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY = 2.0
+DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY = 2.0
+DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE = False
 DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS = True
 DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN = True
 
@@ -63,7 +76,7 @@ DEFAULT_RBF_FINAL_COLLISION_SHORTCUT = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 10.0
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS = 50000
-DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 1
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 5
 DEFAULT_RBF_QUERY_BRIDGE_ALL = True
 DEFAULT_RBF_QUERY_BRIDGE_LABELS = "AS->TS,TS->CS,CS->LB,LB->RB,RB->AS"
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH = 14
@@ -153,13 +166,25 @@ def default_rbf_profile() -> dict[str, Any]:
             "depth_semantics": "lect_active_tree",
             "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
             "adaptive_ffb_depths": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
+            "direct_sample_step": DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
+            "repair_subdivisions": DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
+            "force_selected": DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
+            "forced_attempts": DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
+            "attempt_offset": DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
+            "no_path_retry_attempts": DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+            "adaptive_step_repair": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
+            "adaptive_fine_step": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
+            "adaptive_max_repair_subdivisions": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
+            "adaptive_max_repair_calls": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
+            "box_transition_line_deviation_penalty": DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
+            "foreign_edge_cost_penalty": DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
             "adaptive_all": True,
             "adaptive_max_path_length": 4.5,
             "accept_segment_fraction": 0.25,
             "accept_path_ratio": 1.50,
             "accept_path_additive": 0.75,
-            "endpoint_anchor_before_bridge": True,
-            "note": "Online endpoint anchoring is attempted before full query bridge. Existing graph paths are accepted when strict audit passes, segment fraction is below the registered threshold, and path length is within the registered bound; full bridge is reserved for queries that fail these gates.",
+            "endpoint_anchor_before_bridge": DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
+            "note": "Selected shelf queries are bridged directly with endpoint anchoring inside the bridge stage. Existing graph paths are accepted when strict audit passes, segment fraction is below the registered threshold, and path length is within the registered bound; full bridge is reserved for queries that fail these gates.",
         },
         "query": {
             "state_space": "native_joint_space",
@@ -179,13 +204,15 @@ def default_rbf_profile() -> dict[str, Any]:
         },
         "recommended_tradeoff": {
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
-            "validated_on": "Exp.4 shelf baseline seeds 0..7, ffb depth 60, all-query box bridge, 10 ms main simplify budget",
+            "validated_on": "Exp.4 shelf baseline seeds 0..7, query bridge depth 56, direct sample step 0.10 rad, repair subdivisions 1, adaptive repair cap 32, forced bridge attempts 6 with attempt offset 3, line-deviation penalty 2.0, connector pair timeout 18 ms, 10 ms main simplify budget with 5 simplify attempts",
             "success_runs": "8/8",
-            "median_build_s": 3.108,
-            "median_planning_s": 3.366,
-            "median_raw_segment_fraction": 0.0,
-            "mean_route_length": 3.273,
-            "source": "outputs/exp04_baseline_d60_allbox_seedderived_s0_7",
+            "success_queries": "40/40",
+            "median_online_batch_s": 0.20792,
+            "median_online_solve_per_query_s": 0.03426,
+            "median_online_per_query_s": 0.04158,
+            "median_raw_segment_fraction": 0.38540,
+            "mean_route_length": 2.97774,
+            "source": "outputs/exp04_probe_default_simplify_attempts5_s0_7",
         },
     }
 

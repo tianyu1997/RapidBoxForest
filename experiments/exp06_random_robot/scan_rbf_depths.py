@@ -35,6 +35,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffb-depths", default=f"48,56,{DEFAULT_RBF_DEEP_FFB_DEPTH}")
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
     parser.add_argument("--query-bridge-adaptive-max-path-length", type=float, default=4.5)
+    parser.add_argument("--offline-anchor-counts", default="16")
+    parser.add_argument("--offline-anchor-candidate-counts", default="512")
+    parser.add_argument("--offline-shortcut-edges", default="0")
+    parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
+    parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
+    parser.add_argument("--offline-shortcut-max-segment-length", type=float, default=3.0)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -58,19 +64,40 @@ def write_rows(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def config_label(leaf_max: int, ffb_depth: int, budget: int, seeds: int) -> str:
-    return f"leaf{leaf_max}_ffb{ffb_depth}_b{budget}_s{seeds}"
+def config_label(
+    leaf_max: int,
+    ffb_depth: int,
+    budget: int,
+    seeds: int,
+    anchor_count: int,
+    candidate_count: int,
+    shortcut_edges: int,
+) -> str:
+    return (
+        f"leaf{leaf_max}_ffb{ffb_depth}_b{budget}"
+        f"_a{anchor_count}_c{candidate_count}_os{shortcut_edges}_s{seeds}"
+    )
 
 
 def main() -> int:
     args = parse_args()
     leaf_depths = [int(item) for item in csv_list(args.leaf_max_depths)]
     ffb_depths = [int(item) for item in csv_list(args.ffb_depths)]
-    configs = [(leaf, ffb) for leaf in leaf_depths for ffb in ffb_depths]
+    anchor_counts = [int(item) for item in csv_list(args.offline_anchor_counts)]
+    candidate_counts = [int(item) for item in csv_list(args.offline_anchor_candidate_counts)]
+    shortcut_edges_grid = [int(item) for item in csv_list(args.offline_shortcut_edges)]
+    configs = [
+        (leaf, ffb, anchor_count, candidate_count, shortcut_edges)
+        for leaf in leaf_depths
+        for ffb in ffb_depths
+        for anchor_count in anchor_counts
+        for candidate_count in candidate_counts
+        for shortcut_edges in shortcut_edges_grid
+    ]
     all_rows: list[dict[str, Any]] = []
     runner = REPO_ROOT / "experiments" / "exp06_random_robot" / "run_random_robot.py"
-    for leaf_max, ffb_depth in progress(configs, desc="exp06 depth scan", total=len(configs), disable=bool(args.dry_run)):
-        label = config_label(leaf_max, ffb_depth, int(args.box_budget), int(args.scene_seeds))
+    for leaf_max, ffb_depth, anchor_count, candidate_count, shortcut_edges in progress(configs, desc="exp06 depth scan", total=len(configs), disable=bool(args.dry_run)):
+        label = config_label(leaf_max, ffb_depth, int(args.box_budget), int(args.scene_seeds), anchor_count, candidate_count, shortcut_edges)
         out_dir = Path(args.out_dir) / label
         cmd = [
             sys.executable,
@@ -94,6 +121,12 @@ def main() -> int:
             "--query-bridge-all",
             "--query-bridge-adaptive-all",
             "--query-bridge-adaptive-max-path-length", str(float(args.query_bridge_adaptive_max_path_length)),
+            "--offline-anchor-count", str(int(anchor_count)),
+            "--offline-anchor-candidate-count", str(int(candidate_count)),
+            "--offline-shortcut-edges", str(int(shortcut_edges)),
+            "--offline-shortcut-candidate-limit", str(int(args.offline_shortcut_candidate_limit)),
+            "--offline-shortcut-min-gain-ratio", str(float(args.offline_shortcut_min_gain_ratio)),
+            "--offline-shortcut-max-segment-length", str(float(args.offline_shortcut_max_segment_length)),
             "--out-dir", str(out_dir),
         ]
         print(f"[scan] {label}", flush=True)
@@ -106,6 +139,9 @@ def main() -> int:
                     "leaf_start_depth": int(args.leaf_start_depth),
                     "leaf_max_depth": int(leaf_max),
                     "ffb_depth": int(ffb_depth),
+                    "offline_anchor_count": int(anchor_count),
+                    "offline_anchor_candidate_count": int(candidate_count),
+                    "offline_shortcut_edges": int(shortcut_edges),
                     "box_budget": int(args.box_budget),
                     "scene_seeds_requested": int(args.scene_seeds),
                 })

@@ -31,6 +31,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_AUDIT_RESOLUTION,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+    DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
     DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH,
     DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD,
     DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD,
@@ -44,7 +45,19 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
     DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
+    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
+    DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
     DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE,
@@ -277,6 +290,8 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
         query_bridge_force_indices=str(args.query_bridge_force_indices),
         query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
+        query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
+        query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
         query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
         query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
@@ -316,6 +331,13 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
         query_bridge_labels=str(args.query_bridge_labels),
         query_bridge_segment_only_indices=str(args.query_bridge_segment_only_indices),
+        query_bridge_force_selected=bool(args.query_bridge_force_selected),
+        query_bridge_adaptive_step_repair=bool(args.query_bridge_adaptive_step_repair),
+        query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
+        query_bridge_adaptive_max_repair_subdivisions=int(args.query_bridge_adaptive_max_repair_subdivisions),
+        query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
+        query_box_transition_line_deviation_penalty=float(args.query_box_transition_line_deviation_penalty),
+        query_foreign_edge_cost_penalty=float(args.query_foreign_edge_cost_penalty),
         allow_anchor_roots=True,
         use_priority_points=True,
         offline_query_agnostic_build=True,
@@ -389,10 +411,19 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.offline_anchor_sampling": str(options.offline_anchor_sampling),
         "option.query_bridge_labels": str(options.query_bridge_labels),
         "option.query_bridge_segment_only_indices": str(options.query_bridge_segment_only_indices),
+        "option.query_bridge_force_selected": bool(options.query_bridge_force_selected),
+        "option.query_bridge_adaptive_step_repair": bool(options.query_bridge_adaptive_step_repair),
+        "option.query_bridge_adaptive_fine_step": float(options.query_bridge_adaptive_fine_step),
+        "option.query_bridge_adaptive_max_repair_subdivisions": int(options.query_bridge_adaptive_max_repair_subdivisions),
+        "option.query_bridge_adaptive_max_repair_calls": int(options.query_bridge_adaptive_max_repair_calls),
+        "option.query_box_transition_line_deviation_penalty": float(options.query_box_transition_line_deviation_penalty),
+        "option.query_foreign_edge_cost_penalty": float(options.query_foreign_edge_cost_penalty),
         "option.query_bridge_direct_sample_step": float(options.query_bridge_direct_sample_step),
         "option.query_bridge_repair_subdivisions": int(options.query_bridge_repair_subdivisions),
         "option.query_bridge_force_indices": str(options.query_bridge_force_indices),
         "option.query_bridge_forced_attempts": int(options.query_bridge_forced_attempts),
+        "option.query_bridge_attempt_offset": int(options.query_bridge_attempt_offset),
+        "option.query_bridge_no_path_retry_attempts": int(options.query_bridge_no_path_retry_attempts),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
         "option.query_bridge_to_main_island": bool(options.query_bridge_to_main_island),
         "option.query_bridge_to_main_direct_segment_max_length": float(options.query_bridge_to_main_direct_segment_max_length),
@@ -549,7 +580,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
             "online_solve_per_query_s_median": median(row.get("online_solve_per_query_s", row.get("online_solve_s", row.get("online_batch_s", row["query_s"])) / max(1, row.get("query_count", 1))) for row in items),
             "online_simplify_per_query_s_median": median(row.get("online_simplify_per_query_s", row.get("online_simplify_s", 0.0) / max(1, row.get("query_count", 1))) for row in items),
-            "online_per_query_s_median": median(row.get("online_per_query_s", row["query_s"] / max(1, row.get("query_count", 1))) for row in items),
+            "online_per_query_s_median": median(row.get("online_per_query_s", row.get("online_solve_s", row["query_s"]) / max(1, row.get("query_count", 1))) for row in items),
+            "online_total_per_query_s_median": median(row.get("online_total_per_query_s", row.get("query_total_s", row["query_s"]) / max(1, row.get("query_count", 1))) for row in items),
             "amortized_s_k1": median(row.get("amortized_s_k1", row["planning_s"]) for row in items),
             "amortized_s_k5": median(row.get("amortized_s_k5", row["planning_s"] / 5.0) for row in items),
             "amortized_s_k10": median(row.get("amortized_s_k10", row["planning_s"] / 10.0) for row in items),
@@ -626,6 +658,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "online_solve_per_query_s_median",
         "online_simplify_per_query_s_median",
         "online_per_query_s_median",
+        "online_total_per_query_s_median",
         "amortized_s_k1",
         "amortized_s_k5",
         "amortized_s_k10",
@@ -687,11 +720,11 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Shelf+IIWA reusable RBF ablation at the registered 400-box trade-off point. Build is query-agnostic offline coverage. Solve/q charges endpoint anchoring, query bridge, local repair, and graph search per query. Simplify/q is the fixed OMPL post-processing budget actually consumed. Online/q is their sum, excluding final audit. Amort@5 reports build amortized over the five shelf queries. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full budget curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
+        r"\caption{Shelf+IIWA reusable RBF ablation at the registered 400-box trade-off point. Build is query-agnostic offline coverage. Online/q charges endpoint anchoring, query bridge, local repair, and graph search per query, excluding final simplification. Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Amort@5 reports build amortized over the five shelf queries plus Online/q. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full budget curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
         r"\label{tab:tro-shelf-ablation}",
-        r"\begin{tabular}{lrrrrrrrrr}",
+        r"\begin{tabular}{lrrrrrrrr}",
         r"\toprule",
-        r"Case & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & Seg. & Boxes & SR \\",
+        r"Case & Build & Online/q & Simplify/q & Amort@5 & Path & Seg. & Boxes & SR \\",
         r"\midrule",
     ]
     for row in table_rows:
@@ -702,9 +735,9 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         segment_fraction = row["raw_segment_fraction_median"] if full_success else None
         lines.append(
             f"{label} & {tex_num(row['offline_build_s_median'])} & "
-            f"{tex_num(row.get('online_solve_per_query_s_median'))} & "
+            f"{tex_num(row['online_per_query_s_median'])} & "
             f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
-            f"{tex_num(row['online_per_query_s_median'])} & {tex_num(row['amortized_s_k5'])} & "
+            f"{tex_num(row['amortized_s_k5'])} & "
             f"{tex_num(path_length)} & {tex_num(segment_fraction)} & "
             f"{tex_num(row['final_boxes_median'])} & {sr} \\\\"
         )
@@ -755,8 +788,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-adaptive-min-segment-fraction", type=float, default=DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
     parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
-    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.0)
-    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=-1)
+    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
+    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
@@ -793,7 +826,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-segment-fraction", type=float, default=0.25)
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
-    parser.add_argument("--query-endpoint-anchor-before-bridge", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-endpoint-anchor-before-bridge", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE)
     parser.add_argument("--query-bridge-labels", default=DEFAULT_RBF_QUERY_BRIDGE_LABELS)
     parser.add_argument(
         "--query-bridge-segment-only-indices",
@@ -802,10 +835,19 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--query-bridge-force-indices",
-        default="",
+        default="0,1,2,3,4",
         help="Comma-separated zero-based shelf query indices that must run query bridge even if normally deferred.",
     )
-    parser.add_argument("--query-bridge-forced-attempts", type=int, default=1)
+    parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED)
+    parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
+    parser.add_argument("--query-bridge-attempt-offset", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET)
+    parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
+    parser.add_argument("--query-bridge-adaptive-step-repair", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR)
+    parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP)
+    parser.add_argument("--query-bridge-adaptive-max-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS)
+    parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
+    parser.add_argument("--query-box-transition-line-deviation-penalty", type=float, default=DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY)
+    parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY)
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--offline-anchor-count", type=int, default=16)
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
@@ -956,7 +998,16 @@ def main() -> int:
             "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
             "query_bridge_repair_subdivisions": int(args.query_bridge_repair_subdivisions),
             "query_bridge_force_indices": str(args.query_bridge_force_indices),
+            "query_bridge_force_selected": bool(args.query_bridge_force_selected),
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
+            "query_bridge_attempt_offset": int(args.query_bridge_attempt_offset),
+            "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
+            "query_bridge_adaptive_step_repair": bool(args.query_bridge_adaptive_step_repair),
+            "query_bridge_adaptive_fine_step": float(args.query_bridge_adaptive_fine_step),
+            "query_bridge_adaptive_max_repair_subdivisions": int(args.query_bridge_adaptive_max_repair_subdivisions),
+            "query_bridge_adaptive_max_repair_calls": int(args.query_bridge_adaptive_max_repair_calls),
+            "query_box_transition_line_deviation_penalty": float(args.query_box_transition_line_deviation_penalty),
+            "query_foreign_edge_cost_penalty": float(args.query_foreign_edge_cost_penalty),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
@@ -995,6 +1046,7 @@ def main() -> int:
             "query_bridge_segment_only_indices": str(args.query_bridge_segment_only_indices),
             "query_bridge_force_indices": str(args.query_bridge_force_indices),
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
+            "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),

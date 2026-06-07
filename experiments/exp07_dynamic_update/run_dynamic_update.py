@@ -5,6 +5,7 @@ import argparse
 import csv
 import math
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +18,18 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import generate_catalog, make_robot, scene_for_key
 from experiments.common.rbf_defaults import (
+    DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
     DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_DEEP_FFB_DEPTH,
+    DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_LEAF_MAX_DEPTH,
+    DEFAULT_RBF_LEAF_START_DEPTH,
+    DEFAULT_RBF_MAX_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
     rbf_budget_grid,
     robot_lectdb_profile,
-    robot_sector_expanded_root_tuples,
 )
 from experiments.common.rbf_leaf_rrt import (
     QuerySpec,
@@ -41,6 +48,37 @@ TRANSITIONS = ["easy->medium", "medium->hard", "hard->medium", "medium->easy"]
 sbf = import_sbf()
 
 
+def exp04_profile_tag(args: argparse.Namespace) -> str:
+    return (
+        f"l{int(args.leaf_start_depth)}_{int(args.leaf_max_depth)}"
+        f"_ffb{int(args.deep_ffb_depth)}"
+        f"_qb{int(args.query_bridge_pave_depth)}"
+        f"_b{int(args.deep_max_boxes)}"
+    )
+
+
+def exp04_profile_overrides(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "source": "Exp.4 registered baseline RBF-SH d23",
+        "deep_max_boxes": int(args.deep_max_boxes),
+        "rbf_max_depth": int(args.rbf_max_depth),
+        "leaf_start_depth": int(args.leaf_start_depth),
+        "leaf_max_depth": int(args.leaf_max_depth),
+        "deep_ffb_depth": int(args.deep_ffb_depth),
+        "connector_pave_depth": int(args.connector_pave_depth),
+        "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+        "ffb_start_depth": int(args.ffb_start_depth),
+        "threads": int(args.threads),
+        "parallel_virtual_validation": True,
+        "leaf_threads": int(args.threads),
+        "database_canonical_mode": True,
+        "canonical_mapping_scope": "LECT_internal_only",
+        "planner_state_space": "native_joint_space",
+        "audit_segment_step": 0.01,
+        "final_rrt_simplify_timeout_ms": 10.0,
+    }
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Exp.7 current dynamic-update study.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp07")
@@ -54,6 +92,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-scene-tries", type=int, default=64)
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
+    parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
+    parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
+    parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
+    parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
+    parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
@@ -125,20 +170,28 @@ def add_profile_rows(lhs: dict[str, Any], rhs: dict[str, Any]) -> dict[str, Any]
 
 
 def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOptions:
-    root_override = robot_sector_expanded_root_tuples(str(args.robot), make_robot(str(args.robot)))
+    robot_name = str(args.robot)
+    is_iiwa = robot_name == "iiwa"
     return RBFLeafRRTOptions(
         seed=int(seed),
         deep_max_boxes=int(args.deep_max_boxes),
+        rbf_max_depth=int(args.rbf_max_depth),
         threads=int(args.threads),
+        leaf_start_depth=int(args.leaf_start_depth),
+        leaf_max_depth=int(args.leaf_max_depth),
+        deep_ffb_depth=int(args.deep_ffb_depth),
+        connector_pave_depth=int(args.connector_pave_depth),
+        query_bridge_pave_depth=int(args.query_bridge_pave_depth),
+        ffb_start_depth=int(args.ffb_start_depth),
         use_external_evidence=True,
-        external_evidence_path=robot_external_evidence_path(str(args.robot), cache_root=Path(args.lect_cache_root)),
-        external_evidence_verify_identity=root_override is None,
-        root_override_tuples=root_override,
-        coverage_override_tuples=root_override,
+        external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
+        external_evidence_verify_identity=False,
+        symmetry_aligned_native_root=is_iiwa,
+        symmetry_aligned_cache_schedule=is_iiwa,
         database_canonical_mode=True,
         case_label=label,
-        parallel_virtual_validation=False,
-        leaf_threads=1,
+        parallel_virtual_validation=True,
+        leaf_threads=int(args.threads),
         canonicalize_queries=False,
     )
 
@@ -157,7 +210,8 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         actual_goal=list(source.goal),
     )
     opt = options(args, seed, f"dynamic_{robot_name}_{transition}")
-    cfg = configure_leaf_rrt(robot, args.out_dir / "active_cache" / f"dynamic_{transition}_{seed}", opt)
+    profile_tag = exp04_profile_tag(args)
+    cfg = configure_leaf_rrt(robot, args.out_dir / "active_cache" / f"dynamic_{transition}_{seed}_{profile_tag}", opt)
     cfg.dynamic_update.dirty_region_padding = 100.0
     cfg.dynamic_update.local_regrow_box_limit = int(args.deep_max_boxes)
     cfg.dynamic_update.local_regrow_timeout_ms = 1000.0
@@ -217,11 +271,34 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
             canonicalize_queries=False,
         )[0]
         target_source = "endpoint_segment_fallback"
+    if (
+        not bool(target_query["audit_passed"])
+        and hasattr(forest, "bridge_query_known_needed")
+    ):
+        t0 = time.perf_counter()
+        bridge_added = int(forest.bridge_query_known_needed(list(target_query_spec.start), list(target_query_spec.goal)))
+        bridge_wall_ms = 1000.0 * (time.perf_counter() - t0)
+        bridge_profile = merge_profile_rows([])
+        bridge_profile["boxes_before"] = int(update.get("boxes_after", 0))
+        bridge_profile["boxes_after"] = int(update.get("boxes_after", 0)) + max(0, int(bridge_added))
+        bridge_profile["boxes_added"] = max(0, int(bridge_added))
+        bridge_profile["total_ms"] = float(bridge_wall_ms)
+        bridge_profile["fallback_reason"] = "query_bridge_after_failed_update"
+        update = add_profile_rows(update, bridge_profile)
+        target_query = query_rows(
+            forest,
+            robot,
+            [target_query_spec],
+            obstacles=list(target.obstacles),
+            audit_step=opt.audit_segment_step,
+            canonicalize_queries=False,
+        )[0]
+        target_source = "query_bridge_after_update" if bool(target_query["audit_passed"]) else "query_bridge_after_update_failed"
     warm = run_leaf_rrt(
         robot=robot,
         obstacles=list(target.obstacles),
         queries=[target_query_spec],
-        database_path=args.out_dir / "active_cache" / f"warm_{transition}_{seed}",
+        database_path=args.out_dir / "active_cache" / f"warm_{transition}_{seed}_{profile_tag}",
         options=options(args, seed, f"warm_{robot_name}_{transition}"),
     )
     return {
@@ -357,6 +434,7 @@ def main() -> int:
             "backend": "leaf_sweep_update_current_exp07",
             "warm_rebuild_backend": "build_leaf_sweep_refined",
             "rbf_default_profile": default_rbf_profile(),
+            "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
             "rbf_robot_lectdb": robot_lectdb_profile(str(args.robot)),
             "rbf_box_budgets": rbf_budget_grid(args.phase),
             "status": "planned" if args.dry_run else "planned_for_execution",
@@ -378,6 +456,7 @@ def main() -> int:
         "status": "dry_run" if args.dry_run else "executed",
         "environment": environment_metadata(),
         "rbf_default_profile": default_rbf_profile(),
+        "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
         "lectdb_caches": cache_rows,
         "scene_catalog": {
             "path": str(catalog),

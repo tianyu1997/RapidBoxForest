@@ -1,25 +1,25 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the current v6 multi-query catalog; non-RBF columns use current saved-catalog rows when available and otherwise fall back to registered common-rule context. RBF Solve/q and Simplify/q split online latency before the Online/q total. Full current curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
+\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the v6 multi-query catalog; PRM, RRTConnect, and BIT* use current saved-catalog rows with the globally fixed 0.01~s final-simplify budget. The IRIS-NP+GCS column restores the legacy random-scene contextual result. RBF Online/q excludes final simplification; Simplify/q reports the measured post-processing cost. Full budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
 \label{tab:tro-random-summary}
 \scriptsize
-\setlength{\tabcolsep}{1.55pt}
-\begin{tabular}{lrrrrrr|rr|rr|rr|rr}
+\setlength{\tabcolsep}{1.35pt}
+\begin{tabular}{lrrrrrrr|rr|rr|rr|rr}
 \toprule
-Scenario & \multicolumn{6}{c|}{Current RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\
-\cmidrule(lr){2-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}\cmidrule(lr){12-13}\cmidrule(lr){14-15}
- & Solve/q & Simplify/q & Online/q & Amort@10 & Path & Boxes & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\
+Scenario & \multicolumn{7}{c|}{RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\
+\cmidrule(lr){2-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}\cmidrule(lr){13-14}\cmidrule(lr){15-16}
+ & Build & Online/q & Simplify/q & Amort@10 & Path & Boxes & SR & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\
 \midrule
-IIWA-Easy & -- & -- & 0.049 & 0.049 & 1.93 & 400 & 76.400 & 5.46 & 0.882 & 4.13 & 0.005 & 3.86 & 0.015 & 3.67 \\
-IIWA-Medium & -- & -- & 0.053 & 0.053 & 2.28 & 100 & 137.700 & 5.56 & 0.847 & 4.34 & 0.006 & 4.12 & 0.025 & 4.04 \\
-IIWA-Hard & -- & -- & 0.060 & 0.060 & 2.42 & 400 & 187.500 & 5.46 & 0.871 & 4.32 & 0.006 & 4.06 & 0.015 & 3.91 \\
-UR5-Easy & -- & -- & 0.063 & 0.063 & 4.18 & 400 & 18.140 & 7.62 & 0.903 & 5.01 & 0.010 & 6.05 & 0.024 & 4.22 \\
-UR5-Medium & -- & -- & 0.079 & 0.079 & 6.19 & 800 & 29.160 & 7.60 & 0.881 & 5.20 & 0.014 & 7.41 & 0.019 & 4.55 \\
-UR5-Hard & -- & -- & 0.107 & 0.107 & 4.94 & 200 & 40.670 & 7.62 & 0.888 & 5.00 & 0.011 & 6.20 & 0.015 & 4.44 \\
-PANDA-Easy & -- & -- & 0.011 & 0.011 & 3.66 & 100 & 18.130 & 5.82 & 0.945 & 4.05 & 0.005 & 3.87 & 0.009 & 3.90 \\
-PANDA-Medium & -- & -- & 0.010 & 0.010 & 3.68 & 800 & 30.120 & 5.87 & 0.916 & 4.12 & 0.005 & 3.84 & 0.009 & 3.88 \\
-PANDA-Hard & -- & -- & 0.012 & 0.012 & 3.52 & 400 & 44.300 & 5.79 & 0.921 & 4.14 & 0.006 & 3.94 & 0.009 & 3.98 \\
+IIWA-Easy & 0.276 & 0.022 & 0.003 & 0.050 & 3.66 & 200 & 80/80 & 10.267 & 1.84 & 10.492 & 2.30 & 0.001 & 3.86 & 0.012 & 3.65 \\
+IIWA-Medium & 0.254 & 0.022 & 0.003 & 0.048 & 3.93 & 400 & 80/80 & 20.180 & 2.12 & 5.473 & 2.24 & 0.001 & 4.12 & 0.012 & 4.00 \\
+IIWA-Hard & 0.313 & 0.022 & 0.004 & 0.053 & 3.90 & 400 & 80/80 & 31.206 & 2.13 & 1.507 & 2.71 & 0.001 & 4.06 & 0.012 & 3.83 \\
+UR5-Easy & 0.186 & 0.001 & 0.006 & 0.020 & 4.99 & 400 & 80/80 & 3.448 & 3.87 & 0.893 & 4.39 & 0.003 & 6.07 & 0.012 & 4.24 \\
+UR5-Medium & 0.332 & 0.044 & 0.009 & 0.077 & 5.57 & 100 & 80/80 & 5.684 & 4.77 & 10.491 & 4.53 & 0.006 & 7.39 & 0.017 & 4.47 \\
+UR5-Hard & 0.313 & 0.047 & 0.008 & 0.078 & 4.99 & 200 & 80/80 & 7.535 & 4.35 & 10.497 & 4.15 & 0.004 & 6.22 & 0.012 & 4.34 \\
+PANDA-Easy & 0.201 & 0.001 & 0.002 & 0.022 & 3.75 & 400 & 80/80 & 3.410 & 3.45 & 1.034 & 3.60 & 0.001 & 3.87 & 0.007 & 3.87 \\
+PANDA-Medium & 0.199 & 0.001 & 0.003 & 0.021 & 3.73 & 400 & 80/80 & 6.371 & 3.58 & 1.034 & 3.67 & 0.001 & 3.83 & 0.007 & 3.86 \\
+PANDA-Hard & 0.205 & 0.002 & 0.003 & 0.023 & 3.84 & 400 & 80/80 & 7.932 & 3.18 & 1.051 & 3.70 & 0.001 & 3.95 & 0.007 & 3.96 \\
 \bottomrule
 \end{tabular}
 \par\endgroup

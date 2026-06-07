@@ -622,6 +622,7 @@ def run_bitstar_trace(
             )
             query_traces.append((query, [dict(item) for item in result.get("checkpoints", [])]))
     rows: list[dict[str, Any]] = []
+    best_by_query: dict[str, dict[str, Any]] = {}
     for target_checkpoint_s in checkpoint_grid_s:
         qrows: list[dict[str, Any]] = []
         audit_s = 0.0
@@ -629,6 +630,8 @@ def run_bitstar_trace(
         for query, checkpoints in query_traces:
             checkpoint = checkpoint_at_or_after(checkpoints, target_checkpoint_s)
             checkpoint_s = max(checkpoint_s, float(checkpoint.get("checkpoint_s", target_checkpoint_s) or 0.0))
+            elapsed_s = float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0)
+            solve_s = float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0)
             path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
             path, simplify_s, simplify_status = simplify_path_if_requested(
                 robot,
@@ -649,13 +652,13 @@ def run_bitstar_trace(
             audit_s += audit_time_s
             ok = bool(checkpoint.get("ok")) and audit_passed
             length = path_length(path) if ok else math.nan
-            qrows.append({
+            current_row = {
                 "label": query["label"],
                 "success": ok,
                 "audit_passed": audit_passed,
                 "audit_status": audit_status,
-                "query_ms": (float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) + simplify_s) * 1000.0,
-                "solve_ms": float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0) * 1000.0,
+                "query_ms": (elapsed_s + simplify_s) * 1000.0,
+                "solve_ms": solve_s * 1000.0,
                 "simplify_ms": simplify_s * 1000.0,
                 "audit_ms": audit_time_s * 1000.0,
                 "path_length": length,
@@ -668,7 +671,25 @@ def run_bitstar_trace(
                 "checkpoint_s": checkpoint_s,
                 "target_checkpoint_s": float(target_checkpoint_s),
                 "simplify_status": simplify_status,
-            })
+                "incumbent_checkpoint_s": float(target_checkpoint_s) if ok else math.nan,
+            }
+            label = str(query["label"])
+            best = best_by_query.get(label)
+            if ok and math.isfinite(length) and (best is None or length < float(best.get("path_length", math.inf))):
+                best_by_query[label] = dict(current_row)
+                best = best_by_query[label]
+            if best is None:
+                qrows.append(current_row)
+            else:
+                row = dict(best)
+                row["query_ms"] = (elapsed_s + float(row.get("simplify_ms", 0.0)) / 1000.0) * 1000.0
+                row["solve_ms"] = solve_s * 1000.0
+                row["checkpoint_s"] = checkpoint_s
+                row["target_checkpoint_s"] = float(target_checkpoint_s)
+                row["planner_status"] = str(checkpoint.get("status", checkpoint.get("reason", "")))
+                row["iterations"] = int(checkpoint.get("iterations", 0) or 0)
+                row["batches"] = int(checkpoint.get("batches", 0) or 0)
+                qrows.append(row)
         row = summarize_method_run(
             "bitstar",
             seed,
@@ -886,7 +907,10 @@ def summarize_method_run(
         residual_s = online_batch_s - online_solve_s - online_simplify_s
         if residual_s > 1e-9:
             online_solve_s += residual_s
-    online_per_query_s = online_batch_s / query_count
+    online_total_s = online_batch_s
+    online_batch_s = online_solve_s
+    online_per_query_s = online_solve_s / query_count
+    online_total_per_query_s = online_total_s / query_count
     online_solve_per_query_s = online_solve_s / query_count
     online_simplify_per_query_s = online_simplify_s / query_count
     amortized = {
@@ -901,13 +925,17 @@ def summarize_method_run(
         "status": "ok" if len(successes) == len(qrows) else "partial",
         "success_count": len(successes),
         "query_count": len(qrows),
-        "planning_s": float(planning_s),
+        "planning_s": build_s + online_batch_s,
+        "planning_total_s": float(planning_s),
         "build_s": build_s,
         "offline_build_s": build_s,
         "online_batch_s": online_batch_s,
+        "online_total_s": online_total_s,
+        "online_total_batch_s": online_total_s,
         "online_solve_s": online_solve_s,
         "online_simplify_s": online_simplify_s,
         "online_per_query_s": online_per_query_s,
+        "online_total_per_query_s": online_total_per_query_s,
         "online_solve_per_query_s": online_solve_per_query_s,
         "online_simplify_per_query_s": online_simplify_per_query_s,
         **amortized,
@@ -1032,6 +1060,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "build_s": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
             "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
             "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0))) for row in items),
+            "online_total_s_median": median(row.get("online_total_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) for row in items),
             "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) for row in items),
             "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
             "online_solve_per_query_s_median": median(
@@ -1051,7 +1080,14 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "online_per_query_s_median": median(
                 row.get(
                     "online_per_query_s",
-                    max(0.0, row["planning_s"] - row.get("build_s", 0.0)) / max(1, int(row.get("query_count", 1))),
+                    row.get("online_solve_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0))) / max(1, int(row.get("query_count", 1))),
+                )
+                for row in items
+            ),
+            "online_total_per_query_s_median": median(
+                row.get(
+                    "online_total_per_query_s",
+                    row.get("online_total_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
                 )
                 for row in items
             ),
@@ -1076,7 +1112,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = [
         "method", "method_label", "stage_id", "budget_s", "timeout_cap_s", "deep_max_boxes",
         "runs", "success_runs", "success_queries", "total_queries", "source",
-        "build_s", "offline_build_s_median", "online_batch_s_median", "online_per_query_s_median",
+        "build_s", "offline_build_s_median", "online_batch_s_median", "online_total_s_median",
+        "online_per_query_s_median", "online_total_per_query_s_median",
         "online_solve_s_median", "online_simplify_s_median",
         "online_solve_per_query_s_median", "online_simplify_per_query_s_median",
         "amortized_s_k1", "amortized_s_k5", "amortized_s_k10", "amortized_s_k20", "amortized_s_k50",
@@ -1160,8 +1197,9 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             selected_rbf = sorted(
                 rbf_rows,
                 key=lambda row: (
-                    finite_value(row.get("amortized_s_k5")),
                     finite_value(row.get("online_per_query_s_median")),
+                    finite_value(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
+                    + finite_value(row.get("online_per_query_s_median")),
                     int(float(row.get("deep_max_boxes", 0) or 0)),
                 ),
             )[0]
@@ -1189,8 +1227,9 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                 row_by_method[method] = sorted(
                     candidates,
                     key=lambda row: (
-                        finite_value(row.get("amortized_s_k5")),
                         finite_value(row.get("online_per_query_s_median")),
+                        finite_value(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
+                        + finite_value(row.get("online_per_query_s_median")),
                         finite_value(row.get("budget_s")),
                     ),
                 )[0]
@@ -1205,13 +1244,13 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Shelf+IIWA cross-algorithm reusable-planner comparison under a common fixed-step final audit. RBF uses the Exp.4 two-stage profile. PRM and IRIS/GCS report reusable build/query timing; RRTConnect and BIT* are one-shot online baselines with zero build time. Solve/q and Simplify/q split online latency before the Online/q total; all timing excludes final audit. Amort@5 amortizes reusable build over the five shelf queries.}",
+        r"\caption{Shelf+IIWA cross-algorithm reusable-planner comparison under a common fixed-step final audit. RBF uses the Exp.4 two-stage profile. PRM and IRIS/GCS report reusable build/query timing; RRTConnect and BIT* are one-shot online baselines with zero build time. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. All timing excludes final audit. Amort@5 amortizes reusable build over the five shelf queries plus Online/q.}",
         r"\label{tab:tro-shelf-cross-algorithm}",
         r"\footnotesize",
         r"\setlength{\tabcolsep}{3.5pt}",
-        r"\begin{tabular}{lrrrrrrr}",
+        r"\begin{tabular}{lrrrrrr}",
         r"\toprule",
-        r"Method & Build & Solve/q & Simplify/q & Online/q & Amort@5 & Path & SR \\",
+        r"Method & Build & Online/q & Simplify/q & Amort@5 & Path & SR \\",
         r"\midrule",
     ]
     for row in selected_rows():
@@ -1221,10 +1260,9 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             method = rf"{method} (b{int(float(row.get('deep_max_boxes', 0) or 0))})"
         lines.append(
             f"{method} & {tex_num(row.get('offline_build_s_median', row.get('build_s')))} & "
-            f"{tex_num(row.get('online_solve_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median')))} & "
             f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
-            f"{tex_num(row.get('online_per_query_s_median', row.get('query_s_median')))} & "
-            f"{tex_num(row.get('amortized_s_k5'))} & "
+            f"{tex_num(finite_value(row.get('offline_build_s_median', row.get('build_s'))) / 5.0 + finite_value(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median'))))} & "
             f"{tex_num(path_stat(row))} & {sr} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])

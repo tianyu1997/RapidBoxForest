@@ -381,6 +381,22 @@ double env_double_or_default(const char* name, double fallback) {
     return value;
 }
 
+int env_indexed_int_or_default(const char* prefix, int index, int fallback) {
+    if (index < 0) {
+        return fallback;
+    }
+    const std::string indexed = std::string(prefix) + "_" + std::to_string(index);
+    return env_int_or_default(indexed.c_str(), fallback);
+}
+
+double env_indexed_double_or_default(const char* prefix, int index, double fallback) {
+    if (index < 0) {
+        return fallback;
+    }
+    const std::string indexed = std::string(prefix) + "_" + std::to_string(index);
+    return env_double_or_default(indexed.c_str(), fallback);
+}
+
 bool env_index_list_contains(const char* name, std::size_t target) {
     const char* raw = std::getenv(name);
     if (raw == nullptr || raw[0] == '\0') {
@@ -5041,6 +5057,12 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         std::max(1, corridor_config.target_k),
         static_cast<int>(targets.size()));
 
+    std::unordered_map<int, std::size_t> box_index_by_id;
+    box_index_by_id.reserve(boxes_.size() * 2);
+    for (std::size_t index = 0; index < boxes_.size(); ++index) {
+        box_index_by_id[boxes_[index].id] = index;
+    }
+
     std::unordered_map<int, int> node_owner;
     node_owner.reserve(boxes_.size());
     for (const auto& box : boxes_) {
@@ -5048,12 +5070,34 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             node_owner[box.tree_id] = box.id;
         }
     }
+    BoxSpatialIndex all_box_index;
+    all_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
+
+    std::vector<int> main_box_ids;
+    std::vector<BoxNode> main_boxes;
+    main_box_ids.reserve(main_island.size());
+    main_boxes.reserve(main_island.size());
+    for (int box_id : main_island) {
+        auto it = box_index_by_id.find(box_id);
+        if (it == box_index_by_id.end()) {
+            continue;
+        }
+        const BoxNode& box = boxes_[it->second];
+        if (box.n_dims() != point.size()) {
+            continue;
+        }
+        main_box_ids.push_back(box_id);
+        main_boxes.push_back(box);
+    }
+    BoxSpatialIndex main_box_index;
+    main_box_index.rebuild(main_boxes, config_.query.adjacency_tolerance);
+
     int next_id = next_box_id();
     int added_total = 0;
     int boxes_added = 0;
     int ffb_calls = 0;
     int local_adj_checks = 0;
-    bool tried_max_depth_ffb = false;
+    bool max_depth_ffb_failed = false;
     const int requested_final_depth = config_.query_bridge_pave_depth > 0
         ? config_.query_bridge_pave_depth
         : config_.connector.pave.find_free_box.max_depth;
@@ -5061,15 +5105,14 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                                          std::max(1, requested_final_depth));
 
     auto box_by_id = [&](int box_id) -> BoxNode* {
-        for (auto& box : boxes_) {
-            if (box.id == box_id) {
-                return &box;
-            }
+        auto it = box_index_by_id.find(box_id);
+        if (it == box_index_by_id.end() || it->second >= boxes_.size()) {
+            return nullptr;
         }
-        return nullptr;
+        return &boxes_[it->second];
     };
     auto contains_point = [&](int box_id, const Eigen::VectorXd& q) {
-        const BoxNode* box = find_box_by_id(boxes_, box_id);
+        const BoxNode* box = box_by_id(box_id);
         return box != nullptr && box->contains(q, config_.query.adjacency_tolerance);
     };
     auto append_edge_if_connected = [&](int lhs, int rhs) {
@@ -5089,19 +5132,31 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return true;
     };
     auto main_owner = [&](const Eigen::VectorXd& q) {
-        for (int box_id : main_island) {
-            const BoxNode* box = find_box_by_id(boxes_, box_id);
-            if (box != nullptr && box->contains(q, config_.query.adjacency_tolerance)) {
-                return box_id;
+        auto candidates = main_box_index.point_candidates(q);
+        if (candidates.empty()) {
+            candidates.reserve(main_boxes.size());
+            for (int index = 0; index < static_cast<int>(main_boxes.size()); ++index) {
+                candidates.push_back(index);
+            }
+        }
+        for (int index : candidates) {
+            if (index < 0 || index >= static_cast<int>(main_boxes.size())) {
+                continue;
+            }
+            const BoxNode& box = main_boxes[static_cast<std::size_t>(index)];
+            if (box.contains(q, config_.query.adjacency_tolerance)) {
+                return main_box_ids[static_cast<std::size_t>(index)];
             }
         }
         return -1;
     };
     auto first_existing_cover = [&](const Eigen::VectorXd& q) {
-        for (const auto& box : boxes_) {
-            if (box.contains(q, config_.query.adjacency_tolerance)) {
-                return box.id;
-            }
+        const int index = all_box_index.covering_box(
+            boxes_,
+            q,
+            config_.query.adjacency_tolerance);
+        if (index >= 0 && index < static_cast<int>(boxes_.size())) {
+            return boxes_[static_cast<std::size_t>(index)].id;
         }
         return -1;
     };
@@ -5181,9 +5236,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             options.reject_seed_collision = false;
             options.max_depth = std::min(std::max(1, config_.database.max_tree_depth),
                                          std::max(1, depth));
-            if (options.max_depth >= final_ffb_depth) {
-                tried_max_depth_ffb = true;
-            }
+            const bool is_max_depth_attempt = options.max_depth >= final_ffb_depth;
             ffb_calls += 1;
             add_diag("ffb_calls");
             FindFreeBoxResult result = find_free_box_in_domain(
@@ -5195,12 +5248,18 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 !intervals_contain_point_local(result.intervals,
                                                seed,
                                                config_.query.adjacency_tolerance)) {
+                if (is_max_depth_attempt) {
+                    max_depth_ffb_failed = true;
+                }
                 if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
                     break;
                 }
                 continue;
             }
             if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
+                if (is_max_depth_attempt) {
+                    max_depth_ffb_failed = true;
+                }
                 if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
                     break;
                 }
@@ -5217,6 +5276,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             BoxNode* parent_box = box_by_id(parent_box_id);
             if (parent_box == nullptr ||
                 !boxes_connected(*parent_box, candidate, config_.query.adjacency_tolerance)) {
+                if (is_max_depth_attempt) {
+                    max_depth_ffb_failed = true;
+                }
                 if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
                     break;
                 }
@@ -5231,6 +5293,11 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             }
             boxes_.push_back(candidate);
             raw_boxes_.push_back(candidate);
+            const std::size_t new_index = boxes_.size() - 1;
+            box_index_by_id[new_id] = new_index;
+            all_box_index.add_box(boxes_.back(),
+                                  static_cast<int>(new_index),
+                                  config_.query.adjacency_tolerance);
             adjacency_[new_id] = {};
             append_local_edge(adjacency_, parent_box_id, new_id);
             boxes_added += 1;
@@ -5280,11 +5347,11 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return out;
     };
     auto try_residual_segment = [&](int front_box_id, int target_box_id, const Eigen::VectorXd& target_point) {
-        if (!tried_max_depth_ffb || corridor_config.residual_segment_max_length <= 0.0) {
+        if (!max_depth_ffb_failed || corridor_config.residual_segment_max_length <= 0.0) {
             return false;
         }
-        const BoxNode* front_box = find_box_by_id(boxes_, front_box_id);
-        const BoxNode* target_box = find_box_by_id(boxes_, target_box_id);
+        const BoxNode* front_box = box_by_id(front_box_id);
+        const BoxNode* target_box = box_by_id(target_box_id);
         if (front_box == nullptr || target_box == nullptr) {
             return false;
         }
@@ -5678,7 +5745,16 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     if (boxes_.empty() || !oracle_) {
         return -1;
     }
-    const int existing = locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+    int existing = -1;
+    for (const auto& box : boxes_) {
+        if (box.contains(point, config_.query.adjacency_tolerance)) {
+            existing = box.id;
+            break;
+        }
+    }
+    if (existing < 0 && config_.query.nearest_if_outside) {
+        existing = locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+    }
     if (existing >= 0) {
         context.diagnostics().add_counter("query_bridge.endpoint_anchor_already_covered");
         return existing;
@@ -5972,11 +6048,35 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             value);
     };
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
+    auto locate_box_linear = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
+        for (const auto& box : boxes_) {
+            if (intervals_contain_point_local(box.joint_intervals,
+                                              point,
+                                              config_.query.adjacency_tolerance)) {
+                return box.id;
+            }
+        }
+        return -1;
+    };
     auto locate_query_boxes = [&]() {
-        invalidate_query_cache();
-        return std::pair<int, int>{
-            locate_containing_box(query_cache(), start, config_.query.nearest_if_outside),
-            locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside)};
+        using Clock = std::chrono::steady_clock;
+        const auto locate_t0 = Clock::now();
+        int source_box_id = locate_box_linear(start);
+        int target_box_id = locate_box_linear(goal);
+        if ((source_box_id < 0 || target_box_id < 0) && config_.query.nearest_if_outside) {
+            context.diagnostics().add_counter(
+                "query_bridge.locate_query_boxes_cache_fallbacks");
+            invalidate_query_cache();
+            source_box_id =
+                locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+            target_box_id =
+                locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+        }
+        context.diagnostics().record_timing(
+            "query_bridge.locate_query_boxes_ms",
+            std::chrono::duration<double, std::milli>(Clock::now() -
+                                                      locate_t0).count());
+        return std::pair<int, int>{source_box_id, target_box_id};
     };
     auto query_boxes_connected = [&](int source_box_id, int target_box_id) {
         return source_box_id >= 0 &&
@@ -6023,7 +6123,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return locate_query_boxes();
     };
     const bool bridge_internal_simplify =
-        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY", 1) != 0;
+        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY", 0) != 0;
     context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
                                     bridge_internal_simplify ? 1.0 : 0.0);
     if (bridge_internal_simplify &&
@@ -6098,10 +6198,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         const double audit_step = config_.query.audit_segment_step > 0.0
             ? config_.query.audit_segment_step
             : 0.01;
+        const double base_sample_step =
+            env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
+                                  audit_step);
         const double sample_step =
             std::max(1e-4,
-                     env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
-                                           audit_step));
+                     env_indexed_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
+                                                   query_index,
+                                                   base_sample_step));
         context.diagnostics().set_value("query_bridge.direct_corridor_sample_step",
                                         sample_step);
         const std::vector<Eigen::VectorXd> samples =
@@ -6256,7 +6360,24 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         };
         initialize_dsu();
 
-        auto find_duplicate_box_index = [&](const std::vector<Interval>& intervals) {
+        std::unordered_map<OracleNodeId, int> node_to_box_index;
+        node_to_box_index.reserve(boxes_.size() + samples.size());
+        for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
+            const auto node = static_cast<OracleNodeId>(boxes_[box_index].tree_id);
+            if (node != kInvalidOracleNodeId &&
+                node_to_box_index.find(node) == node_to_box_index.end()) {
+                node_to_box_index[node] = static_cast<int>(box_index);
+            }
+        }
+        auto find_duplicate_box_index = [&](OracleNodeId node,
+                                            const std::vector<Interval>& intervals) {
+            if (node != kInvalidOracleNodeId) {
+                const auto node_it = node_to_box_index.find(node);
+                if (node_it != node_to_box_index.end()) {
+                    return node_it->second;
+                }
+                return -1;
+            }
             for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
                 const auto& box = boxes_[box_index];
                 if (box.joint_intervals.size() != intervals.size()) {
@@ -6311,6 +6432,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             candidates.insert(candidates.end(), repair_indices.begin(), repair_indices.end());
             std::sort(candidates.begin(), candidates.end());
             candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+            int local_edges = 0;
             for (int candidate : candidates) {
                 if (candidate == box_index ||
                     candidate < 0 ||
@@ -6320,38 +6442,24 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 if (boxes_connected(boxes_[static_cast<std::size_t>(box_index)],
                                     boxes_[static_cast<std::size_t>(candidate)],
                                     config_.query.adjacency_tolerance)) {
+                    const std::size_t before = adjacency_[box_id].size();
                     dsu.unite(box_index, candidate);
                     append_local_edge(adjacency_,
                                       box_id,
                                       boxes_[static_cast<std::size_t>(candidate)].id);
-                }
-            }
-            int global_edges = 0;
-            const std::size_t box_count = boxes_.size();
-            for (std::size_t candidate_index = 0; candidate_index < box_count; ++candidate_index) {
-                if (candidate_index == static_cast<std::size_t>(box_index)) {
-                    continue;
-                }
-                if (!boxes_connected(boxes_[static_cast<std::size_t>(box_index)],
-                                     boxes_[candidate_index],
-                                     config_.query.adjacency_tolerance)) {
-                    continue;
-                }
-                const std::size_t before = adjacency_[box_id].size();
-                dsu.unite(box_index, static_cast<int>(candidate_index));
-                append_local_edge(adjacency_,
-                                  box_id,
-                                  boxes_[candidate_index].id);
-                if (adjacency_[box_id].size() > before) {
-                    global_edges += 1;
+                    if (adjacency_[box_id].size() > before) {
+                        local_edges += 1;
+                    }
                 }
             }
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_incremental_adjacency_checks",
-                static_cast<double>(box_count > 0 ? box_count - 1 : 0));
+                static_cast<double>(candidates.size()));
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_incremental_adjacency_edges",
-                static_cast<double>(global_edges));
+                static_cast<double>(local_edges));
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_full_adjacency_scans_avoided");
             context.diagnostics().record_timing(
                 "query_bridge.direct_corridor_assimilate_ms",
                 std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
@@ -6365,7 +6473,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                config_.query.adjacency_tolerance)) {
                 return -1;
             }
-            const int duplicate_index = find_duplicate_box_index(result.intervals);
+            const int duplicate_index = find_duplicate_box_index(result.node,
+                                                                 result.intervals);
             if (duplicate_index >= 0) {
                 assimilate_box(duplicate_index, transition_hint);
                 return duplicate_index;
@@ -6387,6 +6496,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             const int box_index = static_cast<int>(boxes_.size());
             boxes_.push_back(box);
             raw_boxes_.push_back(box);
+            if (result.node != kInvalidOracleNodeId) {
+                node_to_box_index.emplace(result.node, box_index);
+            }
             dsu.add();
             assimilate_box(box_index, transition_hint);
             return box_index;
@@ -6401,23 +6513,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             }
             return false;
         };
-        auto nearest_transition_hint = [&](const Eigen::VectorXd& point) {
-            if (samples.empty()) {
-                return 0;
-            }
-            int best_index = 0;
-            double best_distance = std::numeric_limits<double>::infinity();
-            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-                const double distance = (samples[sample_index] - point).squaredNorm();
-                if (distance < best_distance) {
-                    best_distance = distance;
-                    best_index = static_cast<int>(sample_index);
-                }
-            }
-            return std::max(0, std::min(best_index,
-                                        static_cast<int>(samples.size()) - 2));
-        };
-
         FindFreeBoxOptions direct_options = config_.connector.pave.find_free_box;
         direct_options.max_depth = query_bridge_ffb_depth;
         direct_options.reject_seed_collision = false;
@@ -6425,18 +6520,29 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int direct_added = 0;
         struct DirectFfbTask {
             Eigen::VectorXd seed;
+            std::size_t sample_index = 0;
             int transition_hint = 0;
         };
         std::vector<DirectFfbTask> direct_tasks;
         direct_tasks.reserve(samples.size());
-        for (const auto& seed : samples) {
-            if (!current_boxes_cover_point(seed)) {
-                direct_tasks.push_back({seed, nearest_transition_hint(seed)});
+        const int max_transition_hint =
+            std::max(0, static_cast<int>(samples.size()) - 2);
+        for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+            if (!covered[sample_index]) {
+                direct_tasks.push_back(
+                    {samples[sample_index],
+                     sample_index,
+                     std::min(static_cast<int>(sample_index), max_transition_hint)});
             }
         }
         context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
                                         static_cast<double>(direct_tasks.size()));
         for (const auto& task : direct_tasks) {
+            if (task.sample_index < covered.size() && covered[task.sample_index]) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_direct_skip_covered");
+                continue;
+            }
             const auto direct_ffb_t0 = Clock::now();
             const FindFreeBoxResult result = find_free_box_in_domain(
                 task.seed,
@@ -6456,8 +6562,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             }
         }
         std::vector<double> fractions;
+        const int base_subdivisions =
+            env_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS", 6);
         const int subdivisions =
-            std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS", 6));
+            std::max(0,
+                     env_indexed_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS",
+                                                query_index,
+                                                base_subdivisions));
         for (int item = 1; item < subdivisions; ++item) {
             fractions.push_back(static_cast<double>(item) / static_cast<double>(subdivisions));
         }
@@ -6475,7 +6586,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
                 const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
                 for (double u : fractions) {
+                    if (transition_connected(transition)) {
+                        break;
+                    }
                     const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
+                    if (current_boxes_cover_point(seed)) {
+                        context.diagnostics().add_counter(
+                            "query_bridge.direct_corridor_repair_skip_covered");
+                        continue;
+                    }
                     const auto repair_ffb_t0 = Clock::now();
                     const FindFreeBoxResult result = find_free_box_in_domain(
                         seed,
@@ -6503,7 +6622,98 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
             }
         }
-        const auto final_bad = bad_transitions();
+        std::vector<int> final_bad = bad_transitions();
+        int adaptive_repair_calls = 0;
+        int adaptive_repair_added = 0;
+        int adaptive_repair_max_subdivisions_used = subdivisions;
+        const bool adaptive_step_repair =
+            env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR", 1) != 0;
+        if (adaptive_step_repair && !final_bad.empty()) {
+            const int adaptive_max_subdivisions = std::max(
+                subdivisions + 1,
+                env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS",
+                                   std::max(2, subdivisions * 2)));
+            const double adaptive_fine_step = std::max(
+                1e-4,
+                env_double_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP",
+                                      std::max(audit_step, sample_step * 0.5)));
+            const int adaptive_max_calls = std::max(
+                0,
+                env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
+                                   std::numeric_limits<int>::max()));
+            for (int transition : final_bad) {
+                if (adaptive_repair_calls >= adaptive_max_calls) {
+                    break;
+                }
+                if (transition_connected(transition) ||
+                    transition < 0 ||
+                    transition + 1 >= static_cast<int>(samples.size())) {
+                    continue;
+                }
+                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
+                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
+                const double gap_length = (b - a).norm();
+                const int target_subdivisions = std::min(
+                    adaptive_max_subdivisions,
+                    std::max(subdivisions + 1,
+                             static_cast<int>(std::ceil(gap_length / adaptive_fine_step))));
+                adaptive_repair_max_subdivisions_used =
+                    std::max(adaptive_repair_max_subdivisions_used, target_subdivisions);
+                std::vector<double> adaptive_fractions;
+                adaptive_fractions.reserve(static_cast<std::size_t>(
+                    std::max(0, target_subdivisions - 1)));
+                for (int item = 1; item < target_subdivisions; ++item) {
+                    adaptive_fractions.push_back(
+                        static_cast<double>(item) /
+                        static_cast<double>(target_subdivisions));
+                }
+                std::stable_sort(adaptive_fractions.begin(),
+                                 adaptive_fractions.end(),
+                                 [](double lhs, double rhs) {
+                                     return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
+                                 });
+                for (double u : adaptive_fractions) {
+                    if (adaptive_repair_calls >= adaptive_max_calls) {
+                        break;
+                    }
+                    if (transition_connected(transition)) {
+                        break;
+                    }
+                    const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
+                    if (current_boxes_cover_point(seed)) {
+                        context.diagnostics().add_counter(
+                            "query_bridge.direct_corridor_adaptive_repair_skip_covered");
+                        continue;
+                    }
+                    const auto adaptive_ffb_t0 = Clock::now();
+                    const FindFreeBoxResult result = find_free_box_in_domain(
+                        seed,
+                        oracle_->planning_intervals(),
+                        context,
+                        direct_options);
+                    context.diagnostics().record_timing(
+                        "query_bridge.direct_corridor_adaptive_repair_ffb_ms",
+                        std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                  adaptive_ffb_t0).count());
+                    adaptive_repair_calls += 1;
+                    const std::size_t before_boxes = boxes_.size();
+                    const int box_index = commit_result(std::move(result), seed, transition);
+                    if (box_index >= 0) {
+                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
+                            repair_indices.end()) {
+                            repair_indices.push_back(box_index);
+                        }
+                        if (boxes_.size() > before_boxes) {
+                            adaptive_repair_added += 1;
+                        }
+                        if (transition_connected(transition)) {
+                            break;
+                        }
+                    }
+                }
+            }
+            final_bad = bad_transitions();
+        }
         int local_segment_edges_added = 0;
         int local_segment_gap_samples_max = 0;
         auto nearest_nonempty_layer = [&](int start_index, int direction) {
@@ -6519,15 +6729,30 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (!final_bad.empty() &&
             config_.connector.segment_edges_enabled &&
             config_.connector.rrt_segment_edges) {
+            const bool group_residual_gaps =
+                env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
+            std::vector<std::pair<int, int>> gap_groups;
+            gap_groups.reserve(final_bad.size());
             for (int transition : final_bad) {
-                if (transition < 0 ||
-                    transition + 1 >= static_cast<int>(sample_layers.size())) {
+                if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
                     continue;
                 }
+                if (!group_residual_gaps ||
+                    gap_groups.empty() ||
+                    transition > gap_groups.back().second + 1) {
+                    gap_groups.emplace_back(transition, transition);
+                } else {
+                    gap_groups.back().second = transition;
+                }
+            }
+            context.diagnostics().set_value(
+                "query_bridge.direct_corridor_segment_gap_groups",
+                static_cast<double>(gap_groups.size()));
+            for (const auto& gap_group : gap_groups) {
                 const int lhs_sample =
-                    nearest_nonempty_layer(transition, -1);
+                    nearest_nonempty_layer(gap_group.first, -1);
                 const int rhs_sample =
-                    nearest_nonempty_layer(transition + 1, 1);
+                    nearest_nonempty_layer(gap_group.second + 1, 1);
                 if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
                     continue;
                 }
@@ -6546,6 +6771,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 std::vector<Eigen::VectorXd> gap_path{
                     samples[static_cast<std::size_t>(lhs_sample)],
                     samples[static_cast<std::size_t>(rhs_sample)]};
+                const auto segment_audit_t0 = Clock::now();
+                const PathAuditCheck gap_audit =
+                    audit_waypoint_path(gap_path,
+                                        checker,
+                                        config_.query.audit_resolution,
+                                        config_.query.audit_segment_step);
+                context.diagnostics().record_timing(
+                    "query_bridge.direct_corridor_segment_audit_ms",
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              segment_audit_t0).count());
+                if (!gap_audit.passed) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_segment_audit_rejects");
+                    continue;
+                }
                 const int edge_id = add_segment_edge(segment_edges_,
                                                      adjacency_,
                                                      boxes_[static_cast<std::size_t>(lhs_index)].id,
@@ -6576,6 +6816,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                         static_cast<double>(repair_calls));
         context.diagnostics().set_value("query_bridge.direct_corridor_repair_added",
                                         static_cast<double>(repair_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_calls",
+                                        static_cast<double>(adaptive_repair_calls));
+        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_added",
+                                        static_cast<double>(adaptive_repair_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_max_subdivisions",
+                                        static_cast<double>(adaptive_repair_max_subdivisions_used));
         context.diagnostics().set_value("query_bridge.direct_corridor_repair_subdivisions",
                                         static_cast<double>(subdivisions));
         context.diagnostics().set_value("query_bridge.direct_corridor_bad_initial",
@@ -6586,7 +6832,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                         static_cast<double>(local_segment_edges_added));
         context.diagnostics().set_value("query_bridge.direct_corridor_segment_gap_samples_max",
                                         static_cast<double>(local_segment_gap_samples_max));
-        invalidate_query_cache();
         auto [source_box_id, target_box_id] = locate_query_boxes();
         const bool local_corridor_connected =
             final_bad.empty() && endpoint_layers_connected();
@@ -6598,6 +6843,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                     static_cast<double>(direct_added));
         set_query_bridge_task_value("direct_corridor_repair_added",
                                     static_cast<double>(repair_added));
+        set_query_bridge_task_value("direct_corridor_adaptive_repair_calls",
+                                    static_cast<double>(adaptive_repair_calls));
+        set_query_bridge_task_value("direct_corridor_adaptive_repair_added",
+                                    static_cast<double>(adaptive_repair_added));
         set_query_bridge_task_value("direct_corridor_bad_initial",
                                     static_cast<double>(initial_bad.size()));
         set_query_bridge_task_value("direct_corridor_bad_final",
@@ -6636,6 +6885,17 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             source_box_id >= 0 &&
             target_box_id >= 0 &&
             graph_has_box_path_local(adjacency_, source_box_id, target_box_id)) {
+            const PathAuditCheck full_residual_audit =
+                audit_waypoint_path(corridor_path,
+                                    checker,
+                                    config_.query.audit_resolution,
+                                    config_.query.audit_segment_step);
+            if (!full_residual_audit.passed) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_full_residual_audit_rejects");
+                invalidate_query_cache();
+                return direct_added + repair_added + local_segment_edges_added;
+            }
             const int edge_id = add_segment_edge(segment_edges_,
                                                  adjacency_,
                                                  source_box_id,
@@ -6876,6 +7136,16 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (config_.connector.segment_edges_enabled && config_.connector.rrt_segment_edges &&
             max_depth_ffb_failed) {
             if (source_box_id >= 0 && target_box_id >= 0) {
+                const PathAuditCheck segment_audit =
+                    audit_waypoint_path(corridor_path,
+                                        checker,
+                                        config_.query.audit_resolution,
+                                        config_.query.audit_segment_step);
+                if (!segment_audit.passed) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.segment_edge_audit_rejects");
+                    return added + dense_repair_added + box_corridor_edges_added;
+                }
                 const int edge_id = add_segment_edge(segment_edges_,
                                                      adjacency_,
                                                      source_box_id,
@@ -6926,24 +7196,63 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         int attempt = 0;
     };
 
+    const double bridge_accept_segment_fraction =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION", 0.25));
+    const double bridge_accept_path_ratio =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO", 1.50));
+    const double bridge_accept_path_additive =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_ADDITIVE", 0.75));
+    const double bridge_accept_max_path_length =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH", 4.5));
+    auto query_result_good = [&](const QueryResult& current,
+                                 const Eigen::VectorXd& start,
+                                 const Eigen::VectorXd& goal) {
+        if (!current.success || !current.audit_passed) {
+            return false;
+        }
+        const double raw_length =
+            current.raw_path_length > 1e-12 ? current.raw_path_length : current.path_length;
+        const double segment_fraction =
+            raw_length > 1e-12 ? current.segment_edge_length / raw_length
+                               : std::numeric_limits<double>::infinity();
+        if (!(segment_fraction <= bridge_accept_segment_fraction)) {
+            return false;
+        }
+        const double direct = (goal - start).norm();
+        return direct <= 1e-9 ||
+               current.path_length <= std::max(direct * bridge_accept_path_ratio,
+                                                direct + bridge_accept_path_additive) ||
+               current.path_length <= bridge_accept_max_path_length;
+    };
+    auto locate_existing_box_for_query_bridge = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
+        for (const auto& box : boxes_) {
+            if (box.contains(point, config_.query.adjacency_tolerance)) {
+                return box.id;
+            }
+        }
+        if (!config_.query.nearest_if_outside) {
+            return -1;
+        }
+        return locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+    };
+    auto query_bridge_forced_index = [](std::size_t index) {
+        return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", index);
+    };
+
     std::vector<BridgeSearchTask> tasks;
     tasks.reserve(starts.size());
     for (std::size_t index = 0; index < starts.size(); ++index) {
         if (starts[index].size() != goals[index].size()) {
             throw std::invalid_argument("bridge_queries received a start/goal dimension mismatch");
         }
-        QueryResult current = query(starts[index], goals[index]);
-        if (current.success && current.repair_count == 0) {
-            const double direct = (goals[index] - starts[index]).norm();
-            const bool graph_only = current.segment_edges_used == 0;
-            const bool short_enough =
-                direct <= 1e-9 ||
-                current.path_length <= std::max(direct * 1.35, direct + 0.35);
-            if (graph_only && short_enough) {
+        const bool forced_task = query_bridge_forced_index(index);
+        if (!forced_task) {
+            QueryResult current = query(starts[index], goals[index]);
+            if (query_result_good(current, starts[index], goals[index])) {
                 continue;
             }
         }
-        int start_box_id = locate_containing_box(query_cache(), starts[index], config_.query.nearest_if_outside);
+        int start_box_id = locate_existing_box_for_query_bridge(starts[index]);
         if (start_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             start_box_id = anchor_query_endpoint_box(starts[index], anchor_context);
@@ -6954,7 +7263,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (start_box_id < 0) {
             continue;
         }
-        int goal_box_id = locate_containing_box(query_cache(), goals[index], config_.query.nearest_if_outside);
+        int goal_box_id = locate_existing_box_for_query_bridge(goals[index]);
         if (goal_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             goal_box_id = anchor_query_endpoint_box(goals[index], anchor_context);
@@ -7001,12 +7310,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     std::stable_sort(tasks.begin(), tasks.end(), [](const BridgeSearchTask& lhs,
                                                     const BridgeSearchTask& rhs) {
-        const bool lhs_deferred_optional =
-            lhs.index == 2 || (lhs.short_local_bridge && lhs.index != 1);
-        const bool rhs_deferred_optional =
-            rhs.index == 2 || (rhs.short_local_bridge && rhs.index != 1);
-        if (lhs_deferred_optional != rhs_deferred_optional) {
-            return !lhs_deferred_optional && rhs_deferred_optional;
+        const bool lhs_short = lhs.short_local_bridge;
+        const bool rhs_short = rhs.short_local_bridge;
+        if (lhs_short != rhs_short) {
+            return !lhs_short && rhs_short;
         }
         return lhs.index < rhs.index;
     });
@@ -7039,6 +7346,18 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.skip_deferred_short_edges",
         skip_deferred_short_edges ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.accept_segment_fraction",
+        bridge_accept_segment_fraction);
+    batch_context.diagnostics().set_value(
+        "query_bridge.accept_path_ratio",
+        bridge_accept_path_ratio);
+    batch_context.diagnostics().set_value(
+        "query_bridge.accept_path_additive",
+        bridge_accept_path_additive);
+    batch_context.diagnostics().set_value(
+        "query_bridge.accept_max_path_length",
+        bridge_accept_max_path_length);
     const int segment_only_retry_attempts =
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
     batch_context.diagnostics().set_value(
@@ -7051,8 +7370,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         static_cast<double>(no_path_retry_attempts));
     const int forced_query_attempts =
         std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
+    const int query_bridge_attempt_offset =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_OFFSET", 0));
     auto query_bridge_forced = [&](const BridgeSearchTask& task) {
-        return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", task.index);
+        return query_bridge_forced_index(task.index);
     };
     auto current_query_good = [&](const BridgeSearchTask& task) {
         if (env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index)) {
@@ -7061,20 +7382,19 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (query_bridge_forced(task)) {
             return false;
         }
-        const bool deferred_optional_edge =
-            task.index == 2 || (task.short_local_bridge && task.index != 1);
-        if (!deferred_optional_edge) {
+        if (!skip_deferred_short_edges) {
             return false;
         }
-        return skip_deferred_short_edges;
+        return query_result_good(query(task.start, task.goal), task.start, task.goal);
     };
     auto run_task_attempt = [&](const BridgeSearchTask& task, int attempt) {
+        const int scheduled_attempt = attempt + query_bridge_attempt_offset;
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
             task.short_local_profiles.empty()
                 ? task.bridge_rrt
                 : task.short_local_profiles[
-                      static_cast<std::size_t>(attempt) % task.short_local_profiles.size()];
+                      static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
         config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
         std::vector<Eigen::VectorXd> path = rrt_connect(
             task.start,
@@ -7084,7 +7404,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             config,
             derived_planner_seed(config_.grower.rng_seed,
                                  kSeedBatchBridgeOffset,
-                                 attempt,
+                                 scheduled_attempt,
                                  static_cast<int>(task.index),
                                  task.short_local_bridge ? 0 : kSeedAttemptStride),
             batch_context.native_cancel_flag());
@@ -7098,6 +7418,158 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return path;
     };
+
+    const bool parallel_task_rrt =
+        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
+    batch_context.diagnostics().set_value("query_bridge.attempt_offset",
+                                          static_cast<double>(query_bridge_attempt_offset));
+    const bool has_segment_only_task =
+        std::any_of(tasks.begin(), tasks.end(), [](const BridgeSearchTask& task) {
+            return env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES",
+                                           task.index);
+        });
+    if (parallel_task_rrt && !has_segment_only_task && no_path_retry_attempts == 0) {
+        struct PreparedTask {
+            bool skipped = false;
+            bool forced = false;
+            int attempts = 1;
+            double task_start_ms = 0.0;
+        };
+        struct PreparedJob {
+            std::size_t task_offset = 0;
+            int attempt = 0;
+        };
+        std::vector<PreparedTask> prepared(tasks.size());
+        std::vector<PreparedJob> jobs;
+        for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
+            auto& task = tasks[task_offset];
+            prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
+            const auto probe_t0 = Clock::now();
+            if (current_query_good(task)) {
+                prepared[task_offset].skipped = true;
+                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
+                batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                          elapsed_ms_since(probe_t0));
+                batch_context.diagnostics().set_value(task_key(task.index, "skipped"),
+                                                      1.0);
+                continue;
+            }
+            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                      elapsed_ms_since(probe_t0));
+            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
+            prepared[task_offset].forced = query_bridge_forced(task);
+            prepared[task_offset].attempts = prepared[task_offset].forced
+                ? std::max(std::max(1, task.attempts), forced_query_attempts)
+                : std::max(1, task.attempts);
+            if (prepared[task_offset].forced) {
+                batch_context.diagnostics().set_value(task_key(task.index, "forced"),
+                                                      1.0);
+            }
+            batch_context.diagnostics().set_value(task_key(task.index, "attempts"),
+                                                  static_cast<double>(prepared[task_offset].attempts));
+            for (int attempt = 0; attempt < prepared[task_offset].attempts; ++attempt) {
+                jobs.push_back({task_offset, attempt});
+            }
+        }
+
+        std::vector<std::vector<std::vector<Eigen::VectorXd>>> attempt_paths(tasks.size());
+        for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
+            attempt_paths[task_offset].resize(
+                static_cast<std::size_t>(std::max(0, prepared[task_offset].attempts)));
+        }
+        const auto rrt_t0 = Clock::now();
+        if (batch_context.executor().n_threads() > 1 && jobs.size() > 1) {
+            batch_context.executor().parallel_for(0,
+                                                  static_cast<int>(jobs.size()),
+                                                  [&](int job_index) {
+                const PreparedJob& job = jobs[static_cast<std::size_t>(job_index)];
+                attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
+                    run_task_attempt(tasks[job.task_offset], job.attempt);
+            });
+        } else {
+            for (const PreparedJob& job : jobs) {
+                attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
+                    run_task_attempt(tasks[job.task_offset], job.attempt);
+            }
+        }
+        const double rrt_ms = elapsed_ms_since(rrt_t0);
+        batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
+                                                  rrt_ms);
+        batch_context.diagnostics().set_value("query_bridge.parallel_task_rrt",
+                                              1.0);
+        batch_context.diagnostics().set_value("query_bridge.parallel_task_rrt_jobs",
+                                              static_cast<double>(jobs.size()));
+
+        for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
+            auto& task = tasks[task_offset];
+            if (prepared[task_offset].skipped) {
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "total_ms"),
+                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+                continue;
+            }
+            batch_context.diagnostics().set_value(task_key(task.index, "rrt_ms"),
+                                                  rrt_ms);
+            double best_length = std::numeric_limits<double>::infinity();
+            for (auto& path : attempt_paths[task_offset]) {
+                if (path.empty()) {
+                    continue;
+                }
+                const double length = path_length(path);
+                if (length < best_length) {
+                    best_length = length;
+                    task.waypoint_path = std::move(path);
+                }
+            }
+            if (task.waypoint_path.empty()) {
+                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
+                batch_context.diagnostics().set_value(task_key(task.index, "no_path"),
+                                                      1.0);
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "total_ms"),
+                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+                continue;
+            }
+            batch_context.diagnostics().set_value(task_key(task.index, "waypoint_length"),
+                                                  best_length);
+            const auto second_probe_t0 = Clock::now();
+            if (current_query_good(task)) {
+                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+                batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                          elapsed_ms_since(second_probe_t0));
+                batch_context.diagnostics().set_value(task_key(task.index, "skipped_after_rrt"),
+                                                      1.0);
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "total_ms"),
+                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+                continue;
+            }
+            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                      elapsed_ms_since(second_probe_t0));
+            const auto pave_t0 = Clock::now();
+            added_by_query[task.index] =
+                bridge_query_with_waypoint_path(task.start,
+                                                task.goal,
+                                                task.waypoint_path,
+                                                task.short_local_bridge,
+                                                task.bridge_rrt,
+                                                static_cast<int>(task.index));
+            const double pave_ms = elapsed_ms_since(pave_t0);
+            batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
+                                                      pave_ms);
+            batch_context.diagnostics().set_value(task_key(task.index, "pave_ms"),
+                                                  pave_ms);
+            batch_context.diagnostics().set_value(task_key(task.index, "added"),
+                                                  static_cast<double>(added_by_query[task.index]));
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "total_ms"),
+                elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+        }
+
+        batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
+                                              elapsed_ms_since(batch_t0));
+        return added_by_query;
+    }
 
     for (auto& task : tasks) {
         const auto task_t0 = Clock::now();

@@ -126,15 +126,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-adaptive-all", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-adaptive-max-path-length", type=float, default=4.5)
+    parser.add_argument("--query-bridge-accept-segment-fraction", type=float, default=0.25)
+    parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
+    parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.04)
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=1)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
+    parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
+    parser.add_argument("--endpoint-main-target-k", type=int, default=8)
+    parser.add_argument("--endpoint-main-coarse-step", type=float, default=0.08)
+    parser.add_argument("--endpoint-main-fine-step", type=float, default=0.02)
+    parser.add_argument("--endpoint-main-max-ffb-calls", type=int, default=48)
+    parser.add_argument("--endpoint-main-max-boxes", type=int, default=64)
+    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="50,58,62")
+    parser.add_argument("--endpoint-main-residual-segment-max-length", type=float, default=0.25)
+    parser.add_argument("--endpoint-main-lateral-offset", type=float, default=0.03)
+    parser.add_argument("--endpoint-main-lateral-rounds", type=int, default=2)
+    parser.add_argument("--endpoint-main-face-epsilon", type=float, default=1e-6)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--offline-anchor-count", type=int, default=16)
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
     parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
     parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-shortcut-edges", type=int, default=0)
+    parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
+    parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
+    parser.add_argument("--offline-shortcut-max-segment-length", type=float, default=3.0)
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
@@ -284,11 +304,30 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     ]
     valid_root = robot_joint_limit_tuples(robot)
     root_override = robot_symmetry_aligned_root_tuples(robot) if str(robot_name) == "iiwa" else valid_root
+    stage_id = (
+        f"l{int(args.leaf_max_depth)}"
+        f"_ffb{int(args.deep_ffb_depth)}"
+        f"_b{int(args.deep_max_boxes)}"
+        f"_a{int(args.offline_anchor_count)}"
+        f"_c{int(args.offline_anchor_candidate_count)}"
+        f"_os{int(args.offline_shortcut_edges)}"
+        f"_tm{int(bool(args.query_bridge_to_main_island))}"
+    )
+    active_cache_name = (
+        f"rbf_{robot_name}_{difficulty}_{int(scene_seed)}"
+        f"_b{int(args.deep_max_boxes)}"
+        f"_l{int(args.leaf_max_depth)}"
+        f"_ffb{int(args.deep_ffb_depth)}"
+        f"_a{int(args.offline_anchor_count)}"
+        f"_c{int(args.offline_anchor_candidate_count)}"
+        f"_os{int(args.offline_shortcut_edges)}"
+        f"_tm{int(bool(args.query_bridge_to_main_island))}"
+    )
     row = run_leaf_rrt(
         robot=robot,
         obstacles=list(scene.obstacles),
         queries=queries,
-        database_path=args.out_dir / "active_cache" / f"rbf_{robot_name}_{difficulty}_{scene_seed}",
+        database_path=args.out_dir / "active_cache" / active_cache_name,
         options=RBFLeafRRTOptions(
             seed=int(scene_seed),
             deep_max_boxes=int(args.deep_max_boxes),
@@ -320,14 +359,34 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             offline_anchor_candidate_count=int(args.offline_anchor_candidate_count),
             offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
             offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+            offline_shortcut_edges=int(args.offline_shortcut_edges),
+            offline_shortcut_candidate_limit=int(args.offline_shortcut_candidate_limit),
+            offline_shortcut_min_gain_ratio=float(args.offline_shortcut_min_gain_ratio),
+            offline_shortcut_max_segment_length=float(args.offline_shortcut_max_segment_length),
             connector_pair_timeout_ms=DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
             connector_max_pairs_per_gap=DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
             query_bridge_all=bool(args.query_bridge_all),
             query_bridge_adaptive_all=bool(args.query_bridge_adaptive_all),
             query_bridge_adaptive_max_path_length=float(args.query_bridge_adaptive_max_path_length),
+            query_bridge_accept_segment_fraction=float(args.query_bridge_accept_segment_fraction),
+            query_bridge_accept_path_ratio=float(args.query_bridge_accept_path_ratio),
+            query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
             query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
             query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
+            query_bridge_force_selected=bool(args.query_bridge_force_selected),
+            query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
+            query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
+            endpoint_main_target_k=int(args.endpoint_main_target_k),
+            endpoint_main_coarse_step=float(args.endpoint_main_coarse_step),
+            endpoint_main_fine_step=float(args.endpoint_main_fine_step),
+            endpoint_main_max_ffb_calls=int(args.endpoint_main_max_ffb_calls),
+            endpoint_main_max_boxes=int(args.endpoint_main_max_boxes),
+            endpoint_main_adaptive_ffb_depths=str(args.endpoint_main_adaptive_ffb_depths),
+            endpoint_main_residual_segment_max_length=float(args.endpoint_main_residual_segment_max_length),
+            endpoint_main_lateral_offset=float(args.endpoint_main_lateral_offset),
+            endpoint_main_lateral_rounds=int(args.endpoint_main_lateral_rounds),
+            endpoint_main_face_epsilon=float(args.endpoint_main_face_epsilon),
             connector_segment_resolution=(
                 int(args.connector_segment_resolution)
                 if args.connector_segment_resolution is not None
@@ -343,6 +402,23 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "robot": robot_name,
             "difficulty": difficulty,
             "scene_seed": int(scene_seed),
+            "stage_id": stage_id,
+            "leaf_start_depth": int(args.leaf_start_depth),
+            "leaf_max_depth": int(args.leaf_max_depth),
+            "deep_ffb_depth": int(args.deep_ffb_depth),
+            "connector_pave_depth": int(args.connector_pave_depth),
+            "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+            "offline_anchor_count": int(args.offline_anchor_count),
+            "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
+            "offline_shortcut_edges": int(args.offline_shortcut_edges),
+            "offline_shortcut_candidate_limit": int(args.offline_shortcut_candidate_limit),
+            "offline_shortcut_min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),
+            "offline_shortcut_max_segment_length": float(args.offline_shortcut_max_segment_length),
+            "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
+            "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
+            "ffb_start_depth": int(args.ffb_start_depth),
+            "rbf_max_depth": int(args.rbf_max_depth),
+            "deep_max_boxes": int(args.deep_max_boxes),
             "obstacle_count": len(scene.obstacles),
             "queries_per_scene": len(queries),
             "scene_catalog": str(args.scene_catalog or (args.out_dir / "random_scene_catalog_v6.json")),
@@ -457,7 +533,10 @@ def summarize_query_batch_method(
         residual_s = online_s - online_solve_s - online_simplify_s
         if residual_s > 1e-9:
             online_solve_s += residual_s
-    online_per_query_s = online_s / query_count
+    online_total_s = online_s
+    online_s = online_solve_s
+    online_per_query_s = online_solve_s / query_count
+    online_total_per_query_s = online_total_s / query_count
     online_solve_per_query_s = online_solve_s / query_count
     online_simplify_per_query_s = online_simplify_s / query_count
     amortized = {
@@ -478,12 +557,16 @@ def summarize_query_batch_method(
         "success_count": len(successes),
         "query_count": len(qrows),
         "planning_s": float(offline_build_s) + online_s,
+        "planning_total_s": float(offline_build_s) + online_total_s,
         "build_s": float(offline_build_s),
         "offline_build_s": float(offline_build_s),
         "online_batch_s": online_s,
+        "online_total_s": online_total_s,
+        "online_total_batch_s": online_total_s,
         "online_solve_s": online_solve_s,
         "online_simplify_s": online_simplify_s,
         "online_per_query_s": online_per_query_s,
+        "online_total_per_query_s": online_total_per_query_s,
         "online_solve_per_query_s": online_solve_per_query_s,
         "online_simplify_per_query_s": online_simplify_per_query_s,
         **amortized,
@@ -743,6 +826,7 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
         )
         query_traces.append((dict(query), [dict(item) for item in result.get("checkpoints", [])]))
     rows: list[dict[str, Any]] = []
+    best_by_query: dict[str, dict[str, Any]] = {}
     for target_checkpoint_s in checkpoint_grid_s:
         qrows: list[dict[str, Any]] = []
         audit_total_s = 0.0
@@ -750,6 +834,8 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
         for index, (query, checkpoints) in enumerate(query_traces):
             checkpoint = checkpoint_at_or_after(checkpoints, target_checkpoint_s)
             checkpoint_s = max(checkpoint_s, float(checkpoint.get("checkpoint_s", target_checkpoint_s) or 0.0))
+            elapsed_s = float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0)
+            solve_s = float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0)
             path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
             path, simplify_s, simplify_status = simplify_path_if_requested(
                 robot,
@@ -771,20 +857,34 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
             )
             audit_total_s += audit_s
             ok = bool(checkpoint.get("ok")) and audit_passed
-            qrows.append({
-                "label": f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{index}')}",
+            label = f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{index}')}"
+            length = path_length(path) if ok else math.nan
+            current_row = {
+                "label": label,
                 "success": ok,
                 "audit_passed": audit_passed,
                 "audit_status": audit_status,
-                "query_ms": (float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0) + simplify_s) * 1000.0,
-                "solve_ms": float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0) * 1000.0,
+                "query_ms": (elapsed_s + simplify_s) * 1000.0,
+                "solve_ms": solve_s * 1000.0,
                 "simplify_ms": simplify_s * 1000.0,
                 "audit_ms": audit_s * 1000.0,
-                "path_length": path_length(path) if ok else math.nan,
+                "path_length": length,
                 "segment_fraction": 0.0 if ok else math.nan,
                 "waypoint_count": len(path),
                 "simplify_status": simplify_status,
-            })
+                "incumbent_checkpoint_s": float(target_checkpoint_s) if ok else math.nan,
+            }
+            best = best_by_query.get(label)
+            if ok and math.isfinite(length) and (best is None or length < float(best.get("path_length", math.inf))):
+                best_by_query[label] = dict(current_row)
+                best = best_by_query[label]
+            if best is None:
+                qrows.append(current_row)
+            else:
+                row = dict(best)
+                row["query_ms"] = (elapsed_s + float(row.get("simplify_ms", 0.0)) / 1000.0) * 1000.0
+                row["solve_ms"] = solve_s * 1000.0
+                qrows.append(row)
         rows.append(summarize_query_batch_method(
             "bitstar",
             robot_name,
@@ -886,6 +986,13 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "robot": robot,
                 "difficulty": difficulty,
                 "stage_id": stage_id,
+                "leaf_start_depth": median(row.get("leaf_start_depth", math.nan) for row in items),
+                "leaf_max_depth": median(row.get("leaf_max_depth", math.nan) for row in items),
+                "deep_ffb_depth": median(row.get("deep_ffb_depth", math.nan) for row in items),
+                "connector_pave_depth": median(row.get("connector_pave_depth", math.nan) for row in items),
+                "query_bridge_pave_depth": median(row.get("query_bridge_pave_depth", math.nan) for row in items),
+                "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
+                "rbf_max_depth": median(row.get("rbf_max_depth", math.nan) for row in items),
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
                 "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
                 "deep_max_boxes": budget,
@@ -899,6 +1006,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
                 "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0))) for row in items),
+                "online_total_s_median": median(row.get("online_total_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
                 "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
                 "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
                 "online_solve_per_query_s_median": median(
@@ -918,7 +1026,14 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "online_per_query_s_median": median(
                     row.get(
                         "online_per_query_s",
-                        max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)) / max(1, int(row.get("query_count", 1))),
+                        row.get("online_solve_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0))) / max(1, int(row.get("query_count", 1))),
+                    )
+                    for row in items
+                ),
+                "online_total_per_query_s_median": median(
+                    row.get(
+                        "online_total_per_query_s",
+                        row.get("online_total_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
                     )
                     for row in items
                 ),
@@ -944,6 +1059,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "robot",
         "difficulty",
         "stage_id",
+        "leaf_start_depth",
+        "leaf_max_depth",
+        "deep_ffb_depth",
+        "connector_pave_depth",
+        "query_bridge_pave_depth",
+        "ffb_start_depth",
+        "rbf_max_depth",
         "budget_s",
         "timeout_cap_s",
         "deep_max_boxes",
@@ -957,11 +1079,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "planning_s_median",
         "offline_build_s_median",
         "online_batch_s_median",
+        "online_total_s_median",
         "online_solve_s_median",
         "online_simplify_s_median",
         "online_solve_per_query_s_median",
         "online_simplify_per_query_s_median",
         "online_per_query_s_median",
+        "online_total_per_query_s_median",
         "amortized_s_k1",
         "amortized_s_k5",
         "amortized_s_k10",
@@ -1018,7 +1142,12 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
             candidates,
             key=lambda row: (
                 float(row.get("online_per_query_s_median", math.nan)) if math.isfinite(float(row.get("online_per_query_s_median", math.nan))) else 1e9,
-                float(row.get("amortized_s_k10", math.nan)) if math.isfinite(float(row.get("amortized_s_k10", math.nan))) else 1e9,
+                (
+                    float(row.get("offline_build_s_median", row.get("build_s", 0.0))) / 10.0
+                    + float(row.get("online_per_query_s_median", math.nan))
+                    if math.isfinite(float(row.get("online_per_query_s_median", math.nan)))
+                    else 1e9
+                ),
                 int(float(row.get("deep_max_boxes", 0) or 0)),
             ),
         )[0])
@@ -1030,21 +1159,22 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Solve/q and Simplify/q split online latency before the Online/q total. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}",
+        r"\caption{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}",
         r"\label{tab:tro-random-summary}",
         r"\footnotesize",
-        r"\begin{tabular}{llrrrrrrrrrr}",
+        r"\begin{tabular}{llrrrrrrrrr}",
         r"\toprule",
-        r"Robot & Difficulty & Boxes & SR & Build & Solve/q & Simplify/q & Online/q & Amort@10 & Path & Seg. \\",
+        r"Robot & Difficulty & Boxes & SR & Build & Online/q & Simplify/q & Amort@10 & Path & Seg. \\",
         r"\midrule",
     ]
     for row in rows:
         sr = f"{int(row.get('success_queries', 0))}/{int(row.get('total_queries', 0))}"
         lines.append(
             f"{row.get('robot')} & {row.get('difficulty')} & {int(row.get('deep_max_boxes', 0) or 0)} & {sr} & "
-            f"{tex_num(row.get('offline_build_s_median'))} & {tex_num(row.get('online_solve_per_query_s_median'))} & "
-            f"{tex_num(row.get('online_simplify_per_query_s_median'))} & {tex_num(row.get('online_per_query_s_median'))} & "
-            f"{tex_num(row.get('amortized_s_k10'))} & {tex_num(row.get('path_length_mean', row.get('path_length_median')))} & "
+            f"{tex_num(row.get('offline_build_s_median'))} & {tex_num(row.get('online_per_query_s_median'))} & "
+            f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
+            f"{tex_num(float(row.get('offline_build_s_median', row.get('build_s', 0.0))) / 10.0 + float(row.get('online_per_query_s_median', 0.0)))} & "
+            f"{tex_num(row.get('path_length_mean', row.get('path_length_median')))} & "
             f"{tex_num(row.get('raw_segment_fraction_median'))} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])

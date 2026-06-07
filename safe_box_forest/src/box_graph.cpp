@@ -932,7 +932,6 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
             continue;
         }
         if (boxes_connected(lhs, rhs)) {
-            append_if_new(lhs.center());
             append_if_new(transition_waypoint_toward_goal(lhs, rhs, path.back(), goal));
         } else {
             const Eigen::VectorXd lhs_center = lhs.center();

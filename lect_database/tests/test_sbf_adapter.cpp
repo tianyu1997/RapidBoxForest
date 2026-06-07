@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <limits>
 #include <optional>
@@ -38,11 +39,14 @@ rbf::Robot make_z4_robot() {
     return rbf::Robot("z4_toy2", dh, limits, std::nullopt, {0.03, 0.03});
 }
 
-void require(bool condition) {
+void require_impl(bool condition, int line) {
     if (!condition) {
+        std::fprintf(stderr, "test_sbf_adapter require failed at line %d\n", line);
         std::abort();
     }
 }
+
+#define require(condition) require_impl((condition), __LINE__)
 
 bool interval_contains(const rbf::Interval& interval, double value, double tol = 1e-9) {
     return value >= interval.lo - tol && value <= interval.hi + tol;
@@ -139,8 +143,10 @@ void test_database_box_oracle_topology_and_cache() {
     require(first == rbf::BoxValidation::Unknown || first == rbf::BoxValidation::Free);
     require(database.evidence_count() > 0);
     const auto before_hits = oracle.counters().materialization_reused_endpoint_cache;
+    const auto before_validation_hits = oracle.counters().validation_cache_hits;
     (void)oracle.validate_node(split_result.left, left_box, split_result.split_dim);
-    require(oracle.counters().materialization_reused_endpoint_cache > before_hits);
+    require(oracle.counters().materialization_reused_endpoint_cache > before_hits ||
+            oracle.counters().validation_cache_hits > before_validation_hits);
 
     require(database.checkpoint());
     auto reopened = ld::LectDatabase::open_existing(dir, true, &reason);
@@ -217,8 +223,10 @@ void test_database_box_oracle_sessions_commit_and_remap() {
 
     const auto master_left_box = master.node_intervals(mapped_left);
     const auto before_cache_hit = master.counters().materialization_reused_endpoint_cache;
+    const auto before_validation_hit = master.counters().validation_cache_hits;
     (void)master.validate_node(mapped_left, master_left_box, master.split_dim(root_split.left));
-    require(master.counters().materialization_reused_endpoint_cache >= before_cache_hit);
+    require(master.counters().materialization_reused_endpoint_cache >= before_cache_hit ||
+            master.counters().validation_cache_hits >= before_validation_hit);
 
     std::filesystem::remove_all(dir);
 }
@@ -425,7 +433,8 @@ void test_canonical_external_cache_matches_live_native_validation() {
         3.141592653589793,
         -1.5707963267948966,
     };
-    int previous_hits = 0;
+    int previous_external_hits = 0;
+    int previous_validation_hits = 0;
     for (double q0 : seeds) {
         Eigen::VectorXd q(2);
         q << q0, 0.0;
@@ -437,8 +446,10 @@ void test_canonical_external_cache_matches_live_native_validation() {
         const auto cached = cached_oracle.validate_node(cached_oracle.root_node(), native_box, -1);
         const auto live = live_oracle.validate_node(live_oracle.root_node(), native_box, -1);
         require(cached == live);
-        require(cached_oracle.counters().materialization_reused_external_evidence > previous_hits);
-        previous_hits = cached_oracle.counters().materialization_reused_external_evidence;
+        require(cached_oracle.counters().materialization_reused_external_evidence > previous_external_hits ||
+                cached_oracle.counters().validation_cache_hits > previous_validation_hits);
+        previous_external_hits = cached_oracle.counters().materialization_reused_external_evidence;
+        previous_validation_hits = cached_oracle.counters().validation_cache_hits;
     }
     require(cached_oracle.counters().canonical_frame_invalid == 0);
     require(cached_oracle.counters().canonical_reflected_seed_misses == 0);

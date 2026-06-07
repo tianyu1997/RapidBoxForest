@@ -470,6 +470,10 @@ private:
     BoxValidation classify_payload(OracleNodeId node,
                                    const std::vector<Interval>& intervals,
                                    const EndpointPayload& endpoint_payload);
+    struct ValidationCacheEntry {
+        BoxValidation result = BoxValidation::Unknown;
+        OracleValidationDetail detail;
+    };
 
     Robot robot_;
     lect_database::LectDatabase& database_;
@@ -483,6 +487,7 @@ private:
     CollisionChecker checker_;
     mutable OracleCounters counters_;
     OracleValidationDetail last_validation_detail_;
+    std::unordered_map<std::uint64_t, ValidationCacheEntry> validation_cache_;
     std::unordered_map<OracleNodeId, int> node_to_box_;
     std::unordered_map<int, OracleNodeId> box_to_node_;
     std::unordered_map<std::uint64_t, LinkEnvelope> envelope_cache_;

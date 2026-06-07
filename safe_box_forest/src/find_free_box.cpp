@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdlib>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -71,6 +72,18 @@ std::vector<int> scheduled_depths(const FindFreeBoxOptions& options,
     return depths;
 }
 
+int env_int_or_default(const char* name, int fallback) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || *value == '\0') {
+        return fallback;
+    }
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
 }  // namespace
 
 FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorXd>& seed,
@@ -126,11 +139,13 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         struct PathEntry {
             OracleNodeId node = kInvalidOracleNodeId;
             int changed_dim = -1;
+            std::vector<Interval> tree_intervals;
         };
         std::vector<PathEntry> path;
         path.reserve(static_cast<std::size_t>(effective_max_depth + 1));
         OracleNodeId node = oracle_.root_node();
         int changed_dim = -1;
+        auto current_tree_intervals = oracle_.node_intervals(node);
         while (node != kInvalidOracleNodeId) {
             if (context.should_stop() ||
                 (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
@@ -144,17 +159,16 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             if (static_cast<int>(path.size()) <= depth) {
                 path.resize(static_cast<std::size_t>(depth + 1));
             }
-            path[static_cast<std::size_t>(depth)] = {node, changed_dim};
+            path[static_cast<std::size_t>(depth)] = {node, changed_dim, current_tree_intervals};
             if (depth >= effective_max_depth) {
                 break;
             }
-            const auto intervals_start = Clock::now();
-            auto tree_intervals = oracle_.node_intervals(node);
-            record_elapsed(context, "oracle.node_intervals", intervals_start);
             if (oracle_.is_reserved(node) && !options.split_reserved_leaf) {
                 result.hit_reserved_depth_cap = true;
                 result.node = node;
-                result.intervals = oracle_.query_intervals_for_node(node, tree_intervals, seed);
+                result.intervals = oracle_.query_intervals_for_node(node,
+                                                                    current_tree_intervals,
+                                                                    seed);
                 result.fail_code = 2;
                 result.total_ms = elapsed_ms();
                 return result;
@@ -163,18 +177,20 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                 if (!options.split_unknown_leaf) {
                     result.hit_unknown_depth_cap = true;
                     result.node = node;
-                    result.intervals = oracle_.query_intervals_for_node(node, tree_intervals, seed);
+                    result.intervals = oracle_.query_intervals_for_node(node,
+                                                                        current_tree_intervals,
+                                                                        seed);
                     result.fail_code = 2;
                     result.total_ms = elapsed_ms();
                     return result;
                 }
                 const auto split_start = Clock::now();
                 const auto split = oracle_.split_node(node,
-                                                       tree_intervals,
+                                                       current_tree_intervals,
                                                        changed_dim,
                                                        split_options);
                 record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, tree_intervals, depth);
+                record_split_diagnostics(context, split, current_tree_intervals, depth);
                 if (!split.split) {
                     result.fail_code = 6;
                     result.total_ms = elapsed_ms();
@@ -183,7 +199,24 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                 result.splits += 1;
             }
             changed_dim = oracle_.split_dim(node);
-            node = oracle_.child_containing_point(node, seed);
+            const OracleNodeId parent = node;
+            node = oracle_.child_containing_point(parent, seed);
+            if (node == kInvalidOracleNodeId) {
+                break;
+            }
+            if (changed_dim >= 0 &&
+                changed_dim < static_cast<int>(current_tree_intervals.size())) {
+                const double split_value = oracle_.split_value(parent);
+                if (node == oracle_.left_child(parent)) {
+                    current_tree_intervals[static_cast<std::size_t>(changed_dim)].hi =
+                        split_value;
+                } else {
+                    current_tree_intervals[static_cast<std::size_t>(changed_dim)].lo =
+                        split_value;
+                }
+            } else {
+                current_tree_intervals = oracle_.node_intervals(node);
+            }
         }
 
         const int start_depth =
@@ -197,12 +230,9 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             }
             const auto& entry = path[static_cast<std::size_t>(depth)];
             oracle_.record_visit(entry.node);
-            const auto intervals_start = Clock::now();
-            auto tree_intervals = oracle_.node_intervals(entry.node);
             auto query_intervals = oracle_.query_intervals_for_node(entry.node,
-                                                                    tree_intervals,
+                                                                    entry.tree_intervals,
                                                                     seed);
-            record_elapsed(context, "oracle.node_intervals", intervals_start);
             candidate.node = entry.node;
             candidate.changed_dim = entry.changed_dim;
             candidate.intervals = query_intervals;
@@ -235,18 +265,35 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             return validation;
         };
 
-        FindFreeBoxResult high_candidate;
-        BoxValidation high_validation = validate_depth(effective_max_depth,
-                                                       high_candidate);
-        result.decisions += high_candidate.decisions;
-        if (high_validation != BoxValidation::Free) {
-            high_candidate.splits = result.splits;
-            high_candidate.total_ms = elapsed_ms();
-            return high_candidate;
-        }
         int lo = start_depth;
         int hi = effective_max_depth;
-        FindFreeBoxResult best = high_candidate;
+        FindFreeBoxResult best;
+        const int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+        if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
+            FindFreeBoxResult probe_candidate;
+            const BoxValidation probe_validation = validate_depth(probe_depth,
+                                                                  probe_candidate);
+            result.decisions += probe_candidate.decisions;
+            if (probe_validation == BoxValidation::Free) {
+                best = std::move(probe_candidate);
+                hi = probe_depth;
+                context.diagnostics().add_counter("ffb.binary_probe_free");
+            } else {
+                context.diagnostics().add_counter("ffb.binary_probe_not_free");
+            }
+        }
+        if (!best.found) {
+            FindFreeBoxResult high_candidate;
+            BoxValidation high_validation = validate_depth(effective_max_depth,
+                                                           high_candidate);
+            result.decisions += high_candidate.decisions;
+            if (high_validation != BoxValidation::Free) {
+                high_candidate.splits = result.splits;
+                high_candidate.total_ms = elapsed_ms();
+                return high_candidate;
+            }
+            best = high_candidate;
+        }
         while (lo < hi) {
             if (context.should_stop() ||
                 (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {

@@ -1,22 +1,22 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Common-rule tabulated Shelf+IIWA rows from Fig.~\ref{fig:tro_shelf_cross_tradeoff}, reported by query. Gold rings in the figure mark these rows only to expose detailed numeric values; the full curves remain the primary evidence. RBF uses the current leaf-sweep--RRT grower profile. PRM, RRTConnect, and BIT* are current reruns with the registered settings; IRIS-NP+GCS reuses the registered audited common-rule artifact. For RRTConnect and BIT*, Solve is the observed return time under the timeout cap rather than the cap itself. BIT* is run as a single timed trace with dense subsecond and sparse long-horizon incumbent checkpoints. Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. The main table uses a 0.01~s common final-simplify budget; OMPL planning, final simplify, and fixed-resolution final audit use the same 0.01 joint-space segment step with zero collision tolerance.}
+\captionof{table}{Shelf+IIWA cross-algorithm rows selected from Fig.~\ref{fig:tro_shelf_cross_tradeoff}, reported by query. Gold rings in the figure mark these tabulated rows; the full curves remain the primary evidence. RBF uses the selected leaf-sweep--RRT grower profile. PRM, RRTConnect, and BIT* are rerun under the same native-query and audit settings; IRIS-NP+GCS restores the legacy Shelf+IIWA contextual result. For RRTConnect and BIT*, Solve is the observed return time under the timeout cap rather than the cap itself. BIT* is run as a single timed trace with dense checkpoints around the first full-success transition; the table reports each BIT* query at its first checkpoint with 100\% success over seeds. Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. Solve/q excludes final simplification; the main table records artifacts generated with a 0.01~s common final-simplify budget; OMPL planning, final simplify, and fixed-resolution final audit use the same 0.01 joint-space segment step with zero collision tolerance.}
 \label{tab:tro-shelf-cross-algorithm}
 \footnotesize
 \setlength{\tabcolsep}{1.55pt}
 \renewcommand{\arraystretch}{0.96}
 \begin{tabular}{@{}lrr|rr|rr|rr|rr@{}}
 \toprule
-  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.203\,s; SR 8/8}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 355.425\,s; SR 1/1}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 10.010\,s; SR 24/40}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.000\,s; SR 40/40}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{7.1}{7.8}\selectfont Build 0.000\,s; SR 40/40}}}} \\
+  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.215\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Simp 0.007\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont SR 8/8}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 355.425\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont SR 1/1}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 2.012\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Simp 0.002\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont SR 29/40}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Simp 0.005\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont SR 40/40}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Simp 0.002\,s}\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont SR 40/40}}}} \\
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
-Query & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path & Query (s) & Path \\
+Query & Solve/q (s) & Path & Solve/q (s) & Path & Solve/q (s) & Path & Solve/q (s) & Path & Solve/q (s) & Path \\
 \midrule
-AS$\rightarrow$TS & 0.074 & 2.43 & 0.449 & 2.42 & 0.478 & 5.32 & 0.053 & 4.28 & 2.505 & 1.89 \\
-TS$\rightarrow$CS & 0.004 & 1.10 & 0.269 & 2.03 & 0.422 & 4.59 & 0.090 & 6.52 & 2.506 & 2.60 \\
-CS$\rightarrow$LB & 0.004 & 2.27 & 0.381 & 2.67 & 0.346 & 6.02 & 0.063 & 5.80 & 2.510 & 2.81 \\
-LB$\rightarrow$RB & 0.042 & 3.09 & 0.786 & 3.26 & 0.475 & 3.92 & 0.008 & 3.97 & 2.507 & 3.22 \\
-RB$\rightarrow$AS & 0.028 & 3.69 & 0.527 & 1.83 & 0.464 & 2.24 & 0.004 & 1.92 & 2.506 & 1.87 \\
+AS$\rightarrow$TS & 0.010 & 3.07 & 0.449 & 2.42 & 0.471 & 4.91 & 0.039 & 4.27 & 0.205 & 2.27 \\
+TS$\rightarrow$CS & 0.010 & 2.22 & 0.269 & 2.03 & 0.446 & 4.10 & 0.062 & 6.46 & 1.906 & 2.85 \\
+CS$\rightarrow$LB & 0.011 & 4.09 & 0.381 & 2.67 & 0.460 & 5.34 & 0.039 & 5.64 & 0.060 & 4.13 \\
+LB$\rightarrow$RB & 0.005 & 3.89 & 0.786 & 3.26 & 0.480 & 4.00 & 0.005 & 3.94 & 0.056 & 3.26 \\
+RB$\rightarrow$AS & 0.002 & 1.94 & 0.527 & 1.83 & 0.484 & 2.86 & 0.003 & 1.92 & 0.055 & 1.85 \\
 \bottomrule
 \end{tabular}
 \par\endgroup

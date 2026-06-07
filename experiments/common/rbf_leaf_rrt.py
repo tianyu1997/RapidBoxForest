@@ -24,8 +24,21 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
     DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
+    DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
+    DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
     DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE,
@@ -157,13 +170,22 @@ class RBFLeafRRTOptions:
     query_bridge_accept_segment_fraction: float = 0.25
     query_bridge_accept_path_ratio: float = 1.50
     query_bridge_accept_path_additive: float = 0.75
-    query_endpoint_anchor_before_bridge: bool = True
+    query_endpoint_anchor_before_bridge: bool = DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE
     query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
     query_bridge_segment_only_indices: str = ""
     query_bridge_force_indices: str = ""
-    query_bridge_forced_attempts: int = 1
-    query_bridge_direct_sample_step: float = 0.0
-    query_bridge_repair_subdivisions: int = -1
+    query_bridge_force_selected: bool = DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED
+    query_bridge_forced_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS
+    query_bridge_attempt_offset: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET
+    query_bridge_no_path_retry_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS
+    query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
+    query_bridge_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS
+    query_bridge_adaptive_step_repair: bool = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR
+    query_bridge_adaptive_fine_step: float = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP
+    query_bridge_adaptive_max_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS
+    query_bridge_adaptive_max_repair_calls: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS
+    query_box_transition_line_deviation_penalty: float = DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY
+    query_foreign_edge_cost_penalty: float = DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY
     query_bridge_direct_max_length: float = 6.5
     query_bridge_to_main_island: bool = False
     query_bridge_to_main_direct_segment_max_length: float = 0.0
@@ -953,136 +975,71 @@ def bridge_all_queries(
         added_total += anchor_added
         attempts += anchor_attempts
 
-    def forest_islands() -> list[list[int]]:
-        boxes = list(forest.boxes())
-        adjacency = dict(forest.adjacency())
-        box_ids = [int(box.id) for box in boxes]
-        box_id_set = set(box_ids)
-        seen: set[int] = set()
-        islands: list[list[int]] = []
-        for box_id in box_ids:
-            if box_id in seen:
-                continue
-            stack = [box_id]
-            seen.add(box_id)
-            island: list[int] = []
-            while stack:
-                current = stack.pop()
-                island.append(current)
-                for neighbor in adjacency.get(current, []):
-                    neighbor_id = int(neighbor)
-                    if neighbor_id not in box_id_set or neighbor_id in seen:
-                        continue
-                    seen.add(neighbor_id)
-                    stack.append(neighbor_id)
-            islands.append(island)
-        return islands
-
-    def closest_point_in_box(box: Any, point: list[float]) -> list[float]:
-        out: list[float] = []
-        for interval, value in zip(list(box.joint_intervals), point, strict=True):
-            out.append(min(max(float(value), float(interval.lo)), float(interval.hi)))
-        return out
-
-    def point_in_box(box: Any, point: list[float], tolerance: float = 1e-9) -> bool:
-        intervals = list(box.joint_intervals)
-        if len(intervals) != len(point):
-            return False
-        for interval, value in zip(intervals, point, strict=True):
-            if float(value) < float(interval.lo) - tolerance or float(value) > float(interval.hi) + tolerance:
-                return False
-        return True
-
-    def locate_point_box_id(point: list[float]) -> int:
-        candidates = [
-            box for box in list(forest.boxes())
-            if point_in_box(box, point)
-        ]
-        if not candidates:
-            return -1
-        candidates.sort(key=lambda box: float(getattr(box, "volume", 0.0)), reverse=True)
-        return int(candidates[0].id)
-
     if bool(getattr(options, "query_bridge_to_main_island", False)):
         main_t0 = time.perf_counter()
         main_added = 0
         main_attempts = 0
-        islands = forest_islands()
-        if islands:
-            islands.sort(key=len, reverse=True)
-            main_ids = set(int(item) for item in islands[0])
-            boxes_by_id = {int(box.id): box for box in list(forest.boxes())}
-            main_boxes = [boxes_by_id[box_id] for box_id in main_ids if box_id in boxes_by_id]
-            endpoints: list[tuple[str, list[float]]] = []
-            for label, start, goal in query_items:
-                endpoints.append((f"{label}:start", start))
-                endpoints.append((f"{label}:goal", goal))
-            for endpoint_label, point in endpoints:
-                point_box_id = locate_point_box_id(point)
-                if point_box_id in main_ids or not main_boxes:
-                    continue
-                best_target: list[float] | None = None
-                best_dist2 = math.inf
-                for box in main_boxes:
-                    target = closest_point_in_box(box, point)
-                    dist2 = sum((float(lhs) - float(rhs)) ** 2 for lhs, rhs in zip(point, target, strict=True))
-                    if dist2 < best_dist2:
-                        best_dist2 = dist2
-                        best_target = target
-                if best_target is None or best_dist2 <= 1e-18:
-                    continue
-                main_attempts += 1
-                added = 0
-                if (
-                    bool(getattr(options, "query_bridge_to_main_box_corridor", True)) and
-                    hasattr(forest, "connect_query_endpoint_to_main_box_corridor") and
-                    hasattr(sbf, "EndpointMainBoxCorridorConfig")
-                ):
-                    corridor_cfg = sbf.EndpointMainBoxCorridorConfig()
-                    corridor_cfg.target_k = int(getattr(options, "endpoint_main_target_k", 8))
-                    corridor_cfg.coarse_step = float(getattr(options, "endpoint_main_coarse_step", 0.08))
-                    corridor_cfg.fine_step = float(getattr(options, "endpoint_main_fine_step", 0.02))
-                    corridor_cfg.max_ffb_calls = int(getattr(options, "endpoint_main_max_ffb_calls", 48))
-                    corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
-                    corridor_cfg.adaptive_ffb_depths = [
-                        int(item.strip())
-                        for item in str(getattr(options, "endpoint_main_adaptive_ffb_depths", "50,58,62")).split(",")
-                        if item.strip()
-                    ]
-                    corridor_cfg.residual_segment_max_length = float(
-                        getattr(options, "endpoint_main_residual_segment_max_length", 0.25)
-                    )
-                    corridor_cfg.lateral_offset = float(getattr(options, "endpoint_main_lateral_offset", 0.03))
-                    corridor_cfg.lateral_rounds = int(getattr(options, "endpoint_main_lateral_rounds", 2))
-                    corridor_cfg.face_epsilon = float(getattr(options, "endpoint_main_face_epsilon", 1e-6))
-                    added = int(forest.connect_query_endpoint_to_main_box_corridor(point, corridor_cfg))
-                direct_max_length = float(getattr(
-                    options,
-                    "query_bridge_to_main_direct_segment_max_length",
-                    0.0,
-                ))
-                if (
-                    added <= 0 and
-                    direct_max_length > 0.0 and
-                    hasattr(forest, "connect_query_endpoint_to_main_island")
-                ):
-                    added = int(forest.connect_query_endpoint_to_main_island(point, direct_max_length))
-                main_added += added
-                added_by_label[endpoint_label] = added_by_label.get(endpoint_label, 0) + added
-                if added > 0:
-                    islands = forest_islands()
-                    islands.sort(key=len, reverse=True)
-                    main_ids = set(int(item) for item in islands[0])
-                    boxes_by_id = {int(box.id): box for box in list(forest.boxes())}
-                    main_boxes = [boxes_by_id[box_id] for box_id in main_ids if box_id in boxes_by_id]
+        endpoints: list[tuple[str, list[float]]] = []
+        for label, start, goal in query_items:
+            endpoints.append((f"{label}:start", start))
+            endpoints.append((f"{label}:goal", goal))
+        for endpoint_label, point in endpoints:
+            main_attempts += 1
+            added = 0
+            if (
+                bool(getattr(options, "query_bridge_to_main_box_corridor", True)) and
+                hasattr(forest, "connect_query_endpoint_to_main_box_corridor") and
+                hasattr(sbf, "EndpointMainBoxCorridorConfig")
+            ):
+                corridor_cfg = sbf.EndpointMainBoxCorridorConfig()
+                corridor_cfg.target_k = int(getattr(options, "endpoint_main_target_k", 8))
+                corridor_cfg.coarse_step = float(getattr(options, "endpoint_main_coarse_step", 0.08))
+                corridor_cfg.fine_step = float(getattr(options, "endpoint_main_fine_step", 0.02))
+                corridor_cfg.max_ffb_calls = int(getattr(options, "endpoint_main_max_ffb_calls", 48))
+                corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
+                corridor_cfg.adaptive_ffb_depths = [
+                    int(item.strip())
+                    for item in str(getattr(options, "endpoint_main_adaptive_ffb_depths", "50,58,62")).split(",")
+                    if item.strip()
+                ]
+                corridor_cfg.residual_segment_max_length = float(
+                    getattr(options, "endpoint_main_residual_segment_max_length", 0.25)
+                )
+                corridor_cfg.lateral_offset = float(getattr(options, "endpoint_main_lateral_offset", 0.03))
+                corridor_cfg.lateral_rounds = int(getattr(options, "endpoint_main_lateral_rounds", 2))
+                corridor_cfg.face_epsilon = float(getattr(options, "endpoint_main_face_epsilon", 1e-6))
+                added = int(forest.connect_query_endpoint_to_main_box_corridor(point, corridor_cfg))
+            direct_max_length = float(getattr(
+                options,
+                "query_bridge_to_main_direct_segment_max_length",
+                0.0,
+            ))
+            if (
+                added <= 0 and
+                direct_max_length > 0.0 and
+                hasattr(forest, "connect_query_endpoint_to_main_island")
+            ):
+                added = int(forest.connect_query_endpoint_to_main_island(point, direct_max_length))
+            main_added += added
+            added_by_label[endpoint_label] = added_by_label.get(endpoint_label, 0) + added
         timing_by_label["__endpoint_to_main_island__"] = time.perf_counter() - main_t0
         added_by_label["__endpoint_to_main_island__"] = main_added
         added_total += main_added
         attempts += main_attempts
     if not labels and not adaptive_all:
         return time.perf_counter() - t0, added_total, attempts, timing_by_label, added_by_label
+    # Endpoint-to-main is a cheap first-stage repair. It should not force the
+    # heavier endpoint-to-endpoint bridge for every query; after the endpoint
+    # stage, re-probe the graph and only bridge queries that still violate the
+    # acceptance criteria.
+    force_selected = bool(getattr(options, "query_bridge_force_selected", False))
     for label, start, goal in query_items:
         if labels and label not in labels:
+            continue
+        if force_selected:
+            selected_index = len(selected)
+            selected.append((label, start, goal))
+            force_selected_indices.add(selected_index)
             continue
         if labels or adaptive_all:
             probe = forest.query(start, goal)
@@ -1106,19 +1063,18 @@ def bridge_all_queries(
                 path_length_value <= max(direct * ratio, direct + additive) or
                 absolute_short_enough
             )
-            if bool(probe.success) and bool(probe.audit_passed) and segment_ok and short_enough:
+            if bool(probe.success) and segment_ok and short_enough:
                 continue
             if (
                 bool(getattr(options, "query_bridge_to_main_island", False)) and
                 bool(probe.success) and
-                bool(probe.audit_passed) and
                 segment_ok and
                 short_enough
             ):
                 continue
         selected_index = len(selected)
         selected.append((label, start, goal))
-        if to_main_enabled:
+        if force_selected:
             force_selected_indices.add(selected_index)
 
     if (
@@ -1140,13 +1096,39 @@ def bridge_all_queries(
                 str(options.query_bridge_segment_only_indices).strip() or None,
             "RBF_QUERY_BRIDGE_FORCE_INDICES":
                 force_indices_text or None,
+            "RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION":
+                str(float(options.query_bridge_accept_segment_fraction)),
+            "RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO":
+                str(float(options.query_bridge_accept_path_ratio)),
+            "RBF_QUERY_BRIDGE_ACCEPT_PATH_ADDITIVE":
+                str(float(options.query_bridge_accept_path_additive)),
+            "RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH":
+                str(float(options.query_bridge_adaptive_max_path_length)),
         }
         if int(options.query_bridge_forced_attempts) > 1:
             env_updates["RBF_QUERY_BRIDGE_FORCED_ATTEMPTS"] = str(int(options.query_bridge_forced_attempts))
+        env_updates["RBF_QUERY_BRIDGE_ATTEMPT_OFFSET"] = str(
+            int(getattr(options, "query_bridge_attempt_offset", 0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS"] = str(
+            int(getattr(options, "query_bridge_no_path_retry_attempts", 0))
+        )
         if float(options.query_bridge_direct_sample_step) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
         if int(options.query_bridge_repair_subdivisions) >= 0:
             env_updates["RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS"] = str(int(options.query_bridge_repair_subdivisions))
+        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR"] = (
+            "1" if bool(getattr(options, "query_bridge_adaptive_step_repair", True)) else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP"] = str(
+            float(getattr(options, "query_bridge_adaptive_fine_step", 0.08))
+        )
+        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS"] = str(
+            int(getattr(options, "query_bridge_adaptive_max_repair_subdivisions", 2))
+        )
+        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS"] = str(
+            int(getattr(options, "query_bridge_adaptive_max_repair_calls", 5))
+        )
         if float(options.query_bridge_direct_max_length) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
         previous_env = {name: os.environ.get(name) for name in env_updates}
@@ -1251,38 +1233,54 @@ def run_leaf_rrt(
     offline_build_wall_s = time.perf_counter() - offline_t0
     build_final_boxes = int(build.profile.final_boxes)
     build_segment_edges = int(build.profile.segment_edges)
-    corridor_refine_s, corridor_refine_added, corridor_refine_attempts = refine_corridors(
-        forest,
-        robot,
-        query_list,
-        options,
-    )
-    after_corridor_boxes = len(list(forest.boxes()))
-    after_corridor_segment_edges = len(list(forest.segment_edges()))
-    (
-        query_bridge_s,
-        query_bridge_added,
-        query_bridge_attempts,
-        query_bridge_by_label_s,
-        query_bridge_added_by_label,
-    ) = bridge_all_queries(
-        forest,
-        robot,
-        query_list,
-        options,
-    )
-    final_boxes = len(list(forest.boxes()))
-    final_segment_edges = len(list(forest.segment_edges()))
-    final_adjacency_islands = forest_adjacency_island_count(forest)
-    qrows = query_rows(
-        forest,
-        robot,
-        query_list,
-        obstacles=list(obstacles),
-        audit_step=float(options.audit_segment_step),
-        audit_collision_tolerance=float(options.audit_collision_tolerance),
-        canonicalize_queries=bool(options.canonicalize_queries),
-    )
+    query_cost_env = {
+        "RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY":
+            str(float(options.query_box_transition_line_deviation_penalty)),
+        "RBF_QUERY_FOREIGN_EDGE_COST_PENALTY":
+            str(float(options.query_foreign_edge_cost_penalty)),
+    }
+    previous_query_cost_env = {name: os.environ.get(name) for name in query_cost_env}
+    for name, value in query_cost_env.items():
+        os.environ[name] = value
+    try:
+        corridor_refine_s, corridor_refine_added, corridor_refine_attempts = refine_corridors(
+            forest,
+            robot,
+            query_list,
+            options,
+        )
+        after_corridor_boxes = len(list(forest.boxes()))
+        after_corridor_segment_edges = len(list(forest.segment_edges()))
+        (
+            query_bridge_s,
+            query_bridge_added,
+            query_bridge_attempts,
+            query_bridge_by_label_s,
+            query_bridge_added_by_label,
+        ) = bridge_all_queries(
+            forest,
+            robot,
+            query_list,
+            options,
+        )
+        final_boxes = len(list(forest.boxes()))
+        final_segment_edges = len(list(forest.segment_edges()))
+        final_adjacency_islands = forest_adjacency_island_count(forest)
+        qrows = query_rows(
+            forest,
+            robot,
+            query_list,
+            obstacles=list(obstacles),
+            audit_step=float(options.audit_segment_step),
+            audit_collision_tolerance=float(options.audit_collision_tolerance),
+            canonicalize_queries=bool(options.canonicalize_queries),
+        )
+    finally:
+        for name, previous_value in previous_query_cost_env.items():
+            if previous_value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = previous_value
     build_for_diagnostics = forest.last_build_profile() if hasattr(forest, "last_build_profile") else build
     successes = [row for row in qrows if bool(row["audit_passed"])]
     total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))
@@ -1301,13 +1299,16 @@ def run_leaf_rrt(
     online_adaptation_s = float(corridor_refine_s) + float(query_bridge_s)
     graph_solve_s = sum(float(row.get("solve_ms", row["query_ms"])) for row in qrows) / 1000.0
     graph_simplify_s = sum(float(row.get("simplify_ms", row.get("final_simplify_ms", 0.0))) for row in qrows) / 1000.0
-    graph_query_s = graph_solve_s + graph_simplify_s
+    graph_query_s = graph_solve_s
+    graph_query_total_s = graph_solve_s + graph_simplify_s
     online_solve_s = online_adaptation_s + graph_solve_s
     online_simplify_s = graph_simplify_s
-    query_s = online_solve_s + online_simplify_s
+    query_s = online_solve_s
+    query_total_s = online_solve_s + online_simplify_s
     query_count = max(1, len(qrows))
     query_bridge_per_query_s = float(query_bridge_s) / query_count
     online_per_query_s = query_s / query_count
+    online_total_per_query_s = query_total_s / query_count
     online_solve_per_query_s = online_solve_s / query_count
     online_simplify_per_query_s = online_simplify_s / query_count
     offline_segment_edges_added = int(getattr(build.profile, "segment_edges_added", 0))
@@ -1331,22 +1332,29 @@ def run_leaf_rrt(
         "success_count": len(successes),
         "query_count": len(qrows),
         "planning_s": offline_build_s + query_s,
+        "planning_total_s": offline_build_s + query_total_s,
         "build_s": offline_build_s,
         "offline_build_s": offline_build_s,
         "offline_build_profile_s": offline_build_profile_s,
         "query_s": query_s,
+        "query_total_s": query_total_s,
         "online_s": query_s,
         "online_batch_s": query_s,
+        "online_total_s": query_total_s,
+        "online_total_batch_s": query_total_s,
         "online_adaptation_s": online_adaptation_s,
         "online_solve_s": online_solve_s,
         "online_simplify_s": online_simplify_s,
         "online_per_query_s": online_per_query_s,
+        "online_total_per_query_s": online_total_per_query_s,
         "online_solve_per_query_s": online_solve_per_query_s,
         "online_simplify_per_query_s": online_simplify_per_query_s,
         "graph_query_s": graph_query_s,
+        "graph_query_total_s": graph_query_total_s,
         "graph_solve_s": graph_solve_s,
         "graph_simplify_s": graph_simplify_s,
         "graph_query_per_query_s": graph_query_s / query_count,
+        "graph_query_total_per_query_s": graph_query_total_s / query_count,
         "graph_solve_per_query_s": graph_solve_s / query_count,
         "graph_simplify_per_query_s": graph_simplify_s / query_count,
         **amortized,

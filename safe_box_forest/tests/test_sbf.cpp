@@ -131,6 +131,25 @@ void test_graph() {
     assert(dijkstra.found);
 }
 
+void test_extract_waypoints_uses_overlap_transitions() {
+    rbf::BoxNode a;
+    a.id = 0;
+    a.joint_intervals = {{0.0, 1.0}, {0.0, 2.0}};
+    a.compute_volume();
+    rbf::BoxNode b;
+    b.id = 1;
+    b.joint_intervals = {{1.0, 2.0}, {0.0, 2.0}};
+    b.compute_volume();
+    Eigen::VectorXd start(2), goal(2);
+    start << 0.1, 0.1;
+    goal << 1.9, 0.1;
+
+    const auto path = rbf::extract_waypoints({0, 1}, std::vector<rbf::BoxNode>{a, b}, start, goal);
+    assert(path.size() == 3);
+    assert((path[1] - Eigen::Vector2d(1.0, 0.1)).norm() < 1e-12);
+    assert(rbf::path_length(path) < 1.81);
+}
+
 void test_indexed_graph_equivalence() {
     std::vector<rbf::BoxNode> boxes;
     int id = 0;
@@ -461,6 +480,37 @@ void test_leaf_sweep_refined_domain_invariant() {
     }
 }
 
+void test_endpoint_main_corridor_already_main_noop() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_endpoint_main_corridor_noop");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    config.database.canonical_mode = false;
+    config.enable_connector = false;
+    rbf::RBFPlanningForest forest(robot, config);
+    rbf::LeafSweepRefineConfig refine_config;
+    refine_config.leaf_start_depth = 1;
+    refine_config.leaf_max_depth = 1;
+    refine_config.deep_max_boxes = 0;
+    refine_config.use_virtual_topology = false;
+    auto result = forest.build_leaf_sweep_refined({}, refine_config);
+    assert(result.leaf_free_count > 0);
+    assert(!forest.boxes().empty());
+
+    const std::size_t boxes_before = forest.boxes().size();
+    const std::size_t edges_before = forest.segment_edges().size();
+    Eigen::VectorXd point = forest.boxes().front().center();
+    rbf::EndpointMainBoxCorridorConfig corridor_config;
+    const int added = forest.connect_query_endpoint_to_main_box_corridor(point, corridor_config);
+    assert(added == 0);
+    assert(forest.boxes().size() == boxes_before);
+    assert(forest.segment_edges().size() == edges_before);
+    const auto& diagnostics = forest.last_build_profile().diagnostics;
+    const auto it = diagnostics.find("endpoint_main.already_main");
+    assert(it != diagnostics.end());
+    assert(it->second >= 1.0);
+}
+
 void test_obstacle_rebuild() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_obstacle_rebuild");
@@ -501,6 +551,7 @@ void test_query_audit_gated_repair_without_graph() {
 int main() {
     test_runtime_context();
     test_graph();
+    test_extract_waypoints_uses_overlap_transitions();
     test_indexed_graph_equivalence();
     test_birrt_connect_api();
     test_parallel_merger_candidates();
@@ -515,6 +566,7 @@ int main() {
     test_leaf_sweep_thread_count_consistency();
     test_leaf_sweep_refined_empty_scene();
     test_leaf_sweep_refined_domain_invariant();
+    test_endpoint_main_corridor_already_main_noop();
     test_obstacle_rebuild();
     test_query_audit_gated_repair_without_graph();
     std::cout << "SBF C++ tests passed.\n";
