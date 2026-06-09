@@ -48,14 +48,20 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
+    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
+    DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
+    DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
@@ -64,7 +70,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_RRT_TIMEOUT_MS,
     DEFAULT_RBF_CONNECTOR_SEGMENT_RESOLUTION,
     DEFAULT_RBF_DEEP_FFB_DEPTH,
-    DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_SHELF_BOX_BUDGET,
     DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
     DEFAULT_RBF_DOMAIN_SEED_CAP,
     DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
@@ -74,6 +80,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
@@ -84,7 +91,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
-    rbf_budget_grid,
     robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
@@ -111,7 +117,7 @@ CASE_LABELS = {
     "critsample_d23_cache": "CritSample d23",
     "no_cache_full_root_ts": "No-cache full-root TS",
     "critsample_support_hull": "CritSample endpoints",
-    "no_external_lect": "No LECT replay",
+    "no_external_lect": "No LECT replay, live d17",
     "support_hull_no_aabb": "SH w/o broadphase",
     "link_aabb": "Link AABB",
     "single_thread": "No LECT, 1 thread",
@@ -149,7 +155,9 @@ ALLOWED_CONFIG_DIFFS = {
         "cfg.endpoint_source.source",
     },
     "no_cache_full_root_ts": set(),
-    "no_external_lect": set(),
+    "no_external_lect": {
+        "ref.leaf_max_depth",
+    },
     "support_hull_no_aabb": {
         "option.support_hull_skip_aabb_broadphase",
         "cfg.envelope_type.support_hull_config.skip_aabb_broadphase",
@@ -226,19 +234,43 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
     robot = sbf.load_iiwa14_robot()
     threads = 1 if case == "single_thread" else int(args.threads)
     task_root = robot_joint_limit_tuples(robot)
-    active_root = robot_symmetry_aligned_root_tuples(robot)
+    # Canonical semantics stay inside LECT: the active database root is the
+    # canonical primary-sector root selected by SBF when no override is passed,
+    # while coverage/query inputs remain in native joint space.
+    active_root = None
     coverage_root = task_root
     warm_cache_label = str(args.warm_cache_label)
     if case == "critsample_d23_cache" and warm_cache_label == D23_CACHE_LABEL:
         warm_cache_label = CRITSAMPLE_D23_CACHE_LABEL
+    leaf_max_depth = int(args.leaf_max_depth)
+    adaptive_target_depth = int(args.adaptive_target_depth)
+    if case == "no_external_lect":
+        leaf_max_depth = max(leaf_max_depth, 17)
+        adaptive_target_depth = max(adaptive_target_depth, leaf_max_depth)
     options = RBFLeafRRTOptions(
         seed=int(seed),
+        offline_grower=str(args.offline_grower),
         deep_max_boxes=int(deep_max_boxes),
         rbf_max_depth=int(args.rbf_max_depth),
         timeout_ms=float(args.timeout_ms),
         threads=threads,
         leaf_start_depth=int(args.leaf_start_depth),
-        leaf_max_depth=int(args.leaf_max_depth),
+        leaf_max_depth=leaf_max_depth,
+        adaptive_target_depth=adaptive_target_depth,
+        adaptive_time_budget_ms=float(args.adaptive_time_budget_ms),
+        adaptive_node_budget=int(args.adaptive_node_budget),
+        adaptive_defer_min_depth=int(args.adaptive_defer_min_depth),
+        adaptive_overlap_depth_threshold=float(args.adaptive_overlap_depth_threshold),
+        adaptive_overlap_depth_min_threshold=float(args.adaptive_overlap_depth_min_threshold),
+        adaptive_overlap_depth_decay_per_depth=float(args.adaptive_overlap_depth_decay_per_depth),
+        adaptive_overlap_ratio_threshold=float(args.adaptive_overlap_ratio_threshold),
+        adaptive_seed_probe_count=int(args.coverage_probe_count),
+        adaptive_seed_anchor_probe_cap=int(args.adaptive_seed_anchor_probe_cap),
+        adaptive_max_merge_ms=float(args.adaptive_max_merge_ms),
+        adaptive_max_merge_rounds=int(args.adaptive_max_merge_rounds),
+        adaptive_max_merge_input_boxes=int(args.adaptive_max_merge_input_boxes),
+        adaptive_max_free_boxes=min(int(args.adaptive_max_free_boxes), int(deep_max_boxes)),
+        adaptive_max_unresolved_domains=int(args.adaptive_max_unresolved_domains),
         deep_ffb_depth=int(args.deep_ffb_depth),
         refine_timeout_ms=float(args.refine_timeout_ms),
         domain_seed_cap=int(args.domain_seed_cap),
@@ -259,8 +291,15 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         support_hull_direct_collision=(case == "support_hull_direct"),
         endpoint_source="critsample" if case in {"critsample_support_hull", "critsample_d23_cache"} else "ifk",
         unsafe_sampling_validation=False,
-        use_external_evidence=case.startswith("baseline_d23") or case == "critsample_d23_cache",
+        use_external_evidence=(
+            case.startswith("baseline_d23")
+            or case == "critsample_d23_cache"
+            or case in {"support_hull_no_aabb", "link_aabb"}
+        ),
         external_evidence_live_retry_on_maybe=False,
+        active_endpoint_evidence_cache=bool(args.active_endpoint_evidence_cache),
+        active_store_endpoint_evidence_cache=bool(args.active_store_endpoint_evidence_cache),
+        worker_shared_endpoint_cache=bool(args.worker_shared_endpoint_cache),
         external_evidence_path=Path(args.rbf_cache_root) / warm_cache_label,
         external_evidence_verify_identity=False,
         use_shelf_root_override=False,
@@ -292,6 +331,8 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
         query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
         query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
+        query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
+        query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
         query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
         query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
@@ -336,8 +377,13 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
         query_bridge_adaptive_max_repair_subdivisions=int(args.query_bridge_adaptive_max_repair_subdivisions),
         query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
+        query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
+        query_bridge_adaptive_repair_target_segment_fraction=float(
+            args.query_bridge_adaptive_repair_target_segment_fraction
+        ),
         query_box_transition_line_deviation_penalty=float(args.query_box_transition_line_deviation_penalty),
         query_foreign_edge_cost_penalty=float(args.query_foreign_edge_cost_penalty),
+        query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
         allow_anchor_roots=True,
         use_priority_points=True,
         offline_query_agnostic_build=True,
@@ -392,6 +438,9 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.unsafe_sampling_validation": bool(options.unsafe_sampling_validation),
         "option.use_external_evidence": bool(options.use_external_evidence),
         "option.external_evidence_live_retry_on_maybe": bool(options.external_evidence_live_retry_on_maybe),
+        "option.active_endpoint_evidence_cache": bool(options.active_endpoint_evidence_cache),
+        "option.active_store_endpoint_evidence_cache": bool(options.active_store_endpoint_evidence_cache),
+        "option.worker_shared_endpoint_cache": bool(options.worker_shared_endpoint_cache),
         "option.envelope": str(options.envelope),
         "option.support_hull_skip_aabb_broadphase": bool(options.support_hull_skip_aabb_broadphase),
         "option.support_hull_direct_collision": bool(options.support_hull_direct_collision),
@@ -416,14 +465,21 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_adaptive_fine_step": float(options.query_bridge_adaptive_fine_step),
         "option.query_bridge_adaptive_max_repair_subdivisions": int(options.query_bridge_adaptive_max_repair_subdivisions),
         "option.query_bridge_adaptive_max_repair_calls": int(options.query_bridge_adaptive_max_repair_calls),
+        "option.query_bridge_adaptive_repair_priority": int(options.query_bridge_adaptive_repair_priority),
+        "option.query_bridge_adaptive_repair_target_segment_fraction": float(
+            options.query_bridge_adaptive_repair_target_segment_fraction
+        ),
         "option.query_box_transition_line_deviation_penalty": float(options.query_box_transition_line_deviation_penalty),
         "option.query_foreign_edge_cost_penalty": float(options.query_foreign_edge_cost_penalty),
+        "option.query_bridge_edge_cost_penalty": float(options.query_bridge_edge_cost_penalty),
         "option.query_bridge_direct_sample_step": float(options.query_bridge_direct_sample_step),
         "option.query_bridge_repair_subdivisions": int(options.query_bridge_repair_subdivisions),
         "option.query_bridge_force_indices": str(options.query_bridge_force_indices),
         "option.query_bridge_forced_attempts": int(options.query_bridge_forced_attempts),
         "option.query_bridge_attempt_offset": int(options.query_bridge_attempt_offset),
         "option.query_bridge_no_path_retry_attempts": int(options.query_bridge_no_path_retry_attempts),
+        "option.query_bridge_rrt_fixed_iters": int(options.query_bridge_rrt_fixed_iters),
+        "option.query_bridge_rrt_fixed_timeout_ms": float(options.query_bridge_rrt_fixed_timeout_ms),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
         "option.query_bridge_to_main_island": bool(options.query_bridge_to_main_island),
         "option.query_bridge_to_main_direct_segment_max_length": float(options.query_bridge_to_main_direct_segment_max_length),
@@ -444,6 +500,9 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "cfg.envelope_type.support_hull_config.direct_collision": bool(getattr(cfg.envelope_type.support_hull_config, "direct_collision", False)),
         "cfg.validation.mode": str(cfg.validation.mode),
         "cfg.validation.accept_unsafe_free": bool(cfg.validation.accept_unsafe_free),
+        "cfg.validation.enable_endpoint_evidence_cache": bool(getattr(cfg.validation, "enable_endpoint_evidence_cache", False)),
+        "cfg.validation.store_endpoint_evidence_cache": bool(getattr(cfg.validation, "store_endpoint_evidence_cache", False)),
+        "cfg.validation.enable_worker_shared_endpoint_cache": bool(getattr(cfg.validation, "enable_worker_shared_endpoint_cache", False)),
         "cfg.validation.external_evidence_live_retry_on_maybe": bool(getattr(cfg.validation, "external_evidence_live_retry_on_maybe", False)),
         "cfg.grower.commit_policy": str(cfg.grower.commit_policy),
         "cfg.connector.pave.commit_policy": str(cfg.connector.pave.commit_policy),
@@ -552,13 +611,19 @@ def audit_case_configs(cases: list[str], args: argparse.Namespace, seed: int = 0
 
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    keys = sorted({(row["case"], row["deep_max_boxes"]) for row in rows})
-    for case, budget in keys:
-        items = [row for row in rows if row["case"] == case and row["deep_max_boxes"] == budget]
+    keys = sorted({(row["case"], str(row.get("offline_grower", "leaf_refine")), row["deep_max_boxes"]) for row in rows})
+    for case, offline_grower, budget in keys:
+        items = [
+            row for row in rows
+            if row["case"] == case
+            and str(row.get("offline_grower", "leaf_refine")) == offline_grower
+            and row["deep_max_boxes"] == budget
+        ]
         total_queries = sum(int(row.get("query_count", 0)) for row in items)
         success_queries = sum(int(row.get("success_count", 0)) for row in items)
         out.append({
             "case": case,
+            "offline_grower": offline_grower,
             "deep_max_boxes": budget,
             "runs": len(items),
             "success_runs": sum(1 for row in items if row["success_count"] == row["query_count"]),
@@ -572,6 +637,82 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "online_batch_s_median": median(row.get("online_batch_s", row["query_s"]) for row in items),
             "query_bridge_s_median": median(row.get("query_bridge_s", 0.0) for row in items),
             "query_bridge_per_query_s_median": median(row.get("query_bridge_per_query_s", row.get("query_bridge_s", 0.0) / max(1, row.get("query_count", 1))) for row in items),
+            "diag_query_bridge_batch_total_ms_median": median(row.get("diag_query_bridge_batch_total_ms", 0.0) for row in items),
+            "diag_query_bridge_batch_per_query_ms_median": median(row.get("diag_query_bridge_batch_per_query_ms", 0.0) for row in items),
+            "diag_query_bridge_batch_rrt_ms_total_median": median(row.get("diag_query_bridge_batch_rrt_ms_total", 0.0) for row in items),
+            "diag_query_bridge_batch_probe_ms_total_median": median(row.get("diag_query_bridge_batch_probe_ms_total", 0.0) for row in items),
+            "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
+            "diag_query_bridge_parallel_task_rrt_median": median(row.get("diag_query_bridge_parallel_task_rrt", 0.0) for row in items),
+            "diag_query_bridge_parallel_task_rrt_jobs_median": median(row.get("diag_query_bridge_parallel_task_rrt_jobs", 0.0) for row in items),
+            "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
+            "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_line_on_no_path_median": median(row.get("diag_query_bridge_direct_line_on_no_path", 0.0) for row in items),
+            "diag_query_bridge_direct_line_on_no_path_attempts_median": median(row.get("diag_query_bridge_direct_line_on_no_path_attempts", 0.0) for row in items),
+            "diag_query_bridge_direct_line_on_no_path_successes_median": median(row.get("diag_query_bridge_direct_line_on_no_path_successes", 0.0) for row in items),
+            "diag_query_bridge_direct_line_on_no_path_rejects_median": median(row.get("diag_query_bridge_direct_line_on_no_path_rejects", 0.0) for row in items),
+            "diag_query_bridge_detour_on_no_path_median": median(row.get("diag_query_bridge_detour_on_no_path", 0.0) for row in items),
+            "diag_query_bridge_detour_candidate_median": median(row.get("diag_query_bridge_detour_candidate", 0.0) for row in items),
+            "diag_query_bridge_detour_on_no_path_attempts_median": median(row.get("diag_query_bridge_detour_on_no_path_attempts", 0.0) for row in items),
+            "diag_query_bridge_detour_on_no_path_successes_median": median(row.get("diag_query_bridge_detour_on_no_path_successes", 0.0) for row in items),
+            "diag_query_bridge_detour_on_no_path_candidates_median": median(row.get("diag_query_bridge_detour_on_no_path_candidates", 0.0) for row in items),
+            "diag_query_bridge_detour_on_no_path_rejects_median": median(row.get("diag_query_bridge_detour_on_no_path_rejects", 0.0) for row in items),
+            "diag_query_bridge_detour_candidate_selected_median": median(row.get("diag_query_bridge_detour_candidate_selected", 0.0) for row in items),
+            "diag_query_bridge_detour_candidate_not_shorter_median": median(row.get("diag_query_bridge_detour_candidate_not_shorter", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_median": median(row.get("diag_query_bridge_waypoint_quality_retry", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_tasks_median": median(row.get("diag_query_bridge_waypoint_quality_retry_tasks", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_attempts_median": median(row.get("diag_query_bridge_waypoint_quality_retry_attempts", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_successes_median": median(row.get("diag_query_bridge_waypoint_quality_retry_successes", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_fixed_median": median(row.get("diag_query_bridge_waypoint_quality_retry_fixed", 0.0) for row in items),
+            "diag_query_bridge_waypoint_quality_retry_ms_total_median": median(row.get("diag_query_bridge_waypoint_quality_retry_ms_total", 0.0) for row in items),
+            "diag_query_bridge_batch_tasks_initial_median": median(row.get("diag_query_bridge_batch_tasks_initial", 0.0) for row in items),
+            "diag_query_bridge_batch_tasks_attempted_median": median(row.get("diag_query_bridge_batch_tasks_attempted", 0.0) for row in items),
+            "diag_query_bridge_batch_tasks_no_path_median": median(row.get("diag_query_bridge_batch_tasks_no_path", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_ms_median": median(row.get("diag_query_bridge_direct_corridor_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_ms_total_median": median(row.get("diag_query_bridge_direct_corridor_ms_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_samples_median": median(row.get("diag_query_bridge_direct_corridor_samples", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_samples_total_median": median(row.get("diag_query_bridge_direct_corridor_samples_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_ffb_calls_median": median(row.get("diag_query_bridge_direct_corridor_ffb_calls", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_ffb_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_ffb_calls_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_all_ffb_calls_median": median(row.get("diag_query_bridge_direct_corridor_all_ffb_calls", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_all_ffb_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_all_ffb_calls_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_direct_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_direct_ffb_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_repair_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_repair_ffb_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_priority_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_priority", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_target_stops_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_target_stops", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_final_bad_fraction", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_ffb_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_mark_initial_ms_median": median(row.get("diag_query_bridge_direct_corridor_mark_initial_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_mark_incremental_ms_median": median(row.get("diag_query_bridge_direct_corridor_mark_incremental_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_initialize_dsu_ms_median": median(row.get("diag_query_bridge_direct_corridor_initialize_dsu_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_assimilate_ms_median": median(row.get("diag_query_bridge_direct_corridor_assimilate_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_partition_neighbor_candidates_median": median(row.get("diag_query_bridge_direct_corridor_partition_neighbor_candidates", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_segment_audit_ms_median": median(row.get("diag_query_bridge_direct_corridor_segment_audit_ms", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_added_median": median(row.get("diag_query_bridge_direct_corridor_added", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_added_total_median": median(row.get("diag_query_bridge_direct_corridor_added_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_repair_calls_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_repair_added_total_median": median(row.get("diag_query_bridge_direct_corridor_repair_added_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_calls_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_adaptive_repair_added_total_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_added_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_enabled_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_enabled", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_calls_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_calls", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_calls_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_added_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_added", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_lateral_repair_added_total_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_added_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_bad_initial_median": median(row.get("diag_query_bridge_direct_corridor_bad_initial", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_bad_initial_total_median": median(row.get("diag_query_bridge_direct_corridor_bad_initial_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_bad_final_median": median(row.get("diag_query_bridge_direct_corridor_bad_final", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_bad_final_total_median": median(row.get("diag_query_bridge_direct_corridor_bad_final_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_segment_edges_median": median(row.get("diag_query_bridge_direct_corridor_segment_edges", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_segment_edges_total_median": median(row.get("diag_query_bridge_direct_corridor_segment_edges_total", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_local_residual_overlay_connected_median": median(row.get("diag_query_bridge_direct_corridor_local_residual_overlay_connected", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_full_residual_without_local_overlay_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_without_local_overlay", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_full_residual_audit_rejects_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_audit_rejects", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_full_residual_edges_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay", 0.0) for row in items),
+            "diag_query_bridge_direct_corridor_full_adjacency_scans_avoided_median": median(row.get("diag_query_bridge_direct_corridor_full_adjacency_scans_avoided", 0.0) for row in items),
             "endpoint_main_s_median": median(row.get("endpoint_main_s", 0.0) for row in items),
             "endpoint_main_per_query_s_median": median(row.get("endpoint_main_per_query_s", row.get("endpoint_main_s", 0.0) / max(1, row.get("query_count", 1))) for row in items),
             "endpoint_main_success_count_median": median(row.get("endpoint_main_success_count", 0) for row in items),
@@ -582,6 +723,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "online_simplify_per_query_s_median": median(row.get("online_simplify_per_query_s", row.get("online_simplify_s", 0.0) / max(1, row.get("query_count", 1))) for row in items),
             "online_per_query_s_median": median(row.get("online_per_query_s", row.get("online_solve_s", row["query_s"]) / max(1, row.get("query_count", 1))) for row in items),
             "online_total_per_query_s_median": median(row.get("online_total_per_query_s", row.get("query_total_s", row["query_s"]) / max(1, row.get("query_count", 1))) for row in items),
+            "partition_query_per_query_s_median": median(row.get("partition_query_per_query_s", math.nan) for row in items),
+            "partition_query_total_per_query_s_median": median(row.get("partition_query_total_per_query_s", math.nan) for row in items),
             "amortized_s_k1": median(row.get("amortized_s_k1", row["planning_s"]) for row in items),
             "amortized_s_k5": median(row.get("amortized_s_k5", row["planning_s"] / 5.0) for row in items),
             "amortized_s_k10": median(row.get("amortized_s_k10", row["planning_s"] / 10.0) for row in items),
@@ -589,6 +732,48 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "amortized_s_k50": median(row.get("amortized_s_k50", row["planning_s"] / 50.0) for row in items),
             "leaf_sweep_s_median": median(row["leaf_sweep_s"] for row in items),
             "deep_refine_s_median": median(row["deep_refine_s"] for row in items),
+            "adaptive_deep_leaf_s_median": median(row.get("adaptive_deep_leaf_s", 0.0) for row in items),
+            "adaptive_target_depth_median": median(row.get("adaptive_target_depth", math.nan) for row in items),
+            "adaptive_validated_median": median(row.get("adaptive_validated", 0) for row in items),
+            "adaptive_splits_median": median(row.get("adaptive_splits", 0) for row in items),
+            "adaptive_deferred_median": median(row.get("adaptive_deferred", 0) for row in items),
+            "adaptive_promoted_median": median(row.get("adaptive_promoted", 0) for row in items),
+            "adaptive_unresolved_domains_median": median(row.get("adaptive_unresolved_domains", 0) for row in items),
+            "adaptive_merge_input_boxes_median": median(row.get("adaptive_merge_input_boxes", 0) for row in items),
+            "adaptive_merge_output_boxes_median": median(row.get("adaptive_merge_output_boxes", 0) for row in items),
+            "adaptive_merge_grid_ms_median": median(row.get("adaptive_merge_grid_ms", 0.0) for row in items),
+            "adaptive_merge_grid_merges_median": median(row.get("adaptive_merge_grid_merges", 0) for row in items),
+            "adaptive_merge_tree_ms_median": median(row.get("adaptive_merge_tree_ms", 0.0) for row in items),
+            "adaptive_merge_tree_merges_median": median(row.get("adaptive_merge_tree_merges", 0) for row in items),
+            "adaptive_merge_containment_ms_median": median(row.get("adaptive_merge_containment_ms", 0.0) for row in items),
+            "adaptive_merge_exact_ms_median": median(row.get("adaptive_merge_exact_ms", 0.0) for row in items),
+            "adaptive_partition_merge_containment_skipped_median": median(row.get("adaptive_partition_merge_containment_skipped", 0) for row in items),
+            "adaptive_partition_merge_containment_bucket_entries_median": median(row.get("adaptive_partition_merge_containment_bucket_entries", 0) for row in items),
+            "adaptive_partition_merge_containment_candidates_median": median(row.get("adaptive_partition_merge_containment_candidates", 0) for row in items),
+            "adaptive_partition_merge_containment_tests_median": median(row.get("adaptive_partition_merge_containment_tests", 0) for row in items),
+            "adaptive_partition_merge_containment_overflow_median": median(row.get("adaptive_partition_merge_containment_overflow", 0) for row in items),
+            "adaptive_partition_merge_containment_ms_median": median(row.get("adaptive_partition_merge_containment_ms", 0.0) for row in items),
+            "adaptive_partition_merge_line_ms_median": median(row.get("adaptive_partition_merge_line_ms", 0.0) for row in items),
+            "adaptive_adjacency_ms_median": median(row.get("adaptive_adjacency_ms", 0.0) for row in items),
+            "adaptive_adjacency_candidates_median": median(row.get("adaptive_adjacency_candidates", 0) for row in items),
+            "adaptive_adjacency_exact_tests_median": median(row.get("adaptive_adjacency_exact_tests", 0) for row in items),
+            "partition_cell_count_median": median(row.get("partition_cell_count", 0) for row in items),
+            "partition_grid_cell_count_median": median(row.get("partition_grid_cell_count", 0) for row in items),
+            "partition_non_grid_cell_count_median": median(row.get("partition_non_grid_cell_count", 0) for row in items),
+            "partition_point_index_dims_median": median(row.get("partition_point_index_dims", 0) for row in items),
+            "partition_point_index_entries_median": median(row.get("partition_point_index_entries", 0) for row in items),
+            "partition_point_index_overflow_cells_median": median(row.get("partition_point_index_overflow_cells", 0) for row in items),
+            "partition_islands_median": median(row.get("partition_islands", 0) for row in items),
+            "partition_largest_island_median": median(row.get("partition_largest_island", 0) for row in items),
+            "partition_overlay_edges_median": median(row.get("partition_overlay_edges", 0) for row in items),
+            "partition_build_ms_median": median(row.get("partition_build_ms", 0.0) for row in items),
+            "partition_index_rebuild_ms_median": median(row.get("partition_index_rebuild_ms", 0.0) for row in items),
+            "partition_adjacency_candidates_median": median(row.get("partition_adjacency_candidates", 0) for row in items),
+            "partition_adjacency_edges_median": median(row.get("partition_adjacency_edges", 0) for row in items),
+            "coverage_probe_free_count_median": median(row.get("coverage_probe_free_count", 0) for row in items),
+            "coverage_box_covered_probability_median": median(row.get("coverage_box_covered_probability", math.nan) for row in items),
+            "coverage_anchor_success_probability_median": median(row.get("coverage_anchor_success_probability", math.nan) for row in items),
+            "coverage_main_accessible_probability_median": median(row.get("coverage_main_accessible_probability", math.nan) for row in items),
             "connector_s_median": median(row["connector_s"] for row in items),
             "corridor_refine_s_median": median(row.get("corridor_refine_s", 0.0) for row in items),
             "corridor_refine_added_median": median(row.get("corridor_refine_added", 0) for row in items),
@@ -611,6 +796,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "offline_shortcut_box_corridor_edges_added_median": median(row.get("offline_shortcut_box_corridor_edges_added", 0) for row in items),
             "offline_shortcut_segment_edges_added_median": median(row.get("offline_shortcut_segment_edges_added", 0) for row in items),
             "offline_shortcut_pave_boxes_added_median": median(row.get("offline_shortcut_pave_boxes_added", 0) for row in items),
+            "offline_shortcut_pave_fail_median": median(row.get("offline_shortcut_pave_fail", 0) for row in items),
             "offline_box_edges_added_median": median(row.get("offline_box_edges_added", 0) for row in items),
             "offline_segment_edges_added_median": median(row.get("offline_segment_edges_added", 0) for row in items),
             "offline_islands_before_median": median(row.get("offline_islands_before", 0) for row in items),
@@ -636,6 +822,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fields = [
         "case",
+        "offline_grower",
         "deep_max_boxes",
         "runs",
         "success_runs",
@@ -649,6 +836,82 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "online_batch_s_median",
         "query_bridge_s_median",
         "query_bridge_per_query_s_median",
+        "diag_query_bridge_batch_total_ms_median",
+        "diag_query_bridge_batch_per_query_ms_median",
+        "diag_query_bridge_batch_rrt_ms_total_median",
+        "diag_query_bridge_batch_probe_ms_total_median",
+        "diag_query_bridge_batch_pave_ms_total_median",
+        "diag_query_bridge_parallel_task_rrt_median",
+        "diag_query_bridge_parallel_task_rrt_jobs_median",
+        "diag_query_bridge_rrt_fixed_iters_median",
+        "diag_query_bridge_rrt_fixed_timeout_ms_median",
+        "diag_query_bridge_direct_line_on_no_path_median",
+        "diag_query_bridge_direct_line_on_no_path_attempts_median",
+        "diag_query_bridge_direct_line_on_no_path_successes_median",
+        "diag_query_bridge_direct_line_on_no_path_rejects_median",
+        "diag_query_bridge_detour_on_no_path_median",
+        "diag_query_bridge_detour_candidate_median",
+        "diag_query_bridge_detour_on_no_path_attempts_median",
+        "diag_query_bridge_detour_on_no_path_successes_median",
+        "diag_query_bridge_detour_on_no_path_candidates_median",
+        "diag_query_bridge_detour_on_no_path_rejects_median",
+        "diag_query_bridge_detour_candidate_selected_median",
+        "diag_query_bridge_detour_candidate_not_shorter_median",
+        "diag_query_bridge_waypoint_quality_retry_median",
+        "diag_query_bridge_waypoint_quality_retry_tasks_median",
+        "diag_query_bridge_waypoint_quality_retry_attempts_median",
+        "diag_query_bridge_waypoint_quality_retry_successes_median",
+        "diag_query_bridge_waypoint_quality_retry_fixed_median",
+        "diag_query_bridge_waypoint_quality_retry_ms_total_median",
+        "diag_query_bridge_batch_tasks_initial_median",
+        "diag_query_bridge_batch_tasks_attempted_median",
+        "diag_query_bridge_batch_tasks_no_path_median",
+        "diag_query_bridge_direct_corridor_ms_median",
+        "diag_query_bridge_direct_corridor_ms_total_median",
+        "diag_query_bridge_direct_corridor_samples_median",
+        "diag_query_bridge_direct_corridor_samples_total_median",
+        "diag_query_bridge_direct_corridor_ffb_calls_median",
+        "diag_query_bridge_direct_corridor_ffb_calls_total_median",
+        "diag_query_bridge_direct_corridor_all_ffb_calls_median",
+        "diag_query_bridge_direct_corridor_all_ffb_calls_total_median",
+        "diag_query_bridge_direct_corridor_direct_ffb_ms_median",
+        "diag_query_bridge_direct_corridor_repair_ffb_ms_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_priority_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_target_stops_median",
+        "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median",
+        "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_ffb_ms_median",
+        "diag_query_bridge_direct_corridor_mark_initial_ms_median",
+        "diag_query_bridge_direct_corridor_mark_incremental_ms_median",
+        "diag_query_bridge_direct_corridor_initialize_dsu_ms_median",
+        "diag_query_bridge_direct_corridor_assimilate_ms_median",
+        "diag_query_bridge_direct_corridor_partition_neighbor_candidates_median",
+        "diag_query_bridge_direct_corridor_segment_audit_ms_median",
+        "diag_query_bridge_direct_corridor_added_median",
+        "diag_query_bridge_direct_corridor_added_total_median",
+        "diag_query_bridge_direct_corridor_repair_calls_total_median",
+        "diag_query_bridge_direct_corridor_repair_added_total_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_added_total_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_enabled_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_calls_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_calls_total_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_added_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_added_total_median",
+        "diag_query_bridge_direct_corridor_bad_initial_median",
+        "diag_query_bridge_direct_corridor_bad_initial_total_median",
+        "diag_query_bridge_direct_corridor_bad_final_median",
+        "diag_query_bridge_direct_corridor_bad_final_total_median",
+        "diag_query_bridge_direct_corridor_segment_edges_median",
+        "diag_query_bridge_direct_corridor_segment_edges_total_median",
+        "diag_query_bridge_direct_corridor_local_residual_overlay_connected_median",
+        "diag_query_bridge_direct_corridor_full_residual_without_local_overlay_median",
+        "diag_query_bridge_direct_corridor_full_residual_audit_rejects_median",
+        "diag_query_bridge_direct_corridor_full_residual_edges_median",
+        "diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay_median",
+        "diag_query_bridge_direct_corridor_full_adjacency_scans_avoided_median",
         "endpoint_main_s_median",
         "endpoint_main_per_query_s_median",
         "endpoint_main_success_count_median",
@@ -659,6 +922,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "online_simplify_per_query_s_median",
         "online_per_query_s_median",
         "online_total_per_query_s_median",
+        "partition_query_per_query_s_median",
+        "partition_query_total_per_query_s_median",
         "amortized_s_k1",
         "amortized_s_k5",
         "amortized_s_k10",
@@ -666,6 +931,48 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "amortized_s_k50",
         "leaf_sweep_s_median",
         "deep_refine_s_median",
+        "adaptive_deep_leaf_s_median",
+        "adaptive_target_depth_median",
+        "adaptive_validated_median",
+        "adaptive_splits_median",
+        "adaptive_deferred_median",
+        "adaptive_promoted_median",
+        "adaptive_unresolved_domains_median",
+        "adaptive_merge_input_boxes_median",
+        "adaptive_merge_output_boxes_median",
+        "adaptive_merge_grid_ms_median",
+        "adaptive_merge_grid_merges_median",
+        "adaptive_merge_tree_ms_median",
+        "adaptive_merge_tree_merges_median",
+        "adaptive_merge_containment_ms_median",
+        "adaptive_merge_exact_ms_median",
+        "adaptive_partition_merge_containment_skipped_median",
+        "adaptive_partition_merge_containment_bucket_entries_median",
+        "adaptive_partition_merge_containment_candidates_median",
+        "adaptive_partition_merge_containment_tests_median",
+        "adaptive_partition_merge_containment_overflow_median",
+        "adaptive_partition_merge_containment_ms_median",
+        "adaptive_partition_merge_line_ms_median",
+        "adaptive_adjacency_ms_median",
+        "adaptive_adjacency_candidates_median",
+        "adaptive_adjacency_exact_tests_median",
+        "partition_cell_count_median",
+        "partition_grid_cell_count_median",
+        "partition_non_grid_cell_count_median",
+        "partition_point_index_dims_median",
+        "partition_point_index_entries_median",
+        "partition_point_index_overflow_cells_median",
+        "partition_islands_median",
+        "partition_largest_island_median",
+        "partition_overlay_edges_median",
+        "partition_build_ms_median",
+        "partition_index_rebuild_ms_median",
+        "partition_adjacency_candidates_median",
+        "partition_adjacency_edges_median",
+        "coverage_probe_free_count_median",
+        "coverage_box_covered_probability_median",
+        "coverage_anchor_success_probability_median",
+        "coverage_main_accessible_probability_median",
         "connector_s_median",
         "corridor_refine_s_median",
         "corridor_refine_added_median",
@@ -688,6 +995,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "offline_shortcut_box_corridor_edges_added_median",
         "offline_shortcut_segment_edges_added_median",
         "offline_shortcut_pave_boxes_added_median",
+        "offline_shortcut_pave_fail_median",
         "offline_box_edges_added_median",
         "offline_segment_edges_added_median",
         "offline_islands_before_median",
@@ -714,13 +1022,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
-    table_rows = [row for row in rows if int(row.get("deep_max_boxes", -1)) == DEFAULT_RBF_DEEP_MAX_BOXES]
+    table_rows = [row for row in rows if int(row.get("deep_max_boxes", -1)) == DEFAULT_RBF_SHELF_BOX_BUDGET]
     if not table_rows:
         table_rows = rows
     lines = [
         r"\begin{table*}[t]",
         r"\centering",
-        r"\caption{Shelf+IIWA reusable RBF ablation at the registered 400-box trade-off point. Build is query-agnostic offline coverage. Online/q charges endpoint anchoring, query bridge, local repair, and graph search per query, excluding final simplification. Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Amort@5 reports build amortized over the five shelf queries plus Online/q. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full budget curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
+        r"\caption{Shelf+IIWA RBF ablation at the registered 100-box point. Times are in seconds; Path is the success-only mean and Seg. is the raw segment fraction.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\begin{tabular}{lrrrrrrrr}",
         r"\toprule",
@@ -752,13 +1060,33 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--phase", choices=["smoke", "pilot", "paper", "full", "assets"], default="smoke")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--seeds", default="0,1,2,3,4,5,6,7")
-    parser.add_argument("--box-budgets", default=",".join(str(item) for item in rbf_budget_grid("pilot")))
+    parser.add_argument("--box-budgets", default=str(DEFAULT_RBF_SHELF_BOX_BUDGET))
     parser.add_argument("--only", default="baseline_d23_aafk_support_hull_8t,critsample_support_hull,no_external_lect,support_hull_no_aabb,link_aabb")
     parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--timeout-ms", type=float, default=8000.0)
     parser.add_argument("--rbf-max-depth", type=int, default=60)
+    parser.add_argument("--offline-grower", choices=["leaf_refine", "adaptive_deep_leaf"], default="adaptive_deep_leaf")
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
     parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-target-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
+    parser.add_argument("--adaptive-node-budget", type=int, default=0)
+    parser.add_argument("--adaptive-defer-min-depth", type=int, default=16)
+    parser.add_argument("--adaptive-overlap-depth-threshold", type=float, default=0.05)
+    parser.add_argument("--adaptive-overlap-depth-min-threshold", type=float, default=0.01)
+    parser.add_argument("--adaptive-overlap-depth-decay-per-depth", type=float, default=0.04)
+    parser.add_argument("--adaptive-overlap-ratio-threshold", type=float, default=0.0)
+    parser.add_argument("--coverage-probe-count", type=int, default=4096)
+    parser.add_argument("--adaptive-seed-anchor-probe-cap", type=int, default=256)
+    parser.add_argument("--adaptive-max-merge-ms", type=float, default=1500.0)
+    parser.add_argument("--adaptive-max-merge-rounds", type=int, default=2)
+    parser.add_argument("--adaptive-max-merge-input-boxes", type=int, default=100000)
+    parser.add_argument("--adaptive-max-free-boxes", type=int, default=50000)
+    parser.add_argument("--adaptive-max-unresolved-domains", type=int, default=100000)
+    parser.add_argument("--adaptive-planning-backend", default="partition_native")
+    parser.add_argument("--adaptive-grid-target-depth", type=int, default=0)
+    parser.add_argument("--adaptive-grid-face-index-enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-grid-planning-max-expansions", type=int, default=0)
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--refine-timeout-ms", type=float, default=DEFAULT_RBF_REFINE_TIMEOUT_MS)
     parser.add_argument("--domain-seed-cap", type=int, default=DEFAULT_RBF_DOMAIN_SEED_CAP)
@@ -770,6 +1098,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-resolution", type=int, default=DEFAULT_RBF_AUDIT_RESOLUTION)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
+    parser.add_argument("--active-endpoint-evidence-cache", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--active-store-endpoint-evidence-cache", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--worker-shared-endpoint-cache", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-shortcut-boxes", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--segment-edges-fallback-only", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--connector-birrt", action=argparse.BooleanOptionalAction, default=True)
@@ -835,20 +1166,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--query-bridge-force-indices",
-        default="0,1,2,3,4",
+        default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
         help="Comma-separated zero-based shelf query indices that must run query bridge even if normally deferred.",
     )
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED)
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
     parser.add_argument("--query-bridge-attempt-offset", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET)
     parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
+    parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
+    parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-adaptive-step-repair", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP)
     parser.add_argument("--query-bridge-adaptive-max-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
+    parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
+    parser.add_argument(
+        "--query-bridge-adaptive-repair-target-segment-fraction",
+        type=float,
+        default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
+    )
     parser.add_argument("--query-box-transition-line-deviation-penalty", type=float, default=DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY)
     parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY)
-    parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
+    parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS)
     parser.add_argument("--offline-anchor-count", type=int, default=16)
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
     parser.add_argument("--offline-anchor-sampling", choices=["random", "halton", "mixed"], default="random")
@@ -896,7 +1236,11 @@ def main() -> int:
             "case": case,
             "seed": seed,
             "deep_max_boxes": budget,
-            "backend": "build_leaf_sweep_refined",
+            "backend": str(args.offline_grower),
+            "offline_grower": str(args.offline_grower),
+            "adaptive_target_depth": int(args.adaptive_target_depth),
+            "adaptive_planning_backend": str(args.adaptive_planning_backend),
+            "adaptive_grid_target_depth": int(args.adaptive_grid_target_depth),
             "offline_query_agnostic_build": True,
             "offline_anchor_count": int(args.offline_anchor_count),
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
@@ -908,15 +1252,16 @@ def main() -> int:
             "grower_mode": "rrt",
             "cache_depth_semantics": "canonical_lect_tree",
             "planner_depth_semantics": "lect_active_tree",
-            "lect_cache_root": "full_robot_joint_limits",
+            "lect_cache_root": "canonical_primary_sector_with_native_coverage",
             "planner_state_space": "native_joint_space",
             "active_planning_root": "full_robot_joint_limits",
-            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "active_lect_root": "canonical_primary_sector",
             "coverage_root": "full_robot_joint_limits",
             "valid_planning_root": "full_robot_joint_limits",
-            "split_schedule": "active_dim0_first_two_then_cache_tail",
+            "split_schedule": "external_cache_manifest_prefix",
             "canonical_mapping_scope": "LECT_internal_only",
             "audit_collision_tolerance": float(args.audit_collision_tolerance),
+            "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
         }
         for case in cases for seed in seeds for budget in budgets
     ]
@@ -951,13 +1296,13 @@ def main() -> int:
             "cache_depth_semantics": "canonical_lect_tree",
             "planner_depth_semantics": "lect_active_tree",
             "prewarm_depth": 23,
-            "lect_cache_root": "full_robot_joint_limits",
+            "lect_cache_root": "canonical_primary_sector_with_native_coverage",
             "planner_state_space": "native_joint_space",
             "active_planning_root": "full_robot_joint_limits",
-            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "active_lect_root": "canonical_primary_sector",
             "coverage_root": "full_robot_joint_limits",
             "valid_planning_root": "full_robot_joint_limits",
-            "split_schedule": "active_dim0_first_two_then_cache_tail",
+            "split_schedule": "external_cache_manifest_prefix",
             "canonical_mapping_scope": "LECT_internal_only",
             "leaf_start_depth": int(args.leaf_start_depth),
             "leaf_max_depth": int(args.leaf_max_depth),
@@ -1006,8 +1351,13 @@ def main() -> int:
             "query_bridge_adaptive_fine_step": float(args.query_bridge_adaptive_fine_step),
             "query_bridge_adaptive_max_repair_subdivisions": int(args.query_bridge_adaptive_max_repair_subdivisions),
             "query_bridge_adaptive_max_repair_calls": int(args.query_bridge_adaptive_max_repair_calls),
+            "query_bridge_adaptive_repair_priority": int(args.query_bridge_adaptive_repair_priority),
+            "query_bridge_adaptive_repair_target_segment_fraction": float(
+                args.query_bridge_adaptive_repair_target_segment_fraction
+            ),
             "query_box_transition_line_deviation_penalty": float(args.query_box_transition_line_deviation_penalty),
             "query_foreign_edge_cost_penalty": float(args.query_foreign_edge_cost_penalty),
+            "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),

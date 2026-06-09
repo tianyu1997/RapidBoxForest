@@ -199,7 +199,7 @@ def audit_reuse(
         "reuse_policy": {
             "reuse": sorted(REUSED_METHODS),
             "excluded": ["old_sbf_sh"],
-            "reason": "Current RBF rows must be regenerated with the leaf-sweep + RRT grower profile; old SBF-SH is only used as historical context.",
+            "reason": "Current RBF rows must be regenerated with the current leaf-sweep + partition-native profile; old SBF-SH is only used as historical context.",
         },
     }
 
@@ -262,7 +262,7 @@ def write_markdown(path: Path, payload: dict[str, Any], summary_rows: list[dict[
     lines.extend(
         [
             "",
-            "Old SBF-SH is intentionally excluded. Current RBF is regenerated with the current leaf-sweep + RRT grower implementation.",
+            "Old SBF-SH is intentionally excluded. Current RBF is regenerated with the current leaf-sweep + partition-native implementation.",
             "",
         ]
     )

@@ -1,5 +1,7 @@
 from ._sbf_cpp import (
     __version__,
+    AdaptiveLeafSweepConfig,
+    AdaptiveLeafSweepResult,
     BuildProfile,
     BoxNode,
     BoxCommitPolicy,
@@ -59,6 +61,9 @@ from ._sbf_cpp import (
     canonicalize_configuration_for_robot,
     build_lect_snapshot_from_legacy,
     check_config_collision,
+    ompl_cspace_bitstar_trace,
+    ompl_cspace_prm_multiquery,
+    ompl_cspace_rrt_connect_path,
     ompl_simplify_path,
     ompl_bitstar_path,
     ompl_bitstar_trace,
@@ -90,6 +95,8 @@ from .marcucci import (
 
 __all__ = [
     "__version__",
+    "AdaptiveLeafSweepConfig",
+    "AdaptiveLeafSweepResult",
     "BuildProfile",
     "BoxNode",
     "BoxCommitPolicy",
@@ -149,6 +156,9 @@ __all__ = [
     "canonicalize_configuration_for_robot",
     "build_lect_snapshot_from_legacy",
     "check_config_collision",
+    "ompl_cspace_bitstar_trace",
+    "ompl_cspace_prm_multiquery",
+    "ompl_cspace_rrt_connect_path",
     "ompl_simplify_path",
     "ompl_bitstar_path",
     "ompl_bitstar_trace",

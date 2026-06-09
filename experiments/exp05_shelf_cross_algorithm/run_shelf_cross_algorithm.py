@@ -31,9 +31,9 @@ from experiments.common.rbf_defaults import (
     D23_CACHE_ROOT,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
-    DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_SHELF_BOX_BUDGET,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
-    rbf_budget_grid,
+    DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
     robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
@@ -234,7 +234,6 @@ def shelf_queries(robot: Any) -> list[dict[str, Any]]:
 def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], budget: int) -> dict[str, Any]:
     budget = int(budget)
     full_root = robot_joint_limit_tuples(robot)
-    symmetry_root = robot_symmetry_aligned_root_tuples(robot)
     options = RBFLeafRRTOptions(
         seed=int(seed),
         deep_max_boxes=budget,
@@ -242,9 +241,9 @@ def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
         external_evidence_path=Path(args.rbf_cache_root) / str(args.warm_cache_label),
         external_evidence_verify_identity=False,
         use_shelf_root_override=False,
-        root_override_tuples=symmetry_root,
+        root_override_tuples=None,
         coverage_override_tuples=full_root,
-        symmetry_aligned_native_root=True,
+        symmetry_aligned_native_root=False,
         symmetry_aligned_cache_schedule=True,
         case_label="sbf_leaf_rrt",
         threads=int(args.threads),
@@ -257,6 +256,7 @@ def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
         offline_anchor_candidate_count=int(args.offline_anchor_candidate_count),
         offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
         offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+        adaptive_max_free_boxes=budget,
         final_rrt_simplify_timeout_ms=1000.0 * float(args.ompl_simplify_time_s),
         final_rrt_simplify_attempts=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
     )
@@ -1284,9 +1284,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
     parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
-    parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
-    parser.add_argument("--sbf-box-budgets", default=",".join(str(item) for item in rbf_budget_grid("pilot")))
-    parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_SHELF_BOX_BUDGET)
+    parser.add_argument("--sbf-box-budgets", default=str(DEFAULT_RBF_SHELF_BOX_BUDGET))
+    parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS)
     parser.add_argument("--offline-anchor-count", type=int, default=16)
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
     parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
@@ -1450,7 +1450,7 @@ def main() -> int:
             "offline_query_agnostic_build": True if method == "sbf_leaf_rrt" else None,
             "offline_anchor_count": int(args.offline_anchor_count) if method == "sbf_leaf_rrt" else None,
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count) if method == "sbf_leaf_rrt" else None,
-            "box_budgets": rbf_budget_grid(args.phase) if method == "sbf_leaf_rrt" else None,
+            "box_budgets": list(sbf_budgets) if method == "sbf_leaf_rrt" else None,
         }
                 )
     rows: list[dict[str, Any]] = []

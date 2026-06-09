@@ -81,7 +81,7 @@ when available. RRTConnect and BIT* are one-shot online baselines with
 `build=0`. The main curve is amortized time/query over K.
 
 Exp.6 Random Multi-Robot:
-Use `random_scene_catalog_v6.json`. Each saved obstacle scene contains fixed
+Use `random_scene_catalog_v7.json`. Each saved obstacle scene contains fixed
 obstacles and fixed query records. RBF and PRM build once per obstacle scene;
 RRTConnect and BIT* solve each saved query independently. The selected RBF
 trade-off point must have full query success, then minimize online per-query

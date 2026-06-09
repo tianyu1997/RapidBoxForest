@@ -34,13 +34,19 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_MAX_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
+    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
+    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
     rbf_budget_grid,
     robot_lectdb_profile,
     robot_joint_limit_tuples,
-    robot_symmetry_aligned_root_tuples,
 )
 from experiments.common.rbf_leaf_rrt import QuerySpec, RBFLeafRRTOptions, run_leaf_rrt
 from experiments.common.robot_lectdb_cache import ensure_robot_lectdb_cache, robot_external_evidence_path
@@ -49,6 +55,16 @@ from experiments.common.sbf_import import import_sbf
 
 METHODS = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
 sbf = import_sbf()
+
+
+def resolved_adaptive_target_depth(args: argparse.Namespace) -> int:
+    value = int(getattr(args, "adaptive_target_depth", 0))
+    return value if value > 0 else int(args.leaf_max_depth)
+
+
+def resolved_adaptive_grid_target_depth(args: argparse.Namespace) -> int:
+    value = int(getattr(args, "adaptive_grid_target_depth", 0))
+    return value if value > 0 else resolved_adaptive_target_depth(args)
 
 
 def configure_thread_environment(threads: int) -> None:
@@ -75,6 +91,8 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["override_reason"] = "Exp.6 controlled depth trade-off scan on saved random-scene catalog."
     profile["leaf_sweep"]["leaf_start_depth"] = int(args.leaf_start_depth)
     profile["leaf_sweep"]["leaf_max_depth"] = int(args.leaf_max_depth)
+    profile["leaf_sweep"]["adaptive_target_depth"] = resolved_adaptive_target_depth(args)
+    profile["leaf_sweep"]["adaptive_grid_target_depth"] = resolved_adaptive_grid_target_depth(args)
     profile["leaf_sweep"]["leaf_threads"] = int(args.threads)
     profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
@@ -90,6 +108,9 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["query_bridge"]["direct_sample_step"] = float(args.query_bridge_direct_sample_step)
     profile["query_bridge"]["repair_subdivisions"] = int(args.query_bridge_repair_subdivisions)
     profile["query_bridge"]["direct_max_length"] = float(args.query_bridge_direct_max_length)
+    profile["query_bridge"]["query_bridge_edge_cost_penalty"] = float(args.query_bridge_edge_cost_penalty)
+    profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
+    profile["query_bridge"]["rrt_fixed_timeout_ms"] = float(args.query_bridge_rrt_fixed_timeout_ms)
     profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
     profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)
     if box_budgets is not None:
@@ -105,7 +126,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--robots", default="iiwa,ur5,panda")
     parser.add_argument("--difficulties", default="easy,medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=50)
-    parser.add_argument("--scene-profile", choices=["balanced", "balanced_independent", "balanced_probe", "legacy"], default="balanced_independent")
+    parser.add_argument(
+        "--scene-profile",
+        choices=[
+            "bitstar_gated", "bitstar_gated_independent",
+            "balanced", "balanced_independent", "balanced_probe",
+            "timed_probe", "timed_probe_independent",
+            "narrow_passage", "narrow_passage_independent",
+            "legacy",
+        ],
+        default="timed_probe_independent",
+    )
     parser.add_argument("--max-scene-tries", type=int, default=64)
     parser.add_argument("--scene-catalog", type=Path, default=None)
     parser.add_argument("--scene-catalog-mode", choices=["auto", "generate", "reuse", "verify"], default="auto")
@@ -115,8 +146,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--box-budgets", default="")
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
+    parser.add_argument("--offline-grower", choices=["leaf_refine", "adaptive_deep_leaf"], default="adaptive_deep_leaf")
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
-    parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--leaf-max-depth", type=int, default=14)
+    parser.add_argument("--adaptive-target-depth", type=int, default=0)
+    parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
+    parser.add_argument("--adaptive-node-budget", type=int, default=0)
+    parser.add_argument("--adaptive-defer-min-depth", type=int, default=16)
+    parser.add_argument("--adaptive-overlap-depth-threshold", type=float, default=0.05)
+    parser.add_argument("--adaptive-overlap-depth-min-threshold", type=float, default=0.01)
+    parser.add_argument("--adaptive-overlap-depth-decay-per-depth", type=float, default=0.04)
+    parser.add_argument("--adaptive-overlap-ratio-threshold", type=float, default=0.0)
+    parser.add_argument("--coverage-probe-count", type=int, default=4096)
+    parser.add_argument("--adaptive-seed-anchor-probe-cap", type=int, default=256)
+    parser.add_argument("--adaptive-max-merge-ms", type=float, default=1500.0)
+    parser.add_argument("--adaptive-max-merge-rounds", type=int, default=2)
+    parser.add_argument("--adaptive-max-merge-input-boxes", type=int, default=100000)
+    parser.add_argument("--adaptive-max-free-boxes", type=int, default=50000)
+    parser.add_argument("--adaptive-max-unresolved-domains", type=int, default=100000)
+    parser.add_argument("--adaptive-planning-backend", default="partition_native")
+    parser.add_argument("--adaptive-grid-target-depth", type=int, default=0)
+    parser.add_argument("--adaptive-grid-face-index-enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-grid-planning-max-expansions", type=int, default=0)
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
@@ -129,10 +180,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-segment-fraction", type=float, default=0.25)
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
-    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.04)
+    parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=1)
+    parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
+    parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
+    parser.add_argument(
+        "--query-bridge-adaptive-repair-target-segment-fraction",
+        type=float,
+        default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
+    )
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
+    parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
+    parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
     parser.add_argument("--endpoint-main-target-k", type=int, default=8)
@@ -303,7 +364,10 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         for index, query in enumerate(queries_for_key(catalog, robot_name, difficulty, scene_seed))
     ]
     valid_root = robot_joint_limit_tuples(robot)
-    root_override = robot_symmetry_aligned_root_tuples(robot) if str(robot_name) == "iiwa" else valid_root
+    # Canonical roots are internal to LECT.  The active database root is left
+    # unset so SBF uses the canonical primary sector when appropriate; the
+    # experiment/root sampling space remains the native joint-limit coverage.
+    root_override = None
     stage_id = (
         f"l{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
@@ -330,11 +394,28 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         database_path=args.out_dir / "active_cache" / active_cache_name,
         options=RBFLeafRRTOptions(
             seed=int(scene_seed),
+            offline_grower=str(args.offline_grower),
             deep_max_boxes=int(args.deep_max_boxes),
             rbf_max_depth=int(args.rbf_max_depth),
             threads=int(args.threads),
             leaf_start_depth=int(args.leaf_start_depth),
             leaf_max_depth=int(args.leaf_max_depth),
+            adaptive_target_depth=resolved_adaptive_target_depth(args),
+            adaptive_time_budget_ms=float(args.adaptive_time_budget_ms),
+            adaptive_node_budget=int(args.adaptive_node_budget),
+            adaptive_defer_min_depth=int(args.adaptive_defer_min_depth),
+            adaptive_overlap_depth_threshold=float(args.adaptive_overlap_depth_threshold),
+            adaptive_overlap_depth_min_threshold=float(args.adaptive_overlap_depth_min_threshold),
+            adaptive_overlap_depth_decay_per_depth=float(args.adaptive_overlap_depth_decay_per_depth),
+            adaptive_overlap_ratio_threshold=float(args.adaptive_overlap_ratio_threshold),
+            adaptive_seed_probe_count=int(args.coverage_probe_count),
+            adaptive_seed_anchor_probe_cap=int(args.adaptive_seed_anchor_probe_cap),
+            adaptive_max_merge_ms=float(args.adaptive_max_merge_ms),
+            adaptive_max_merge_rounds=int(args.adaptive_max_merge_rounds),
+            adaptive_max_merge_input_boxes=int(args.adaptive_max_merge_input_boxes),
+            adaptive_max_free_boxes=int(args.adaptive_max_free_boxes),
+            adaptive_max_unresolved_domains=int(args.adaptive_max_unresolved_domains),
+            adaptive_grid_target_depth=resolved_adaptive_grid_target_depth(args),
             deep_ffb_depth=int(args.deep_ffb_depth),
             connector_pave_depth=int(args.connector_pave_depth),
             query_bridge_pave_depth=int(args.query_bridge_pave_depth),
@@ -345,8 +426,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             external_evidence_verify_identity=False,
             root_override_tuples=root_override,
             coverage_override_tuples=valid_root,
-            symmetry_aligned_native_root=str(robot_name) == "iiwa",
-            symmetry_aligned_cache_schedule=str(robot_name) == "iiwa",
+            symmetry_aligned_native_root=False,
+            symmetry_aligned_cache_schedule=False,
             database_canonical_mode=True,
             case_label=f"rbf_{robot_name}_{difficulty}",
             parallel_virtual_validation=True,
@@ -373,8 +454,16 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
             query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
+            query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
+            query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
+            query_bridge_adaptive_repair_target_segment_fraction=float(
+                args.query_bridge_adaptive_repair_target_segment_fraction
+            ),
             query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
             query_bridge_force_selected=bool(args.query_bridge_force_selected),
+            query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
+            query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
+            query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
             query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
             query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
             endpoint_main_target_k=int(args.endpoint_main_target_k),
@@ -405,6 +494,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "stage_id": stage_id,
             "leaf_start_depth": int(args.leaf_start_depth),
             "leaf_max_depth": int(args.leaf_max_depth),
+            "adaptive_target_depth": resolved_adaptive_target_depth(args),
+            "adaptive_grid_target_depth": resolved_adaptive_grid_target_depth(args),
             "deep_ffb_depth": int(args.deep_ffb_depth),
             "connector_pave_depth": int(args.connector_pave_depth),
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
@@ -416,6 +507,9 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "offline_shortcut_max_segment_length": float(args.offline_shortcut_max_segment_length),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
+            "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
+            "query_bridge_rrt_fixed_iters": int(args.query_bridge_rrt_fixed_iters),
+            "query_bridge_rrt_fixed_timeout_ms": float(args.query_bridge_rrt_fixed_timeout_ms),
             "ffb_start_depth": int(args.ffb_start_depth),
             "rbf_max_depth": int(args.rbf_max_depth),
             "deep_max_boxes": int(args.deep_max_boxes),
@@ -963,17 +1057,19 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["method"],
             row["robot"],
             row["difficulty"],
+            str(row.get("offline_grower", "")),
             str(row.get("stage_id", "")),
             int(row.get("deep_max_boxes", 0) or 0),
         )
         for row in rows
     })
-    for method, robot, difficulty, stage_id, budget in keys:
+    for method, robot, difficulty, offline_grower, stage_id, budget in keys:
         items = [
             row for row in rows
             if row["method"] == method
             and row["robot"] == robot
             and row["difficulty"] == difficulty
+            and str(row.get("offline_grower", "")) == offline_grower
             and str(row.get("stage_id", "")) == stage_id
             and int(row.get("deep_max_boxes", 0) or 0) == budget
         ]
@@ -985,6 +1081,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "method": method,
                 "robot": robot,
                 "difficulty": difficulty,
+                "offline_grower": offline_grower,
                 "stage_id": stage_id,
                 "leaf_start_depth": median(row.get("leaf_start_depth", math.nan) for row in items),
                 "leaf_max_depth": median(row.get("leaf_max_depth", math.nan) for row in items),
@@ -1037,6 +1134,73 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     )
                     for row in items
                 ),
+                "query_bridge_per_query_s_median": median(
+                    row.get(
+                        "query_bridge_per_query_s",
+                        row.get("query_bridge_s", 0.0) / max(1, int(row.get("query_count", 1))),
+                    )
+                    for row in items
+                ),
+                "diag_query_bridge_batch_total_ms_median": median(row.get("diag_query_bridge_batch_total_ms", 0.0) for row in items),
+                "diag_query_bridge_batch_per_query_ms_median": median(row.get("diag_query_bridge_batch_per_query_ms", 0.0) for row in items),
+                "diag_query_bridge_batch_rrt_ms_total_median": median(row.get("diag_query_bridge_batch_rrt_ms_total", 0.0) for row in items),
+                "diag_query_bridge_batch_probe_ms_total_median": median(row.get("diag_query_bridge_batch_probe_ms_total", 0.0) for row in items),
+                "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
+                "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
+                "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
+                "diag_query_bridge_batch_tasks_initial_median": median(row.get("diag_query_bridge_batch_tasks_initial", 0.0) for row in items),
+                "diag_query_bridge_batch_tasks_attempted_median": median(row.get("diag_query_bridge_batch_tasks_attempted", 0.0) for row in items),
+                "diag_query_bridge_batch_tasks_no_path_median": median(row.get("diag_query_bridge_batch_tasks_no_path", 0.0) for row in items),
+                "diag_query_bridge_direct_line_on_no_path_median": median(row.get("diag_query_bridge_direct_line_on_no_path", 0.0) for row in items),
+                "diag_query_bridge_direct_line_on_no_path_attempts_median": median(row.get("diag_query_bridge_direct_line_on_no_path_attempts", 0.0) for row in items),
+                "diag_query_bridge_direct_line_on_no_path_successes_median": median(row.get("diag_query_bridge_direct_line_on_no_path_successes", 0.0) for row in items),
+                "diag_query_bridge_direct_line_on_no_path_rejects_median": median(row.get("diag_query_bridge_direct_line_on_no_path_rejects", 0.0) for row in items),
+                "diag_query_bridge_detour_on_no_path_median": median(row.get("diag_query_bridge_detour_on_no_path", 0.0) for row in items),
+                "diag_query_bridge_detour_candidate_median": median(row.get("diag_query_bridge_detour_candidate", 0.0) for row in items),
+                "diag_query_bridge_detour_on_no_path_attempts_median": median(row.get("diag_query_bridge_detour_on_no_path_attempts", 0.0) for row in items),
+                "diag_query_bridge_detour_on_no_path_successes_median": median(row.get("diag_query_bridge_detour_on_no_path_successes", 0.0) for row in items),
+                "diag_query_bridge_detour_on_no_path_candidates_median": median(row.get("diag_query_bridge_detour_on_no_path_candidates", 0.0) for row in items),
+                "diag_query_bridge_detour_on_no_path_rejects_median": median(row.get("diag_query_bridge_detour_on_no_path_rejects", 0.0) for row in items),
+                "diag_query_bridge_detour_candidate_selected_median": median(row.get("diag_query_bridge_detour_candidate_selected", 0.0) for row in items),
+                "diag_query_bridge_detour_candidate_not_shorter_median": median(row.get("diag_query_bridge_detour_candidate_not_shorter", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_median": median(row.get("diag_query_bridge_waypoint_quality_retry", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_tasks_median": median(row.get("diag_query_bridge_waypoint_quality_retry_tasks", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_attempts_median": median(row.get("diag_query_bridge_waypoint_quality_retry_attempts", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_successes_median": median(row.get("diag_query_bridge_waypoint_quality_retry_successes", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_fixed_median": median(row.get("diag_query_bridge_waypoint_quality_retry_fixed", 0.0) for row in items),
+                "diag_query_bridge_waypoint_quality_retry_ms_total_median": median(row.get("diag_query_bridge_waypoint_quality_retry_ms_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_ms_median": median(row.get("diag_query_bridge_direct_corridor_ms", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_ms_total_median": median(row.get("diag_query_bridge_direct_corridor_ms_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_ffb_calls_median": median(row.get("diag_query_bridge_direct_corridor_ffb_calls", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_ffb_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_ffb_calls_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_all_ffb_calls_median": median(row.get("diag_query_bridge_direct_corridor_all_ffb_calls", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_all_ffb_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_all_ffb_calls_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_added_median": median(row.get("diag_query_bridge_direct_corridor_added", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_added_total_median": median(row.get("diag_query_bridge_direct_corridor_added_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_repair_priority_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_priority", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_repair_target_stops_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_target_stops", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_final_bad_fraction", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_calls_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_adaptive_repair_added_total_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_added_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_lateral_repair_enabled_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_enabled", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_lateral_repair_calls_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_calls", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_lateral_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_calls_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_lateral_repair_added_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_added", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_lateral_repair_added_total_median": median(row.get("diag_query_bridge_direct_corridor_lateral_repair_added_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_partition_neighbor_candidates_median": median(row.get("diag_query_bridge_direct_corridor_partition_neighbor_candidates", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_bad_initial_median": median(row.get("diag_query_bridge_direct_corridor_bad_initial", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_bad_initial_total_median": median(row.get("diag_query_bridge_direct_corridor_bad_initial_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_bad_final_median": median(row.get("diag_query_bridge_direct_corridor_bad_final", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_bad_final_total_median": median(row.get("diag_query_bridge_direct_corridor_bad_final_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_segment_edges_median": median(row.get("diag_query_bridge_direct_corridor_segment_edges", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_segment_edges_total_median": median(row.get("diag_query_bridge_direct_corridor_segment_edges_total", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_local_residual_overlay_connected_median": median(row.get("diag_query_bridge_direct_corridor_local_residual_overlay_connected", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_full_residual_without_local_overlay_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_without_local_overlay", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_full_residual_audit_rejects_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_audit_rejects", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_full_residual_edges_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges", 0.0) for row in items),
+                "diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay", 0.0) for row in items),
                 "amortized_s_k1": median(row.get("amortized_s_k1", row.get("planning_s", math.nan)) for row in items),
                 "amortized_s_k5": median(row.get("amortized_s_k5", row.get("planning_s", math.nan) / 5.0) for row in items),
                 "amortized_s_k10": median(row.get("amortized_s_k10", row.get("planning_s", math.nan) / 10.0) for row in items),
@@ -1045,6 +1209,61 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "audit_s_median": median(row.get("audit_s", math.nan) for row in items),
                 "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success_items),
                 "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success_items),
+                "adaptive_deep_leaf_s_median": median(row.get("adaptive_deep_leaf_s", math.nan) for row in items),
+                "adaptive_target_depth_median": median(row.get("adaptive_target_depth", math.nan) for row in items),
+                "adaptive_validated_median": median(row.get("adaptive_validated", math.nan) for row in items),
+                "adaptive_splits_median": median(row.get("adaptive_splits", math.nan) for row in items),
+                "adaptive_deferred_median": median(row.get("adaptive_deferred", math.nan) for row in items),
+                "adaptive_promoted_median": median(row.get("adaptive_promoted", math.nan) for row in items),
+                "adaptive_unresolved_domains_median": median(row.get("adaptive_unresolved_domains", math.nan) for row in items),
+                "adaptive_merge_input_boxes_median": median(row.get("adaptive_merge_input_boxes", math.nan) for row in items),
+                "adaptive_merge_output_boxes_median": median(row.get("adaptive_merge_output_boxes", math.nan) for row in items),
+                "adaptive_merge_grid_ms_median": median(row.get("adaptive_merge_grid_ms", math.nan) for row in items),
+                "adaptive_merge_grid_merges_median": median(row.get("adaptive_merge_grid_merges", math.nan) for row in items),
+                "adaptive_merge_tree_ms_median": median(row.get("adaptive_merge_tree_ms", math.nan) for row in items),
+                "adaptive_merge_tree_merges_median": median(row.get("adaptive_merge_tree_merges", math.nan) for row in items),
+                "adaptive_merge_containment_ms_median": median(row.get("adaptive_merge_containment_ms", math.nan) for row in items),
+                "adaptive_merge_exact_ms_median": median(row.get("adaptive_merge_exact_ms", math.nan) for row in items),
+                "adaptive_partition_merge_containment_skipped_median": median(row.get("adaptive_partition_merge_containment_skipped", math.nan) for row in items),
+                "adaptive_partition_merge_containment_bucket_entries_median": median(row.get("adaptive_partition_merge_containment_bucket_entries", math.nan) for row in items),
+                "adaptive_partition_merge_containment_candidates_median": median(row.get("adaptive_partition_merge_containment_candidates", math.nan) for row in items),
+                "adaptive_partition_merge_containment_tests_median": median(row.get("adaptive_partition_merge_containment_tests", math.nan) for row in items),
+                "adaptive_partition_merge_containment_overflow_median": median(row.get("adaptive_partition_merge_containment_overflow", math.nan) for row in items),
+                "adaptive_partition_merge_containment_ms_median": median(row.get("adaptive_partition_merge_containment_ms", math.nan) for row in items),
+                "adaptive_partition_merge_line_ms_median": median(row.get("adaptive_partition_merge_line_ms", math.nan) for row in items),
+                "adaptive_adjacency_ms_median": median(row.get("adaptive_adjacency_ms", math.nan) for row in items),
+                "adaptive_adjacency_candidates_median": median(row.get("adaptive_adjacency_candidates", math.nan) for row in items),
+                "adaptive_adjacency_exact_tests_median": median(row.get("adaptive_adjacency_exact_tests", math.nan) for row in items),
+                "partition_cell_count_median": median(row.get("partition_cell_count", math.nan) for row in items),
+                "partition_grid_cell_count_median": median(row.get("partition_grid_cell_count", math.nan) for row in items),
+                "partition_non_grid_cell_count_median": median(row.get("partition_non_grid_cell_count", math.nan) for row in items),
+                "partition_point_index_dims_median": median(row.get("partition_point_index_dims", math.nan) for row in items),
+                "partition_point_index_entries_median": median(row.get("partition_point_index_entries", math.nan) for row in items),
+                "partition_point_index_overflow_cells_median": median(row.get("partition_point_index_overflow_cells", math.nan) for row in items),
+                "partition_islands_median": median(row.get("partition_islands", math.nan) for row in items),
+                "partition_largest_island_median": median(row.get("partition_largest_island", math.nan) for row in items),
+                "partition_overlay_edges_median": median(row.get("partition_overlay_edges", math.nan) for row in items),
+                "partition_build_ms_median": median(row.get("partition_build_ms", math.nan) for row in items),
+                "partition_index_rebuild_ms_median": median(row.get("partition_index_rebuild_ms", math.nan) for row in items),
+                "partition_face_index_ms_median": median(row.get("partition_face_index_ms", math.nan) for row in items),
+                "partition_point_index_ms_median": median(row.get("partition_point_index_ms", math.nan) for row in items),
+                "partition_neighbor_cache_ms_median": median(row.get("partition_neighbor_cache_ms", math.nan) for row in items),
+                "partition_island_rebuild_ms_median": median(row.get("partition_island_rebuild_ms", math.nan) for row in items),
+                "partition_adjacency_candidates_median": median(row.get("partition_adjacency_candidates", math.nan) for row in items),
+                "partition_adjacency_edges_median": median(row.get("partition_adjacency_edges", math.nan) for row in items),
+                "partition_query_per_query_s_median": median(row.get("partition_query_per_query_s", math.nan) for row in items),
+                "partition_query_total_per_query_s_median": median(row.get("partition_query_total_per_query_s", math.nan) for row in items),
+                "coverage_probe_free_count_median": median(row.get("coverage_probe_free_count", math.nan) for row in items),
+                "coverage_box_covered_probability_median": median(row.get("coverage_box_covered_probability", math.nan) for row in items),
+                "coverage_anchor_success_probability_median": median(row.get("coverage_anchor_success_probability", math.nan) for row in items),
+                "coverage_main_accessible_probability_median": median(row.get("coverage_main_accessible_probability", math.nan) for row in items),
+                "offline_shortcut_s_median": median(row.get("offline_shortcut_s", math.nan) for row in items),
+                "offline_shortcut_edges_requested_median": median(row.get("offline_shortcut_edges_requested", math.nan) for row in items),
+                "offline_shortcut_edges_added_median": median(row.get("offline_shortcut_edges_added", math.nan) for row in items),
+                "offline_shortcut_box_corridor_edges_added_median": median(row.get("offline_shortcut_box_corridor_edges_added", math.nan) for row in items),
+                "offline_shortcut_segment_edges_added_median": median(row.get("offline_shortcut_segment_edges_added", math.nan) for row in items),
+                "offline_shortcut_pave_boxes_added_median": median(row.get("offline_shortcut_pave_boxes_added", math.nan) for row in items),
+                "offline_shortcut_pave_fail_median": median(row.get("offline_shortcut_pave_fail", math.nan) for row in items),
                 "final_boxes_median": median(row.get("final_boxes", math.nan) for row in items),
                 "status": "executed",
             }
@@ -1058,6 +1277,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "method",
         "robot",
         "difficulty",
+        "offline_grower",
         "stage_id",
         "leaf_start_depth",
         "leaf_max_depth",
@@ -1086,6 +1306,67 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "online_simplify_per_query_s_median",
         "online_per_query_s_median",
         "online_total_per_query_s_median",
+        "query_bridge_per_query_s_median",
+        "diag_query_bridge_batch_total_ms_median",
+        "diag_query_bridge_batch_per_query_ms_median",
+        "diag_query_bridge_batch_rrt_ms_total_median",
+        "diag_query_bridge_batch_probe_ms_total_median",
+        "diag_query_bridge_batch_pave_ms_total_median",
+        "diag_query_bridge_rrt_fixed_iters_median",
+        "diag_query_bridge_rrt_fixed_timeout_ms_median",
+        "diag_query_bridge_batch_tasks_initial_median",
+        "diag_query_bridge_batch_tasks_attempted_median",
+        "diag_query_bridge_batch_tasks_no_path_median",
+        "diag_query_bridge_direct_line_on_no_path_median",
+        "diag_query_bridge_direct_line_on_no_path_attempts_median",
+        "diag_query_bridge_direct_line_on_no_path_successes_median",
+        "diag_query_bridge_direct_line_on_no_path_rejects_median",
+        "diag_query_bridge_detour_on_no_path_median",
+        "diag_query_bridge_detour_candidate_median",
+        "diag_query_bridge_detour_on_no_path_attempts_median",
+        "diag_query_bridge_detour_on_no_path_successes_median",
+        "diag_query_bridge_detour_on_no_path_candidates_median",
+        "diag_query_bridge_detour_on_no_path_rejects_median",
+        "diag_query_bridge_detour_candidate_selected_median",
+        "diag_query_bridge_detour_candidate_not_shorter_median",
+        "diag_query_bridge_waypoint_quality_retry_median",
+        "diag_query_bridge_waypoint_quality_retry_tasks_median",
+        "diag_query_bridge_waypoint_quality_retry_attempts_median",
+        "diag_query_bridge_waypoint_quality_retry_successes_median",
+        "diag_query_bridge_waypoint_quality_retry_fixed_median",
+        "diag_query_bridge_waypoint_quality_retry_ms_total_median",
+        "diag_query_bridge_direct_corridor_ms_median",
+        "diag_query_bridge_direct_corridor_ms_total_median",
+        "diag_query_bridge_direct_corridor_ffb_calls_median",
+        "diag_query_bridge_direct_corridor_ffb_calls_total_median",
+        "diag_query_bridge_direct_corridor_all_ffb_calls_median",
+        "diag_query_bridge_direct_corridor_all_ffb_calls_total_median",
+        "diag_query_bridge_direct_corridor_added_median",
+        "diag_query_bridge_direct_corridor_added_total_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_priority_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_target_segment_fraction_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_target_stops_median",
+        "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median",
+        "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median",
+        "diag_query_bridge_direct_corridor_adaptive_repair_added_total_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_enabled_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_calls_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_calls_total_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_added_median",
+        "diag_query_bridge_direct_corridor_lateral_repair_added_total_median",
+        "diag_query_bridge_direct_corridor_partition_neighbor_candidates_median",
+        "diag_query_bridge_direct_corridor_bad_initial_median",
+        "diag_query_bridge_direct_corridor_bad_initial_total_median",
+        "diag_query_bridge_direct_corridor_bad_final_median",
+        "diag_query_bridge_direct_corridor_bad_final_total_median",
+        "diag_query_bridge_direct_corridor_segment_edges_median",
+        "diag_query_bridge_direct_corridor_segment_edges_total_median",
+        "diag_query_bridge_direct_corridor_local_residual_overlay_connected_median",
+        "diag_query_bridge_direct_corridor_full_residual_without_local_overlay_median",
+        "diag_query_bridge_direct_corridor_full_residual_audit_rejects_median",
+        "diag_query_bridge_direct_corridor_full_residual_edges_median",
+        "diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay_median",
         "amortized_s_k1",
         "amortized_s_k5",
         "amortized_s_k10",
@@ -1094,6 +1375,57 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "audit_s_median",
         "path_length_mean",
         "raw_segment_fraction_median",
+        "adaptive_deep_leaf_s_median",
+        "adaptive_target_depth_median",
+        "adaptive_validated_median",
+        "adaptive_splits_median",
+        "adaptive_deferred_median",
+        "adaptive_promoted_median",
+        "adaptive_unresolved_domains_median",
+        "adaptive_merge_input_boxes_median",
+        "adaptive_merge_output_boxes_median",
+        "adaptive_merge_grid_ms_median",
+        "adaptive_merge_grid_merges_median",
+        "adaptive_merge_tree_ms_median",
+        "adaptive_merge_tree_merges_median",
+        "adaptive_merge_containment_ms_median",
+        "adaptive_merge_exact_ms_median",
+        "adaptive_partition_merge_containment_skipped_median",
+        "adaptive_partition_merge_containment_bucket_entries_median",
+        "adaptive_partition_merge_containment_candidates_median",
+        "adaptive_partition_merge_containment_tests_median",
+        "adaptive_partition_merge_containment_overflow_median",
+        "adaptive_partition_merge_containment_ms_median",
+        "adaptive_partition_merge_line_ms_median",
+        "adaptive_adjacency_ms_median",
+        "adaptive_adjacency_candidates_median",
+        "adaptive_adjacency_exact_tests_median",
+        "partition_cell_count_median",
+        "partition_grid_cell_count_median",
+        "partition_non_grid_cell_count_median",
+        "partition_point_index_dims_median",
+        "partition_point_index_entries_median",
+        "partition_point_index_overflow_cells_median",
+        "partition_islands_median",
+        "partition_largest_island_median",
+        "partition_overlay_edges_median",
+        "partition_build_ms_median",
+        "partition_index_rebuild_ms_median",
+        "partition_adjacency_candidates_median",
+        "partition_adjacency_edges_median",
+        "partition_query_per_query_s_median",
+        "partition_query_total_per_query_s_median",
+        "coverage_probe_free_count_median",
+        "coverage_box_covered_probability_median",
+        "coverage_anchor_success_probability_median",
+        "coverage_main_accessible_probability_median",
+        "offline_shortcut_s_median",
+        "offline_shortcut_edges_requested_median",
+        "offline_shortcut_edges_added_median",
+        "offline_shortcut_box_corridor_edges_added_median",
+        "offline_shortcut_segment_edges_added_median",
+        "offline_shortcut_pave_boxes_added_median",
+        "offline_shortcut_pave_fail_median",
         "final_boxes_median",
         "status",
     ]
@@ -1205,7 +1537,7 @@ def main() -> int:
         bitstar_stage_s = [bitstar_trace_timeout_s]
         args.queries_per_scene = min(int(args.queries_per_scene), 3)
     rbf_profile = effective_rbf_profile(args, box_budgets)
-    catalog_path = args.scene_catalog or (args.out_dir / "random_scene_catalog_v6.json")
+    catalog_path = args.scene_catalog or (args.out_dir / "random_scene_catalog_v7.json")
     catalog_summary: dict[str, Any] = {
         "path": str(catalog_path),
         "mode": args.scene_catalog_mode,

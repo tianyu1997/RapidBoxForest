@@ -8,8 +8,8 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 
-RBF_DEFAULT_PROFILE_NAME = "exp04_leaf_qrootcap3_b400_d60_step010_a6o3_line2"
-RBF_SHELF_PROFILE_NAME = "exp04_leaf_qrootcap3_d23_b400_d60_step010_a6o3_line2"
+RBF_DEFAULT_PROFILE_NAME = "exp04_partition_leaf13_d23_fixed800_online25ms"
+RBF_SHELF_PROFILE_NAME = "exp04_partition_leaf13_d23_fixed800_online25ms"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
 
@@ -24,9 +24,10 @@ ROBOT_DEFAULT_LECTDB_DEPTHS: dict[str, int] = {
     "panda": 20,
 }
 DEFAULT_RBF_LEAF_START_DEPTH = 8
-DEFAULT_RBF_LEAF_MAX_DEPTH = 14
+DEFAULT_RBF_LEAF_MAX_DEPTH = 13
 DEFAULT_RBF_MAX_DEPTH = 64
 DEFAULT_RBF_DEEP_MAX_BOXES = 400
+DEFAULT_RBF_SHELF_BOX_BUDGET = 100
 DEFAULT_RBF_DEEP_FFB_DEPTH = 62
 DEFAULT_RBF_REFINE_TIMEOUT_MS = 800.0
 DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES = 1
@@ -36,7 +37,7 @@ DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 2
 DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 3
 DEFAULT_RBF_VALIDATION_BATCH_SIZE = 512
 DEFAULT_RBF_THREADS = 8
-DEFAULT_RBF_FFB_START_DEPTH = 5
+DEFAULT_RBF_FFB_START_DEPTH = 32
 DEFAULT_RBF_FFB_SEARCH_MODE = "binary"
 
 DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS = 18.0
@@ -51,21 +52,27 @@ DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN = 160
 DEFAULT_RBF_CONNECTOR_PAVE_STEPS = 12
 DEFAULT_RBF_CONNECTOR_PAVE_DEPTH = 62
 DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION = 0.75
-DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 56
+DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH = 52
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS = ""
-DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP = 0.10
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP = 0.08
 DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS = 1
 DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED = True
-DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS = 6
+DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS = 12
 DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET = 3
 DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS = 0
+DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS = 1600
+DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS = 0.0
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR = True
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP = 0.08
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS = 2
-DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS = 32
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS = 24
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY = 1
+DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION = 0.0
 DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY = 2.0
 DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY = 2.0
+DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY = 5.0
 DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE = False
+DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS = False
 DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS = True
 DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN = True
 
@@ -76,9 +83,10 @@ DEFAULT_RBF_FINAL_COLLISION_SHORTCUT = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY = True
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS = 10.0
 DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS = 50000
-DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 5
+DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS = 8
 DEFAULT_RBF_QUERY_BRIDGE_ALL = True
 DEFAULT_RBF_QUERY_BRIDGE_LABELS = "AS->TS,TS->CS,CS->LB,LB->RB,RB->AS"
+DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES = "0,1,2,3,4"
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH = 14
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD = 0.05
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD = 0.0
@@ -102,6 +110,8 @@ def default_rbf_profile() -> dict[str, Any]:
     return {
         "profile": RBF_DEFAULT_PROFILE_NAME,
         "backend": RBF_DEFAULT_BACKEND,
+        "offline_grower": "adaptive_deep_leaf",
+        "online_backend": "partition_native",
         "grower_mode": RBF_DEFAULT_GROWER_MODE,
         "cache": {
             "mode": "robot_native_stateless_external_evidence",
@@ -117,6 +127,9 @@ def default_rbf_profile() -> dict[str, Any]:
             "depth_semantics": "lect_active_tree",
             "leaf_start_depth": DEFAULT_RBF_LEAF_START_DEPTH,
             "leaf_max_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
+            "adaptive_target_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
+            "adaptive_planning_backend": "partition_native",
+            "adaptive_grid_target_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
             "use_virtual_topology": True,
             "parallel_virtual_validation": True,
             "store_group_results": False,
@@ -172,12 +185,19 @@ def default_rbf_profile() -> dict[str, Any]:
             "forced_attempts": DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
             "attempt_offset": DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
             "no_path_retry_attempts": DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+            "rrt_fixed_iters": DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
+            "rrt_fixed_timeout_ms": DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
             "adaptive_step_repair": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
             "adaptive_fine_step": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
             "adaptive_max_repair_subdivisions": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
             "adaptive_max_repair_calls": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
+            "adaptive_repair_priority": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
+            "adaptive_repair_target_segment_fraction": (
+                DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
+            ),
             "box_transition_line_deviation_penalty": DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
             "foreign_edge_cost_penalty": DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
+            "query_bridge_edge_cost_penalty": DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
             "adaptive_all": True,
             "adaptive_max_path_length": 4.5,
             "accept_segment_fraction": 0.25,
@@ -204,15 +224,15 @@ def default_rbf_profile() -> dict[str, Any]:
         },
         "recommended_tradeoff": {
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
-            "validated_on": "Exp.4 shelf baseline seeds 0..7, query bridge depth 56, direct sample step 0.10 rad, repair subdivisions 1, adaptive repair cap 32, forced bridge attempts 6 with attempt offset 3, line-deviation penalty 2.0, connector pair timeout 18 ms, 10 ms main simplify budget with 5 simplify attempts",
+            "validated_on": "Exp.4/5 shelf baseline seeds 0..7, partition-native adaptive leaf sweep d13, d23 external evidence, FFB start depth 32, query bridge depth 52, direct sample step 0.08 rad, repair subdivisions 1, adaptive repair priority 1, adaptive repair cap 24, forced bridge attempts 12 with attempt offset 3, fixed 1600 query-bridge RRT iterations without wall-clock cutoff, stable label-based query indices, line-deviation penalty 2.0, query-bridge edge penalty 5.0, connector pair timeout 18 ms, 10 ms main simplify budget with 8 simplify attempts",
             "success_runs": "8/8",
             "success_queries": "40/40",
-            "median_online_batch_s": 0.20792,
-            "median_online_solve_per_query_s": 0.03426,
-            "median_online_per_query_s": 0.04158,
-            "median_raw_segment_fraction": 0.38540,
-            "mean_route_length": 2.97774,
-            "source": "outputs/exp04_probe_default_simplify_attempts5_s0_7",
+            "median_offline_build_s": 0.09330,
+            "median_online_solve_per_query_s": 0.02517,
+            "median_online_total_per_query_s": 0.03255,
+            "median_raw_segment_fraction": 0.27594,
+            "mean_route_length": 2.87340,
+            "source": "outputs/perf_partition_native_waypoints/default1280_regression_1780876086/exp04",
         },
     }
 
@@ -226,11 +246,11 @@ def shelf_d23_rbf_profile() -> dict[str, Any]:
         "root": str(D23_CACHE_ROOT),
         "label": D23_CACHE_LABEL,
         "root_intervals": "canonical_root_internal_to_LECT",
-        "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+        "active_lect_root": "canonical_primary_sector",
         "active_planning_root": "full_robot_joint_limits",
         "coverage_root": "full_robot_joint_limits",
-        "split_schedule": "active_dim0_first_two_then_cache_tail",
-        "cache_split_schedule": "full_joint_canonical_aafk",
+        "split_schedule": "external_cache_manifest_prefix",
+        "cache_split_schedule": "full_joint_canonical_aafk_manifest",
         "canonical_mapping_scope": "LECT_internal_only",
     }
     return profile
@@ -263,12 +283,12 @@ def robot_lectdb_profile(robot_name: str) -> dict[str, Any]:
             "label": D23_CACHE_LABEL,
             "path": str(D23_CACHE_ROOT / D23_CACHE_LABEL),
             "root_intervals": "canonical_root_internal_to_LECT",
-            "active_lect_root": "symmetry_aligned_native_dim0_minus_pi_pi",
+            "active_lect_root": "canonical_primary_sector",
             "coverage_domain": "full_robot_joint_limits",
             "canonical_mode": True,
             "active_planning_root": "full_robot_joint_limits",
-            "split_schedule": "active_dim0_first_two_then_cache_tail",
-            "cache_split_schedule": "full_joint_canonical_aafk",
+            "split_schedule": "external_cache_manifest_prefix",
+            "cache_split_schedule": "full_joint_canonical_aafk_manifest",
             "canonical_mapping_scope": "LECT_internal_only",
             "symmetry_descriptor": CANONICAL_SYMMETRY_DESCRIPTOR,
         }

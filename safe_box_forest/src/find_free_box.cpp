@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -14,20 +15,31 @@ namespace {
 
 void record_elapsed(StageContext& context,
                     const std::string& key,
-                    std::chrono::steady_clock::time_point start) {
+                    std::chrono::steady_clock::time_point start,
+                    bool enabled) {
+    if (!enabled) {
+        return;
+    }
     context.diagnostics().record_timing(
         key,
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 }
 
-void set_max_diagnostic(StageContext& context, const std::string& key, double value) {
+void set_max_diagnostic(StageContext& context, const std::string& key, double value, bool enabled) {
+    if (!enabled) {
+        return;
+    }
     context.diagnostics().set_value(key, std::max(context.diagnostics().value(key), value));
 }
 
 void record_split_diagnostics(StageContext& context,
                               const SplitNodeResult& split,
                               const std::vector<Interval>& intervals,
-                              int depth) {
+                              int depth,
+                              bool enabled) {
+    if (!enabled) {
+        return;
+    }
     if (!split.split || split.split_dim < 0 ||
         split.split_dim >= static_cast<int>(intervals.size())) {
         return;
@@ -47,9 +59,9 @@ void record_split_diagnostics(StageContext& context,
     }
     const double split_width = std::max(0.0, intervals[static_cast<std::size_t>(dim)].width());
     context.diagnostics().add_counter("oracle.split_width_sum." + std::to_string(dim), split_width);
-    set_max_diagnostic(context, "oracle.split_width_max." + std::to_string(dim), split_width);
+    set_max_diagnostic(context, "oracle.split_width_max." + std::to_string(dim), split_width, enabled);
     if (std::isfinite(min_width) && min_width > 0.0) {
-        set_max_diagnostic(context, "oracle.split_parent_aspect_ratio_max", max_width / min_width);
+        set_max_diagnostic(context, "oracle.split_parent_aspect_ratio_max", max_width / min_width, enabled);
     }
 }
 
@@ -96,7 +108,10 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                                            StageContext& context,
                                            const FindFreeBoxOptions& options) {
     using Clock = std::chrono::steady_clock;
-    ScopedStageTimer function_timer(context.diagnostics(), "ffb.find");
+    std::unique_ptr<ScopedStageTimer> function_timer;
+    if (options.record_diagnostics) {
+        function_timer = std::make_unique<ScopedStageTimer>(context.diagnostics(), "ffb.find");
+    }
     const auto start = Clock::now();
     FindFreeBoxResult result;
     if (context.should_stop()) {
@@ -108,7 +123,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
     if (seed.size() == oracle_.n_dims()) {
         const auto contains_start = Clock::now();
         seed_in_domain = oracle_.contains_point(oracle_.root_node(), seed);
-        record_elapsed(context, "oracle.contains_point", contains_start);
+        record_elapsed(context, "oracle.contains_point", contains_start, options.record_diagnostics);
     }
     if (seed.size() != oracle_.n_dims() || !seed_in_domain) {
         result.fail_code = 5;
@@ -117,7 +132,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
     if (options.reject_seed_collision) {
         const auto collision_start = Clock::now();
         const bool seed_collision = oracle_.point_in_collision(seed);
-        record_elapsed(context, "oracle.point_in_collision", collision_start);
+        record_elapsed(context, "oracle.point_in_collision", collision_start, options.record_diagnostics);
         if (seed_collision) {
             result.seed_collision = true;
             result.fail_code = 1;
@@ -189,8 +204,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                                                        current_tree_intervals,
                                                        changed_dim,
                                                        split_options);
-                record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, current_tree_intervals, depth);
+                record_elapsed(context, "oracle.split_node", split_start, options.record_diagnostics);
+                record_split_diagnostics(context, split, current_tree_intervals, depth, options.record_diagnostics);
                 if (!split.split) {
                     result.fail_code = 6;
                     result.total_ms = elapsed_ms();
@@ -251,7 +266,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                                                           query_intervals,
                                                           entry.changed_dim);
             candidate.validation_detail = oracle_.last_validation_detail();
-            record_elapsed(context, "oracle.validate_node", validation_start);
+            record_elapsed(context, "oracle.validate_node", validation_start, options.record_diagnostics);
             candidate.decisions += 1;
             if (validation == BoxValidation::Free) {
                 candidate.found = true;
@@ -277,9 +292,13 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             if (probe_validation == BoxValidation::Free) {
                 best = std::move(probe_candidate);
                 hi = probe_depth;
-                context.diagnostics().add_counter("ffb.binary_probe_free");
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.binary_probe_free");
+                }
             } else {
-                context.diagnostics().add_counter("ffb.binary_probe_not_free");
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.binary_probe_not_free");
+                }
             }
         }
         if (!best.found) {
@@ -318,9 +337,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         best.total_ms = elapsed_ms();
         if (best.found) {
             const double free_depth = static_cast<double>(oracle_.depth(best.node));
-            context.diagnostics().add_counter("ffb.free_ancestor_hits");
-            context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth);
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.free_ancestor_hits");
+                context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
+            }
+            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
             double free_log_volume = 0.0;
             for (const auto& interval : best.intervals) {
                 const double width = std::max(0.0, interval.width());
@@ -328,7 +349,9 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                     free_log_volume += std::log(width);
                 }
             }
-            context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+            }
         }
         return best;
     }
@@ -353,7 +376,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         const auto intervals_start = Clock::now();
         auto tree_intervals = oracle_.node_intervals(node);
         auto query_intervals = oracle_.query_intervals_for_node(node, tree_intervals, seed);
-        record_elapsed(context, "oracle.node_intervals", intervals_start);
+        record_elapsed(context, "oracle.node_intervals", intervals_start, options.record_diagnostics);
         if (oracle_.is_reserved(node)) {
             if (oracle_.depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
                 result.hit_reserved_depth_cap = true;
@@ -366,8 +389,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                 const auto split_start = Clock::now();
                 const int split_depth = oracle_.depth(node);
                 const auto split = oracle_.split_node(node, tree_intervals, changed_dim, split_options);
-                record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, tree_intervals, split_depth);
+                record_elapsed(context, "oracle.split_node", split_start, options.record_diagnostics);
+                record_split_diagnostics(context, split, tree_intervals, split_depth, options.record_diagnostics);
                 if (!split.split) {
                     result.fail_code = 6;
                     break;
@@ -390,7 +413,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             const auto validation_start = Clock::now();
             validation = oracle_.validate_node(node, query_intervals, changed_dim);
             result.validation_detail = oracle_.last_validation_detail();
-            record_elapsed(context, "oracle.validate_node", validation_start);
+            record_elapsed(context, "oracle.validate_node", validation_start, options.record_diagnostics);
             result.decisions += 1;
         }
         if (validation == BoxValidation::Free) {
@@ -406,9 +429,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             // hit depth and box log-volume so the seed-independent reuse can be
             // measured (mean hit depth should drop / certified box volume rise).
             const double free_depth = static_cast<double>(oracle_.depth(node));
-            context.diagnostics().add_counter("ffb.free_ancestor_hits");
-            context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth);
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.free_ancestor_hits");
+                context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
+            }
+            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
             double free_log_volume = 0.0;
             for (const auto& interval : result.intervals) {
                 const double width = std::max(0.0, interval.width());
@@ -416,7 +441,9 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                     free_log_volume += std::log(width);
                 }
             }
-            context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+            }
             break;
         }
         if (validation == BoxValidation::Occupied) {
@@ -436,8 +463,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             const auto split_start = Clock::now();
             const int split_depth = oracle_.depth(node);
             const auto split = oracle_.split_node(node, tree_intervals, changed_dim, split_options);
-            record_elapsed(context, "oracle.split_node", split_start);
-            record_split_diagnostics(context, split, tree_intervals, split_depth);
+            record_elapsed(context, "oracle.split_node", split_start, options.record_diagnostics);
+            record_split_diagnostics(context, split, tree_intervals, split_depth, options.record_diagnostics);
             if (!split.split) {
                 result.fail_code = 6;
                 break;
@@ -461,7 +488,10 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
     const FindFreeBoxOptions& options,
     const AcceptCandidate& accept) {
     using Clock = std::chrono::steady_clock;
-    ScopedStageTimer function_timer(context.diagnostics(), "ffb.find");
+    std::unique_ptr<ScopedStageTimer> function_timer;
+    if (options.record_diagnostics) {
+        function_timer = std::make_unique<ScopedStageTimer>(context.diagnostics(), "ffb.find");
+    }
     const auto start = Clock::now();
     FindFreeBoxResult result;
     if (context.should_stop()) {
@@ -473,7 +503,7 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
     if (seed.size() == oracle_.n_dims()) {
         const auto contains_start = Clock::now();
         seed_in_domain = oracle_.contains_point(oracle_.root_node(), seed);
-        record_elapsed(context, "oracle.contains_point", contains_start);
+        record_elapsed(context, "oracle.contains_point", contains_start, options.record_diagnostics);
     }
     if (seed.size() != oracle_.n_dims() || !seed_in_domain) {
         result.fail_code = 5;
@@ -482,7 +512,7 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
     if (options.reject_seed_collision) {
         const auto collision_start = Clock::now();
         const bool seed_collision = oracle_.point_in_collision(seed);
-        record_elapsed(context, "oracle.point_in_collision", collision_start);
+        record_elapsed(context, "oracle.point_in_collision", collision_start, options.record_diagnostics);
         if (seed_collision) {
             result.seed_collision = true;
             result.fail_code = 1;
@@ -512,7 +542,7 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
         const auto intervals_start = Clock::now();
         auto tree_intervals = oracle_.node_intervals(node);
         auto query_intervals = oracle_.query_intervals_for_node(node, tree_intervals, seed);
-        record_elapsed(context, "oracle.node_intervals", intervals_start);
+        record_elapsed(context, "oracle.node_intervals", intervals_start, options.record_diagnostics);
         const int depth = oracle_.depth(node);
         while (checkpoint_index + 1 < checkpoints.size() &&
                depth > checkpoints[checkpoint_index]) {
@@ -534,8 +564,8 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
                                                        tree_intervals,
                                                        changed_dim,
                                                        split_options);
-                record_elapsed(context, "oracle.split_node", split_start);
-                record_split_diagnostics(context, split, tree_intervals, depth);
+                record_elapsed(context, "oracle.split_node", split_start, options.record_diagnostics);
+                record_split_diagnostics(context, split, tree_intervals, depth, options.record_diagnostics);
                 if (!split.split) {
                     result.fail_code = 6;
                     break;
@@ -558,7 +588,7 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
             const auto validation_start = Clock::now();
             validation = oracle_.validate_node(node, query_intervals, changed_dim);
             result.validation_detail = oracle_.last_validation_detail();
-            record_elapsed(context, "oracle.validate_node", validation_start);
+            record_elapsed(context, "oracle.validate_node", validation_start, options.record_diagnostics);
             result.decisions += 1;
         }
         if (validation == BoxValidation::Free) {
@@ -576,9 +606,11 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
             if (must_accept && (!accept || accept(candidate))) {
                 result = std::move(candidate);
                 const double free_depth = static_cast<double>(oracle_.depth(node));
-                context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-                set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth);
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
+                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
+                }
+                set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
                 double free_log_volume = 0.0;
                 for (const auto& interval : result.intervals) {
                     const double width = std::max(0.0, interval.width());
@@ -586,10 +618,14 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
                         free_log_volume += std::log(width);
                     }
                 }
-                context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
+                }
                 break;
             }
-            context.diagnostics().add_counter("ffb.incremental_candidate_skips");
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.incremental_candidate_skips");
+            }
         } else if (validation == BoxValidation::Occupied) {
             result.node = node;
             result.intervals = std::move(query_intervals);
@@ -610,8 +646,8 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
                                                    tree_intervals,
                                                    changed_dim,
                                                    split_options);
-            record_elapsed(context, "oracle.split_node", split_start);
-            record_split_diagnostics(context, split, tree_intervals, depth);
+            record_elapsed(context, "oracle.split_node", split_start, options.record_diagnostics);
+            record_split_diagnostics(context, split, tree_intervals, depth, options.record_diagnostics);
             if (!split.split) {
                 result.fail_code = 6;
                 break;

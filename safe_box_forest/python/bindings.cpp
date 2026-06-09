@@ -540,6 +540,73 @@ std::shared_ptr<ompl::base::RealVectorStateSpace> make_ompl_space(const rbf::Rob
     return space;
 }
 
+int validate_cspace_limits(const std::vector<std::vector<double>>& limits) {
+    if (limits.empty()) {
+        throw std::invalid_argument("cspace limits must be non-empty");
+    }
+    for (const auto& interval : limits) {
+        if (interval.size() != 2U || !(interval[0] < interval[1])) {
+            throw std::invalid_argument("each cspace limit must be [lo, hi] with lo < hi");
+        }
+    }
+    return static_cast<int>(limits.size());
+}
+
+void validate_cspace_vector(const std::vector<double>& q, int dimension, const char* name) {
+    if (static_cast<int>(q.size()) != dimension) {
+        throw std::invalid_argument(std::string(name) + " dimension must match cspace limits");
+    }
+}
+
+std::shared_ptr<ompl::base::RealVectorStateSpace> make_cspace_ompl_space(
+    const std::vector<std::vector<double>>& limits) {
+    namespace ob = ompl::base;
+    const int dimension = validate_cspace_limits(limits);
+    auto space = std::make_shared<ob::RealVectorStateSpace>(dimension);
+    ob::RealVectorBounds bounds(dimension);
+    for (int dim = 0; dim < dimension; ++dim) {
+        bounds.setLow(dim, limits[static_cast<std::size_t>(dim)][0]);
+        bounds.setHigh(dim, limits[static_cast<std::size_t>(dim)][1]);
+    }
+    space->setBounds(bounds);
+    return space;
+}
+
+bool cspace_point_in_box(const double* values, int dimension, const std::vector<double>& flattened_box) {
+    if (static_cast<int>(flattened_box.size()) != 2 * dimension) {
+        throw std::invalid_argument("each cspace obstacle must be flattened [lo0, hi0, lo1, hi1, ...]");
+    }
+    for (int dim = 0; dim < dimension; ++dim) {
+        const double lo = flattened_box[static_cast<std::size_t>(2 * dim)];
+        const double hi = flattened_box[static_cast<std::size_t>(2 * dim + 1)];
+        if (!(lo <= hi)) {
+            throw std::invalid_argument("cspace obstacle interval must satisfy lo <= hi");
+        }
+        if (values[dim] < lo || values[dim] > hi) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool cspace_point_valid(const double* values,
+                        int dimension,
+                        const std::vector<std::vector<double>>& flattened_obstacles) {
+    for (const auto& obstacle : flattened_obstacles) {
+        if (cspace_point_in_box(values, dimension, obstacle)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool cspace_vector_valid(const std::vector<double>& q,
+                         int dimension,
+                         const std::vector<std::vector<double>>& flattened_obstacles) {
+    validate_cspace_vector(q, dimension, "q");
+    return cspace_point_valid(q.data(), dimension, flattened_obstacles);
+}
+
 std::shared_ptr<ompl::base::SpaceInformation> make_ompl_space_information(
     const rbf::Robot& robot,
     const std::vector<rbf::Obstacle>& obstacles,
@@ -949,7 +1016,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("store_group_results", &rbf::LeafSweepConfig::store_group_results)
         .def_readwrite("pre_split_to_max_depth", &rbf::LeafSweepConfig::pre_split_to_max_depth)
         .def_readwrite("use_virtual_topology", &rbf::LeafSweepConfig::use_virtual_topology)
-        .def_readwrite("parallel_virtual_validation", &rbf::LeafSweepConfig::parallel_virtual_validation);
+        .def_readwrite("parallel_virtual_validation", &rbf::LeafSweepConfig::parallel_virtual_validation)
+        .def_readwrite("collision_overlap_prune_min_threshold", &rbf::LeafSweepConfig::collision_overlap_prune_min_threshold)
+        .def_readwrite("collision_overlap_prune_decay_per_depth", &rbf::LeafSweepConfig::collision_overlap_prune_decay_per_depth)
+        .def_readwrite("max_free_boxes", &rbf::LeafSweepConfig::max_free_boxes)
+        .def_readwrite("max_collision_boxes", &rbf::LeafSweepConfig::max_collision_boxes);
 
     py::class_<rbf::LeafSweepGroupResult>(module, "LeafSweepGroupResult")
         .def_readonly("group_id", &rbf::LeafSweepGroupResult::group_id)
@@ -998,6 +1069,39 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("collision_overlap_prune_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_threshold)
         .def_readwrite("collision_overlap_prune_ratio_threshold", &rbf::LeafSweepRefineConfig::collision_overlap_prune_ratio_threshold);
 
+    py::class_<rbf::AdaptiveLeafSweepConfig>(module, "AdaptiveLeafSweepConfig")
+        .def(py::init<>())
+        .def_readwrite("shallow_start_depth", &rbf::AdaptiveLeafSweepConfig::shallow_start_depth)
+        .def_readwrite("shallow_max_depth", &rbf::AdaptiveLeafSweepConfig::shallow_max_depth)
+        .def_readwrite("target_max_depth", &rbf::AdaptiveLeafSweepConfig::target_max_depth)
+        .def_readwrite("time_budget_ms", &rbf::AdaptiveLeafSweepConfig::time_budget_ms)
+        .def_readwrite("node_budget", &rbf::AdaptiveLeafSweepConfig::node_budget)
+        .def_readwrite("threads", &rbf::AdaptiveLeafSweepConfig::threads)
+        .def_readwrite("validation_batch_size", &rbf::AdaptiveLeafSweepConfig::validation_batch_size)
+        .def_readwrite("obstacle_cluster_gap", &rbf::AdaptiveLeafSweepConfig::obstacle_cluster_gap)
+        .def_readwrite("use_virtual_topology", &rbf::AdaptiveLeafSweepConfig::use_virtual_topology)
+        .def_readwrite("parallel_virtual_validation", &rbf::AdaptiveLeafSweepConfig::parallel_virtual_validation)
+        .def_readwrite("store_group_results", &rbf::AdaptiveLeafSweepConfig::store_group_results)
+        .def_readwrite("defer_min_depth", &rbf::AdaptiveLeafSweepConfig::defer_min_depth)
+        .def_readwrite("overlap_depth_threshold", &rbf::AdaptiveLeafSweepConfig::overlap_depth_threshold)
+        .def_readwrite("overlap_depth_min_threshold", &rbf::AdaptiveLeafSweepConfig::overlap_depth_min_threshold)
+        .def_readwrite("overlap_depth_decay_per_depth", &rbf::AdaptiveLeafSweepConfig::overlap_depth_decay_per_depth)
+        .def_readwrite("overlap_ratio_threshold", &rbf::AdaptiveLeafSweepConfig::overlap_ratio_threshold)
+        .def_readwrite("seed_probe_count", &rbf::AdaptiveLeafSweepConfig::seed_probe_count)
+        .def_readwrite("seed_probe_rng_seed", &rbf::AdaptiveLeafSweepConfig::seed_probe_rng_seed)
+        .def_readwrite("seed_promote_uncovered", &rbf::AdaptiveLeafSweepConfig::seed_promote_uncovered)
+        .def_readwrite("seed_anchor_probe_cap", &rbf::AdaptiveLeafSweepConfig::seed_anchor_probe_cap)
+        .def_readwrite("promotion_interval", &rbf::AdaptiveLeafSweepConfig::promotion_interval)
+        .def_readwrite("max_merge_ms", &rbf::AdaptiveLeafSweepConfig::max_merge_ms)
+        .def_readwrite("max_merge_rounds", &rbf::AdaptiveLeafSweepConfig::max_merge_rounds)
+        .def_readwrite("max_merge_input_boxes", &rbf::AdaptiveLeafSweepConfig::max_merge_input_boxes)
+        .def_readwrite("max_free_boxes", &rbf::AdaptiveLeafSweepConfig::max_free_boxes)
+        .def_readwrite("max_unresolved_domains", &rbf::AdaptiveLeafSweepConfig::max_unresolved_domains)
+        .def_readwrite("planning_backend", &rbf::AdaptiveLeafSweepConfig::planning_backend)
+        .def_readwrite("grid_target_depth", &rbf::AdaptiveLeafSweepConfig::grid_target_depth)
+        .def_readwrite("grid_face_index_enabled", &rbf::AdaptiveLeafSweepConfig::grid_face_index_enabled)
+        .def_readwrite("grid_planning_max_expansions", &rbf::AdaptiveLeafSweepConfig::grid_planning_max_expansions);
+
     py::class_<rbf::EndpointMainBoxCorridorConfig>(module, "EndpointMainBoxCorridorConfig")
         .def(py::init<>())
         .def_readwrite("target_k", &rbf::EndpointMainBoxCorridorConfig::target_k)
@@ -1034,6 +1138,37 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("connector_ms", &rbf::LeafSweepRefineResult::connector_ms)
         .def_readonly("total_ms", &rbf::LeafSweepRefineResult::total_ms)
         .def_readonly("diagnostics", &rbf::LeafSweepRefineResult::diagnostics);
+
+    py::class_<rbf::AdaptiveLeafSweepResult>(module, "AdaptiveLeafSweepResult")
+        .def_readonly("leaf_sweep", &rbf::AdaptiveLeafSweepResult::leaf_sweep)
+        .def_readonly("profile", &rbf::AdaptiveLeafSweepResult::profile)
+        .def_readonly("shallow_free_count", &rbf::AdaptiveLeafSweepResult::shallow_free_count)
+        .def_readonly("shallow_collision_count", &rbf::AdaptiveLeafSweepResult::shallow_collision_count)
+        .def_readonly("adaptive_free_added", &rbf::AdaptiveLeafSweepResult::adaptive_free_added)
+        .def_readonly("adaptive_validated", &rbf::AdaptiveLeafSweepResult::adaptive_validated)
+        .def_readonly("adaptive_splits", &rbf::AdaptiveLeafSweepResult::adaptive_splits)
+        .def_readonly("adaptive_deferred", &rbf::AdaptiveLeafSweepResult::adaptive_deferred)
+        .def_readonly("adaptive_promoted", &rbf::AdaptiveLeafSweepResult::adaptive_promoted)
+        .def_readonly("unresolved_domains", &rbf::AdaptiveLeafSweepResult::unresolved_domains)
+        .def_readonly("seed_probe_count", &rbf::AdaptiveLeafSweepResult::seed_probe_count)
+        .def_readonly("seed_probe_free_count", &rbf::AdaptiveLeafSweepResult::seed_probe_free_count)
+        .def_readonly("seed_probe_box_covered", &rbf::AdaptiveLeafSweepResult::seed_probe_box_covered)
+        .def_readonly("seed_probe_anchor_success", &rbf::AdaptiveLeafSweepResult::seed_probe_anchor_success)
+        .def_readonly("seed_probe_main_accessible", &rbf::AdaptiveLeafSweepResult::seed_probe_main_accessible)
+        .def_readonly("p_box_covered", &rbf::AdaptiveLeafSweepResult::p_box_covered)
+        .def_readonly("p_anchor_success", &rbf::AdaptiveLeafSweepResult::p_anchor_success)
+        .def_readonly("p_main_accessible", &rbf::AdaptiveLeafSweepResult::p_main_accessible)
+        .def_readonly("leaf_sweep_ms", &rbf::AdaptiveLeafSweepResult::leaf_sweep_ms)
+        .def_readonly("adaptive_ms", &rbf::AdaptiveLeafSweepResult::adaptive_ms)
+        .def_readonly("coverage_probe_ms", &rbf::AdaptiveLeafSweepResult::coverage_probe_ms)
+        .def_readonly("total_ms", &rbf::AdaptiveLeafSweepResult::total_ms)
+        .def_readonly("partition_cell_count", &rbf::AdaptiveLeafSweepResult::partition_cell_count)
+        .def_readonly("partition_grid_cell_count", &rbf::AdaptiveLeafSweepResult::partition_grid_cell_count)
+        .def_readonly("partition_non_grid_cell_count", &rbf::AdaptiveLeafSweepResult::partition_non_grid_cell_count)
+        .def_readonly("partition_face_index_entries", &rbf::AdaptiveLeafSweepResult::partition_face_index_entries)
+        .def_readonly("partition_islands", &rbf::AdaptiveLeafSweepResult::partition_islands)
+        .def_readonly("partition_largest_island", &rbf::AdaptiveLeafSweepResult::partition_largest_island)
+        .def_readonly("diagnostics", &rbf::AdaptiveLeafSweepResult::diagnostics);
 
     py::class_<rbf::BestTightenOptions>(module, "BestTightenOptions")
         .def(py::init<>())
@@ -1095,6 +1230,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("split_reserved_leaf", &rbf::FindFreeBoxOptions::split_reserved_leaf)
         .def_readwrite("split_unknown_leaf", &rbf::FindFreeBoxOptions::split_unknown_leaf)
         .def_readwrite("reject_seed_collision", &rbf::FindFreeBoxOptions::reject_seed_collision)
+        .def_readwrite("skip_existing_cover_check", &rbf::FindFreeBoxOptions::skip_existing_cover_check)
         .def_readwrite("split", &rbf::FindFreeBoxOptions::split);
 
     py::class_<rbf::GrowerConfig::DepthStage>(module, "GrowerDepthStage")
@@ -1443,6 +1579,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readonly("certified_box_length", &rbf::QueryResult::certified_box_length)
         .def_readonly("provisional_audited_length", &rbf::QueryResult::provisional_audited_length)
         .def_readonly("segment_edge_length", &rbf::QueryResult::segment_edge_length)
+        .def_readonly("partition_cells_used", &rbf::QueryResult::partition_cells_used)
+        .def_readonly("partition_search_ms", &rbf::QueryResult::partition_search_ms)
+        .def_readonly("partition_repair_ms", &rbf::QueryResult::partition_repair_ms)
+        .def_readonly("non_grid_cells_used", &rbf::QueryResult::non_grid_cells_used)
+        .def_readonly("residual_segment_fraction", &rbf::QueryResult::residual_segment_fraction)
         .def_readonly("remaining_unsafe_assumptions", &rbf::QueryResult::remaining_unsafe_assumptions);
 
     py::class_<rbf::RBFPlanningForest>(module, "RBFPlanningForest")
@@ -1490,6 +1631,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              py::arg("config") = rbf::LeafSweepRefineConfig{},
              py::arg("priority_points") = std::vector<std::vector<double>>{},
              py::arg("offline_anchor_points") = std::vector<std::vector<double>>{})
+        .def("build_adaptive_deep_leaf_sweep_cover",
+             [](rbf::RBFPlanningForest& forest,
+                const std::vector<rbf::Obstacle>& obstacles,
+                const rbf::AdaptiveLeafSweepConfig& config) {
+                 return forest.build_adaptive_deep_leaf_sweep_cover(obstacles, config);
+             },
+             py::arg("obstacles"),
+             py::arg("config") = rbf::AdaptiveLeafSweepConfig{})
         .def("oracle_counters",
              [](const rbf::RBFPlanningForest& forest) {
                  const rbf::OracleCounters* counters = forest.oracle_counters();
@@ -4223,6 +4372,468 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("samples_per_batch") = -1,
         py::arg("rewire_factor") = -1.0,
         py::arg("stop_on_solution_improvement") = true,
+        py::arg("use_k_nearest") = -1,
+        py::arg("pruning") = -1,
+        py::arg("prune_threshold_fraction") = -1.0,
+        py::arg("delay_rewiring_until_initial_solution") = -1,
+        py::arg("just_in_time_sampling") = -1,
+        py::arg("drop_samples_on_prune") = -1,
+        py::arg("approximate_solutions") = -1,
+        py::arg("strict_queue_ordering") = -1,
+        py::arg("cascading_rewirings") = -1,
+        py::arg("initial_inflation_factor") = -1.0,
+        py::arg("inflation_scaling_parameter") = -1.0,
+        py::arg("truncation_scaling_parameter") = -1.0,
+        py::arg("allowed_failed_sampling_attempts") = -1);
+
+    module.def("ompl_cspace_rrt_connect_path",
+        [](const std::vector<std::vector<double>>& limits,
+           const std::vector<std::vector<double>>& obstacles,
+           const std::vector<double>& start,
+           const std::vector<double>& goal,
+           double timeout_ms,
+           double range,
+           double segment_step,
+           double simplify_time_s,
+           int seed) {
+            namespace ob = ompl::base;
+            namespace og = ompl::geometric;
+            ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
+            py::dict result;
+            const int dimension = validate_cspace_limits(limits);
+            validate_cspace_vector(start, dimension, "start");
+            validate_cspace_vector(goal, dimension, "goal");
+            const auto t0 = std::chrono::steady_clock::now();
+            if (!cspace_vector_valid(start, dimension, obstacles) || !cspace_vector_valid(goal, dimension, obstacles)) {
+                const double solve_s = ompl_elapsed_s(t0);
+                result["ok"] = false;
+                result["reason"] = "endpoint_collision";
+                result["status"] = "endpoint_collision";
+                result["solve_s"] = solve_s;
+                result["simplify_s"] = 0.0;
+                result["t_s"] = solve_s;
+                result["path"] = std::vector<std::vector<double>>{};
+                result["nodes"] = 0;
+                return result;
+            }
+
+            const auto base_seed = normalize_seed(seed);
+            auto space = make_cspace_ompl_space(limits);
+            configure_deterministic_state_sampler(space, mix_seed(base_seed, 0x43525253U));
+            og::SimpleSetup setup(space);
+            setup.setStateValidityChecker([obstacles, dimension](const ob::State* state) {
+                const auto* vector_state = state->as<ob::RealVectorStateSpace::StateType>();
+                return cspace_point_valid(vector_state->values, dimension, obstacles);
+            });
+            const double maximum_extent = std::max(space->getMaximumExtent(), 1e-9);
+            const double checking_resolution = std::clamp(std::max(segment_step, 1e-6) / maximum_extent, 1e-6, 0.05);
+            setup.getSpaceInformation()->setStateValidityCheckingResolution(checking_resolution);
+
+            ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+            for (int dim = 0; dim < dimension; ++dim) {
+                q_start->values[dim] = start[static_cast<std::size_t>(dim)];
+                q_goal->values[dim] = goal[static_cast<std::size_t>(dim)];
+            }
+            setup.setStartAndGoalStates(q_start, q_goal);
+            auto planner = std::make_shared<SeededRRTConnect>(setup.getSpaceInformation());
+            planner->setLocalSeed(mix_seed(base_seed, 0x43525250U));
+            if (range > 0.0) {
+                planner->setRange(range);
+            }
+            setup.setPlanner(planner);
+
+            const double timeout_s = std::max(0.0, timeout_ms) / 1000.0;
+            const double ptc_interval_s = std::max(1e-3, std::min(0.05, timeout_s / 20.0));
+            ob::PlannerStatus status = setup.solve(ob::timedPlannerTerminationCondition(timeout_s, ptc_interval_s));
+            const double solve_s = ompl_elapsed_s(t0);
+            const bool exact_solution = status == ob::PlannerStatus::EXACT_SOLUTION;
+            bool ok = exact_solution;
+            double simplify_s = 0.0;
+            if (ok && simplify_time_s > 0.0) {
+                const auto simplify_start = std::chrono::steady_clock::now();
+                setup.simplifySolution(simplify_time_s);
+                simplify_s = ompl_elapsed_s(simplify_start);
+            }
+            std::vector<std::vector<double>> path;
+            if (ok && setup.haveSolutionPath()) {
+                path = path_from_problem_solution(setup.getProblemDefinition(), dimension);
+                ok = path.size() >= 2;
+            } else {
+                ok = false;
+            }
+            ob::PlannerData planner_data(setup.getSpaceInformation());
+            planner->getPlannerData(planner_data);
+            result["ok"] = ok;
+            result["reason"] = ok ? "connected" : std::string(status.asString());
+            result["status"] = std::string(status.asString());
+            result["exact_solution"] = exact_solution;
+            result["solve_s"] = solve_s;
+            result["simplify_s"] = simplify_s;
+            result["t_s"] = solve_s + simplify_s;
+            result["path"] = path;
+            result["nodes"] = static_cast<int>(planner_data.numVertices());
+            result["checking_resolution"] = checking_resolution;
+            result["planner"] = "OMPL_CSpace_RRTConnect";
+            return result;
+        },
+        py::arg("limits"),
+        py::arg("obstacles"),
+        py::arg("start"),
+        py::arg("goal"),
+        py::arg("timeout_ms") = 1000.0,
+        py::arg("range") = 0.35,
+        py::arg("segment_step") = 0.01,
+        py::arg("simplify_time_s") = 0.0,
+        py::arg("seed") = 42);
+
+    module.def("ompl_cspace_prm_multiquery",
+        [](const std::vector<std::vector<double>>& limits,
+           const std::vector<std::vector<double>>& obstacles,
+           const std::vector<std::vector<double>>& starts,
+           const std::vector<std::vector<double>>& goals,
+           double build_budget_s,
+           double query_budget_s,
+           double segment_step,
+           double simplify_time_s,
+           int seed,
+           int max_nearest_neighbors,
+           const std::string& planner_kind,
+           bool preload_query_endpoints) {
+            namespace ob = ompl::base;
+            namespace og = ompl::geometric;
+            ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
+            const auto base_seed = normalize_seed(seed);
+            py::dict result;
+            const int dimension = validate_cspace_limits(limits);
+            if (starts.empty() || starts.size() != goals.size()) {
+                throw std::invalid_argument("starts/goals must be non-empty and have the same length");
+            }
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                validate_cspace_vector(starts[index], dimension, "start");
+                validate_cspace_vector(goals[index], dimension, "goal");
+            }
+            auto endpoint_collision = [&](const std::vector<double>& q) {
+                return !cspace_vector_valid(q, dimension, obstacles);
+            };
+            auto space = make_cspace_ompl_space(limits);
+            configure_deterministic_state_sampler(space, mix_seed(base_seed, 0x43505253U));
+            auto si = std::make_shared<ob::SpaceInformation>(space);
+            si->setStateValidityChecker([obstacles, dimension](const ob::State* state) {
+                const auto* vector_state = state->as<ob::RealVectorStateSpace::StateType>();
+                return cspace_point_valid(vector_state->values, dimension, obstacles);
+            });
+            const double maximum_extent = std::max(space->getMaximumExtent(), 1e-9);
+            const double checking_resolution = std::clamp(std::max(segment_step, 1e-6) / maximum_extent, 1e-6, 0.05);
+            si->setStateValidityCheckingResolution(checking_resolution);
+            si->setup();
+            auto problem = std::make_shared<ob::ProblemDefinition>(si);
+            set_problem_query(problem, space, si, starts.front(), goals.front(), dimension);
+            std::shared_ptr<og::PRM> planner;
+            std::shared_ptr<SeededPRM> seeded_prm;
+            std::shared_ptr<SeededPRMstar> seeded_prmstar;
+            const bool use_prmstar = planner_kind == "prmstar" || planner_kind == "PRMstar" || planner_kind == "PRM*";
+            if (use_prmstar) {
+                seeded_prmstar = std::make_shared<SeededPRMstar>(si);
+                seeded_prmstar->setLocalSeed(mix_seed(base_seed, 0x43505250U));
+                planner = seeded_prmstar;
+            } else {
+                seeded_prm = std::make_shared<SeededPRM>(si);
+                seeded_prm->setLocalSeed(mix_seed(base_seed, 0x43505250U));
+                planner = seeded_prm;
+            }
+            if (!use_prmstar && max_nearest_neighbors > 0) {
+                planner->setMaxNearestNeighbors(static_cast<unsigned int>(max_nearest_neighbors));
+            }
+            planner->setProblemDefinition(problem);
+            planner->setup();
+
+            const auto build_start = std::chrono::steady_clock::now();
+            if (preload_query_endpoints) {
+                for (std::size_t index = 0; index < starts.size(); ++index) {
+                    ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+                    for (int dim = 0; dim < dimension; ++dim) {
+                        q_start->values[dim] = starts[index][static_cast<std::size_t>(dim)];
+                        q_goal->values[dim] = goals[index][static_cast<std::size_t>(dim)];
+                    }
+                    if (use_prmstar) {
+                        seeded_prmstar->addMilestoneFromState(q_start.get());
+                        seeded_prmstar->addMilestoneFromState(q_goal.get());
+                    } else {
+                        seeded_prm->addMilestoneFromState(q_start.get());
+                        seeded_prm->addMilestoneFromState(q_goal.get());
+                    }
+                }
+            }
+            planner->constructRoadmap(ob::timedPlannerTerminationCondition(std::max(0.0, build_budget_s)));
+            const double build_s = ompl_elapsed_s(build_start);
+
+            py::list query_results;
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                py::dict row;
+                row["index"] = static_cast<int>(index);
+                if (endpoint_collision(starts[index]) || endpoint_collision(goals[index])) {
+                    row["ok"] = false;
+                    row["reason"] = "endpoint_collision";
+                    row["status"] = "endpoint_collision";
+                    row["solve_s"] = 0.0;
+                    row["simplify_s"] = 0.0;
+                    row["t_s"] = 0.0;
+                    row["path"] = std::vector<std::vector<double>>{};
+                    query_results.append(row);
+                    continue;
+                }
+                planner->clearQuery();
+                set_problem_query(problem, space, si, starts[index], goals[index], dimension);
+                const auto query_start = std::chrono::steady_clock::now();
+                ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+                for (int dim = 0; dim < dimension; ++dim) {
+                    q_start->values[dim] = starts[index][static_cast<std::size_t>(dim)];
+                    q_goal->values[dim] = goals[index][static_cast<std::size_t>(dim)];
+                }
+                if (use_prmstar) {
+                    seeded_prmstar->addMilestoneFromState(q_start.get());
+                    seeded_prmstar->addMilestoneFromState(q_goal.get());
+                } else {
+                    seeded_prm->addMilestoneFromState(q_start.get());
+                    seeded_prm->addMilestoneFromState(q_goal.get());
+                }
+                ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
+                bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
+                const double solve_s = ompl_elapsed_s(query_start);
+                double simplify_s = 0.0;
+                if (ok && simplify_time_s > 0.0) {
+                    auto path_ptr = problem->getSolutionPath();
+                    auto geometric_path = std::dynamic_pointer_cast<og::PathGeometric>(path_ptr);
+                    if (geometric_path) {
+                        const auto simplify_start = std::chrono::steady_clock::now();
+                        og::PathSimplifier simplifier(si);
+                        simplifier.simplify(*geometric_path, std::max(0.0, simplify_time_s));
+                        simplify_s = ompl_elapsed_s(simplify_start);
+                    }
+                }
+                auto path = ok ? path_from_problem_solution(problem, dimension) : std::vector<std::vector<double>>{};
+                if (path.size() < 2) {
+                    ok = false;
+                }
+                row["ok"] = ok;
+                row["reason"] = ok ? "connected" : std::string(status.asString());
+                row["status"] = std::string(status.asString());
+                row["solve_s"] = solve_s;
+                row["simplify_s"] = simplify_s;
+                row["t_s"] = solve_s + simplify_s;
+                row["path"] = path;
+                query_results.append(row);
+            }
+            ob::PlannerData planner_data(si);
+            planner->getPlannerData(planner_data);
+            result["ok"] = true;
+            result["planner"] = use_prmstar ? "OMPL_CSpace_PRMstar" : "OMPL_CSpace_PRM";
+            result["build_s"] = build_s;
+            result["nodes"] = static_cast<int>(planner_data.numVertices());
+            result["checking_resolution"] = checking_resolution;
+            result["preload_query_endpoints"] = preload_query_endpoints;
+            result["queries"] = query_results;
+            return result;
+        },
+        py::arg("limits"),
+        py::arg("obstacles"),
+        py::arg("starts"),
+        py::arg("goals"),
+        py::arg("build_budget_s") = 2.0,
+        py::arg("query_budget_s") = 4.0,
+        py::arg("segment_step") = 0.01,
+        py::arg("simplify_time_s") = 0.01,
+        py::arg("seed") = 42,
+        py::arg("max_nearest_neighbors") = 128,
+        py::arg("planner_kind") = "prm",
+        py::arg("preload_query_endpoints") = true);
+
+    module.def("ompl_cspace_bitstar_trace",
+        [](const std::vector<std::vector<double>>& limits,
+           const std::vector<std::vector<double>>& obstacles,
+           const std::vector<double>& start,
+           const std::vector<double>& goal,
+           double timeout_ms,
+           double checkpoint_interval_ms,
+           double segment_step,
+           int seed,
+           int samples_per_batch,
+           double rewire_factor,
+           bool stop_on_solution_improvement,
+           int use_k_nearest,
+           int pruning,
+           double prune_threshold_fraction,
+           int delay_rewiring_until_initial_solution,
+           int just_in_time_sampling,
+           int drop_samples_on_prune,
+           int approximate_solutions,
+           int strict_queue_ordering,
+           int cascading_rewirings,
+           double initial_inflation_factor,
+           double inflation_scaling_parameter,
+           double truncation_scaling_parameter,
+           int allowed_failed_sampling_attempts) {
+            namespace ob = ompl::base;
+            namespace og = ompl::geometric;
+            ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
+            const int dimension = validate_cspace_limits(limits);
+            validate_cspace_vector(start, dimension, "start");
+            validate_cspace_vector(goal, dimension, "goal");
+            const auto t0 = std::chrono::steady_clock::now();
+            py::dict result;
+            py::list checkpoints;
+            if (!cspace_vector_valid(start, dimension, obstacles) || !cspace_vector_valid(goal, dimension, obstacles)) {
+                const double solve_s = ompl_elapsed_s(t0);
+                result["ok"] = false;
+                result["reason"] = "endpoint_collision";
+                result["status"] = "endpoint_collision";
+                result["solve_s"] = solve_s;
+                result["simplify_s"] = 0.0;
+                result["t_s"] = solve_s;
+                result["path"] = std::vector<std::vector<double>>{};
+                result["nodes"] = 0;
+                result["checkpoints"] = checkpoints;
+                return result;
+            }
+
+            const auto base_seed = normalize_seed(seed);
+            auto space = make_cspace_ompl_space(limits);
+            configure_deterministic_state_sampler(space, mix_seed(base_seed, 0x43424953U));
+            og::SimpleSetup setup(space);
+            auto si = setup.getSpaceInformation();
+            si->setStateValidityChecker([obstacles, dimension](const ob::State* state) {
+                const auto* vector_state = state->as<ob::RealVectorStateSpace::StateType>();
+                return cspace_point_valid(vector_state->values, dimension, obstacles);
+            });
+            const double maximum_extent = std::max(space->getMaximumExtent(), 1e-9);
+            const double checking_resolution = std::clamp(std::max(segment_step, 1e-6) / maximum_extent, 1e-6, 0.05);
+            si->setStateValidityCheckingResolution(checking_resolution);
+
+            ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+            for (int dim = 0; dim < dimension; ++dim) {
+                q_start->values[dim] = start[static_cast<std::size_t>(dim)];
+                q_goal->values[dim] = goal[static_cast<std::size_t>(dim)];
+            }
+            setup.setStartAndGoalStates(q_start, q_goal);
+            setup.setOptimizationObjective(std::make_shared<ob::PathLengthOptimizationObjective>(si));
+            auto planner = std::make_shared<SeededBITstar>(si);
+            planner->setLocalSeed(mix_seed(base_seed, 0x43424950U));
+            configure_bitstar_planner(
+                planner,
+                samples_per_batch,
+                rewire_factor,
+                stop_on_solution_improvement,
+                use_k_nearest,
+                pruning,
+                prune_threshold_fraction,
+                delay_rewiring_until_initial_solution,
+                just_in_time_sampling,
+                drop_samples_on_prune,
+                approximate_solutions,
+                strict_queue_ordering,
+                cascading_rewirings,
+                initial_inflation_factor,
+                inflation_scaling_parameter,
+                truncation_scaling_parameter,
+                allowed_failed_sampling_attempts);
+            setup.setPlanner(planner);
+
+            const double timeout_s = std::max(0.0, timeout_ms) / 1000.0;
+            const double interval_s = std::max(1e-3, checkpoint_interval_ms / 1000.0);
+            std::string last_status = "not_run";
+            bool last_exact = false;
+
+            auto append_checkpoint = [&](double target_s) {
+                const double elapsed_s = ompl_elapsed_s(t0);
+                std::vector<std::vector<double>> path;
+                bool ok = false;
+                if (setup.haveSolutionPath()) {
+                    path = path_from_problem_solution(setup.getProblemDefinition(), dimension);
+                    ok = path.size() >= 2;
+                }
+                py::dict row;
+                row["checkpoint_s"] = target_s;
+                row["elapsed_s"] = elapsed_s;
+                row["ok"] = ok;
+                row["reason"] = ok ? "connected" : last_status;
+                row["status"] = ok ? "solution" : last_status;
+                row["exact_solution"] = ok || last_exact;
+                row["solve_s"] = elapsed_s;
+                row["simplify_s"] = 0.0;
+                row["t_s"] = elapsed_s;
+                row["path"] = path;
+                row["nodes"] = 0;
+                row["iterations"] = static_cast<int>(planner->numIterations());
+                row["batches"] = static_cast<int>(planner->numBatches());
+                checkpoints.append(row);
+            };
+
+            if (timeout_s <= 0.0) {
+                append_checkpoint(0.0);
+            } else {
+                for (double target_s = interval_s; target_s < timeout_s - 1e-9; target_s += interval_s) {
+                    const double clamped_target_s = std::min(target_s, timeout_s);
+                    while (ompl_elapsed_s(t0) < clamped_target_s - 1e-6) {
+                        const double remaining_s = std::max(1e-5, clamped_target_s - ompl_elapsed_s(t0));
+                        const double ptc_interval_s = std::max(1e-3, std::min(0.05, remaining_s / 20.0));
+                        const auto before_s = ompl_elapsed_s(t0);
+                        ob::PlannerStatus status = setup.solve(ob::timedPlannerTerminationCondition(remaining_s, ptc_interval_s));
+                        last_status = std::string(status.asString());
+                        last_exact = status == ob::PlannerStatus::EXACT_SOLUTION;
+                        if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
+                            break;
+                        }
+                    }
+                    append_checkpoint(clamped_target_s);
+                }
+                while (ompl_elapsed_s(t0) < timeout_s - 1e-6) {
+                    const double remaining_s = std::max(1e-5, timeout_s - ompl_elapsed_s(t0));
+                    const double ptc_interval_s = std::max(1e-3, std::min(0.05, remaining_s / 20.0));
+                    const auto before_s = ompl_elapsed_s(t0);
+                    ob::PlannerStatus status = setup.solve(ob::timedPlannerTerminationCondition(remaining_s, ptc_interval_s));
+                    last_status = std::string(status.asString());
+                    last_exact = status == ob::PlannerStatus::EXACT_SOLUTION;
+                    if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
+                        break;
+                    }
+                }
+                append_checkpoint(timeout_s);
+            }
+
+            std::vector<std::vector<double>> final_path;
+            bool ok = false;
+            if (setup.haveSolutionPath()) {
+                final_path = path_from_problem_solution(setup.getProblemDefinition(), dimension);
+                ok = final_path.size() >= 2;
+            }
+            const double solve_s = ompl_elapsed_s(t0);
+            result["ok"] = ok;
+            result["reason"] = ok ? "connected" : last_status;
+            result["status"] = ok ? "solution" : last_status;
+            result["exact_solution"] = ok || last_exact;
+            result["solve_s"] = solve_s;
+            result["simplify_s"] = 0.0;
+            result["t_s"] = solve_s;
+            result["path"] = final_path;
+            result["nodes"] = 0;
+            result["checking_resolution"] = checking_resolution;
+            result["planner"] = "OMPL_CSpace_BITstar";
+            result["iterations"] = static_cast<int>(planner->numIterations());
+            result["batches"] = static_cast<int>(planner->numBatches());
+            result["checkpoints"] = checkpoints;
+            return result;
+        },
+        py::arg("limits"),
+        py::arg("obstacles"),
+        py::arg("start"),
+        py::arg("goal"),
+        py::arg("timeout_ms") = 1000.0,
+        py::arg("checkpoint_interval_ms") = 10.0,
+        py::arg("segment_step") = 0.01,
+        py::arg("seed") = 42,
+        py::arg("samples_per_batch") = -1,
+        py::arg("rewire_factor") = -1.0,
+        py::arg("stop_on_solution_improvement") = false,
         py::arg("use_k_nearest") = -1,
         py::arg("pruning") = -1,
         py::arg("prune_threshold_fraction") = -1.0,

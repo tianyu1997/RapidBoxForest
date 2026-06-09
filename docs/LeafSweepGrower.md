@@ -159,7 +159,8 @@ leaf_cfg = sbf.LeafSweepConfig()
 
 `pre_split_to_max_depth`
 
-实验项。提前把 active LECT split 到 `max_depth`。exp04 warm 场景实测变慢，不推荐。
+（已移除）该分支曾用于提前把 active LECT split 到 `max_depth`，在当前
+实验框架下已被弃用，不作为扫描参数，不建议在新实验中使用。
 
 `use_virtual_topology`
 

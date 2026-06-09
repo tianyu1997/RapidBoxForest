@@ -29,6 +29,11 @@ struct FindFreeBoxOptions {
 	bool split_unknown_leaf = true;
 	bool split_reserved_leaf = true;
 	bool reject_seed_collision = false;
+	bool record_diagnostics = true;
+	/// Skip the forest-level "seed already covered by an existing box" scan.
+	/// Only enable this when the caller has already checked coverage against the
+	/// current local box set/index immediately before invoking FFB.
+	bool skip_existing_cover_check = false;
 	double deadline_ms = 0.0;
 	OracleSplitOptions split;
 };

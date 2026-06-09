@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/adaptive_grid_partition.h>
 #include <SBF/connector.h>
 #include <SBF/grower.h>
 #include <SBF/leaf_sweep_grower.h>
@@ -248,6 +249,71 @@ struct LeafSweepRefineResult {
 	std::unordered_map<std::string, double> diagnostics;
 };
 
+struct AdaptiveLeafSweepConfig {
+	int shallow_start_depth = 8;
+	int shallow_max_depth = 14;
+	int target_max_depth = 50;
+	double time_budget_ms = 60000.0;
+	int node_budget = 0;
+	int threads = 8;
+	int validation_batch_size = 512;
+	double obstacle_cluster_gap = 1000.0;
+	bool use_virtual_topology = true;
+	bool parallel_virtual_validation = true;
+	bool store_group_results = false;
+	int defer_min_depth = 16;
+	double overlap_depth_threshold = 0.05;
+	double overlap_depth_min_threshold = 0.01;
+	double overlap_depth_decay_per_depth = 0.04;
+	double overlap_ratio_threshold = 0.0;
+	int seed_probe_count = 4096;
+	int seed_probe_rng_seed = 20260607;
+	bool seed_promote_uncovered = true;
+	int seed_anchor_probe_cap = 256;
+	int promotion_interval = 1024;
+	double max_merge_ms = 1500.0;
+	int max_merge_rounds = 2;
+	int max_merge_input_boxes = 100000;
+	int max_free_boxes = 50000;
+	int max_unresolved_domains = 100000;
+	std::string planning_backend = "partition_native";
+	int grid_target_depth = 0;
+	bool grid_face_index_enabled = true;
+	int grid_planning_max_expansions = 0;
+};
+
+struct AdaptiveLeafSweepResult {
+	LeafSweepResult leaf_sweep;
+	BuildProfile profile;
+	int shallow_free_count = 0;
+	int shallow_collision_count = 0;
+	int adaptive_free_added = 0;
+	int adaptive_validated = 0;
+	int adaptive_splits = 0;
+	int adaptive_deferred = 0;
+	int adaptive_promoted = 0;
+	int unresolved_domains = 0;
+	int seed_probe_count = 0;
+	int seed_probe_free_count = 0;
+	int seed_probe_box_covered = 0;
+	int seed_probe_anchor_success = 0;
+	int seed_probe_main_accessible = 0;
+	double p_box_covered = 0.0;
+	double p_anchor_success = 0.0;
+	double p_main_accessible = 0.0;
+	double leaf_sweep_ms = 0.0;
+	double adaptive_ms = 0.0;
+	double coverage_probe_ms = 0.0;
+	double total_ms = 0.0;
+	int partition_cell_count = 0;
+	int partition_grid_cell_count = 0;
+	int partition_non_grid_cell_count = 0;
+	int partition_face_index_entries = 0;
+	int partition_islands = 0;
+	int partition_largest_island = 0;
+	std::unordered_map<std::string, double> diagnostics;
+};
+
 enum class CorridorRefineMode : std::uint8_t {
 	LegacyBridge = 0,
 	BoxOnlyLongPath = 1,
@@ -299,6 +365,9 @@ public:
 		const LeafSweepRefineConfig& refine_config = {},
 		const std::vector<Eigen::VectorXd>& priority_points = {},
 		const std::vector<Eigen::VectorXd>& offline_anchor_points = {});
+	AdaptiveLeafSweepResult build_adaptive_deep_leaf_sweep_cover(
+		const std::vector<Obstacle>& obstacles,
+		const AdaptiveLeafSweepConfig& config = {});
 	/// Isolated FFB benchmark — no RRT, no grower, no adjacency.
 	/// Resets the oracle scene to @p obstacles, then calls ffb.find() once per
 	/// seed.  LECT evidence accumulates across repeated calls (same as build()).
@@ -384,15 +453,58 @@ private:
 								   bool allow_collision_shortcut) const;
 	int anchor_query_endpoint_box(const Eigen::Ref<const Eigen::VectorXd>& point,
 								  StageContext& context);
+	int locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
+								   bool nearest_if_outside) const;
+	bool box_only_path_connected_partition_first(int source_box_id,
+												 int target_box_id) const;
+	bool overlay_path_connected_partition_first(int source_box_id,
+											   int target_box_id) const;
+	bool partition_native_mode() const;
+	int island_count_partition_first() const;
 	int bridge_query_with_waypoint_path(const Eigen::Ref<const Eigen::VectorXd>& start,
 										const Eigen::Ref<const Eigen::VectorXd>& goal,
 										const std::vector<Eigen::VectorXd>& waypoint_path,
 										bool short_local_bridge,
 										const RRTConnectConfig& bridge_rrt,
-										int query_index = -1);
+										int query_index = -1,
+										bool allow_residual_segments = true);
+	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
+										   const Eigen::Ref<const Eigen::VectorXd>& goal,
+										   const std::vector<Eigen::VectorXd>& waypoint_path,
+										   const char* diagnostic_prefix,
+										   bool anchor_endpoints,
+										   bool skip_if_connected,
+										   int query_index = -1,
+										   BuildProfile* profile = nullptr);
 	void reset_oracle(Scene scene);
 	void reserve_existing_boxes();
 	void rebuild_adjacency();
+	void rebuild_adaptive_partition(const AdaptiveLeafSweepConfig& config, BuildProfile* profile);
+	void refresh_adaptive_partition_diagnostics(BuildProfile* profile) const;
+	void refresh_dynamic_partition_after_update(RebuildProfile& profile,
+												const char* diagnostic_prefix);
+	void refresh_dynamic_partition_after_append(RebuildProfile& profile,
+												std::size_t first_box_index,
+												const char* diagnostic_prefix);
+	void refresh_dynamic_partition_after_remove_append(RebuildProfile& profile,
+													   const std::unordered_set<int>& removed_box_ids,
+													   std::size_t first_box_index,
+													   const char* diagnostic_prefix);
+	int append_adaptive_partition_boxes(std::size_t first_box_index,
+										 BuildProfile* profile,
+										 const char* diagnostic_prefix);
+	int sync_adaptive_partition_segment_edges(BuildProfile* profile,
+											 const char* diagnostic_prefix);
+	int add_segment_edge_partition_first(int source_box_id,
+										 int target_box_id,
+										 std::vector<Eigen::VectorXd> waypoints,
+										 SegmentEdgeType type,
+										 int segment_resolution,
+										 SegmentEdgeValidation validation,
+										 bool strict_audit_required = false,
+										 int query_index = -1,
+										 BuildProfile* profile = nullptr,
+										 const char* diagnostic_prefix = nullptr);
 	void invalidate_query_cache() const;
 	const QueryGraphCache& query_cache() const;
 	int next_box_id() const;
@@ -429,11 +541,24 @@ private:
 	std::vector<BoxNode> raw_boxes_;
 	AdjacencyGraph adjacency_;
 	SegmentEdgeList segment_edges_;
+	std::unique_ptr<AdaptiveGridPartition> adaptive_partition_;
+	bool adaptive_partition_query_enabled_ = false;
+	bool has_adaptive_partition_config_ = false;
+	AdaptiveLeafSweepConfig last_adaptive_partition_config_;
 	std::vector<CachedCollisionBox> dynamic_collision_box_cache_;
 	BuildProfile last_build_;
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;
 	mutable bool query_cache_dirty_ = true;
+	struct PartitionLastQueryCache {
+		bool valid = false;
+		bool allow_collision_shortcut = true;
+		int active_query_index = -1;
+		Eigen::VectorXd start;
+		Eigen::VectorXd goal;
+		QueryResult result;
+	};
+	mutable PartitionLastQueryCache partition_last_query_cache_;
 };
 
 }  // namespace rbf

@@ -14,7 +14,8 @@ from experiments.common.sbf_import import import_sbf
 
 sbf = import_sbf()
 
-ENDPOINT_CLEARANCE_MARGIN_M = 0.24
+ENDPOINT_CLEARANCE_MARGIN_M = 0.12
+NARROW_ENDPOINT_CLEARANCE_MARGIN_M = 0.07
 FIXED_ROBOT_CLEARANCE_MARGIN_M = 0.025
 MAX_QUERY_L2 = 4.0
 SEGMENT_RESOLUTION = 96
@@ -25,18 +26,45 @@ BALANCED_PROBE_TIMEOUT_MS = 250.0
 BALANCED_PROBE_RANGE = 0.35
 BALANCED_PROBE_SEGMENT_STEP = 0.06
 BALANCED_PROBE_SIMPLIFY_TIME_S = 0.0
+TIMED_PROBE_RANGE = 0.35
+TIMED_PROBE_SEGMENT_STEP = 0.06
+TIMED_PROBE_SIMPLIFY_TIME_S = 0.0
+BITSTAR_PROBE_TIMEOUT_S = 0.50
+BITSTAR_PROBE_CHECKPOINT_INTERVAL_S = 0.005
+BITSTAR_PROBE_MIN_FIRST_SUCCESS_S = 0.10
+BITSTAR_PROBE_SAMPLES_PER_BATCH = 100
+BITSTAR_PROBE_REWIRE_FACTOR = 5.0
+TIMED_PROBE_TIMEOUT_WINDOWS_S = {
+    "easy": (0.0, 0.05),
+    "medium": (0.05, 0.20),
+    "hard": (0.20, 1.00),
+}
+NARROW_PASSAGE_TIMEOUT_WINDOWS_S = {
+    "easy": (0.02, 0.10),
+    "medium": (0.10, 0.40),
+    "hard": (0.40, 1.50),
+}
+DIRECT_OBSTRUCTION_FRACTION_WINDOWS = {
+    "easy": (0.02, 0.16),
+    "medium": (0.10, 0.35),
+    "hard": (0.22, 1.01),
+}
+BITSTAR_GATED_OBSTACLE_COUNTS = {"easy": 8, "medium": 12, "hard": 16}
+BITSTAR_GATED_OBSTRUCTION_TARGETS = {"easy": 0.18, "medium": 0.28, "hard": 0.40}
+BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M = 0.0
 DEFAULT_RANDOM_ROBOTS = "iiwa,ur5,panda"
 DEFAULT_RANDOM_DIFFICULTIES = "easy,medium,hard"
 DEFAULT_RANDOM_SCENE_SEEDS = 50
 DEFAULT_QUERIES_PER_SCENE = 10
 RANDOM_DIFFICULTY_ORDER = ("easy", "medium", "hard")
-RANDOM_OBSTACLE_COUNTS = {"easy": 4, "medium": 8, "hard": 12}
-RANDOM_OBSTACLE_SCALES = {"easy": 0.12, "medium": 0.16, "hard": 0.20}
+RANDOM_OBSTACLE_COUNTS = {"easy": 4, "medium": 10, "hard": 16}
+RANDOM_OBSTACLE_SCALES = {"easy": 0.12, "medium": 0.20, "hard": 0.26}
+NARROW_OBSTACLE_COUNTS = {"easy": 4, "medium": 8, "hard": 12}
 RANDOM_WORKSPACE_Z_MIN = 0.05
 RANDOM_WORKSPACE_Z_MAX = 0.90
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
-CATALOG_SCHEMA = "tro2026_random_scene_catalog_v6"
-READABLE_CATALOG_SCHEMAS = {CATALOG_SCHEMA, "tro2026_random_scene_catalog_v5"}
+CATALOG_SCHEMA = "tro2026_random_scene_catalog_v7"
+READABLE_CATALOG_SCHEMAS = {CATALOG_SCHEMA, "tro2026_random_scene_catalog_v6", "tro2026_random_scene_catalog_v5"}
 LECT_SAMPLE_DOMAIN = "full_robot_joint_limits"
 
 
@@ -173,6 +201,10 @@ def random_obstacle_count(difficulty: str) -> int:
     return RANDOM_OBSTACLE_COUNTS.get(difficulty, RANDOM_OBSTACLE_COUNTS["medium"])
 
 
+def narrow_obstacle_count(difficulty: str) -> int:
+    return NARROW_OBSTACLE_COUNTS.get(difficulty, NARROW_OBSTACLE_COUNTS["medium"])
+
+
 def random_obstacle_scale(difficulty: str) -> float:
     return RANDOM_OBSTACLE_SCALES.get(difficulty, RANDOM_OBSTACLE_SCALES["medium"])
 
@@ -185,6 +217,67 @@ def random_workspace_obstacle(rng: random.Random, base: float) -> Any:
     cy = rng.uniform(-0.65, 0.65)
     cz = rng.uniform(RANDOM_WORKSPACE_Z_MIN + hz, RANDOM_WORKSPACE_Z_MAX - hz)
     return make_aabb(cx, cy, cz, hx, hy, hz)
+
+
+def random_narrow_workspace_obstacle(rng: random.Random, base: float) -> Any:
+    kind = rng.randrange(4)
+    if kind == 0:
+        hx = rng.uniform(base * 0.25, base * 0.55)
+        hy = rng.uniform(base * 1.6, base * 3.0)
+        hz = rng.uniform(base * 1.3, base * 2.5)
+    elif kind == 1:
+        hx = rng.uniform(base * 1.6, base * 3.0)
+        hy = rng.uniform(base * 0.25, base * 0.55)
+        hz = rng.uniform(base * 1.3, base * 2.5)
+    elif kind == 2:
+        hx = rng.uniform(base * 1.0, base * 2.0)
+        hy = rng.uniform(base * 1.0, base * 2.0)
+        hz = rng.uniform(base * 0.35, base * 0.8)
+    else:
+        hx = rng.uniform(base * 0.8, base * 1.7)
+        hy = rng.uniform(base * 0.8, base * 1.7)
+        hz = rng.uniform(base * 0.8, base * 1.7)
+    hx = min(hx, 0.55)
+    hy = min(hy, 0.55)
+    hz = min(hz, 0.36)
+    cx = rng.uniform(-0.55, 0.75)
+    cy = rng.uniform(-0.65, 0.65)
+    cz = rng.uniform(RANDOM_WORKSPACE_Z_MIN + hz, RANDOM_WORKSPACE_Z_MAX - hz)
+    return make_aabb(cx, cy, cz, hx, hy, hz)
+
+
+def random_obstacle_near_workspace_path_config(rng: random.Random, base: float) -> Any:
+    hx = rng.uniform(max(0.025, base * 0.12), max(0.08, base * 0.45))
+    hy = rng.uniform(max(0.025, base * 0.12), max(0.08, base * 0.45))
+    hz = rng.uniform(max(0.025, base * 0.12), max(0.08, base * 0.45))
+    cx = rng.uniform(-0.85, 0.90)
+    cy = rng.uniform(-0.85, 0.85)
+    cz = rng.uniform(0.02 + hz, 1.00 - hz)
+    return make_aabb(cx, cy, cz, hx, hy, hz)
+
+
+def random_obstacle_colliding_with_path_config(
+    robot_name: str,
+    robot: Any,
+    start: list[float],
+    goal: list[float],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts: int = 512,
+) -> Any | None:
+    for _ in range(max(1, int(attempts))):
+        alpha = rng.uniform(0.18, 0.82)
+        q = interpolate(start, goal, alpha)
+        candidate = random_obstacle_near_workspace_path_config(rng, base)
+        if not obstacle_clears_fixed_robot(robot_name, candidate):
+            continue
+        if not sbf.check_config_collision(robot, [candidate], q):
+            continue
+        if not endpoint_pair_has_clearance(robot, [candidate], start, goal, margin=endpoint_clearance_margin_m):
+            continue
+        return candidate
+    return None
 
 
 def obstacle_prefix(obstacles: list[Any], difficulty: str) -> list[Any]:
@@ -371,6 +464,23 @@ def path_is_collision_free(robot: Any, obstacles: list[Any], path: list[list[flo
     return all(segment_is_collision_free(robot, obstacles, path[index], path[index + 1], resolution) for index in range(len(path) - 1))
 
 
+def direct_obstruction_probe(robot: Any, obstacles: list[Any], start: list[float], goal: list[float], resolution: int = SEGMENT_RESOLUTION) -> dict[str, Any]:
+    steps = max(1, int(resolution))
+    hits = 0
+    for index in range(steps + 1):
+        if sbf.check_config_collision(robot, obstacles, interpolate(start, goal, index / steps)):
+            hits += 1
+    return {
+        "samples": int(steps + 1),
+        "collision_samples": int(hits),
+        "collision_fraction": float(hits) / float(steps + 1),
+    }
+
+
+def obstruction_window(difficulty: str) -> tuple[float, float]:
+    return DIRECT_OBSTRUCTION_FRACTION_WINDOWS.get(str(difficulty).lower(), DIRECT_OBSTRUCTION_FRACTION_WINDOWS["medium"])
+
+
 def scene_profile_uses_nested_prefixes(scene_profile: str) -> bool:
     return str(scene_profile).lower() in {
         "balanced",
@@ -380,6 +490,10 @@ def scene_profile_uses_nested_prefixes(scene_profile: str) -> bool:
         "balanced_probe",
         "comparable_probe",
         "paper_probe",
+        "timed_probe",
+        "timed",
+        "narrow_passage",
+        "narrow",
     }
 
 
@@ -392,6 +506,50 @@ def scene_profile_requires_balanced_probe(scene_profile: str) -> bool:
         "balanced_probe",
         "comparable_probe",
         "paper_probe",
+    }
+
+
+def scene_profile_requires_timed_probe(scene_profile: str) -> bool:
+    return str(scene_profile).lower() in {
+        "bitstar_gated",
+        "bitstar_gated_independent",
+        "timed_probe",
+        "timed_probe_independent",
+        "timed",
+        "timed_independent",
+        "narrow_passage",
+        "narrow_passage_independent",
+        "narrow",
+        "narrow_independent",
+    }
+
+
+def scene_profile_uses_narrow_construction(scene_profile: str) -> bool:
+    return str(scene_profile).lower() in {
+        "narrow_passage",
+        "narrow_passage_independent",
+        "narrow",
+        "narrow_independent",
+        "narrow_passage_strict_time",
+        "narrow_passage_independent_strict_time",
+        "narrow_strict_time",
+        "narrow_independent_strict_time",
+    }
+
+
+def scene_profile_uses_bitstar_gated_construction(scene_profile: str) -> bool:
+    return str(scene_profile).lower() in {
+        "bitstar_gated",
+        "bitstar_gated_independent",
+    }
+
+
+def scene_profile_requires_strict_time_probe(scene_profile: str) -> bool:
+    return str(scene_profile).lower() in {
+        "narrow_passage_strict_time",
+        "narrow_passage_independent_strict_time",
+        "narrow_strict_time",
+        "narrow_independent_strict_time",
     }
 
 
@@ -413,6 +571,214 @@ def scene_passes_balanced_probe(robot: Any, obstacles: list[Any], start: list[fl
     if not bool(result.get("ok")) or result.get("status") != "Exact solution":
         return False
     return path_is_collision_free(robot, obstacles, [list(point) for point in result.get("path", [])])
+
+
+def timed_probe_window_s(difficulty: str, *, strict_time: bool = False) -> tuple[float, float]:
+    windows = NARROW_PASSAGE_TIMEOUT_WINDOWS_S if strict_time else TIMED_PROBE_TIMEOUT_WINDOWS_S
+    return windows.get(str(difficulty).lower(), windows["medium"])
+
+
+def rrtconnect_timed_probe(
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    seed: int,
+    difficulty: str,
+    strict_time: bool = False,
+) -> dict[str, Any]:
+    min_s, max_s = timed_probe_window_s(difficulty, strict_time=bool(strict_time))
+    obstruction = direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)
+    obs_min, obs_max = obstruction_window(difficulty)
+    obstruction_in_window = (
+        float(obstruction["collision_fraction"]) >= float(obs_min) - 1e-12
+        and float(obstruction["collision_fraction"]) < float(obs_max) + 1e-12
+    )
+    # For medium/hard timed scenes, the intended difficulty is primarily
+    # narrow/obstructed workspace clearance. Avoid spending an OMPL probe on
+    # candidates that are visibly outside the requested obstruction band.
+    if (not strict_time) and str(difficulty).lower() != "easy" and not obstruction_in_window:
+        return {
+            "planner": "OMPL_RRTConnect",
+            "ok": False,
+            "status": "direct_obstruction_out_of_window",
+            "solve_s": math.nan,
+            "min_s": float(min_s),
+            "max_s": float(max_s),
+            "in_window": False,
+            "accepted_by": "rejected",
+            "nodes": 0,
+            "range": float(TIMED_PROBE_RANGE),
+            "segment_step": float(TIMED_PROBE_SEGMENT_STEP),
+            "simplify_time_s": float(TIMED_PROBE_SIMPLIFY_TIME_S),
+            "direct_obstruction": obstruction,
+            "direct_obstruction_min": float(obs_min),
+            "direct_obstruction_max": float(obs_max),
+        }
+    try:
+        result = sbf.ompl_rrt_connect_path(
+            robot,
+            obstacles,
+            start,
+            goal,
+            max_s * 1000.0,
+            TIMED_PROBE_RANGE,
+            TIMED_PROBE_SEGMENT_STEP,
+            TIMED_PROBE_SIMPLIFY_TIME_S,
+            seed,
+        )
+    except AttributeError:
+        return {
+            "planner": "OMPL_RRTConnect",
+            "ok": True,
+            "status": "binding_unavailable",
+            "solve_s": math.nan,
+            "min_s": float(min_s),
+            "max_s": float(max_s),
+            "in_window": True,
+        }
+    solve_s = float(result.get("solve_s", result.get("t_s", math.nan)) or math.nan)
+    time_in_window = (
+        math.isfinite(solve_s)
+        and solve_s >= float(min_s) - 1e-9
+        and solve_s <= float(max_s) + 1e-9
+    )
+    exact_ok = (
+        bool(result.get("ok"))
+        and str(result.get("status", "")) == "Exact solution"
+        and math.isfinite(solve_s)
+        and path_is_collision_free(robot, obstacles, [list(point) for point in result.get("path", [])])
+    )
+    accepted_by = "time_window" if exact_ok and time_in_window else ("direct_obstruction" if exact_ok and obstruction_in_window and not strict_time else "rejected")
+    return {
+        "planner": "OMPL_RRTConnect",
+        "ok": bool(exact_ok and (time_in_window or (obstruction_in_window and not strict_time))),
+        "status": str(result.get("status", "")),
+        "solve_s": solve_s,
+        "min_s": float(min_s),
+        "max_s": float(max_s),
+        "in_window": bool(time_in_window),
+        "accepted_by": accepted_by,
+        "nodes": int(result.get("nodes", 0) or 0),
+        "range": float(TIMED_PROBE_RANGE),
+        "segment_step": float(TIMED_PROBE_SEGMENT_STEP),
+        "simplify_time_s": float(TIMED_PROBE_SIMPLIFY_TIME_S),
+        "strict_time": bool(strict_time),
+        "direct_obstruction": obstruction,
+        "direct_obstruction_min": float(obs_min),
+        "direct_obstruction_max": float(obs_max),
+    }
+
+
+def bitstar_first_solution_probe(
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    seed: int,
+    min_first_success_s: float = BITSTAR_PROBE_MIN_FIRST_SUCCESS_S,
+    timeout_s: float = BITSTAR_PROBE_TIMEOUT_S,
+    checkpoint_interval_s: float = BITSTAR_PROBE_CHECKPOINT_INTERVAL_S,
+) -> dict[str, Any]:
+    try:
+        result = sbf.ompl_bitstar_trace(
+            robot,
+            obstacles,
+            start,
+            goal,
+            float(timeout_s) * 1000.0,
+            float(checkpoint_interval_s) * 1000.0,
+            float(TIMED_PROBE_SEGMENT_STEP),
+            int(seed),
+            int(BITSTAR_PROBE_SAMPLES_PER_BATCH),
+            float(BITSTAR_PROBE_REWIRE_FACTOR),
+            False,
+        )
+    except AttributeError:
+        return {
+            "planner": "OMPL_BITstar_trace",
+            "ok": False,
+            "status": "binding_unavailable",
+            "timeout_s": float(timeout_s),
+            "checkpoint_interval_s": float(checkpoint_interval_s),
+            "min_first_success_s": float(min_first_success_s),
+        }
+
+    checkpoints = [dict(item) for item in result.get("checkpoints", [])]
+    first: dict[str, Any] | None = None
+    for checkpoint in checkpoints:
+        if not bool(checkpoint.get("ok")):
+            continue
+        path = [list(point) for point in checkpoint.get("path", [])]
+        if path_is_collision_free(robot, obstacles, path):
+            first = checkpoint
+            break
+
+    first_checkpoint_s = math.nan
+    first_elapsed_s = math.nan
+    if first is not None:
+        first_checkpoint_s = float(first.get("checkpoint_s", math.nan))
+        first_elapsed_s = float(first.get("elapsed_s", first_checkpoint_s))
+    time_ok = math.isfinite(first_checkpoint_s) and first_checkpoint_s >= float(min_first_success_s) - 1e-12
+    return {
+        "planner": "OMPL_BITstar_trace",
+        "ok": bool(time_ok),
+        "status": str(result.get("status", "")) if first is not None else "no_valid_solution_before_timeout",
+        "timeout_s": float(timeout_s),
+        "checkpoint_interval_s": float(checkpoint_interval_s),
+        "segment_step": float(TIMED_PROBE_SEGMENT_STEP),
+        "seed": int(seed),
+        "samples_per_batch": int(BITSTAR_PROBE_SAMPLES_PER_BATCH),
+        "rewire_factor": float(BITSTAR_PROBE_REWIRE_FACTOR),
+        "min_first_success_s": float(min_first_success_s),
+        "first_success_checkpoint_s": first_checkpoint_s,
+        "first_success_elapsed_s": first_elapsed_s,
+        "checkpoint_count": len(checkpoints),
+        "success_checkpoint_count": sum(1 for row in checkpoints if bool(row.get("ok"))),
+    }
+
+
+def timed_difficulty_probe(
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    seed: int,
+    difficulty: str,
+    strict_time: bool = False,
+) -> dict[str, Any]:
+    rrt_probe = rrtconnect_timed_probe(robot, obstacles, start, goal, seed, difficulty, strict_time=bool(strict_time))
+    if not bool(rrt_probe.get("ok")):
+        return rrt_probe
+    bitstar_probe = bitstar_first_solution_probe(
+        robot,
+        obstacles,
+        start,
+        goal,
+        int(seed) + 524287,
+    )
+    combined = dict(rrt_probe)
+    combined["ok"] = bool(rrt_probe.get("ok")) and bool(bitstar_probe.get("ok"))
+    combined["planner"] = "OMPL_RRTConnect+BITstar"
+    combined["bitstar_probe"] = bitstar_probe
+    combined["bitstar_first_success_checkpoint_s"] = bitstar_probe.get("first_success_checkpoint_s")
+    combined["bitstar_min_first_success_s"] = float(BITSTAR_PROBE_MIN_FIRST_SUCCESS_S)
+    if not bool(bitstar_probe.get("ok")):
+        combined["accepted_by"] = "rejected_bitstar_first_success"
+        combined["status"] = "bitstar_first_success_too_fast_or_missing"
+    return combined
+
+
+def scene_passes_timed_probe(
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    seed: int,
+    difficulty: str,
+    strict_time: bool = False,
+) -> bool:
+    return bool(timed_difficulty_probe(robot, obstacles, start, goal, seed, difficulty, strict_time=bool(strict_time)).get("ok"))
 
 
 def sample_free_pair(
@@ -477,19 +843,258 @@ def append_random_scene_obstacle(
     base: float,
     require_direct_blocker: bool,
     max_attempts: int = 5000,
+    endpoint_clearance_margin_m: float = ENDPOINT_CLEARANCE_MARGIN_M,
 ) -> bool:
     for _ in range(max_attempts):
         candidate = random_workspace_obstacle(rng, base)
         if not obstacle_clears_fixed_robot(robot_name, candidate):
             continue
         proposed = [*obstacles, candidate]
-        if not endpoint_pair_has_clearance(robot, proposed, start, goal):
+        if not endpoint_pair_has_clearance(robot, proposed, start, goal, margin=endpoint_clearance_margin_m):
             continue
         if require_direct_blocker and segment_is_collision_free(robot, [candidate], start, goal):
             continue
         obstacles.append(candidate)
         return True
     return False
+
+
+def append_best_obstructing_obstacle(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    rng: random.Random,
+    base: float,
+    candidate_count: int = 256,
+    endpoint_clearance_margin_m: float = ENDPOINT_CLEARANCE_MARGIN_M,
+) -> bool:
+    current_fraction = float(direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)["collision_fraction"])
+    best: tuple[float, Any] | None = None
+    for _ in range(max(1, int(candidate_count))):
+        if rng.random() < 0.70:
+            candidate = random_obstacle_colliding_with_path_config(
+                robot_name,
+                robot,
+                start,
+                goal,
+                rng,
+                base,
+                endpoint_clearance_margin_m,
+                attempts=64,
+            )
+            if candidate is None:
+                continue
+        elif rng.random() < 0.85:
+            candidate = random_narrow_workspace_obstacle(rng, base)
+        else:
+            candidate = random_workspace_obstacle(rng, base)
+        if not obstacle_clears_fixed_robot(robot_name, candidate):
+            continue
+        proposed = [*obstacles, candidate]
+        if not endpoint_pair_has_clearance(robot, proposed, start, goal, margin=endpoint_clearance_margin_m):
+            continue
+        probe = direct_obstruction_probe(robot, proposed, start, goal, SEGMENT_RESOLUTION)
+        fraction = float(probe["collision_fraction"])
+        gain = fraction - current_fraction
+        if gain <= 0.0:
+            continue
+        # Prefer obstacles that enlarge the blocked interval, but keep a small
+        # random tiebreaker so repeated seeds do not collapse to identical walls.
+        score = gain + 1e-4 * rng.random()
+        if best is None or score > best[0]:
+            best = (score, candidate)
+    if best is None:
+        return False
+    obstacles.append(best[1])
+    return True
+
+
+def append_path_blocker(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts: int = 2048,
+) -> bool:
+    current_fraction = float(direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)["collision_fraction"])
+    for _ in range(max(1, int(attempts))):
+        candidate = random_obstacle_colliding_with_path_config(
+            robot_name,
+            robot,
+            start,
+            goal,
+            rng,
+            base,
+            endpoint_clearance_margin_m,
+            attempts=1,
+        )
+        if candidate is None:
+            continue
+        proposed = [*obstacles, candidate]
+        fraction = float(direct_obstruction_probe(robot, proposed, start, goal, SEGMENT_RESOLUTION)["collision_fraction"])
+        if fraction <= current_fraction:
+            continue
+        obstacles.append(candidate)
+        return True
+    return False
+
+
+def make_narrow_passage_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, strict_time: bool = False) -> SceneSpec:
+    robot = make_robot(robot_name)
+    last_error: Exception | None = None
+    target = narrow_obstacle_count(difficulty)
+    base = random_obstacle_scale(difficulty)
+    for scene_try in range(max(1, int(max_scene_tries))):
+        rng = random.Random(seed + 1000003 * scene_try)
+        obstacles: list[Any] = []
+        try:
+            start, goal, canonical_start, canonical_goal, shift, sector = sample_free_pair_with_canonical_record(
+                robot,
+                obstacles,
+                rng,
+                min_l2=2.0,
+                clearance_margin_m=NARROW_ENDPOINT_CLEARANCE_MARGIN_M,
+            )
+            obs_min, obs_max = obstruction_window(difficulty)
+            min_count = max(2, min(target, target // 2))
+            while len(obstacles) < target:
+                current_obstruction = direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)
+                if not append_path_blocker(
+                    robot_name,
+                    robot,
+                    obstacles,
+                    start,
+                    goal,
+                    rng,
+                    base,
+                    endpoint_clearance_margin_m=NARROW_ENDPOINT_CLEARANCE_MARGIN_M,
+                    attempts=2048,
+                ):
+                    if len(obstacles) >= min_count and float(current_obstruction["collision_fraction"]) >= float(obs_min):
+                        break
+                    raise RuntimeError("could not add an obstructing obstacle")
+            if not obstacles:
+                raise RuntimeError("could not add any obstructing obstacle")
+            if len(obstacles) < min_count:
+                raise RuntimeError("too few narrow-passage obstacles")
+            if not obstacles_clear_fixed_robot(robot_name, obstacles):
+                continue
+            if not endpoint_pair_has_clearance(robot, obstacles, start, goal, margin=NARROW_ENDPOINT_CLEARANCE_MARGIN_M):
+                continue
+            if segment_is_collision_free(robot, obstacles, start, goal):
+                continue
+            final_obstruction = direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)
+            final_fraction = float(final_obstruction["collision_fraction"])
+            if final_fraction < float(obs_min) - 1e-12 or final_fraction > float(obs_max) + 1e-12:
+                continue
+            if strict_time and not scene_passes_timed_probe(robot, obstacles, start, goal, seed + 131071, difficulty, strict_time=True):
+                continue
+            return SceneSpec(
+                robot_name=robot_name,
+                difficulty=difficulty,
+                obstacles=obstacles,
+                start=start,
+                goal=goal,
+                canonical_start=canonical_start,
+                canonical_goal=canonical_goal,
+                symmetry_shift=shift,
+                symmetry_sector=sector,
+                endpoint_clearance_margin_m=NARROW_ENDPOINT_CLEARANCE_MARGIN_M,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+    raise RuntimeError(f"could not sample a valid {robot_name}/{difficulty} narrow-passage scene after {max_scene_tries} attempts: {last_error}")
+
+
+def make_bitstar_gated_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int) -> SceneSpec:
+    robot = make_robot(robot_name)
+    last_error: Exception | None = None
+    difficulty_key = str(difficulty).lower()
+    target_count = BITSTAR_GATED_OBSTACLE_COUNTS.get(difficulty_key, BITSTAR_GATED_OBSTACLE_COUNTS["medium"])
+    target_obstruction = BITSTAR_GATED_OBSTRUCTION_TARGETS.get(difficulty_key, BITSTAR_GATED_OBSTRUCTION_TARGETS["medium"])
+    base = max(random_obstacle_scale(difficulty_key), 0.20)
+    for scene_try in range(max(1, int(max_scene_tries))):
+        rng = random.Random(seed + 1000003 * scene_try)
+        obstacles: list[Any] = []
+        try:
+            start, goal, canonical_start, canonical_goal, shift, sector = sample_free_pair_with_canonical_record(
+                robot,
+                obstacles,
+                rng,
+                min_l2=2.0,
+                clearance_margin_m=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M,
+            )
+            for _ in range(target_count):
+                obstruction = direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)
+                if float(obstruction["collision_fraction"]) >= float(target_obstruction):
+                    break
+                if not append_best_obstructing_obstacle(
+                    robot_name,
+                    robot,
+                    obstacles,
+                    start,
+                    goal,
+                    rng,
+                    base,
+                    candidate_count=384,
+                    endpoint_clearance_margin_m=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M,
+                ):
+                    if not append_random_scene_obstacle(
+                        robot_name,
+                        robot,
+                        obstacles,
+                        start,
+                        goal,
+                        rng,
+                        max(base, 0.30),
+                        require_direct_blocker=True,
+                        max_attempts=4096,
+                        endpoint_clearance_margin_m=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M,
+                    ):
+                        raise RuntimeError("could not add a BIT*-gated obstructing obstacle")
+            while len(obstacles) < target_count:
+                if not append_best_obstructing_obstacle(
+                    robot_name,
+                    robot,
+                    obstacles,
+                    start,
+                    goal,
+                    rng,
+                    base,
+                    candidate_count=128,
+                    endpoint_clearance_margin_m=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M,
+                ):
+                    break
+            if not obstacles_clear_fixed_robot(robot_name, obstacles):
+                continue
+            if not endpoint_pair_has_clearance(robot, obstacles, start, goal, margin=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M):
+                continue
+            if segment_is_collision_free(robot, obstacles, start, goal):
+                continue
+            probe = timed_difficulty_probe(robot, obstacles, start, goal, seed + 131071, difficulty_key)
+            if not bool(probe.get("ok")):
+                continue
+            return SceneSpec(
+                robot_name=robot_name,
+                difficulty=difficulty,
+                obstacles=obstacles,
+                start=start,
+                goal=goal,
+                canonical_start=canonical_start,
+                canonical_goal=canonical_goal,
+                symmetry_shift=shift,
+                symmetry_sector=sector,
+                endpoint_clearance_margin_m=BITSTAR_GATED_ENDPOINT_CLEARANCE_MARGIN_M,
+            )
+        except RuntimeError as exc:
+            last_error = exc
+    raise RuntimeError(f"could not sample a valid {robot_name}/{difficulty} BIT*-gated scene after {max_scene_tries} attempts: {last_error}")
 
 
 def nested_prefixes_are_valid(
@@ -501,6 +1106,8 @@ def nested_prefixes_are_valid(
     seed: int,
     scene_try: int,
     balanced: bool,
+    timed: bool = False,
+    strict_time: bool = False,
 ) -> bool:
     for difficulty in RANDOM_DIFFICULTY_ORDER:
         prefix = obstacle_prefix(obstacles, difficulty)
@@ -510,6 +1117,10 @@ def nested_prefixes_are_valid(
             return False
         if segment_is_collision_free(robot, prefix, start, goal):
             return False
+        if timed:
+            difficulty_offset = RANDOM_DIFFICULTY_ORDER.index(difficulty) * 104729
+            if not scene_passes_timed_probe(robot, prefix, start, goal, seed + 131071 + difficulty_offset, difficulty, strict_time=strict_time):
+                return False
         if balanced:
             difficulty_offset = RANDOM_DIFFICULTY_ORDER.index(difficulty) * 104729
             if not scene_passes_balanced_probe(robot, prefix, start, goal, seed + 8191 * scene_try + difficulty_offset):
@@ -517,7 +1128,7 @@ def nested_prefixes_are_valid(
     return True
 
 
-def make_nested_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, balanced: bool) -> SceneSpec:
+def make_nested_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, balanced: bool, timed: bool = False, strict_time: bool = False) -> SceneSpec:
     robot = make_robot(robot_name)
     last_error: Exception | None = None
     for scene_try in range(max(1, int(max_scene_tries))):
@@ -531,7 +1142,7 @@ def make_nested_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
                 while len(obstacles) < random_obstacle_count(level):
                     if not append_random_scene_obstacle(robot_name, robot, obstacles, start, goal, rng, random_obstacle_scale(level), False):
                         raise RuntimeError(f"could not fill {level} obstacle prefix")
-            if not nested_prefixes_are_valid(robot, robot_name, obstacles, start, goal, seed, scene_try, balanced):
+            if not nested_prefixes_are_valid(robot, robot_name, obstacles, start, goal, seed, scene_try, balanced, timed, strict_time):
                 continue
             return SceneSpec(
                 robot_name=robot_name,
@@ -549,7 +1160,7 @@ def make_nested_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
     raise RuntimeError(f"could not sample a valid {robot_name}/{difficulty} scene after {max_scene_tries} attempts: {last_error}")
 
 
-def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, balanced: bool) -> SceneSpec:
+def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, balanced: bool, timed: bool = False, strict_time: bool = False) -> SceneSpec:
     robot = make_robot(robot_name)
     last_error: Exception | None = None
     for scene_try in range(max(1, int(max_scene_tries))):
@@ -572,6 +1183,8 @@ def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
                 continue
             if segment_is_collision_free(robot, obstacles, start, goal):
                 continue
+            if timed and not scene_passes_timed_probe(robot, obstacles, start, goal, seed + 131071, difficulty, strict_time=strict_time):
+                continue
             if balanced and not scene_passes_balanced_probe(robot, obstacles, start, goal, seed + 8191 * scene_try):
                 continue
             return SceneSpec(
@@ -591,9 +1204,15 @@ def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
 
 
 def make_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int = 64, scene_profile: str = "balanced") -> SceneSpec:
+    timed = scene_profile_requires_timed_probe(scene_profile)
+    strict_time = scene_profile_requires_strict_time_probe(scene_profile)
+    if scene_profile_uses_bitstar_gated_construction(scene_profile):
+        return make_bitstar_gated_scene(robot_name, difficulty, seed, max_scene_tries)
+    if scene_profile_uses_narrow_construction(scene_profile) and "independent" in str(scene_profile).lower():
+        return make_narrow_passage_scene(robot_name, difficulty, seed, max_scene_tries, strict_time=strict_time)
     if scene_profile_uses_nested_prefixes(scene_profile):
-        return make_nested_random_scene(robot_name, difficulty, seed, max_scene_tries, scene_profile_requires_balanced_probe(scene_profile))
-    return make_legacy_random_scene(robot_name, difficulty, seed, max_scene_tries, balanced=False)
+        return make_nested_random_scene(robot_name, difficulty, seed, max_scene_tries, scene_profile_requires_balanced_probe(scene_profile), timed, strict_time)
+    return make_legacy_random_scene(robot_name, difficulty, seed, max_scene_tries, balanced=False, timed=timed, strict_time=strict_time)
 
 
 def scene_cache_key(robot_name: str, difficulty: str, scene_seed: int) -> str:
@@ -608,10 +1227,11 @@ def query_record(
     goal: list[float],
     symmetry_shift: int = 0,
     symmetry_sector: int = 0,
+    difficulty_probe: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     canonical_start = canonicalize_q(robot, list(start))
     canonical_goal = canonicalize_q(robot, list(goal))
-    return {
+    record = {
         "label": str(label),
         "start": [float(value) for value in start],
         "goal": [float(value) for value in goal],
@@ -624,6 +1244,9 @@ def query_record(
         "actual_start_in_lect_root": q_in_lect_root(robot, start),
         "actual_goal_in_lect_root": q_in_lect_root(robot, goal),
     }
+    if difficulty_probe is not None:
+        record["difficulty_probe"] = dict(difficulty_probe)
+    return record
 
 
 def sample_additional_query_records(
@@ -653,6 +1276,8 @@ def sample_additional_query_records(
     attempts = 0
     max_attempts = max(2000, int(max_scene_tries) * 250)
     balanced = scene_profile_requires_balanced_probe(scene_profile)
+    timed = scene_profile_requires_timed_probe(scene_profile)
+    strict_time = scene_profile_requires_strict_time_probe(scene_profile)
     while len(records) < target and attempts < max_attempts:
         attempts += 1
         try:
@@ -660,11 +1285,25 @@ def sample_additional_query_records(
                 robot,
                 list(scene.obstacles),
                 rng,
+                clearance_margin_m=float(scene.endpoint_clearance_margin_m),
             )
         except RuntimeError:
             continue
         if segment_is_collision_free(robot, list(scene.obstacles), start, goal):
             continue
+        difficulty_probe = None
+        if timed:
+            difficulty_probe = timed_difficulty_probe(
+                robot,
+                list(scene.obstacles),
+                start,
+                goal,
+                int(generator_seed) + 8191 * attempts,
+                str(scene.difficulty),
+                strict_time=strict_time,
+            )
+            if not bool(difficulty_probe.get("ok")):
+                continue
         if balanced and not scene_passes_balanced_probe(
             robot,
             list(scene.obstacles),
@@ -681,6 +1320,7 @@ def sample_additional_query_records(
                 goal=goal,
                 symmetry_shift=shift,
                 symmetry_sector=sector,
+                difficulty_probe=difficulty_probe,
             )
         )
     if len(records) < target:
@@ -710,6 +1350,16 @@ def scene_to_record(
         max_scene_tries=int(max_scene_tries),
     )
     first = queries[0]
+    if scene_profile_requires_timed_probe(scene_profile) and "difficulty_probe" not in first:
+        first["difficulty_probe"] = timed_difficulty_probe(
+            robot,
+            list(scene.obstacles),
+            [float(value) for value in first["start"]],
+            [float(value) for value in first["goal"]],
+            int(generator_seed) + 131071,
+            str(scene.difficulty),
+            strict_time=scene_profile_requires_strict_time_probe(scene_profile),
+        )
     canonical_start = [float(value) for value in first["canonical_start"]]
     canonical_goal = [float(value) for value in first["canonical_goal"]]
     return {
@@ -846,6 +1496,31 @@ def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds:
             "range": float(BALANCED_PROBE_RANGE),
             "segment_step": float(BALANCED_PROBE_SEGMENT_STEP),
             "required_for_profiles": ["balanced", "comparable", "paper", "balanced_probe", "comparable_probe", "paper_probe"],
+        },
+        "difficulty_probe": {
+            "planner": "OMPL_RRTConnect+BITstar",
+            "policy": "rrtconnect_time_or_direct_obstruction_plus_bitstar_first_success_lower_bound",
+            "windows_s": {key: [float(lo), float(hi)] for key, (lo, hi) in TIMED_PROBE_TIMEOUT_WINDOWS_S.items()},
+            "narrow_windows_s": {key: [float(lo), float(hi)] for key, (lo, hi) in NARROW_PASSAGE_TIMEOUT_WINDOWS_S.items()},
+            "direct_obstruction_fraction_windows": {
+                key: [float(lo), float(hi)]
+                for key, (lo, hi) in DIRECT_OBSTRUCTION_FRACTION_WINDOWS.items()
+            },
+            "range": float(TIMED_PROBE_RANGE),
+            "segment_step": float(TIMED_PROBE_SEGMENT_STEP),
+            "simplify_time_s": float(TIMED_PROBE_SIMPLIFY_TIME_S),
+            "bitstar": {
+                "timeout_s": float(BITSTAR_PROBE_TIMEOUT_S),
+                "checkpoint_interval_s": float(BITSTAR_PROBE_CHECKPOINT_INTERVAL_S),
+                "min_first_success_s": float(BITSTAR_PROBE_MIN_FIRST_SUCCESS_S),
+                "samples_per_batch": int(BITSTAR_PROBE_SAMPLES_PER_BATCH),
+                "rewire_factor": float(BITSTAR_PROBE_REWIRE_FACTOR),
+            },
+            "required_for_profiles": [
+                "bitstar_gated", "bitstar_gated_independent",
+                "timed_probe", "timed_probe_independent", "timed", "timed_independent",
+                "narrow_passage", "narrow_passage_independent", "narrow", "narrow_independent",
+            ],
         },
         "difficulty_order": list(RANDOM_DIFFICULTY_ORDER),
         "sample_domain": LECT_SAMPLE_DOMAIN,

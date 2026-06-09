@@ -1,6 +1,6 @@
 #pragma once
 
-#include <rbf/core.h>
+#include <SBF/api.h>
 
 #include <Eigen/Core>
 
@@ -14,33 +14,15 @@ namespace rbf {
 
 using AdjacencyGraph = std::unordered_map<int, std::vector<int>>;
 
-enum class SegmentEdgeType : std::uint8_t {
-	Unknown = 0,
-	PointValidatedGap = 1,
-	RRTConnector = 2,
-	QueryBridge = 3,
-	BoxCorridor = 4,
+struct AdjacencyBuildStats {
+	int boxes = 0;
+	int selected_dims = 0;
+	int primary_dim = -1;
+	std::uint64_t candidate_pairs = 0;
+	std::uint64_t exact_tests = 0;
+	std::uint64_t edges = 0;
+	double build_ms = 0.0;
 };
-
-enum class SegmentEdgeValidation : std::uint8_t {
-	Unknown = 0,
-	CollisionChecked = 1,
-};
-
-struct SegmentEdge {
-	int id = -1;
-	int source_box_id = -1;
-	int target_box_id = -1;
-	std::vector<Eigen::VectorXd> waypoints;
-	SegmentEdgeType type = SegmentEdgeType::Unknown;
-	SegmentEdgeValidation validation = SegmentEdgeValidation::Unknown;
-	int segment_resolution = 0;
-	double length = 0.0;
-	bool strict_audit_required = false;
-	int query_index = -1;
-};
-
-using SegmentEdgeList = std::vector<SegmentEdge>;
 
 struct QueryGraphCache {
 	const std::vector<BoxNode>* boxes = nullptr;
@@ -71,9 +53,19 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
 								 double tolerance = 1e-9,
 								 int max_degree = 0,
 								 double gap_tolerance = 0.0);
+AdjacencyBuildStats last_adjacency_build_stats();
 QueryGraphCache build_query_graph_cache(const std::vector<BoxNode>& boxes,
 										const AdjacencyGraph& graph,
 										const SegmentEdgeList& segment_edges = {});
+int append_segment_edge(SegmentEdgeList& edges,
+						int source_box_id,
+						int target_box_id,
+						std::vector<Eigen::VectorXd> waypoints,
+						SegmentEdgeType type,
+						int segment_resolution,
+						SegmentEdgeValidation validation,
+						bool strict_audit_required = false,
+						int query_index = -1);
 int add_segment_edge(SegmentEdgeList& edges,
 					 AdjacencyGraph& graph,
 					 int source_box_id,

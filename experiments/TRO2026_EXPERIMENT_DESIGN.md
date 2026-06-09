@@ -17,7 +17,7 @@ to produce a reproducible evidence chain that supports the manuscript claims.
    schema is `tro2026_random_scene_catalog_v5`; it includes an independent
    RRT-Connect feasibility gate so success rates are not contaminated by
    disconnected start/goal pairs.
-5. Shelf and random planning rows use the current leaf-sweep + RRT grower SBF
+5. Shelf and random planning rows use the current leaf-sweep + partition-native SBF
    backend. Segment bridges are fallback witnesses and must be reported
    separately from box-overlap graph edges.
 6. Depth notation is LECT-tree depth. A label such as `d23` always refers to
@@ -32,37 +32,96 @@ to produce a reproducible evidence chain that supports the manuscript claims.
 ## Registered RBF Default
 
 Unless an experiment row explicitly says otherwise, the RBF/SBF method uses the
-shared algorithm profile `exp04_leaf_sweep_rrt_b100_d34` from
+shared algorithm profile `exp04_partition_leaf13_d23_fixed800_online25ms` from
 `experiments/common/rbf_defaults.py`:
 
-1. backend `build_leaf_sweep_refined`, grower mode `RRT`;
-2. leaf sweep `d8 -> d14`, virtual topology enabled, serial virtual validation;
-3. restricted deep refinement with `deep_max_boxes=100`, `deep_ffb_depth=34`,
-   `refine_timeout_ms=800`, and endpoint/corridor priorities canonicalized into
-   the active robot root;
-4. bounded RRT grower enabled after refinement with `rrt_grower_extra_boxes=25`
-   and `rrt_grower_timeout_ms=100`;
-5. build-stage RRT segment edges enabled, `segment_edges_fallback_only=false`,
-   BiRRT connector enabled with at most one 50 ms pair attempt per gap;
-6. no query shortcut boxes, no collision shortcut, strict final path audit,
+1. backend `build_leaf_sweep_refined`, offline grower `adaptive_deep_leaf`,
+   online planner `partition_native`;
+2. leaf sweep `d8 -> d13`, virtual topology enabled, parallel virtual
+   validation;
+3. deep offline refinement with `deep_max_boxes=400`, `deep_ffb_depth=62`,
+   `refine_timeout_ms=800`, and query-agnostic build;
+4. connector/query fallback is explicit: segment bridges remain fallback witnesses;
+5. no query shortcut boxes, no collision shortcut, strict final path audit,
    audit time excluded from planning time.
 
-Shelf+IIWA baseline rows additionally use the profile
-`exp04_leaf_sweep_rrt_d23_b100_d34`, which enables the fixed d23 read-only
-external evidence cache and the restricted Shelf+IIWA canonical root. The `d23`
-cache depth is measured in that canonical LECT tree; all Shelf query endpoints
-and final-audit paths are native joint-space values. Random
-multi-robot rows use the same algorithm defaults but must use robot-local roots
-and must not reuse Shelf anchors or the Shelf d23 cache. The 100-box default is
-registered because the Exp.4 full run over seeds `0..7` passed all five
-canonical Shelf+IIWA queries in every run, with median planning time `0.610 s`,
-mean audited path length `2.517 rad`, and median raw segment fraction `0.022`.
-Larger box budgets remain in the trade-off curve and appendix sweeps; they are
-not the default because they trade lower path length for higher build time and
-larger segment-witness fraction. Connector segment validation is matched to the
+Shelf+IIWA baseline rows additionally use the same profile with fixed d23 external
+evidence cache and the canonical Shelf+IIWA cache root. The `d23` cache depth is
+measured in that canonical LECT tree; all Shelf query endpoints and final-audit
+paths are native joint-space values. Random multi-robot rows use the same
+algorithm defaults but must use robot-local roots and must not reuse Shelf anchors
+or the Shelf d23 cache. The 400-box default follows the current baseline sweep
+practice with stable full-success over seeds `0..7`. Larger box budgets remain in
+the trade-off curve and appendix sweeps; they are selected only when path-quality
+gain outweighs build-time growth. Connector segment validation is matched to the
 same `0.01` joint-space sample spacing as the final strict audit; earlier pilot
-runs with looser connector validation are archived diagnostics and are not used
-for paper-facing rows.
+runs with looser connector validation are archived diagnostics and are not used for
+paper-facing rows.
+
+### 可调参数清单（本文有效）
+
+以下参数为 Exp.4–Exp.6 的主流程可调参数；其余字段仅为诊断输出或已废弃项，不应作为实验扫描变量：
+
+- leaf 阶段：
+  - `leaf_start_depth`, `leaf_max_depth`
+  - `use_virtual_topology`, `parallel_virtual_validation`, `leaf_threads`,
+    `validation_batch_size`
+  - `obstacle_cluster_gap`, `collision_overlap_prune_min_depth`,
+    `collision_overlap_prune_threshold`,
+    `collision_overlap_prune_ratio_threshold`
+  - `adaptive_target_depth`
+- deep/refine 阶段：
+  - `deep_max_boxes`, `deep_ffb_depth`, `refine_timeout_ms`,
+    `ffb_start_depth`, `ffb_search_mode`
+  - `domain_seed_cap`, `domain_success_cap`, `domain_attempt_cap`
+  - `adaptive_overlap_depth_threshold`,
+    `adaptive_overlap_depth_min_threshold`,
+    `adaptive_overlap_depth_decay_per_depth`,
+    `adaptive_overlap_ratio_threshold`
+  - `adaptive_seed_probe_count`, `adaptive_seed_anchor_probe_cap`
+  - `adaptive_max_merge_ms`, `adaptive_max_merge_rounds`,
+    `adaptive_max_merge_input_boxes`
+  - `adaptive_max_merge_ms` 作为离线合并截止项，`adaptive_max_merge_rounds`
+    限制合并轮次
+- partition backend：
+  - `adaptive_planning_backend`, `adaptive_grid_target_depth`,
+    `adaptive_grid_planning_max_expansions`
+  - `adaptive_grid_face_index_enabled` 在主实验中固定为 `true`，只作为
+    debug/compatibility 开关，不作为 Exp.4--Exp.6 扫描变量
+- connector/query（fallback）阶段：
+  - `connector_pair_timeout_ms`, `connector_max_pairs_per_gap`
+  - `connector_rrt_iters`, `connector_rrt_timeout_ms`,
+    `connector_rrt_step_size`, `connector_rrt_goal_bias`
+  - `connector_segment_resolution`, `connector_adaptive_min_segment_fraction`
+  - `connector_pave_depth`, `connector_pave_max_chain`, `connector_pave_steps`
+  - `connector_pave_fill_gaps`
+  - `query_bridge_pave_depth`, `query_bridge_adaptive_ffb_depths`,
+    `query_bridge_direct_sample_step`, `query_bridge_adaptive_step_repair`,
+    `query_bridge_adaptive_fine_step`,
+    `query_bridge_adaptive_max_repair_subdivisions`,
+    `query_bridge_adaptive_max_repair_calls`,
+    `endpoint_main_target_k`, `endpoint_main_coarse_step`,
+    `endpoint_main_fine_step`, `endpoint_main_max_ffb_calls`,
+    `endpoint_main_max_boxes`, `endpoint_main_adaptive_ffb_depths`
+  - `query_bridge_all`, `query_endpoint_anchor_before_bridge`,
+    `query_bridge_labels`
+- query 后处理：
+  - `query_shortcut_boxes`, `final_collision_shortcut`,
+    `final_rrt_simplify`, `final_rrt_simplify_timeout_ms`,
+    `final_rrt_simplify_max_iters`, `final_rrt_simplify_attempts`
+  - `audit_resolution`, `audit_segment_step`, `audit_collision_tolerance`
+
+下列参数已移除、仅作旧 API 兼容，或已在当前主流程中固定；请勿继续在
+Exp.4--Exp.6 的配置扫描、表格说明或 profile 名称中使用：
+
+- `run_rrt_grower`, `rrt_grower_extra_boxes`, `rrt_grower_timeout_ms`
+- `connector_pave_require_connected_chain`, `gap_fill_min_arc_gain`
+- `pre_split_to_max_depth`
+
+`connector_pave_require_connected_chain` 与 `gap_fill_min_arc_gain` 保留只为读取
+旧脚本/诊断入口；论文主流程的铺箱语义固定为 connected boundary propagation。
+partition 邻接使用当前默认实现；已删除的实验性环境分支不再作为文档化参数、
+扫描变量、profile 名称或 appendix 对照组的一部分。
 
 ## Main Experiments
 
@@ -102,14 +161,14 @@ evidence lookup.
 Metrics: wall time distribution, node count, payload bytes, file size, VmRSS,
 VmHWM, hit/miss counts, and replay materialization count.
 
-### Exp.4 Shelf Leaf-Sweep + RRT Grower
+### Exp.4 Shelf Leaf-Sweep + Query-Bridge
 
 Purpose: main controlled planning study on the canonical Shelf+IIWA scene.
 
 Baseline: d23 warm external evidence, AAFK, SupportHull, 8 threads,
-AAFKVolumeMin split policy, `build_leaf_sweep_refined`, RRT grower/connector
-mode, fixed five Marcucci query pairs, seeds `0..7`. The registered default
-budget is `100` deep boxes; the main trade-off curve sweeps `100/200/400/800`.
+AAFKVolumeMin split policy, `build_leaf_sweep_refined` + adaptive deep leaf
+refine, fixed five Marcucci query pairs, seeds `0..7`. The registered default
+budget is `400` deep boxes; the main trade-off curve sweeps `100/200/400/800`.
 
 Ablations: no external LECT replay, envelope option, endpoint source, thread
 count, split policy, anchor policy, leaf/deep depth, and box budget.
@@ -138,6 +197,13 @@ segment step, and source hashes. The importer excludes old SBF-SH rows.
 Metrics: success rate, reusable build time, online query time, audited length,
 and anytime curve checkpoints.
 
+For the Shelf+IIWA RBF budget curve, `deep_max_boxes` is interpreted as the
+adaptive partition free-box cap so that larger budgets correspond to larger
+offline coverage. Random offline anchors are disabled in the registered Shelf
+profile because the deterministic leaf sweep already covers the reusable shelf
+basin; anchors are reserved for random-scene profiles where query-independent
+coverage needs additional spatial dispersion.
+
 ### Exp.6 Random Multi-Robot Scenes
 
 Purpose: test whether the SBF pipeline and baselines run coherently across
@@ -151,13 +217,15 @@ external evidence caches; IIWA uses the registered d23 cache.
 
 Metrics: per robot/difficulty success rate, planning time, build/query split,
 audited path length, segment fraction, and failure reason distribution. The
-current saved v5 `balanced_independent` run has no failures in 288 RBF budget
-rows. The figure shows the complete budget curves; the table reports one
+registered catalog is v7 `timed_probe_independent`: each query must have a
+strictly valid RRTConnect difficulty probe accepted either by the
+difficulty-specific first-solution time window or by the direct-obstruction
+clearance window. The figure shows the complete budget curves; the table reports one
 representative point per robot/difficulty, chosen as the fastest full-success
 point within 8% of the shortest audited median path. Segment fraction remains
 zero at the selected trade-off points. To match the old paper visual form, the
 current figure/table includes PRM, RRTConnect, and BIT* rows rerun on the same
-saved v5 catalog. IRIS-NP+GCS remains imported from the old balanced
+saved catalog. IRIS-NP+GCS remains imported from the old balanced
 random-scene common-rule artifact until the external Drake/GCS pipeline is made
 self-contained in the current runner; it is reported as protocol context rather
 than a current-catalog row.

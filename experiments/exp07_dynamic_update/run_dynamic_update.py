@@ -36,6 +36,7 @@ from experiments.common.rbf_leaf_rrt import (
     RBFLeafRRTOptions,
     canonical_priority_points,
     configure_leaf_rrt,
+    make_adaptive_leaf_sweep_config,
     make_refine_config,
     query_rows,
     run_leaf_rrt,
@@ -59,7 +60,7 @@ def exp04_profile_tag(args: argparse.Namespace) -> str:
 
 def exp04_profile_overrides(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "source": "Exp.4 registered baseline RBF-SH d23",
+        "source": "Exp.4 registered partition-native RBF-SH d23 with Exp.7 dynamic-update coverage override",
         "deep_max_boxes": int(args.deep_max_boxes),
         "rbf_max_depth": int(args.rbf_max_depth),
         "leaf_start_depth": int(args.leaf_start_depth),
@@ -94,7 +95,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
-    parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--leaf-max-depth", type=int, default=16)
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
@@ -106,7 +107,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def profile_row(profile: Any) -> dict[str, Any]:
-    return {
+    row = {
         "boxes_before": int(getattr(profile, "boxes_before", 0)),
         "boxes_after": int(getattr(profile, "boxes_after", 0)),
         "boxes_added": int(getattr(profile, "boxes_added", 0)),
@@ -124,11 +125,73 @@ def profile_row(profile: Any) -> dict[str, Any]:
         "warm_rebuild_ms": float(getattr(profile, "warm_rebuild_ms", 0.0)),
         "total_ms": float(getattr(profile, "total_ms", 0.0)),
     }
+    diagnostics: dict[str, float] = {}
+    raw_diagnostics = getattr(profile, "diagnostics", {}) or {}
+    try:
+        raw_items = dict(raw_diagnostics).items()
+    except TypeError:
+        raw_items = []
+    for key, value in raw_items:
+        try:
+            diagnostics[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    row["diagnostics"] = diagnostics
+    for key, value in diagnostics.items():
+        row[diag_column(key)] = value
+    return row
+
+
+def diag_column(key: str) -> str:
+    cleaned = []
+    for char in str(key):
+        cleaned.append(char if char.isalnum() else "_")
+    return "diag_" + "".join(cleaned).strip("_")
+
+
+def diag_is_state_value(key: str) -> bool:
+    return (
+        key.startswith("adaptive.")
+        or key.endswith("_before")
+        or key.endswith("_after")
+        or key.endswith(".before")
+        or key.endswith(".after")
+        or key.endswith(".segment_edges_before")
+        or key.endswith(".segment_edges_after")
+    )
+
+
+def merge_diagnostics(items: list[dict[str, Any]]) -> dict[str, float]:
+    keys: set[str] = set()
+    for row in items:
+        diagnostics = row.get("diagnostics")
+        if isinstance(diagnostics, dict):
+            keys.update(str(key) for key in diagnostics.keys())
+    merged: dict[str, float] = {}
+    for key in sorted(keys):
+        values: list[float] = []
+        for row in items:
+            diagnostics = row.get("diagnostics")
+            if isinstance(diagnostics, dict) and key in diagnostics:
+                try:
+                    values.append(float(diagnostics[key]))
+                except (TypeError, ValueError):
+                    pass
+        if not values:
+            continue
+        merged[key] = values[-1] if diag_is_state_value(key) else sum(values)
+    return merged
+
+
+def attach_diagnostic_columns(row: dict[str, Any], diagnostics: dict[str, float]) -> None:
+    row["diagnostics"] = diagnostics
+    for key, value in diagnostics.items():
+        row[diag_column(key)] = value
 
 
 def merge_profile_rows(items: list[dict[str, Any]]) -> dict[str, Any]:
     if not items:
-        return {
+        row = {
             "boxes_before": 0,
             "boxes_after": 0,
             "boxes_added": 0,
@@ -146,6 +209,8 @@ def merge_profile_rows(items: list[dict[str, Any]]) -> dict[str, Any]:
             "warm_rebuild_ms": 0.0,
             "total_ms": 0.0,
         }
+        attach_diagnostic_columns(row, {})
+        return row
     first = items[0]
     last = items[-1]
     summed = dict(last)
@@ -162,11 +227,37 @@ def merge_profile_rows(items: list[dict[str, Any]]) -> dict[str, Any]:
     summed["fallback_reason"] = ";".join(str(row["fallback_reason"]) for row in items if str(row["fallback_reason"]))
     for key in ["dirty_region_ms", "regrow_ms", "warm_rebuild_ms", "total_ms"]:
         summed[key] = sum(float(row[key]) for row in items)
+    attach_diagnostic_columns(summed, merge_diagnostics(items))
     return summed
 
 
 def add_profile_rows(lhs: dict[str, Any], rhs: dict[str, Any]) -> dict[str, Any]:
     return merge_profile_rows([lhs, rhs])
+
+
+def diag_value(row: dict[str, Any], key: str) -> float:
+    diagnostics = row.get("diagnostics")
+    if isinstance(diagnostics, dict) and key in diagnostics:
+        return finite_or_nan(diagnostics.get(key))
+    return finite_or_nan(row.get(diag_column(key)))
+
+
+def first_diag_value(row: dict[str, Any], keys: list[str]) -> float:
+    for key in keys:
+        value = diag_value(row, key)
+        if math.isfinite(value):
+            return value
+    return math.nan
+
+
+def finite_or_nan(value: Any) -> float:
+    try:
+        if value is None:
+            return math.nan
+        out = float(value)
+        return out if math.isfinite(out) else math.nan
+    except (TypeError, ValueError):
+        return math.nan
 
 
 def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOptions:
@@ -179,6 +270,8 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         threads=int(args.threads),
         leaf_start_depth=int(args.leaf_start_depth),
         leaf_max_depth=int(args.leaf_max_depth),
+        adaptive_target_depth=int(args.leaf_max_depth),
+        adaptive_grid_target_depth=int(args.leaf_max_depth),
         deep_ffb_depth=int(args.deep_ffb_depth),
         connector_pave_depth=int(args.connector_pave_depth),
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
@@ -186,8 +279,8 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         use_external_evidence=True,
         external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
         external_evidence_verify_identity=False,
-        symmetry_aligned_native_root=is_iiwa,
-        symmetry_aligned_cache_schedule=is_iiwa,
+        symmetry_aligned_native_root=False,
+        symmetry_aligned_cache_schedule=False,
         database_canonical_mode=True,
         case_label=label,
         parallel_virtual_validation=True,
@@ -219,11 +312,20 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
     cfg.dynamic_update.warm_rebuild_dirty_box_fraction = 0.0
     cfg.dynamic_update.warm_rebuild_min_local_boxes_added = int(args.deep_max_boxes) + 1
     forest = sbf.SafeBoxForest(robot, cfg)
-    forest.build_leaf_sweep_refined(
-        list(source.obstacles),
-        make_refine_config(opt),
-        canonical_priority_points(robot, [query], canonicalize=False),
-    )
+    if str(opt.offline_grower) == "adaptive_deep_leaf":
+        forest.build_adaptive_deep_leaf_sweep_cover(
+            list(source.obstacles),
+            make_adaptive_leaf_sweep_config(opt),
+        )
+    else:
+        forest.build_leaf_sweep_refined(
+            list(source.obstacles),
+            make_refine_config(opt),
+            canonical_priority_points(robot, [query], canonicalize=False),
+        )
+    source_bridge_added = 0
+    if hasattr(forest, "bridge_query"):
+        source_bridge_added = int(forest.bridge_query(list(query.start), list(query.goal)))
     source_query = query_rows(
         forest,
         robot,
@@ -273,10 +375,10 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         target_source = "endpoint_segment_fallback"
     if (
         not bool(target_query["audit_passed"])
-        and hasattr(forest, "bridge_query_known_needed")
+        and hasattr(forest, "bridge_query")
     ):
         t0 = time.perf_counter()
-        bridge_added = int(forest.bridge_query_known_needed(list(target_query_spec.start), list(target_query_spec.goal)))
+        bridge_added = int(forest.bridge_query(list(target_query_spec.start), list(target_query_spec.goal)))
         bridge_wall_ms = 1000.0 * (time.perf_counter() - t0)
         bridge_profile = merge_profile_rows([])
         bridge_profile["boxes_before"] = int(update.get("boxes_after", 0))
@@ -308,6 +410,7 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         "source_obstacles": source_count,
         "target_obstacles": target_count,
         "source_audit_passed": bool(source_query["audit_passed"]),
+        "source_bridge_added": int(source_bridge_added),
         "target_audit_passed": bool(target_query["audit_passed"]),
         "target_source": target_source,
         "update_s": update["total_ms"] / 1000.0,
@@ -315,8 +418,8 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         "speedup_vs_warm": (float(warm["planning_s"]) / (update["total_ms"] / 1000.0)) if update["total_ms"] > 1e-9 else math.nan,
         "target_path_length": float(target_query["path_length"]) if bool(target_query["audit_passed"]) else math.nan,
         "target_segment_fraction": float(target_query["segment_fraction"]) if bool(target_query["audit_passed"]) else math.nan,
-        "warm_path_length": float(warm["path_length_mean"]),
-        "warm_segment_fraction": float(warm["raw_segment_fraction"]),
+        "warm_path_length": finite_or_nan(warm.get("path_length_mean")),
+        "warm_segment_fraction": finite_or_nan(warm.get("raw_segment_fraction")),
         **update,
         "status": "executed",
         "lectdb": robot_lectdb_profile(robot_name),
@@ -328,6 +431,74 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for transition in sorted({str(row["transition"]) for row in rows}):
         items = [row for row in rows if str(row["transition"]) == transition]
+        append_ms_values = [
+            first_diag_value(
+                row,
+                [
+                    "remove.partition_append.append_ms",
+                    "remove_suffix.partition_append.append_ms",
+                ],
+            )
+            for row in items
+        ]
+        delta_ms_values = [
+            first_diag_value(
+                row,
+                [
+                    "insert.partition_delta.delta_ms",
+                    "insert_batch.partition_delta.delta_ms",
+                ],
+            )
+            for row in items
+        ]
+        rebuild_ms_values = [
+            first_diag_value(
+                row,
+                [
+                    "remove.partition_append.rebuild_after_append_failure.rebuild_ms",
+                    "remove_suffix.partition_append.rebuild_after_append_failure.rebuild_ms",
+                    "insert.partition_delta.rebuild_after_remove_failure.rebuild_ms",
+                    "insert.partition_delta.rebuild_after_append_failure.rebuild_ms",
+                    "insert_batch.partition_delta.rebuild_after_remove_failure.rebuild_ms",
+                    "insert_batch.partition_delta.rebuild_after_append_failure.rebuild_ms",
+                    "insert.partition_update.rebuild_ms",
+                    "insert_batch.partition_update.rebuild_ms",
+                    "remove.partition_update.rebuild_ms",
+                    "remove_suffix.partition_update.rebuild_ms",
+                ],
+            )
+            for row in items
+        ]
+        boxes_appended_values = [
+            first_diag_value(
+                row,
+                [
+                    "remove.partition_append.boxes_appended",
+                    "remove_suffix.partition_append.boxes_appended",
+                ],
+            )
+            for row in items
+        ]
+        delta_boxes_removed_values = [
+            first_diag_value(
+                row,
+                [
+                    "insert.partition_delta.boxes_removed",
+                    "insert_batch.partition_delta.boxes_removed",
+                ],
+            )
+            for row in items
+        ]
+        delta_boxes_appended_values = [
+            first_diag_value(
+                row,
+                [
+                    "insert.partition_delta.boxes_appended",
+                    "insert_batch.partition_delta.boxes_appended",
+                ],
+            )
+            for row in items
+        ]
         out.append(
             {
                 "transition": transition,
@@ -342,6 +513,20 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "segment_fraction_median": median(row["target_segment_fraction"] for row in items if bool(row["target_audit_passed"])),
                 "path_length_mean": mean(row["target_path_length"] for row in items if bool(row["target_audit_passed"])),
                 "segment_fallback_runs": sum(1 for row in items if str(row.get("target_source")) == "endpoint_segment_fallback"),
+                "partition_append_s_median": median(value / 1000.0 for value in append_ms_values if math.isfinite(value)),
+                "partition_delta_s_median": median(value / 1000.0 for value in delta_ms_values if math.isfinite(value)),
+                "partition_rebuild_s_median": median(value / 1000.0 for value in rebuild_ms_values if math.isfinite(value)),
+                "partition_boxes_appended_median": median(value for value in boxes_appended_values if math.isfinite(value)),
+                "partition_delta_boxes_removed_median": median(value for value in delta_boxes_removed_values if math.isfinite(value)),
+                "partition_delta_boxes_appended_median": median(value for value in delta_boxes_appended_values if math.isfinite(value)),
+                "partition_cells_median": median(
+                    diag_value(row, "adaptive.partition_cells") for row in items
+                    if math.isfinite(diag_value(row, "adaptive.partition_cells"))
+                ),
+                "partition_islands_median": median(
+                    diag_value(row, "adaptive.partition_islands") for row in items
+                    if math.isfinite(diag_value(row, "adaptive.partition_islands"))
+                ),
                 "status": "executed",
             }
         )
@@ -363,6 +548,14 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "path_length_mean",
         "segment_fraction_median",
         "segment_fallback_runs",
+        "partition_append_s_median",
+        "partition_delta_s_median",
+        "partition_rebuild_s_median",
+        "partition_boxes_appended_median",
+        "partition_delta_boxes_removed_median",
+        "partition_delta_boxes_appended_median",
+        "partition_cells_median",
+        "partition_islands_median",
         "status",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -431,8 +624,8 @@ def main() -> int:
             "seed": seed,
             "scene_catalog": str(catalog),
             "scene_catalog_mode": str(args.scene_catalog_mode),
-            "backend": "leaf_sweep_update_current_exp07",
-            "warm_rebuild_backend": "build_leaf_sweep_refined",
+            "backend": "adaptive_deep_leaf_partition_update_current_exp07",
+            "warm_rebuild_backend": "adaptive_deep_leaf_partition_native",
             "rbf_default_profile": default_rbf_profile(),
             "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
             "rbf_robot_lectdb": robot_lectdb_profile(str(args.robot)),
@@ -474,7 +667,9 @@ def main() -> int:
     write_json(args.out_dir / "dynamic_update_manifest.json", payload)
     if summary_rows:
         write_csv(args.out_dir / "dynamic_update_summary.csv", summary_rows)
-        write_tex(REPO_ROOT / "paper" / "generated" / "tab_tro_dynamic_update.tex", summary_rows)
+        write_tex(args.out_dir / "tab_tro_dynamic_update.tex", summary_rows)
+        if str(args.phase) == "paper":
+            write_tex(REPO_ROOT / "paper" / "generated" / "tab_tro_dynamic_update.tex", summary_rows)
     print(f"wrote {args.out_dir / 'dynamic_update_manifest.json'}")
     return 0
 

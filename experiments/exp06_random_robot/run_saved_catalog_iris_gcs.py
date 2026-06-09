@@ -59,7 +59,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-seeds", type=int, default=8)
     parser.add_argument("--scene-catalog", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp06" / "random_scene_catalog.json")
     parser.add_argument("--scene-catalog-mode", choices=["reuse", "verify", "auto", "generate"], default="reuse")
-    parser.add_argument("--scene-profile", choices=["balanced", "balanced_independent", "balanced_probe", "legacy"], default="balanced_independent")
+    parser.add_argument(
+        "--scene-profile",
+        choices=[
+            "balanced", "balanced_independent", "balanced_probe",
+            "timed_probe", "timed_probe_independent",
+            "narrow_passage", "narrow_passage_independent",
+            "legacy",
+        ],
+        default="timed_probe_independent",
+    )
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--max-scene-tries", type=int, default=64)
     parser.add_argument("--threads", type=int, default=8)

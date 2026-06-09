@@ -73,8 +73,9 @@ SBF segment bridges are fallback witnesses. Every SBF planning artifact must
 separate box-overlap graph edges from segment edges and report raw no-post
 segment fraction before final simplification.
 
-The registered RBF algorithm default is `exp04_leaf_sweep_rrt_b100_d34`: leaf
-sweep coverage followed by restricted deep refinement and a bounded RRT grower.
+The registered RBF algorithm default is
+`exp04_partition_leaf12_d23_fixed1280_online25ms`: leaf sweep coverage with
+adaptive deep refinement and partition-native online query bridge planning.
 Shelf+IIWA baseline
 rows add the d23 warm-cache override; random multi-robot rows do not inherit the
 Shelf cache or anchors. Segment edges may be added by the build-stage connector,

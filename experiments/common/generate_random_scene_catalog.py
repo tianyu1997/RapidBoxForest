@@ -19,8 +19,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--robots", default="iiwa,ur5,panda")
     parser.add_argument("--difficulties", default="easy,medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=50)
-    parser.add_argument("--scene-profile", choices=["balanced", "balanced_probe", "legacy"], default="balanced")
+    parser.add_argument(
+        "--scene-profile",
+        choices=[
+            "bitstar_gated", "bitstar_gated_independent",
+            "balanced", "balanced_independent", "balanced_probe",
+            "timed_probe", "timed_probe_independent",
+            "narrow_passage", "narrow_passage_independent",
+            "legacy",
+        ],
+        default="timed_probe_independent",
+    )
     parser.add_argument("--max-scene-tries", type=int, default=64)
+    parser.add_argument("--queries-per-scene", type=int, default=10)
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--mode", choices=["auto", "generate", "reuse", "verify"], default="auto")
     parser.add_argument("--summary-json", type=Path, default=None)
@@ -36,6 +47,7 @@ def main() -> int:
         scene_seeds=int(args.scene_seeds),
         scene_profile=str(args.scene_profile),
         seed_base=int(args.seed_base),
+        queries_per_scene=int(args.queries_per_scene),
         max_scene_tries=int(args.max_scene_tries),
         mode="generate" if str(args.mode) == "generate" else str(args.mode),
     )
@@ -47,6 +59,7 @@ def main() -> int:
         "difficulties": payload.get("difficulties"),
         "scene_seeds": payload.get("scene_seeds"),
         "scene_profile": payload.get("scene_profile"),
+        "queries_per_scene": payload.get("queries_per_scene"),
     }
     if args.summary_json is not None:
         write_json(args.summary_json, summary)

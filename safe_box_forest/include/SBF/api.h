@@ -32,6 +32,34 @@ enum class PathAuditStatus : std::uint8_t {
     Repaired = 3,
 };
 
+enum class SegmentEdgeType : std::uint8_t {
+    Unknown = 0,
+    PointValidatedGap = 1,
+    RRTConnector = 2,
+    QueryBridge = 3,
+    BoxCorridor = 4,
+};
+
+enum class SegmentEdgeValidation : std::uint8_t {
+    Unknown = 0,
+    CollisionChecked = 1,
+};
+
+struct SegmentEdge {
+    int id = -1;
+    int source_box_id = -1;
+    int target_box_id = -1;
+    std::vector<Eigen::VectorXd> waypoints;
+    SegmentEdgeType type = SegmentEdgeType::Unknown;
+    SegmentEdgeValidation validation = SegmentEdgeValidation::Unknown;
+    int segment_resolution = 0;
+    double length = 0.0;
+    bool strict_audit_required = false;
+    int query_index = -1;
+};
+
+using SegmentEdgeList = std::vector<SegmentEdge>;
+
 struct QueryResult {
     bool success = false;
     int start_box_id = -1;
@@ -54,6 +82,11 @@ struct QueryResult {
     double certified_box_length = 0.0;
     double provisional_audited_length = 0.0;
     double segment_edge_length = 0.0;
+    int partition_cells_used = 0;
+    int non_grid_cells_used = 0;
+    double partition_search_ms = 0.0;
+    double partition_repair_ms = 0.0;
+    double residual_segment_fraction = 0.0;
 };
 
 struct BuildProfile {

@@ -7,11 +7,14 @@
 #include <cctype>
 #include <cstdlib>
 #include <cmath>
+#include <cstdint>
 #include <functional>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <queue>
+#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -190,6 +193,26 @@ const SegmentEdge* find_segment_edge_by_id(const SegmentEdgeList& edges, int edg
     return nullptr;
 }
 
+std::uint64_t partition_segment_pair_key_local(int lhs, int rhs) {
+    if (lhs > rhs) {
+        std::swap(lhs, rhs);
+    }
+    return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(lhs)) << 32) |
+           static_cast<std::uint32_t>(rhs);
+}
+
+std::unordered_set<std::uint64_t> partition_segment_pair_set_local(const SegmentEdgeList& edges) {
+    std::unordered_set<std::uint64_t> pairs;
+    pairs.reserve(edges.size() * 2);
+    for (const auto& edge : edges) {
+        if (edge.source_box_id < 0 || edge.target_box_id < 0) {
+            continue;
+        }
+        pairs.insert(partition_segment_pair_key_local(edge.source_box_id, edge.target_box_id));
+    }
+    return pairs;
+}
+
 Robot make_sbf_audit_robot(Robot robot) {
     return robot;
 }
@@ -207,6 +230,174 @@ const BoxNode* find_box_by_id(const std::vector<BoxNode>& boxes, int box_id) {
         }
     }
     return nullptr;
+}
+
+bool partition_boxes_connected_local(const BoxNode& lhs,
+                                     const BoxNode& rhs,
+                                     double tolerance) {
+    const int nd = lhs.n_dims();
+    if (nd != rhs.n_dims()) {
+        return false;
+    }
+    int shared_dims = 0;
+    int overlap_dims = 0;
+    for (int dim = 0; dim < nd; ++dim) {
+        const auto& lhs_iv = lhs.joint_intervals[static_cast<std::size_t>(dim)];
+        const auto& rhs_iv = rhs.joint_intervals[static_cast<std::size_t>(dim)];
+        const double overlap_lo = std::max(lhs_iv.lo, rhs_iv.lo);
+        const double overlap_hi = std::min(lhs_iv.hi, rhs_iv.hi);
+        if (overlap_hi < overlap_lo - tolerance) {
+            return false;
+        }
+        if (overlap_hi - overlap_lo < tolerance) {
+            shared_dims += 1;
+        } else {
+            overlap_dims += 1;
+        }
+    }
+    return shared_dims >= 1 || overlap_dims == nd;
+}
+
+Eigen::VectorXd partition_shared_face_center_local(const BoxNode& lhs,
+                                                   const BoxNode& rhs) {
+    const int nd = lhs.n_dims();
+    if (nd != rhs.n_dims()) {
+        return (lhs.center() + rhs.center()) * 0.5;
+    }
+    Eigen::VectorXd center(nd);
+    int face_dim = -1;
+    for (int dim = 0; dim < nd; ++dim) {
+        const auto& lhs_iv = lhs.joint_intervals[static_cast<std::size_t>(dim)];
+        const auto& rhs_iv = rhs.joint_intervals[static_cast<std::size_t>(dim)];
+        const double overlap_lo = std::max(lhs_iv.lo, rhs_iv.lo);
+        const double overlap_hi = std::min(lhs_iv.hi, rhs_iv.hi);
+        if (overlap_hi < overlap_lo - 1e-9) {
+            return (lhs.center() + rhs.center()) * 0.5;
+        }
+        if (std::abs(overlap_hi - overlap_lo) <= 1e-9) {
+            if (face_dim >= 0) {
+                return (lhs.center() + rhs.center()) * 0.5;
+            }
+            face_dim = dim;
+        }
+        center[dim] = 0.5 * (overlap_lo + overlap_hi);
+    }
+    return face_dim >= 0 ? center : (lhs.center() + rhs.center()) * 0.5;
+}
+
+Eigen::VectorXd partition_transition_waypoint_local(const BoxNode& lhs,
+                                                    const BoxNode& rhs,
+                                                    const Eigen::Ref<const Eigen::VectorXd>& from,
+                                                    const Eigen::Ref<const Eigen::VectorXd>& goal,
+                                                    double tolerance) {
+    const int nd = lhs.n_dims();
+    if (nd != rhs.n_dims() || from.size() != nd) {
+        return partition_shared_face_center_local(lhs, rhs);
+    }
+    if (!partition_boxes_connected_local(lhs, rhs, tolerance)) {
+        return partition_shared_face_center_local(lhs, rhs);
+    }
+    Eigen::VectorXd target = rhs.center();
+    if (goal.size() == nd) {
+        target = goal;
+    }
+    Eigen::VectorXd overlap_mid(nd);
+    Eigen::VectorXd overlap_lo(nd);
+    Eigen::VectorXd overlap_hi(nd);
+    for (int dim = 0; dim < nd; ++dim) {
+        const auto& lhs_iv = lhs.joint_intervals[static_cast<std::size_t>(dim)];
+        const auto& rhs_iv = rhs.joint_intervals[static_cast<std::size_t>(dim)];
+        overlap_lo[dim] = std::max(lhs_iv.lo, rhs_iv.lo);
+        overlap_hi[dim] = std::min(lhs_iv.hi, rhs_iv.hi);
+        overlap_mid[dim] = 0.5 * (overlap_lo[dim] + overlap_hi[dim]);
+    }
+    const Eigen::VectorXd local_delta = target - from;
+    const double denom = local_delta.squaredNorm();
+    if (denom <= 1e-18) {
+        return overlap_mid;
+    }
+    const double t = std::clamp((overlap_mid - from).dot(local_delta) / denom, 0.0, 1.0);
+    Eigen::VectorXd waypoint = from + t * local_delta;
+    for (int dim = 0; dim < nd; ++dim) {
+        waypoint[dim] = std::clamp(waypoint[dim], overlap_lo[dim], overlap_hi[dim]);
+    }
+    return waypoint;
+}
+
+std::vector<Eigen::VectorXd> extract_partition_waypoints_local(
+    const std::vector<int>& box_sequence,
+    const std::vector<int>& segment_edge_sequence,
+    const std::vector<BoxNode>& boxes,
+    const SegmentEdgeList& segment_edges,
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    double adjacency_tolerance) {
+    std::vector<Eigen::VectorXd> path;
+    if (box_sequence.empty()) {
+        return path;
+    }
+    std::unordered_map<int, const BoxNode*> box_by_id;
+    box_by_id.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        box_by_id[box.id] = &box;
+    }
+    std::unordered_map<int, const SegmentEdge*> edge_by_id;
+    edge_by_id.reserve(segment_edges.size());
+    for (const auto& edge : segment_edges) {
+        edge_by_id[edge.id] = &edge;
+    }
+    auto box_ptr = [&](int id) -> const BoxNode* {
+        const auto it = box_by_id.find(id);
+        return it == box_by_id.end() ? nullptr : it->second;
+    };
+    auto edge_ptr = [&](std::size_t transition_index) -> const SegmentEdge* {
+        if (transition_index >= segment_edge_sequence.size()) {
+            return nullptr;
+        }
+        const int edge_id = segment_edge_sequence[transition_index];
+        if (edge_id < 0) {
+            return nullptr;
+        }
+        const auto it = edge_by_id.find(edge_id);
+        return it == edge_by_id.end() ? nullptr : it->second;
+    };
+    auto append_if_new = [&](const Eigen::VectorXd& waypoint) {
+        if (path.empty() || (path.back() - waypoint).norm() > 1e-12) {
+            path.push_back(waypoint);
+        }
+    };
+    path.push_back(start);
+    for (std::size_t i = 1; i < box_sequence.size(); ++i) {
+        const BoxNode* lhs_ptr = box_ptr(box_sequence[i - 1]);
+        const BoxNode* rhs_ptr = box_ptr(box_sequence[i]);
+        if (lhs_ptr == nullptr || rhs_ptr == nullptr) {
+            continue;
+        }
+        const BoxNode& lhs = *lhs_ptr;
+        const BoxNode& rhs = *rhs_ptr;
+        if (const SegmentEdge* edge = edge_ptr(i - 1)) {
+            std::vector<Eigen::VectorXd> edge_path = edge->waypoints;
+            if (edge->source_box_id == rhs.id && edge->target_box_id == lhs.id) {
+                std::reverse(edge_path.begin(), edge_path.end());
+            }
+            if (edge_path.empty()) {
+                edge_path.push_back(lhs.center());
+                edge_path.push_back(rhs.center());
+            }
+            for (const auto& waypoint : edge_path) {
+                append_if_new(waypoint);
+            }
+            continue;
+        }
+        if (partition_boxes_connected_local(lhs, rhs, adjacency_tolerance)) {
+            append_if_new(partition_transition_waypoint_local(lhs, rhs, path.back(), goal, adjacency_tolerance));
+        } else {
+            append_if_new(lhs.center());
+            append_if_new(rhs.center());
+        }
+    }
+    append_if_new(goal);
+    return path;
 }
 
 Eigen::VectorXd closest_point_in_box(const BoxNode& box,
@@ -419,6 +610,34 @@ bool env_index_list_contains(const char* name, std::size_t target) {
         }
     }
     return false;
+}
+
+int env_index_list_value_or_default(const char* name, std::size_t position, int fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    std::stringstream stream(raw);
+    std::string item;
+    std::size_t index = 0;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (index == position) {
+            if (item.empty()) {
+                return fallback;
+            }
+            char* end = nullptr;
+            const long value = std::strtol(item.c_str(), &end, 10);
+            if (end != item.c_str()) {
+                return static_cast<int>(value);
+            }
+            return fallback;
+        }
+        ++index;
+    }
+    return fallback;
 }
 
 struct PathAuditCheck {
@@ -658,12 +877,6 @@ bool collision_bracket(const Eigen::VectorXd& lhs,
     return !checker.check_config(repair_start) && !checker.check_config(repair_goal);
 }
 
-struct DirtySeedCandidate {
-    Eigen::VectorXd seed;
-    int parent_box_id = -1;
-    int root_id = -1;
-};
-
 Obstacle inflate_obstacle(const Obstacle& obstacle, double padding) {
     const float pad = static_cast<float>(std::max(0.0, padding));
     return Obstacle(obstacle.bounds[0] - pad,
@@ -792,54 +1005,11 @@ bool point_covered_by_existing_box_local(const std::vector<BoxNode>& boxes,
     });
 }
 
-bool seed_near_existing(const std::vector<DirtySeedCandidate>& candidates,
-                        const Eigen::Ref<const Eigen::VectorXd>& seed,
-                        double tolerance) {
-    for (const auto& candidate : candidates) {
-        if (candidate.seed.size() == seed.size() && (candidate.seed - seed).norm() <= tolerance) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool append_dirty_seed_candidate(std::vector<DirtySeedCandidate>& seeds,
-                                 const std::vector<BoxNode>& live_boxes,
-                                 const Eigen::Ref<const Eigen::VectorXd>& seed,
-                                 int parent_box_id,
-                                 int root_id,
-                                 int limit,
-                                 double dedup_tolerance) {
-    if (static_cast<int>(seeds.size()) >= limit) {
-        return false;
-    }
-    if (point_covered_by_existing_box_local(live_boxes, seed) || seed_near_existing(seeds, seed, dedup_tolerance)) {
-        return false;
-    }
-    seeds.push_back(DirtySeedCandidate{seed, parent_box_id, root_id});
-    return true;
-}
-
 struct SubtractiveSeedCandidate {
     Eigen::VectorXd seed;
     int parent_box_id = -1;
     int root_id = -1;
     int domain_index = -1;
-};
-
-struct LeafRefineSeedCandidate {
-    Eigen::VectorXd seed;
-    int parent_box_id = -1;
-    int root_id = -1;
-    int domain_index = -1;
-    bool priority = false;
-};
-
-struct LeafRefineDomainRank {
-    int index = -1;
-    int adjacent_count = 0;
-    double volume = 0.0;
-    double priority_distance = std::numeric_limits<double>::infinity();
 };
 
 Eigen::VectorXd clamped_domain_seed(const BoxNode& domain,
@@ -855,6 +1025,39 @@ bool intervals_subset_local(const std::vector<Interval>& inner,
     for (std::size_t dim = 0; dim < inner.size(); ++dim) {
         if (inner[dim].lo < outer[dim].lo - tolerance ||
             inner[dim].hi > outer[dim].hi + tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool intervals_equal_local(const std::vector<Interval>& lhs,
+                           const std::vector<Interval>& rhs,
+                           double tolerance = 0.0) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
+        if (std::abs(lhs[dim].lo - rhs[dim].lo) > tolerance ||
+            std::abs(lhs[dim].hi - rhs[dim].hi) > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool clip_intervals_to_domain_local(std::vector<Interval>& intervals,
+                                    const std::vector<Interval>& domain) {
+    if (domain.empty()) {
+        return !intervals.empty();
+    }
+    if (intervals.size() != domain.size()) {
+        return false;
+    }
+    for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
+        intervals[dim].lo = std::max(intervals[dim].lo, domain[dim].lo);
+        intervals[dim].hi = std::min(intervals[dim].hi, domain[dim].hi);
+        if (intervals[dim].lo > intervals[dim].hi) {
             return false;
         }
     }
@@ -1034,233 +1237,6 @@ PriorityPruneStats prune_leaf_sweep_to_priority(LeafSweepResult& result,
     return stats;
 }
 
-std::vector<LeafRefineDomainRank> rank_leaf_refine_domains(
-    const std::vector<BoxNode>& domains,
-    const std::vector<BoxNode>& live_boxes,
-    const std::vector<Eigen::VectorXd>& priority_points,
-    double tolerance) {
-    (void)live_boxes;
-    (void)tolerance;
-    std::vector<LeafRefineDomainRank> ranks;
-    ranks.reserve(domains.size());
-    std::unordered_set<int> pinned;
-    for (const auto& point : priority_points) {
-        int best_index = -1;
-        double best_volume = std::numeric_limits<double>::infinity();
-        for (int index = 0; index < static_cast<int>(domains.size()); ++index) {
-            if (pinned.find(index) != pinned.end()) {
-                continue;
-            }
-            const auto& domain = domains[static_cast<std::size_t>(index)];
-            if (point.size() != domain.n_dims() ||
-                !intervals_contain_point_strict_local(domain.joint_intervals, point, 1e-9)) {
-                continue;
-            }
-            if (domain.volume < best_volume) {
-                best_volume = domain.volume;
-                best_index = index;
-            }
-        }
-        if (best_index >= 0) {
-            const auto& domain = domains[static_cast<std::size_t>(best_index)];
-            LeafRefineDomainRank rank;
-            rank.index = best_index;
-            rank.volume = domain.volume;
-            rank.priority_distance = 0.0;
-            ranks.push_back(rank);
-            pinned.insert(best_index);
-        }
-    }
-    std::vector<LeafRefineDomainRank> remaining;
-    remaining.reserve(domains.size());
-    for (int index = 0; index < static_cast<int>(domains.size()); ++index) {
-        if (pinned.find(index) != pinned.end()) {
-            continue;
-        }
-        const auto& domain = domains[static_cast<std::size_t>(index)];
-        LeafRefineDomainRank rank;
-        rank.index = index;
-        rank.volume = domain.volume;
-        rank.priority_distance = box_priority_point_distance(domain, priority_points);
-        remaining.push_back(rank);
-    }
-    std::sort(remaining.begin(), remaining.end(), [](const auto& lhs, const auto& rhs) {
-        if (lhs.adjacent_count != rhs.adjacent_count) {
-            return lhs.adjacent_count > rhs.adjacent_count;
-        }
-        if (std::abs(lhs.priority_distance - rhs.priority_distance) > 1e-12) {
-            return lhs.priority_distance < rhs.priority_distance;
-        }
-        if (std::abs(lhs.volume - rhs.volume) > 1e-18) {
-            return lhs.volume > rhs.volume;
-        }
-        return lhs.index < rhs.index;
-    });
-    ranks.insert(ranks.end(), remaining.begin(), remaining.end());
-    return ranks;
-}
-
-bool leaf_refine_seed_near_existing(const std::vector<LeafRefineSeedCandidate>& candidates,
-                                    const Eigen::Ref<const Eigen::VectorXd>& seed,
-                                    double tolerance) {
-    for (const auto& candidate : candidates) {
-        if (candidate.seed.size() == seed.size() && (candidate.seed - seed).norm() <= tolerance) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool append_leaf_refine_seed(std::vector<LeafRefineSeedCandidate>& seeds,
-                             const std::vector<BoxNode>& live_boxes,
-                             const BoxNode& domain,
-                             int domain_index,
-                             const Eigen::Ref<const Eigen::VectorXd>& raw_seed,
-                             int parent_box_id,
-                             int root_id,
-                             int limit,
-                             double epsilon,
-                             double dedup_tolerance,
-                             bool priority = false) {
-    if (static_cast<int>(seeds.size()) >= limit) {
-        return false;
-    }
-    Eigen::VectorXd seed = priority && raw_seed.size() == domain.n_dims() &&
-            intervals_contain_point_strict_local(domain.joint_intervals, raw_seed, 1e-12)
-        ? Eigen::VectorXd(raw_seed)
-        : clamped_domain_seed(domain, raw_seed, epsilon);
-    if (point_covered_by_existing_box_local(live_boxes, seed) ||
-        leaf_refine_seed_near_existing(seeds, seed, dedup_tolerance)) {
-        return false;
-    }
-    seeds.push_back(LeafRefineSeedCandidate{std::move(seed), parent_box_id, root_id, domain_index, priority});
-    return true;
-}
-
-Eigen::VectorXd domain_face_seed_from_neighbor(const BoxNode& domain,
-                                               const BoxNode& neighbor,
-                                               double epsilon) {
-    Eigen::VectorXd seed = domain.center();
-    for (int dim = 0; dim < domain.n_dims(); ++dim) {
-        const auto& di = domain.joint_intervals[static_cast<std::size_t>(dim)];
-        const auto& ni = neighbor.joint_intervals[static_cast<std::size_t>(dim)];
-        const double width = std::max(0.0, di.width());
-        const double inset = std::min(std::max(epsilon, 1e-12), 0.25 * width);
-        if (ni.hi <= di.lo + epsilon && width > 2.0 * inset) {
-            seed[dim] = di.lo + inset;
-        } else if (ni.lo >= di.hi - epsilon && width > 2.0 * inset) {
-            seed[dim] = di.hi - inset;
-        } else {
-            const double lo = std::max(di.lo, ni.lo);
-            const double hi = std::min(di.hi, ni.hi);
-            seed[dim] = lo <= hi ? 0.5 * (lo + hi) : di.center();
-        }
-    }
-    return clamped_domain_seed(domain, seed, epsilon);
-}
-
-std::vector<LeafRefineSeedCandidate> make_leaf_refine_domain_seeds(
-    const BoxNode& domain,
-    int domain_index,
-    const std::vector<BoxNode>& live_boxes,
-    const std::vector<Eigen::VectorXd>& priority_points,
-    int limit,
-    double adjacency_tolerance,
-    double boundary_epsilon) {
-    std::vector<LeafRefineSeedCandidate> seeds;
-    if (limit <= 0) {
-        return seeds;
-    }
-    seeds.reserve(static_cast<std::size_t>(std::min(limit, 16)));
-    const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
-    const double dedup_tolerance = std::max(1e-9, 4.0 * epsilon);
-    for (const auto& point : priority_points) {
-        if (static_cast<int>(seeds.size()) >= limit) {
-            return seeds;
-        }
-        if (point.size() != domain.n_dims() ||
-            !intervals_contain_point_strict_local(domain.joint_intervals, point, adjacency_tolerance)) {
-            continue;
-        }
-        append_leaf_refine_seed(seeds,
-                                live_boxes,
-                                domain,
-                                domain_index,
-                                point,
-                                -1,
-                                domain.root_id >= 0 ? domain.root_id : domain.id,
-                                limit,
-                                epsilon,
-                                dedup_tolerance,
-                                true);
-    }
-    for (const auto& live : live_boxes) {
-        if (!boxes_connected(domain, live, adjacency_tolerance)) {
-            continue;
-        }
-        const Eigen::VectorXd seed = domain_face_seed_from_neighbor(domain, live, epsilon);
-        append_leaf_refine_seed(seeds,
-                                live_boxes,
-                                domain,
-                                domain_index,
-                                seed,
-                                live.id,
-                                live.root_id >= 0 ? live.root_id : live.id,
-                                limit,
-                                epsilon,
-                                dedup_tolerance);
-        if (static_cast<int>(seeds.size()) >= limit) {
-            return seeds;
-        }
-    }
-    append_leaf_refine_seed(seeds,
-                            live_boxes,
-                            domain,
-                            domain_index,
-                            domain.center(),
-                            -1,
-                            domain.root_id >= 0 ? domain.root_id : domain.id,
-                            limit,
-                            epsilon,
-                            dedup_tolerance);
-    for (int dim = 0; dim < domain.n_dims() && static_cast<int>(seeds.size()) < limit; ++dim) {
-        const auto& interval = domain.joint_intervals[static_cast<std::size_t>(dim)];
-        const double width = std::max(0.0, interval.width());
-        const double inset = std::min(std::max(epsilon, 1e-12), 0.25 * width);
-        if (width <= 2.0 * inset) {
-            continue;
-        }
-        Eigen::VectorXd lo_seed = domain.center();
-        lo_seed[dim] = interval.lo + inset;
-        append_leaf_refine_seed(seeds,
-                                live_boxes,
-                                domain,
-                                domain_index,
-                                lo_seed,
-                                -1,
-                                domain.root_id >= 0 ? domain.root_id : domain.id,
-                                limit,
-                                epsilon,
-                                dedup_tolerance);
-        if (static_cast<int>(seeds.size()) >= limit) {
-            break;
-        }
-        Eigen::VectorXd hi_seed = domain.center();
-        hi_seed[dim] = interval.hi - inset;
-        append_leaf_refine_seed(seeds,
-                                live_boxes,
-                                domain,
-                                domain_index,
-                                hi_seed,
-                                -1,
-                                domain.root_id >= 0 ? domain.root_id : domain.id,
-                                limit,
-                                epsilon,
-                                dedup_tolerance);
-    }
-    return seeds;
-}
-
 bool leaf_refine_has_adjacency(const std::vector<BoxNode>& boxes,
                                const BoxNode& box,
                                double tolerance,
@@ -1274,42 +1250,6 @@ bool leaf_refine_has_adjacency(const std::vector<BoxNode>& boxes,
         }
     }
     return false;
-}
-
-bool append_leaf_refine_target_step_seed(std::vector<LeafRefineSeedCandidate>& seeds,
-                                         const std::vector<BoxNode>& live_boxes,
-                                         const BoxNode& domain,
-                                         int domain_index,
-                                         const BoxNode& parent,
-                                         const Eigen::VectorXd& target,
-                                         int limit,
-                                         double epsilon,
-                                         double dedup_tolerance) {
-    if (target.size() != domain.n_dims()) {
-        return false;
-    }
-    Eigen::VectorXd seed = target;
-    for (int dim = 0; dim < domain.n_dims(); ++dim) {
-        const auto& interval = parent.joint_intervals[static_cast<std::size_t>(dim)];
-        if (target[dim] < interval.lo) {
-            seed[dim] = interval.lo - epsilon;
-        } else if (target[dim] > interval.hi) {
-            seed[dim] = interval.hi + epsilon;
-        } else {
-            seed[dim] = target[dim];
-        }
-    }
-    return append_leaf_refine_seed(seeds,
-                                   live_boxes,
-                                   domain,
-                                   domain_index,
-                                   seed,
-                                   parent.id,
-                                   parent.root_id >= 0 ? parent.root_id : parent.id,
-                                   limit,
-                                   epsilon,
-                                   dedup_tolerance,
-                                   false);
 }
 
 int containing_domain_index(const std::vector<BoxNode>& domains,
@@ -1558,6 +1498,244 @@ void connect_incremental_boxes(AdjacencyGraph& graph,
     }
 }
 
+Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals) {
+    Eigen::VectorXd center(static_cast<int>(intervals.size()));
+    for (int dim = 0; dim < center.size(); ++dim) {
+        center[dim] = intervals[static_cast<std::size_t>(dim)].center();
+    }
+    return center;
+}
+
+double adaptive_interval_volume(const std::vector<Interval>& intervals) {
+    double volume = 1.0;
+    for (const auto& interval : intervals) {
+        volume *= std::max(0.0, interval.width());
+    }
+    return volume;
+}
+
+int adaptive_virtual_depth(OracleNodeId node) {
+    if (node <= 0) {
+        return 0;
+    }
+    std::uint64_t value = static_cast<std::uint64_t>(node) + 1u;
+    int depth = -1;
+    while (value != 0u) {
+        value >>= 1u;
+        ++depth;
+    }
+    return std::max(0, depth);
+}
+
+struct AdaptiveFrontierItem {
+    OracleNodeId node = -1;
+    std::vector<Interval> intervals;
+    int changed_dim = -1;
+    int free_seed_hits = 0;
+    double overlap_depth = 0.0;
+    double overlap_ratio = 0.0;
+    double score = 0.0;
+};
+
+bool adaptive_virtual_split_node(const lect_database::SplitPolicyDescriptor& descriptor,
+                                 const AdaptiveFrontierItem& item,
+                                 AdaptiveFrontierItem& left,
+                                 AdaptiveFrontierItem& right) {
+    if (item.node < 0 || item.intervals.empty()) {
+        return false;
+    }
+    const int depth = adaptive_virtual_depth(item.node);
+    int split_dim = -1;
+    if (!descriptor.depth_dimensions.empty() &&
+        depth >= 0 &&
+        depth < static_cast<int>(descriptor.depth_dimensions.size())) {
+        split_dim = descriptor.depth_dimensions[static_cast<std::size_t>(depth)];
+    } else {
+        split_dim = depth % static_cast<int>(item.intervals.size());
+    }
+    if (split_dim < 0 || split_dim >= static_cast<int>(item.intervals.size())) {
+        return false;
+    }
+    const auto dim = static_cast<std::size_t>(split_dim);
+    const double split_value = item.intervals[dim].center();
+    if (!(split_value > item.intervals[dim].lo && split_value < item.intervals[dim].hi)) {
+        return false;
+    }
+    left = item;
+    right = item;
+    left.node = static_cast<OracleNodeId>(2 * static_cast<std::uint64_t>(item.node) + 1u);
+    right.node = static_cast<OracleNodeId>(2 * static_cast<std::uint64_t>(item.node) + 2u);
+    left.changed_dim = split_dim;
+    right.changed_dim = split_dim;
+    left.intervals[dim].hi = split_value;
+    right.intervals[dim].lo = split_value;
+    left.free_seed_hits = 0;
+    right.free_seed_hits = 0;
+    left.overlap_depth = 0.0;
+    right.overlap_depth = 0.0;
+    left.overlap_ratio = 0.0;
+    right.overlap_ratio = 0.0;
+    left.score = 0.0;
+    right.score = 0.0;
+    return true;
+}
+
+BoxNode adaptive_make_box_from_intervals(const std::vector<Interval>& intervals,
+                                         OracleNodeId node,
+                                         int id,
+                                         BoxSafetyStatus status,
+                                         bool strict_audit_required) {
+    BoxNode box;
+    box.id = id;
+    box.joint_intervals = intervals;
+    box.seed_config = adaptive_center_of_intervals(intervals);
+    box.tree_id = node;
+    box.parent_box_id = -1;
+    box.root_id = id;
+    box.safety_status = status;
+    box.strict_audit_required = strict_audit_required;
+    box.compute_volume();
+    return box;
+}
+
+std::unordered_set<int> adaptive_largest_island_ids(const AdjacencyGraph& graph) {
+    std::unordered_set<int> ids;
+    const auto islands = find_islands(graph);
+    if (islands.empty()) {
+        return ids;
+    }
+    const auto* largest = &islands.front();
+    for (const auto& island : islands) {
+        if (island.size() > largest->size()) {
+            largest = &island;
+        }
+    }
+    ids.insert(largest->begin(), largest->end());
+    return ids;
+}
+
+bool adaptive_has_adjacency_to_any(const std::vector<BoxNode>& boxes,
+                                   const BoxNode& candidate,
+                                   const std::unordered_set<int>* allowed_ids,
+                                   double tolerance) {
+    for (const auto& existing : boxes) {
+        if (allowed_ids != nullptr && allowed_ids->find(existing.id) == allowed_ids->end()) {
+            continue;
+        }
+        if (boxes_connected(existing, candidate, tolerance)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int adaptive_count_adjacent_free(const std::vector<BoxNode>& boxes,
+                                 const AdaptiveFrontierItem& item,
+                                 double tolerance,
+                                 const std::unordered_set<int>* allowed_ids = nullptr) {
+    const BoxNode candidate = adaptive_make_box_from_intervals(item.intervals,
+                                                              item.node,
+                                                              -1,
+                                                              BoxSafetyStatus::Unknown,
+                                                              false);
+    int count = 0;
+    for (const auto& box : boxes) {
+        if (allowed_ids != nullptr && allowed_ids->find(box.id) == allowed_ids->end()) {
+            continue;
+        }
+        if (boxes_connected(box, candidate, tolerance)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+double adaptive_frontier_score(const std::vector<BoxNode>& boxes,
+                               const AdaptiveFrontierItem& item,
+                               const std::unordered_set<int>& main_ids,
+                               double overlap_depth_threshold,
+                               double tolerance) {
+    (void)boxes;
+    (void)main_ids;
+    (void)tolerance;
+    const double volume = std::max(adaptive_interval_volume(item.intervals), 1e-300);
+    const double normalized_overlap_depth =
+        overlap_depth_threshold > 1e-12
+            ? std::max(0.0, item.overlap_depth / overlap_depth_threshold)
+            : 0.0;
+    return std::log(volume) +
+           75.0 * static_cast<double>(item.free_seed_hits) -
+           3.0 * std::max(0.0, item.overlap_ratio) -
+           1.5 * normalized_overlap_depth -
+           0.10 * static_cast<double>(adaptive_virtual_depth(item.node));
+}
+
+std::vector<Eigen::VectorXd> adaptive_generate_free_probes(DatabaseBoxOracle& oracle,
+                                                           const std::vector<Interval>& domain,
+                                                           int probe_count,
+                                                           int rng_seed,
+                                                           int& attempted) {
+    attempted = std::max(0, probe_count);
+    std::vector<Eigen::VectorXd> free_points;
+    if (probe_count <= 0 || domain.empty()) {
+        return free_points;
+    }
+    std::mt19937 rng(static_cast<std::uint32_t>(rng_seed));
+    std::vector<std::uniform_real_distribution<double>> distributions;
+    distributions.reserve(domain.size());
+    for (const auto& interval : domain) {
+        distributions.emplace_back(interval.lo, interval.hi);
+    }
+    for (int index = 0; index < probe_count; ++index) {
+        Eigen::VectorXd point(static_cast<int>(domain.size()));
+        for (int dim = 0; dim < point.size(); ++dim) {
+            point[dim] = distributions[static_cast<std::size_t>(dim)](rng);
+        }
+        if (!oracle.point_in_collision(point)) {
+            free_points.push_back(std::move(point));
+        }
+    }
+    return free_points;
+}
+
+int adaptive_count_seed_hits(const AdaptiveFrontierItem& item,
+                             const std::vector<Eigen::VectorXd>& free_probes) {
+    int hits = 0;
+    for (const auto& point : free_probes) {
+        if (intervals_contain_point_strict_local(item.intervals, point, 0.0)) {
+            ++hits;
+        }
+    }
+    return hits;
+}
+
+void adaptive_add_depth_counter(std::unordered_map<std::string, double>& diagnostics,
+                                const std::string& prefix,
+                                int depth) {
+    diagnostics[prefix + std::to_string(depth)] += 1.0;
+}
+
+class ScopedAdaptiveFullOverlapStats {
+public:
+    ScopedAdaptiveFullOverlapStats(DatabaseBoxOracle& oracle, bool enabled)
+        : oracle_(oracle), previous_(oracle.validation_config().collect_full_overlap_stats) {
+        if (enabled) {
+            oracle_.set_collect_full_overlap_stats(true);
+        }
+    }
+
+    ~ScopedAdaptiveFullOverlapStats() {
+        oracle_.set_collect_full_overlap_stats(previous_);
+    }
+
+    ScopedAdaptiveFullOverlapStats(const ScopedAdaptiveFullOverlapStats&) = delete;
+    ScopedAdaptiveFullOverlapStats& operator=(const ScopedAdaptiveFullOverlapStats&) = delete;
+
+private:
+    DatabaseBoxOracle& oracle_;
+    bool previous_ = false;
+};
+
 std::unordered_set<int> collect_local_adjacency_ids(const std::vector<BoxNode>& live_boxes,
                                                     const std::vector<BoxNode>& local_domains,
                                                     double tolerance) {
@@ -1657,7 +1835,9 @@ bool fast_exact_face_merge_one_dim(BoxOracle& oracle,
                                    std::vector<BoxNode>& boxes,
                                    int merge_dim,
                                    double tolerance,
-                                   int& exact_merges) {
+                                   int& exact_merges,
+                                   const std::chrono::steady_clock::time_point* deadline = nullptr,
+                                   bool* timed_out = nullptr) {
     if (boxes.empty() || merge_dim < 0 || merge_dim >= boxes.front().n_dims()) {
         return false;
     }
@@ -1679,7 +1859,20 @@ bool fast_exact_face_merge_one_dim(BoxOracle& oracle,
         keys.push_back(item.first);
     }
     std::sort(keys.begin(), keys.end());
-    for (const auto& key : keys) {
+    for (std::size_t key_index = 0; key_index < keys.size(); ++key_index) {
+        const auto& key = keys[key_index];
+        if (deadline != nullptr && std::chrono::steady_clock::now() >= *deadline) {
+            if (timed_out != nullptr) {
+                *timed_out = true;
+            }
+            for (std::size_t remaining = key_index; remaining < keys.size(); ++remaining) {
+                auto& remaining_group = groups[keys[remaining]];
+                merged_boxes.insert(merged_boxes.end(),
+                                    std::make_move_iterator(remaining_group.begin()),
+                                    std::make_move_iterator(remaining_group.end()));
+            }
+            break;
+        }
         auto& group = groups[key];
         std::sort(group.begin(), group.end(), [merge_dim](const BoxNode& lhs, const BoxNode& rhs) {
             const auto& li = lhs.joint_intervals[static_cast<std::size_t>(merge_dim)];
@@ -1719,7 +1912,9 @@ bool fast_exact_face_merge_one_dim(BoxOracle& oracle,
 
 MergerResult fast_exact_face_merge_leaf(BoxOracle& oracle,
                                         std::vector<BoxNode>& boxes,
-                                        const MergerConfig& config) {
+                                        const MergerConfig& config,
+                                        const std::chrono::steady_clock::time_point* deadline = nullptr,
+                                        bool* timed_out = nullptr) {
     MergerResult result;
     result.boxes_before = static_cast<int>(boxes.size());
     if (boxes.empty()) {
@@ -1731,11 +1926,24 @@ MergerResult fast_exact_face_merge_leaf(BoxOracle& oracle,
     for (int round = 0; round < max_rounds; ++round) {
         bool changed = false;
         for (int dim = 0; dim < nd; ++dim) {
+            if (deadline != nullptr && std::chrono::steady_clock::now() >= *deadline) {
+                if (timed_out != nullptr) {
+                    *timed_out = true;
+                }
+                result.boxes_after = static_cast<int>(boxes.size());
+                return result;
+            }
             changed = fast_exact_face_merge_one_dim(oracle,
                                                     boxes,
                                                     dim,
                                                     config.adjacency_tolerance,
-                                                    result.exact_merges) || changed;
+                                                    result.exact_merges,
+                                                    deadline,
+                                                    timed_out) || changed;
+            if (timed_out != nullptr && *timed_out) {
+                result.boxes_after = static_cast<int>(boxes.size());
+                return result;
+            }
         }
         result.rounds += 1;
         if (!changed) {
@@ -1935,6 +2143,470 @@ struct BoxSpatialIndex {
         return best;
     }
 };
+
+struct BudgetedMergeStats {
+    int input_boxes = 0;
+    int output_boxes = 0;
+    int grid_merges = 0;
+    int grid_rounds = 0;
+    int tree_merges = 0;
+    int tree_rounds = 0;
+    int containment_pruned = 0;
+    int exact_merges = 0;
+    int rounds = 0;
+    int stop_reason = 1;  // 0 skipped, 1 complete, 2 time_budget, 3 input_cap
+    double containment_ms = 0.0;
+    double grid_ms = 0.0;
+    double tree_ms = 0.0;
+    double exact_ms = 0.0;
+    double total_ms = 0.0;
+};
+
+struct GridCellKey {
+    bool valid = false;
+    int depth = 0;
+    std::vector<int> split_counts;
+    std::vector<std::uint64_t> coords;
+};
+
+int heap_node_depth(OracleNodeId node) {
+    if (node < 0) {
+        return -1;
+    }
+    std::uint64_t value = static_cast<std::uint64_t>(node) + 1u;
+    int depth = -1;
+    while (value != 0u) {
+        value >>= 1u;
+        depth += 1;
+    }
+    return depth;
+}
+
+bool heap_path_bit(OracleNodeId node, int depth, int bit_index) {
+    const std::uint64_t first_at_depth = (std::uint64_t{1} << static_cast<unsigned>(depth)) - 1u;
+    const std::uint64_t local = static_cast<std::uint64_t>(node) - first_at_depth;
+    const int shift = depth - 1 - bit_index;
+    return ((local >> static_cast<unsigned>(shift)) & std::uint64_t{1}) != 0u;
+}
+
+GridCellKey grid_key_for_heap_box(const DatabaseBoxOracle& oracle,
+                                  const BoxNode& box,
+                                  const std::vector<int>& depth_dimensions,
+                                  double tolerance) {
+    GridCellKey key;
+    const int nd = box.n_dims();
+    const int depth = heap_node_depth(box.tree_id);
+    if (depth < 0 || nd <= 0 || static_cast<int>(depth_dimensions.size()) < depth) {
+        return key;
+    }
+    const auto& root = oracle.root_intervals();
+    if (static_cast<int>(root.size()) != nd) {
+        return key;
+    }
+    key.depth = depth;
+    key.split_counts.assign(static_cast<std::size_t>(nd), 0);
+    key.coords.assign(static_cast<std::size_t>(nd), 0u);
+    for (int level = 0; level < depth; ++level) {
+        const int dim = depth_dimensions[static_cast<std::size_t>(level)];
+        if (dim < 0 || dim >= nd) {
+            key.valid = false;
+            return key;
+        }
+        key.coords[static_cast<std::size_t>(dim)] =
+            (key.coords[static_cast<std::size_t>(dim)] << 1u) |
+            (heap_path_bit(box.tree_id, depth, level) ? std::uint64_t{1} : std::uint64_t{0});
+        key.split_counts[static_cast<std::size_t>(dim)] += 1;
+    }
+    std::vector<Interval> expected = root;
+    for (int dim = 0; dim < nd; ++dim) {
+        const int count = key.split_counts[static_cast<std::size_t>(dim)];
+        const double cell_width = std::ldexp(root[static_cast<std::size_t>(dim)].width(), -count);
+        expected[static_cast<std::size_t>(dim)].lo =
+            root[static_cast<std::size_t>(dim)].lo +
+            static_cast<double>(key.coords[static_cast<std::size_t>(dim)]) * cell_width;
+        expected[static_cast<std::size_t>(dim)].hi =
+            expected[static_cast<std::size_t>(dim)].lo + cell_width;
+    }
+    if (!intervals_equal_local(expected, box.joint_intervals, std::max(tolerance, 1e-10))) {
+        return key;
+    }
+    key.valid = true;
+    return key;
+}
+
+std::string grid_line_key(const GridCellKey& key, int merge_dim) {
+    std::ostringstream oss;
+    oss << "d" << key.depth << "|m" << merge_dim << '|';
+    for (std::size_t dim = 0; dim < key.coords.size(); ++dim) {
+        oss << key.split_counts[dim] << ':';
+        if (static_cast<int>(dim) == merge_dim) {
+            oss << '*';
+        } else {
+            oss << key.coords[dim];
+        }
+        oss << ';';
+    }
+    return oss.str();
+}
+
+int grid_line_merge_leaf(DatabaseBoxOracle& oracle,
+                         std::vector<BoxNode>& boxes,
+                         double tolerance,
+                         int max_rounds,
+                         int& rounds) {
+    rounds = 0;
+    if (boxes.empty()) {
+        return 0;
+    }
+    const auto descriptor = oracle.database().split_policy_descriptor();
+    if (descriptor.depth_dimensions.empty()) {
+        return 0;
+    }
+    int total_merges = 0;
+    for (int round = 0; round < std::max(1, max_rounds); ++round) {
+        bool changed = false;
+        const int nd = boxes.front().n_dims();
+        for (int merge_dim = 0; merge_dim < nd; ++merge_dim) {
+            std::vector<GridCellKey> keys;
+            keys.reserve(boxes.size());
+            std::unordered_map<std::string, std::vector<int>> groups;
+            groups.reserve(boxes.size() * 2);
+            for (int index = 0; index < static_cast<int>(boxes.size()); ++index) {
+                keys.push_back(grid_key_for_heap_box(oracle, boxes[static_cast<std::size_t>(index)], descriptor.depth_dimensions, tolerance));
+                const auto& key = keys.back();
+                if (!key.valid) {
+                    continue;
+                }
+                groups[grid_line_key(key, merge_dim)].push_back(index);
+            }
+            std::vector<unsigned char> removed(boxes.size(), 0);
+            std::vector<BoxNode> additions;
+            for (auto& [_, members] : groups) {
+                if (members.size() <= 1) {
+                    continue;
+                }
+                std::sort(members.begin(), members.end(), [&](int lhs, int rhs) {
+                    return keys[static_cast<std::size_t>(lhs)].coords[static_cast<std::size_t>(merge_dim)] <
+                           keys[static_cast<std::size_t>(rhs)].coords[static_cast<std::size_t>(merge_dim)];
+                });
+                std::size_t run_begin = 0;
+                while (run_begin < members.size()) {
+                    std::size_t run_end = run_begin + 1;
+                    while (run_end < members.size()) {
+                        const auto prev_coord = keys[static_cast<std::size_t>(members[run_end - 1])].coords[static_cast<std::size_t>(merge_dim)];
+                        const auto next_coord = keys[static_cast<std::size_t>(members[run_end])].coords[static_cast<std::size_t>(merge_dim)];
+                        if (next_coord != prev_coord + 1u) {
+                            break;
+                        }
+                        ++run_end;
+                    }
+                    if (run_end - run_begin > 1) {
+                        BoxNode merged = boxes[static_cast<std::size_t>(members[run_begin])];
+                        for (std::size_t pos = run_begin + 1; pos < run_end; ++pos) {
+                            const BoxNode& next = boxes[static_cast<std::size_t>(members[pos])];
+                            for (std::size_t dim = 0; dim < merged.joint_intervals.size(); ++dim) {
+                                merged.joint_intervals[dim] = merged.joint_intervals[dim].hull(next.joint_intervals[dim]);
+                            }
+                            removed[static_cast<std::size_t>(members[pos])] = 1;
+                            oracle.release_box(next.id);
+                            total_merges += 1;
+                        }
+                        removed[static_cast<std::size_t>(members[run_begin])] = 1;
+                        merged.tree_id = -1;
+                        merged.parent_box_id = -1;
+                        merged.root_id = merged.id;
+                        merged.seed_config = merged.center();
+                        merged.compute_volume();
+                        additions.push_back(std::move(merged));
+                        changed = true;
+                    }
+                    run_begin = run_end;
+                }
+            }
+            if (changed) {
+                std::vector<BoxNode> kept;
+                kept.reserve(boxes.size() + additions.size());
+                for (int index = 0; index < static_cast<int>(boxes.size()); ++index) {
+                    if (removed[static_cast<std::size_t>(index)] == 0) {
+                        kept.push_back(std::move(boxes[static_cast<std::size_t>(index)]));
+                    }
+                }
+                kept.insert(kept.end(),
+                            std::make_move_iterator(additions.begin()),
+                            std::make_move_iterator(additions.end()));
+                boxes = std::move(kept);
+            }
+        }
+        rounds += 1;
+        if (!changed) {
+            break;
+        }
+    }
+    return total_merges;
+}
+
+bool try_tree_sibling_merge_round(BoxOracle& oracle,
+                                  std::vector<BoxNode>& boxes,
+                                  double tolerance,
+                                  int& merges) {
+    std::unordered_map<OracleNodeId, int> index_by_node;
+    index_by_node.reserve(boxes.size() * 2);
+    for (int index = 0; index < static_cast<int>(boxes.size()); ++index) {
+        const OracleNodeId node = boxes[static_cast<std::size_t>(index)].tree_id;
+        if (node <= 0) {
+            continue;
+        }
+        if (index_by_node.find(node) == index_by_node.end()) {
+            index_by_node[node] = index;
+        }
+    }
+    std::vector<unsigned char> removed(boxes.size(), 0);
+    bool changed = false;
+    const auto planning_domain = oracle.planning_intervals();
+    for (int left_index = 0; left_index < static_cast<int>(boxes.size()); ++left_index) {
+        if (removed[static_cast<std::size_t>(left_index)] != 0) {
+            continue;
+        }
+        const OracleNodeId left_node = boxes[static_cast<std::size_t>(left_index)].tree_id;
+        if (left_node <= 0 || left_node % 2 == 0) {
+            continue;
+        }
+        const OracleNodeId right_node = left_node + 1;
+        auto right_it = index_by_node.find(right_node);
+        if (right_it == index_by_node.end()) {
+            continue;
+        }
+        const int right_index = right_it->second;
+        if (right_index < 0 || right_index >= static_cast<int>(boxes.size()) ||
+            removed[static_cast<std::size_t>(right_index)] != 0) {
+            continue;
+        }
+        const OracleNodeId parent_node = (left_node - 1) / 2;
+        BoxNode& left_box = boxes[static_cast<std::size_t>(left_index)];
+        BoxNode& right_box = boxes[static_cast<std::size_t>(right_index)];
+        if (left_box.n_dims() != right_box.n_dims() ||
+            !boxes_connected(left_box, right_box, tolerance)) {
+            continue;
+        }
+        std::vector<Interval> hull = left_box.joint_intervals;
+        for (std::size_t dim = 0; dim < hull.size(); ++dim) {
+            hull[dim] = hull[dim].hull(right_box.joint_intervals[dim]);
+        }
+        std::vector<Interval> parent_intervals;
+        try {
+            parent_intervals = oracle.node_intervals(parent_node);
+        } catch (...) {
+            continue;
+        }
+        if (!clip_intervals_to_domain_local(parent_intervals, planning_domain)) {
+            continue;
+        }
+        if (!intervals_equal_local(hull, parent_intervals, std::max(tolerance, 1e-12))) {
+            continue;
+        }
+        left_box.joint_intervals = std::move(hull);
+        left_box.tree_id = parent_node;
+        left_box.parent_box_id = -1;
+        left_box.root_id = left_box.id;
+        left_box.seed_config = left_box.center();
+        left_box.compute_volume();
+        oracle.release_box(right_box.id);
+        removed[static_cast<std::size_t>(right_index)] = 1;
+        merges += 1;
+        changed = true;
+    }
+    if (!changed) {
+        return false;
+    }
+    std::vector<BoxNode> kept;
+    kept.reserve(boxes.size());
+    for (int index = 0; index < static_cast<int>(boxes.size()); ++index) {
+        if (removed[static_cast<std::size_t>(index)] == 0) {
+            kept.push_back(std::move(boxes[static_cast<std::size_t>(index)]));
+        }
+    }
+    boxes = std::move(kept);
+    return true;
+}
+
+int tree_sibling_merge_leaf(BoxOracle& oracle,
+                            std::vector<BoxNode>& boxes,
+                            double tolerance,
+                            int max_rounds,
+                            const std::chrono::steady_clock::time_point* deadline,
+                            bool& timed_out,
+                            int& rounds) {
+    int merges = 0;
+    rounds = 0;
+    for (int round = 0; round < std::max(1, max_rounds); ++round) {
+        if (deadline != nullptr && std::chrono::steady_clock::now() >= *deadline) {
+            timed_out = true;
+            break;
+        }
+        int round_merges = 0;
+        const bool changed = try_tree_sibling_merge_round(oracle, boxes, tolerance, round_merges);
+        merges += round_merges;
+        rounds += 1;
+        if (!changed) {
+            break;
+        }
+    }
+    return merges;
+}
+
+int indexed_containment_prune_leaf(BoxOracle& oracle,
+                                   std::vector<BoxNode>& boxes,
+                                   double tolerance,
+                                   const std::chrono::steady_clock::time_point* deadline,
+                                   bool& timed_out) {
+    if (boxes.size() <= 1) {
+        return 0;
+    }
+    BoxSpatialIndex index;
+    index.rebuild(boxes, tolerance);
+    std::vector<unsigned char> remove(boxes.size(), 0);
+    int pruned = 0;
+    for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
+        if (deadline != nullptr && std::chrono::steady_clock::now() >= *deadline) {
+            timed_out = true;
+            break;
+        }
+        if (remove[static_cast<std::size_t>(i)] != 0) {
+            continue;
+        }
+        const BoxNode& inner = boxes[static_cast<std::size_t>(i)];
+        const auto candidates = index.point_candidates(inner.center());
+        for (int j : candidates) {
+            if (j == i || j < 0 || j >= static_cast<int>(boxes.size()) ||
+                remove[static_cast<std::size_t>(j)] != 0) {
+                continue;
+            }
+            const BoxNode& outer = boxes[static_cast<std::size_t>(j)];
+            if (outer.volume + 1e-18 < inner.volume) {
+                continue;
+            }
+            if (std::abs(outer.volume - inner.volume) <= 1e-18 && outer.id > inner.id) {
+                continue;
+            }
+            if (intervals_subset_local(inner.joint_intervals, outer.joint_intervals, tolerance)) {
+                remove[static_cast<std::size_t>(i)] = 1;
+                pruned += 1;
+                oracle.release_box(inner.id);
+                break;
+            }
+        }
+    }
+    if (pruned <= 0) {
+        return 0;
+    }
+    std::vector<BoxNode> kept;
+    kept.reserve(boxes.size() - static_cast<std::size_t>(pruned));
+    for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
+        if (remove[static_cast<std::size_t>(i)] == 0) {
+            kept.push_back(std::move(boxes[static_cast<std::size_t>(i)]));
+        }
+    }
+    boxes = std::move(kept);
+    return pruned;
+}
+
+BudgetedMergeStats budgeted_leaf_merge(DatabaseBoxOracle& oracle,
+                                       std::vector<BoxNode>& boxes,
+                                       MergerConfig config,
+                                       double max_merge_ms,
+                                       int max_merge_rounds,
+                                       int max_merge_input_boxes,
+                                       double adjacency_tolerance) {
+    using Clock = std::chrono::steady_clock;
+    const auto start = Clock::now();
+    BudgetedMergeStats stats;
+    stats.input_boxes = static_cast<int>(boxes.size());
+    stats.output_boxes = stats.input_boxes;
+    if (boxes.empty()) {
+        stats.stop_reason = 0;
+        return stats;
+    }
+    const bool has_budget = max_merge_ms > 0.0;
+    const auto deadline = has_budget
+        ? start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double, std::milli>(max_merge_ms))
+        : Clock::time_point::max();
+    bool timed_out = false;
+    const auto grid_start = Clock::now();
+    stats.grid_merges = grid_line_merge_leaf(oracle,
+                                             boxes,
+                                             adjacency_tolerance,
+                                             std::max(1, max_merge_rounds),
+                                             stats.grid_rounds);
+    stats.grid_ms = std::chrono::duration<double, std::milli>(Clock::now() - grid_start).count();
+    if (has_budget && Clock::now() >= deadline) {
+        stats.stop_reason = 2;
+        stats.output_boxes = static_cast<int>(boxes.size());
+        stats.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        return stats;
+    }
+    const auto tree_start = Clock::now();
+    stats.tree_merges = tree_sibling_merge_leaf(oracle,
+                                                boxes,
+                                                adjacency_tolerance,
+                                                std::max(1, max_merge_rounds),
+                                                has_budget ? &deadline : nullptr,
+                                                timed_out,
+                                                stats.tree_rounds);
+    stats.tree_ms = std::chrono::duration<double, std::milli>(Clock::now() - tree_start).count();
+    if (timed_out) {
+        stats.stop_reason = 2;
+        stats.output_boxes = static_cast<int>(boxes.size());
+        stats.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        return stats;
+    }
+    const auto containment_start = Clock::now();
+    if (config.containment_prune) {
+        const double containment_budget_ms = has_budget
+            ? std::min(max_merge_ms * 0.15, 100.0)
+            : 0.0;
+        const auto containment_deadline = has_budget
+            ? start + std::chrono::duration_cast<Clock::duration>(
+                          std::chrono::duration<double, std::milli>(containment_budget_ms))
+            : Clock::time_point::max();
+        stats.containment_pruned = indexed_containment_prune_leaf(oracle,
+                                                                  boxes,
+                                                                  adjacency_tolerance,
+                                                                  has_budget ? &containment_deadline : nullptr,
+                                                                  timed_out);
+    }
+    stats.containment_ms = std::chrono::duration<double, std::milli>(Clock::now() - containment_start).count();
+    if (timed_out) {
+        timed_out = false;
+    }
+    const int input_cap = std::max(0, max_merge_input_boxes);
+    if (input_cap > 0 && static_cast<int>(boxes.size()) > input_cap) {
+        stats.stop_reason = 3;
+        stats.output_boxes = static_cast<int>(boxes.size());
+        stats.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+        return stats;
+    }
+    config.exact_face_merge = true;
+    config.greedy_hull_merge = false;
+    config.containment_prune = false;
+    config.adjacency_tolerance = adjacency_tolerance;
+    config.max_rounds = std::max(1, max_merge_rounds);
+    const auto exact_start = Clock::now();
+    bool exact_timed_out = false;
+    MergerResult exact_result = fast_exact_face_merge_leaf(oracle,
+                                                           boxes,
+                                                           config,
+                                                           has_budget ? &deadline : nullptr,
+                                                           &exact_timed_out);
+    stats.exact_ms = std::chrono::duration<double, std::milli>(Clock::now() - exact_start).count();
+    stats.exact_merges = exact_result.exact_merges;
+    stats.rounds = exact_result.rounds;
+    if (exact_timed_out) {
+        stats.stop_reason = 2;
+    }
+    stats.output_boxes = static_cast<int>(boxes.size());
+    stats.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+    return stats;
+}
 
 struct QueryRootPair {
     Eigen::VectorXd start;
@@ -2641,210 +3313,6 @@ QueryRootGrowResult run_query_root_box_grower(BoxOracle& oracle,
     return stats;
 }
 
-bool make_dirty_face_seed(const BoxNode& box,
-                          const std::vector<Interval>& root,
-                          int dim,
-                          int side,
-                          double epsilon,
-                          Eigen::VectorXd& seed) {
-    if (dim < 0 || dim >= box.n_dims() || box.n_dims() != static_cast<int>(root.size())) {
-        return false;
-    }
-    seed = box.center();
-    const double value = side > 0
-        ? box.joint_intervals[dim].hi + epsilon
-        : box.joint_intervals[dim].lo - epsilon;
-    if (!root[static_cast<std::size_t>(dim)].contains(value, 0.0)) {
-        return false;
-    }
-    seed[dim] = value;
-    for (int axis = 0; axis < box.n_dims(); ++axis) {
-        seed[axis] = std::clamp(seed[axis],
-                                root[static_cast<std::size_t>(axis)].lo,
-                                root[static_cast<std::size_t>(axis)].hi);
-    }
-    return true;
-}
-
-void append_box_face_seeds(const BoxNode& source_box,
-                           const std::vector<BoxNode>& live_boxes,
-                           const std::vector<Interval>& root,
-                           int parent_box_id,
-                           int root_id,
-                           int limit,
-                           double epsilon,
-                           double dedup_tolerance,
-                           std::vector<DirtySeedCandidate>& seeds) {
-    for (int dim = 0; dim < source_box.n_dims(); ++dim) {
-        for (int side : {-1, 1}) {
-            Eigen::VectorXd seed;
-            if (!make_dirty_face_seed(source_box, root, dim, side, epsilon, seed)) {
-                continue;
-            }
-            append_dirty_seed_candidate(seeds, live_boxes, seed, parent_box_id, root_id, limit, dedup_tolerance);
-            if (static_cast<int>(seeds.size()) >= limit) {
-                return;
-            }
-        }
-    }
-}
-
-std::vector<DirtySeedCandidate> make_dirty_region_seeds(const std::vector<BoxNode>& boxes,
-                                                        const std::vector<int>& dirty_indices,
-                                                        const std::vector<Interval>& root,
-                                                        const DynamicUpdateConfig& config,
-                                                        double adjacency_tolerance,
-                                                        double boundary_epsilon) {
-    std::vector<DirtySeedCandidate> seeds;
-    const int limit = std::max(0, config.dirty_seed_limit);
-    if (limit == 0) {
-        return seeds;
-    }
-    seeds.reserve(static_cast<std::size_t>(std::min(limit, 64)));
-    const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
-    const double dedup_tol = std::max(1e-9, 4.0 * epsilon);
-    for (int index : dirty_indices) {
-        if (index < 0 || index >= static_cast<int>(boxes.size())) {
-            continue;
-        }
-        const BoxNode& box = boxes[static_cast<std::size_t>(index)];
-        for (int dim = 0; dim < box.n_dims(); ++dim) {
-            for (int side : {-1, 1}) {
-                Eigen::VectorXd seed;
-                if (!make_dirty_face_seed(box, root, dim, side, epsilon, seed)) {
-                    continue;
-                }
-                if (point_covered_by_existing_box_local(boxes, seed) || seed_near_existing(seeds, seed, dedup_tol)) {
-                    continue;
-                }
-                append_dirty_seed_candidate(seeds,
-                                            boxes,
-                                            seed,
-                                            box.id,
-                                            box.root_id >= 0 ? box.root_id : box.id,
-                                            limit,
-                                            dedup_tol);
-                if (static_cast<int>(seeds.size()) >= limit) {
-                    return seeds;
-                }
-            }
-        }
-    }
-    return seeds;
-}
-
-std::vector<DirtySeedCandidate> make_insertion_regrow_seeds(const std::vector<BoxNode>& live_boxes,
-                                                            const std::vector<BoxNode>& removed_boxes,
-                                                            const std::unordered_set<int>& removed_box_ids,
-                                                            const AdjacencyGraph& previous_adjacency,
-                                                            const std::vector<Eigen::VectorXd>& anchor_points,
-                                                            const std::vector<Interval>& root,
-                                                            const DynamicUpdateConfig& config,
-                                                            double adjacency_tolerance,
-                                                            double boundary_epsilon) {
-    std::vector<DirtySeedCandidate> seeds;
-    const int limit = std::max(0, config.dirty_seed_limit);
-    if (limit == 0) {
-        return seeds;
-    }
-    seeds.reserve(static_cast<std::size_t>(std::min(limit, 64)));
-    const double epsilon = std::max({boundary_epsilon, 2.0 * adjacency_tolerance, 1e-10});
-    const double dedup_tol = std::max(1e-9, 4.0 * epsilon);
-    std::unordered_map<int, const BoxNode*> live_by_id;
-    live_by_id.reserve(live_boxes.size());
-    for (const auto& box : live_boxes) {
-        live_by_id[box.id] = &box;
-    }
-    for (const auto& removed : removed_boxes) {
-        auto adjacency_it = previous_adjacency.find(removed.id);
-        if (adjacency_it != previous_adjacency.end()) {
-            for (int neighbor_id : adjacency_it->second) {
-                if (removed_box_ids.find(neighbor_id) != removed_box_ids.end()) {
-                    continue;
-                }
-                auto live_it = live_by_id.find(neighbor_id);
-                if (live_it == live_by_id.end()) {
-                    continue;
-                }
-                const BoxNode& neighbor = *live_it->second;
-                append_box_face_seeds(neighbor,
-                                      live_boxes,
-                                      root,
-                                      neighbor.id,
-                                      neighbor.root_id >= 0 ? neighbor.root_id : neighbor.id,
-                                      limit,
-                                      epsilon,
-                                      dedup_tol,
-                                      seeds);
-                if (static_cast<int>(seeds.size()) >= limit) {
-                    return seeds;
-                }
-            }
-        }
-        append_box_face_seeds(removed,
-                              live_boxes,
-                              root,
-                              -1,
-                              removed.root_id >= 0 ? removed.root_id : removed.id,
-                              limit,
-                              epsilon,
-                              dedup_tol,
-                              seeds);
-        if (static_cast<int>(seeds.size()) >= limit) {
-            return seeds;
-        }
-    }
-    for (const auto& point : anchor_points) {
-        if (point.size() != static_cast<int>(root.size())) {
-            continue;
-        }
-        Eigen::VectorXd seed = point;
-        for (int dim = 0; dim < seed.size(); ++dim) {
-            seed[dim] = std::clamp(seed[dim], root[static_cast<std::size_t>(dim)].lo, root[static_cast<std::size_t>(dim)].hi);
-        }
-        append_dirty_seed_candidate(seeds, live_boxes, seed, -1, -1, limit, dedup_tol);
-        if (static_cast<int>(seeds.size()) >= limit) {
-            return seeds;
-        }
-    }
-    const AdjacencyGraph live_adjacency = compute_adjacency(live_boxes, adjacency_tolerance);
-    const auto islands = find_islands(live_adjacency);
-    for (const auto& island : islands) {
-        const BoxNode* best = nullptr;
-        double best_distance = std::numeric_limits<double>::infinity();
-        for (int box_id : island) {
-            auto live_it = live_by_id.find(box_id);
-            if (live_it == live_by_id.end()) {
-                continue;
-            }
-            const Eigen::VectorXd center = live_it->second->center();
-            for (const auto& removed : removed_boxes) {
-                const double dist = (center - removed.center()).squaredNorm();
-                if (dist < best_distance) {
-                    best_distance = dist;
-                    best = live_it->second;
-                }
-            }
-        }
-        if (best == nullptr) {
-            continue;
-        }
-        append_box_face_seeds(*best,
-                              live_boxes,
-                              root,
-                              best->id,
-                              best->root_id >= 0 ? best->root_id : best->id,
-                              limit,
-                              epsilon,
-                              dedup_tol,
-                              seeds);
-        if (static_cast<int>(seeds.size()) >= limit) {
-            return seeds;
-        }
-    }
-    return seeds;
-}
-
 bool segment_edge_survives_scene(const SegmentEdge& edge,
                                  const CollisionChecker& checker,
                                  int audit_resolution,
@@ -2854,53 +3322,6 @@ bool segment_edge_survives_scene(const SegmentEdge& edge,
     }
     const int resolution = std::max({1, audit_resolution, edge.segment_resolution});
     return audit_waypoint_path(edge.waypoints, checker, resolution, audit_segment_step).passed;
-}
-
-std::vector<int> spatial_dirty_box_indices(const Robot& robot,
-                                           const std::vector<BoxNode>& boxes,
-                                           const std::vector<Obstacle>& removed_obstacles,
-                                           const DynamicUpdateConfig& config,
-                                           int& dirty_count);
-
-std::vector<int> spatial_dirty_box_indices(const Robot& robot,
-                                           const std::vector<BoxNode>& boxes,
-                                           const Obstacle& removed_obstacle,
-                                           const DynamicUpdateConfig& config,
-                                           int& dirty_count) {
-    return spatial_dirty_box_indices(robot,
-                                     boxes,
-                                     std::vector<Obstacle>{removed_obstacle},
-                                     config,
-                                     dirty_count);
-}
-
-std::vector<int> spatial_dirty_box_indices(const Robot& robot,
-                                           const std::vector<BoxNode>& boxes,
-                                           const std::vector<Obstacle>& removed_obstacles,
-                                           const DynamicUpdateConfig& config,
-                                           int& dirty_count) {
-    dirty_count = 0;
-    std::vector<int> dirty_indices;
-    const int anchor_limit = std::max(0, config.dirty_anchor_limit);
-    if (anchor_limit == 0 || boxes.empty() || removed_obstacles.empty()) {
-        return dirty_indices;
-    }
-    std::vector<Obstacle> dirty_obstacles;
-    dirty_obstacles.reserve(removed_obstacles.size());
-    for (const auto& obstacle : removed_obstacles) {
-        dirty_obstacles.push_back(inflate_obstacle(obstacle, config.dirty_region_padding));
-    }
-    CollisionChecker dirty_checker(robot, Scene(std::move(dirty_obstacles)));
-    dirty_indices.reserve(static_cast<std::size_t>(std::min(anchor_limit, static_cast<int>(boxes.size()))));
-    for (int index = 0; index < static_cast<int>(boxes.size()); ++index) {
-        if (dirty_checker.check_box(boxes[static_cast<std::size_t>(index)].joint_intervals)) {
-            dirty_count += 1;
-            if (static_cast<int>(dirty_indices.size()) < anchor_limit) {
-                dirty_indices.push_back(index);
-            }
-        }
-    }
-    return dirty_indices;
 }
 
 std::vector<int> spatial_dirty_all_box_indices(const Robot& robot,
@@ -2931,12 +3352,14 @@ void summarize_query_path(QueryResult& result,
         result.raw_path_length = result.path_length;
     }
     result.segment_edge_length = 0.0;
+    result.segment_edges_used = 0;
     for (int edge_id : result.segment_edge_sequence) {
         if (edge_id < 0) {
             continue;
         }
         if (const SegmentEdge* edge = find_segment_edge_by_id(segment_edges, edge_id)) {
             if (counts_as_segment_edge(edge->type)) {
+                result.segment_edges_used += 1;
                 result.segment_edge_length +=
                     uncovered_segment_edge_length(*edge, boxes);
             }
@@ -3366,6 +3789,9 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     raw_boxes_.clear();
     adjacency_.clear();
     segment_edges_.clear();
+    adaptive_partition_.reset();
+    adaptive_partition_query_enabled_ = false;
+    has_adaptive_partition_config_ = false;
     dynamic_collision_box_cache_.clear();
     invalidate_query_cache();
 
@@ -3582,6 +4008,891 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
         database_->checkpoint();
     }
     return result;
+}
+
+AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
+    const std::vector<Obstacle>& obstacles,
+    const AdaptiveLeafSweepConfig& adaptive_config) {
+    using Clock = std::chrono::steady_clock;
+    const auto total_start = Clock::now();
+    AdaptiveLeafSweepResult out;
+    out.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
+    out.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
+    out.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
+
+    LeafSweepConfig leaf_config;
+    leaf_config.obstacle_cluster_gap = adaptive_config.obstacle_cluster_gap;
+    leaf_config.n_threads = std::max(1, adaptive_config.threads);
+    leaf_config.validation_batch_size = std::max(1, adaptive_config.validation_batch_size);
+    leaf_config.timeout_ms = adaptive_config.time_budget_ms > 0.0
+        ? adaptive_config.time_budget_ms
+        : 0.0;
+    leaf_config.store_group_results = adaptive_config.store_group_results;
+    leaf_config.use_virtual_topology = adaptive_config.use_virtual_topology;
+    leaf_config.parallel_virtual_validation = adaptive_config.parallel_virtual_validation;
+    leaf_config.max_free_boxes = std::max(0, adaptive_config.max_free_boxes);
+    leaf_config.max_collision_boxes = std::max(0, adaptive_config.max_unresolved_domains);
+    leaf_config.collision_overlap_prune_min_depth = -1;
+    leaf_config.collision_overlap_prune_threshold = 0.0;
+    leaf_config.collision_overlap_prune_min_threshold = 0.0;
+    leaf_config.collision_overlap_prune_decay_per_depth = 0.0;
+    leaf_config.collision_overlap_prune_ratio_threshold = 0.0;
+
+    if (adaptive_config.node_budget <= 0) {
+        leaf_config.collision_overlap_prune_min_depth = adaptive_config.defer_min_depth;
+        leaf_config.collision_overlap_prune_threshold = adaptive_config.overlap_depth_threshold;
+        leaf_config.collision_overlap_prune_min_threshold = adaptive_config.overlap_depth_min_threshold;
+        leaf_config.collision_overlap_prune_decay_per_depth = adaptive_config.overlap_depth_decay_per_depth;
+        leaf_config.collision_overlap_prune_ratio_threshold = adaptive_config.overlap_ratio_threshold;
+        out.leaf_sweep = build_leaf_sweep(obstacles,
+                                          adaptive_config.shallow_start_depth,
+                                          adaptive_config.target_max_depth,
+                                          leaf_config);
+        out.leaf_sweep_ms = out.leaf_sweep.total_ms;
+        out.shallow_free_count = static_cast<int>(out.leaf_sweep.free_boxes.size());
+        out.shallow_collision_count = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+        out.adaptive_deferred = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+        out.unresolved_domains = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+
+        const double adjacency_tolerance = config_.query.adjacency_tolerance;
+        const auto merge_start = Clock::now();
+        BudgetedMergeStats merge_stats;
+        if (config_.enable_merger && !boxes_.empty()) {
+            bool merged_by_partition = false;
+            if (adaptive_config.planning_backend == "partition_native") {
+                rebuild_adaptive_partition(adaptive_config, nullptr);
+                if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+                    AdaptiveGridPartitionMergeOptions options;
+                    options.max_ms = adaptive_config.max_merge_ms;
+                    options.max_rounds = adaptive_config.max_merge_rounds;
+                    options.grid_line_merge = true;
+                    options.containment_prune = false;
+                    const auto partition_merge =
+                        adaptive_partition_->merge_boxes(boxes_, options, adjacency_tolerance);
+                    for (int released_id : partition_merge.released_box_ids) {
+                        oracle_->release_box(released_id);
+                    }
+                    merge_stats.input_boxes = partition_merge.input_boxes;
+                    merge_stats.output_boxes = partition_merge.output_boxes;
+                    merge_stats.grid_merges = partition_merge.grid_merges;
+                    merge_stats.grid_rounds = partition_merge.rounds;
+                    merge_stats.containment_pruned = partition_merge.containment_pruned;
+                    merge_stats.stop_reason = partition_merge.stop_reason == 0 ? 1 : partition_merge.stop_reason;
+                    merge_stats.total_ms = partition_merge.total_ms;
+                    merge_stats.grid_ms = partition_merge.total_ms;
+                    out.diagnostics["adaptive.partition_merge_enabled"] = 1.0;
+                    out.diagnostics["adaptive.partition_merge_released_boxes"] =
+                        static_cast<double>(partition_merge.released_box_ids.size());
+                    out.diagnostics["adaptive.partition_merge_containment_skipped"] =
+                        static_cast<double>(partition_merge.containment_skipped);
+                    out.diagnostics["adaptive.partition_merge_containment_bucket_entries"] =
+                        static_cast<double>(partition_merge.containment_bucket_entries);
+                    out.diagnostics["adaptive.partition_merge_containment_candidates"] =
+                        static_cast<double>(partition_merge.containment_candidates);
+                    out.diagnostics["adaptive.partition_merge_containment_tests"] =
+                        static_cast<double>(partition_merge.containment_tests);
+                    out.diagnostics["adaptive.partition_merge_containment_overflow"] =
+                        static_cast<double>(partition_merge.containment_overflow);
+                    out.diagnostics["adaptive.partition_merge_containment_ms"] =
+                        partition_merge.containment_ms;
+                    out.diagnostics["adaptive.partition_merge_line_ms"] =
+                        partition_merge.line_merge_ms;
+                    merged_by_partition = true;
+                }
+            }
+            if (!merged_by_partition) {
+                MergerConfig leaf_merge_config = config_.merger;
+                leaf_merge_config.containment_prune = true;
+                merge_stats = budgeted_leaf_merge(*oracle_,
+                                                  boxes_,
+                                                  leaf_merge_config,
+                                                  adaptive_config.max_merge_ms,
+                                                  adaptive_config.max_merge_rounds,
+                                                  adaptive_config.max_merge_input_boxes,
+                                                  adjacency_tolerance);
+            }
+            raw_boxes_ = boxes_;
+        } else {
+            merge_stats.input_boxes = static_cast<int>(boxes_.size());
+            merge_stats.output_boxes = static_cast<int>(boxes_.size());
+            merge_stats.stop_reason = 0;
+        }
+        const double merge_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - merge_start).count();
+        const bool use_partition_backend = adaptive_config.planning_backend == "partition_native";
+        AdjacencyBuildStats adjacency_stats;
+        std::unordered_set<int> main_ids;
+        int partition_island_count_for_profile = 0;
+        int partition_largest_island_for_profile = 0;
+        if (use_partition_backend) {
+            if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
+                rebuild_adaptive_partition(adaptive_config, nullptr);
+            }
+            if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+                const auto largest = adaptive_partition_->largest_component_box_ids_with_overlay();
+                main_ids.insert(largest.begin(), largest.end());
+                const auto& partition_stats = adaptive_partition_->stats();
+                partition_island_count_for_profile = partition_stats.islands;
+                partition_largest_island_for_profile = partition_stats.largest_island;
+                out.diagnostics["adaptive.partition_skipped_graph_adjacency"] = 1.0;
+            }
+        }
+        if (!use_partition_backend) {
+            rebuild_adjacency();
+            adjacency_stats = last_adjacency_build_stats();
+            main_ids = adaptive_largest_island_ids(adjacency_);
+        } else if (main_ids.empty()) {
+            out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
+        }
+
+        const auto coverage_start = Clock::now();
+        const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
+        int probe_attempted = 0;
+        std::vector<Eigen::VectorXd> free_probes =
+            oracle_ ? adaptive_generate_free_probes(*oracle_,
+                                                    planning_domain,
+                                                    adaptive_config.seed_probe_count,
+                                                    adaptive_config.seed_probe_rng_seed,
+                                                    probe_attempted)
+                    : std::vector<Eigen::VectorXd>{};
+        out.seed_probe_count = probe_attempted;
+        out.seed_probe_free_count = static_cast<int>(free_probes.size());
+        int uncovered_anchor_attempts = 0;
+        StageContext probe_context = StageContext::from_runtime(config_.runtime);
+        FindFreeBoxOptions probe_options = config_.grower.find_free_box;
+        probe_options.max_depth = adaptive_config.target_max_depth;
+        probe_options.reject_seed_collision = false;
+        probe_options.deadline_ms = 5.0;
+        const int anchor_cap = std::max(0, adaptive_config.seed_anchor_probe_cap);
+	        BoxSpatialIndex coverage_index;
+	        const bool use_partition_coverage =
+	            use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_;
+	        if (!use_partition_coverage) {
+	            coverage_index.rebuild(boxes_, adjacency_tolerance);
+	        }
+	        for (const auto& point : free_probes) {
+	            const int owner = use_partition_coverage
+	                ? adaptive_partition_->locate_containing_box(point, false, adjacency_tolerance)
+	                : [&]() {
+	                      const int owner_index = coverage_index.covering_box(boxes_, point, adjacency_tolerance);
+	                      return owner_index >= 0 ? boxes_[static_cast<std::size_t>(owner_index)].id : -1;
+	                  }();
+	            if (owner >= 0) {
+	                out.seed_probe_box_covered += 1;
+	                if (main_ids.find(owner) != main_ids.end()) {
+	                    out.seed_probe_main_accessible += 1;
+                }
+                continue;
+            }
+            if (uncovered_anchor_attempts >= anchor_cap || planning_domain.empty()) {
+                continue;
+            }
+            ++uncovered_anchor_attempts;
+            const auto ffb = find_free_box_in_domain(point, planning_domain, probe_context, probe_options);
+            if (!ffb.found) {
+                continue;
+            }
+            out.seed_probe_anchor_success += 1;
+	            const BoxNode anchor = adaptive_make_box_from_intervals(ffb.intervals,
+	                                                                    ffb.node,
+	                                                                    -1,
+	                                                                    ffb.validation_detail.safety_status,
+	                                                                    ffb.validation_detail.strict_audit_required);
+            const bool anchor_main_accessible = use_partition_coverage
+                ? adaptive_partition_->box_adjacent_to_any(anchor, main_ids, adjacency_tolerance)
+                : (!use_partition_backend &&
+                   adaptive_has_adjacency_to_any(boxes_, anchor, &main_ids, adjacency_tolerance));
+	            if (anchor_main_accessible) {
+	                out.seed_probe_main_accessible += 1;
+	            }
+	        }
+        out.coverage_probe_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - coverage_start).count();
+        const double free_den = static_cast<double>(std::max(1, out.seed_probe_free_count));
+        out.p_box_covered = static_cast<double>(out.seed_probe_box_covered) / free_den;
+        out.p_anchor_success = static_cast<double>(out.seed_probe_anchor_success) / free_den;
+        out.p_main_accessible = static_cast<double>(out.seed_probe_main_accessible) / free_den;
+
+        out.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+        out.profile = {};
+        out.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
+        out.profile.final_boxes = static_cast<int>(boxes_.size());
+        out.profile.segment_edges = static_cast<int>(segment_edges_.size());
+        out.profile.grow_ms = out.leaf_sweep_ms;
+        out.profile.total_ms = out.total_ms;
+        if (use_partition_backend) {
+            out.profile.grow_adjacency_islands = partition_island_count_for_profile;
+            out.profile.adjacency_islands = partition_island_count_for_profile;
+            out.profile.grow_largest_island = partition_largest_island_for_profile;
+        } else {
+            const auto graph_islands = find_islands(adjacency_);
+            out.profile.grow_adjacency_islands = static_cast<int>(graph_islands.size());
+            out.profile.adjacency_islands = out.profile.grow_adjacency_islands;
+            for (const auto& island : graph_islands) {
+                out.profile.grow_largest_island =
+                    std::max(out.profile.grow_largest_island, static_cast<int>(island.size()));
+            }
+        }
+        out.profile.diagnostics = out.leaf_sweep.diagnostics;
+        out.profile.diagnostics["adaptive.fast_leaf_sweep"] = 1.0;
+        out.profile.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
+        out.profile.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
+        out.profile.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
+        out.profile.diagnostics["adaptive.leaf_sweep_ms"] = out.leaf_sweep_ms;
+        out.profile.diagnostics["adaptive.overlap_depth_threshold"] = adaptive_config.overlap_depth_threshold;
+        out.profile.diagnostics["adaptive.overlap_depth_min_threshold"] = adaptive_config.overlap_depth_min_threshold;
+        out.profile.diagnostics["adaptive.overlap_depth_decay_per_depth"] = adaptive_config.overlap_depth_decay_per_depth;
+        out.profile.diagnostics["adaptive.merge_ms"] = merge_ms;
+        out.profile.diagnostics["adaptive.merge_input_boxes"] = static_cast<double>(merge_stats.input_boxes);
+        out.profile.diagnostics["adaptive.merge_output_boxes"] = static_cast<double>(merge_stats.output_boxes);
+        out.profile.diagnostics["adaptive.merge_grid_ms"] = merge_stats.grid_ms;
+        out.profile.diagnostics["adaptive.merge_grid_merges"] = static_cast<double>(merge_stats.grid_merges);
+        out.profile.diagnostics["adaptive.merge_grid_rounds"] = static_cast<double>(merge_stats.grid_rounds);
+        out.profile.diagnostics["adaptive.merge_tree_ms"] = merge_stats.tree_ms;
+        out.profile.diagnostics["adaptive.merge_tree_merges"] = static_cast<double>(merge_stats.tree_merges);
+        out.profile.diagnostics["adaptive.merge_tree_rounds"] = static_cast<double>(merge_stats.tree_rounds);
+        out.profile.diagnostics["adaptive.merge_containment_ms"] = merge_stats.containment_ms;
+        out.profile.diagnostics["adaptive.merge_exact_ms"] = merge_stats.exact_ms;
+        out.profile.diagnostics["adaptive.merge_containment_pruned"] = static_cast<double>(merge_stats.containment_pruned);
+        out.profile.diagnostics["adaptive.merge_exact_merges"] = static_cast<double>(merge_stats.exact_merges);
+        out.profile.diagnostics["adaptive.merge_rounds"] = static_cast<double>(merge_stats.rounds);
+        out.profile.diagnostics["adaptive.merge_stop_reason"] = static_cast<double>(merge_stats.stop_reason);
+        out.profile.diagnostics["adaptive.partition_merge_enabled"] =
+            out.diagnostics.find("adaptive.partition_merge_enabled") != out.diagnostics.end() ? 1.0 : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_released_boxes"] =
+            out.diagnostics.find("adaptive.partition_merge_released_boxes") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_released_boxes"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_skipped"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_skipped") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_skipped"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_bucket_entries"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_bucket_entries") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_bucket_entries"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_candidates"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_candidates") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_candidates"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_tests"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_tests") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_tests"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_overflow"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_overflow") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_overflow"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_containment_ms"] =
+            out.diagnostics.find("adaptive.partition_merge_containment_ms") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_containment_ms"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_merge_line_ms"] =
+            out.diagnostics.find("adaptive.partition_merge_line_ms") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_merge_line_ms"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.partition_skipped_graph_adjacency"] =
+            out.diagnostics.find("adaptive.partition_skipped_graph_adjacency") != out.diagnostics.end()
+                ? out.diagnostics["adaptive.partition_skipped_graph_adjacency"]
+                : 0.0;
+        out.profile.diagnostics["adaptive.adjacency_ms"] = adjacency_stats.build_ms;
+        out.profile.diagnostics["adaptive.adjacency_boxes"] = static_cast<double>(adjacency_stats.boxes);
+        out.profile.diagnostics["adaptive.adjacency_selected_dims"] = static_cast<double>(adjacency_stats.selected_dims);
+        out.profile.diagnostics["adaptive.adjacency_primary_dim"] = static_cast<double>(adjacency_stats.primary_dim);
+        out.profile.diagnostics["adaptive.adjacency_candidates"] = static_cast<double>(adjacency_stats.candidate_pairs);
+        out.profile.diagnostics["adaptive.adjacency_exact_tests"] = static_cast<double>(adjacency_stats.exact_tests);
+        out.profile.diagnostics["adaptive.adjacency_edges"] = static_cast<double>(adjacency_stats.edges);
+        out.profile.diagnostics["adaptive.adaptive_ms"] = 0.0;
+        out.profile.diagnostics["adaptive.coverage_probe_ms"] = out.coverage_probe_ms;
+        out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
+        out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
+        out.profile.diagnostics["adaptive.shallow_collision_count"] = static_cast<double>(out.shallow_collision_count);
+        out.profile.diagnostics["adaptive.deferred"] = static_cast<double>(out.adaptive_deferred);
+        out.profile.diagnostics["adaptive.unresolved_domains"] = static_cast<double>(out.unresolved_domains);
+        out.profile.diagnostics["adaptive.seed_probe_count"] = static_cast<double>(out.seed_probe_count);
+        out.profile.diagnostics["adaptive.seed_probe_free_count"] = static_cast<double>(out.seed_probe_free_count);
+        out.profile.diagnostics["adaptive.seed_probe_box_covered"] = static_cast<double>(out.seed_probe_box_covered);
+        out.profile.diagnostics["adaptive.seed_probe_anchor_success"] = static_cast<double>(out.seed_probe_anchor_success);
+        out.profile.diagnostics["adaptive.seed_probe_main_accessible"] = static_cast<double>(out.seed_probe_main_accessible);
+        out.profile.diagnostics["adaptive.seed_anchor_probe_cap"] = static_cast<double>(anchor_cap);
+        out.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] = static_cast<double>(uncovered_anchor_attempts);
+        out.profile.diagnostics["adaptive.p_box_covered"] = out.p_box_covered;
+        out.profile.diagnostics["adaptive.p_anchor_success"] = out.p_anchor_success;
+        out.profile.diagnostics["adaptive.p_main_accessible"] = out.p_main_accessible;
+        rebuild_adaptive_partition(adaptive_config, &out.profile);
+        if (adaptive_partition_ && !adaptive_partition_->empty()) {
+            const auto& partition_stats = adaptive_partition_->stats();
+            out.partition_cell_count = partition_stats.cells;
+            out.partition_grid_cell_count = partition_stats.grid_cells;
+            out.partition_non_grid_cell_count = partition_stats.non_grid_cells;
+            out.partition_face_index_entries = partition_stats.face_index_entries;
+            out.partition_islands = partition_stats.islands;
+            out.partition_largest_island = partition_stats.largest_island;
+        }
+        out.diagnostics = out.profile.diagnostics;
+        last_build_ = out.profile;
+        if (config_.database.checkpoint_after_build && database_) {
+            database_->checkpoint();
+        }
+        return out;
+    }
+
+    out.leaf_sweep = build_leaf_sweep(obstacles,
+                                      adaptive_config.shallow_start_depth,
+                                      adaptive_config.shallow_max_depth,
+                                      leaf_config);
+    out.leaf_sweep_ms = out.leaf_sweep.total_ms;
+    out.shallow_free_count = static_cast<int>(out.leaf_sweep.free_boxes.size());
+    out.shallow_collision_count = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+
+    const double adjacency_tolerance = config_.query.adjacency_tolerance;
+    const auto merge_start = Clock::now();
+    BudgetedMergeStats merge_stats;
+    if (config_.enable_merger && !boxes_.empty()) {
+        bool merged_by_partition = false;
+        if (adaptive_config.planning_backend == "partition_native") {
+            rebuild_adaptive_partition(adaptive_config, nullptr);
+            if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+                AdaptiveGridPartitionMergeOptions options;
+                options.max_ms = adaptive_config.max_merge_ms;
+                options.max_rounds = adaptive_config.max_merge_rounds;
+                options.grid_line_merge = true;
+                options.containment_prune = false;
+                const auto partition_merge =
+                    adaptive_partition_->merge_boxes(boxes_, options, adjacency_tolerance);
+                for (int released_id : partition_merge.released_box_ids) {
+                    oracle_->release_box(released_id);
+                }
+                merge_stats.input_boxes = partition_merge.input_boxes;
+                merge_stats.output_boxes = partition_merge.output_boxes;
+                merge_stats.grid_merges = partition_merge.grid_merges;
+                merge_stats.grid_rounds = partition_merge.rounds;
+                merge_stats.containment_pruned = partition_merge.containment_pruned;
+                merge_stats.stop_reason = partition_merge.stop_reason == 0 ? 1 : partition_merge.stop_reason;
+                merge_stats.total_ms = partition_merge.total_ms;
+                merge_stats.grid_ms = partition_merge.total_ms;
+                out.diagnostics["adaptive.partition_merge_enabled"] = 1.0;
+                out.diagnostics["adaptive.partition_merge_released_boxes"] =
+                    static_cast<double>(partition_merge.released_box_ids.size());
+                out.diagnostics["adaptive.partition_merge_containment_skipped"] =
+                    static_cast<double>(partition_merge.containment_skipped);
+                out.diagnostics["adaptive.partition_merge_containment_bucket_entries"] =
+                    static_cast<double>(partition_merge.containment_bucket_entries);
+                out.diagnostics["adaptive.partition_merge_containment_candidates"] =
+                    static_cast<double>(partition_merge.containment_candidates);
+                out.diagnostics["adaptive.partition_merge_containment_tests"] =
+                    static_cast<double>(partition_merge.containment_tests);
+                out.diagnostics["adaptive.partition_merge_containment_overflow"] =
+                    static_cast<double>(partition_merge.containment_overflow);
+                out.diagnostics["adaptive.partition_merge_containment_ms"] =
+                    partition_merge.containment_ms;
+                out.diagnostics["adaptive.partition_merge_line_ms"] =
+                    partition_merge.line_merge_ms;
+                merged_by_partition = true;
+            }
+        }
+        if (!merged_by_partition) {
+            MergerConfig leaf_merge_config = config_.merger;
+            leaf_merge_config.containment_prune = true;
+            merge_stats = budgeted_leaf_merge(*oracle_,
+                                              boxes_,
+                                              leaf_merge_config,
+                                              adaptive_config.max_merge_ms,
+                                              adaptive_config.max_merge_rounds,
+                                              adaptive_config.max_merge_input_boxes,
+                                              adjacency_tolerance);
+        }
+        raw_boxes_ = boxes_;
+    } else {
+        merge_stats.input_boxes = static_cast<int>(boxes_.size());
+        merge_stats.output_boxes = static_cast<int>(boxes_.size());
+        merge_stats.stop_reason = 0;
+    }
+	    const double merge_ms = std::chrono::duration<double, std::milli>(Clock::now() - merge_start).count();
+	    const bool use_partition_backend = adaptive_config.planning_backend == "partition_native";
+	    AdjacencyBuildStats initial_adjacency_stats;
+	    std::unordered_set<int> main_ids;
+	    auto refresh_main_from_partition = [&]() -> bool {
+	        if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
+	            return false;
+	        }
+	        const auto largest = adaptive_partition_->largest_component_box_ids_with_overlay();
+	        main_ids.clear();
+	        main_ids.insert(largest.begin(), largest.end());
+	        return !main_ids.empty();
+	    };
+	    if (use_partition_backend) {
+	        if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
+	            rebuild_adaptive_partition(adaptive_config, nullptr);
+	        }
+	        if (refresh_main_from_partition()) {
+	            out.diagnostics["adaptive.partition_skipped_graph_adjacency"] = 1.0;
+	        }
+	    }
+	    if (!use_partition_backend) {
+	        rebuild_adjacency();
+	        initial_adjacency_stats = last_adjacency_build_stats();
+	        main_ids = adaptive_largest_island_ids(adjacency_);
+	    } else if (main_ids.empty()) {
+	        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
+	    }
+	    const std::vector<BoxNode> scoring_boxes = boxes_;
+    std::vector<AdaptiveFrontierItem> deferred;
+    deferred.reserve(out.leaf_sweep.collision_boxes.size());
+    const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
+    int probe_attempted = 0;
+    const auto probe_seed_start = Clock::now();
+    std::vector<Eigen::VectorXd> free_probes =
+        oracle_ ? adaptive_generate_free_probes(*oracle_,
+                                                planning_domain,
+                                                adaptive_config.seed_probe_count,
+                                                adaptive_config.seed_probe_rng_seed,
+                                                probe_attempted)
+                : std::vector<Eigen::VectorXd>{};
+    const double initial_probe_ms =
+        std::chrono::duration<double, std::milli>(Clock::now() - probe_seed_start).count();
+    out.seed_probe_count = probe_attempted;
+    out.seed_probe_free_count = static_cast<int>(free_probes.size());
+
+    auto item_less = [](const AdaptiveFrontierItem& lhs, const AdaptiveFrontierItem& rhs) {
+        return lhs.score < rhs.score;
+    };
+    std::priority_queue<AdaptiveFrontierItem,
+                        std::vector<AdaptiveFrontierItem>,
+                        decltype(item_less)>
+        frontier(item_less);
+
+    auto refresh_score = [&](AdaptiveFrontierItem& item) {
+        item.score = adaptive_frontier_score(scoring_boxes,
+                                             item,
+                                             main_ids,
+                                             adaptive_config.overlap_depth_threshold,
+                                             adjacency_tolerance);
+    };
+    auto push_frontier = [&](AdaptiveFrontierItem item) {
+        item.free_seed_hits = adaptive_count_seed_hits(item, free_probes);
+        if (item.free_seed_hits > 0) {
+            out.diagnostics["adaptive.frontier_seed_hit_pushes"] += 1.0;
+            out.diagnostics["adaptive.frontier_seed_hits_total"] += static_cast<double>(item.free_seed_hits);
+        }
+        refresh_score(item);
+        frontier.push(std::move(item));
+    };
+
+    for (const auto& collision_box : out.leaf_sweep.collision_boxes) {
+        AdaptiveFrontierItem item;
+        item.node = collision_box.tree_id >= 0 ? collision_box.tree_id : collision_box.id;
+        item.intervals = collision_box.joint_intervals;
+        item.changed_dim = -1;
+        if (!planning_domain.empty() && !intervals_overlap_local(item.intervals, planning_domain, 0.0)) {
+            out.diagnostics["adaptive.initial_frontier_outside_domain"] += 1.0;
+            continue;
+        }
+        push_frontier(std::move(item));
+    }
+
+    const auto adaptive_start = Clock::now();
+    auto elapsed_total_ms = [&]() {
+        return std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+    };
+    auto budget_exhausted = [&]() {
+        if (adaptive_config.time_budget_ms > 0.0 &&
+            elapsed_total_ms() >= adaptive_config.time_budget_ms) {
+            return true;
+        }
+        return adaptive_config.node_budget > 0 &&
+               out.adaptive_validated >= adaptive_config.node_budget;
+    };
+    auto promote_deferred = [&]() {
+        if (!adaptive_config.seed_promote_uncovered || deferred.empty() || free_probes.empty()) {
+            return;
+        }
+        std::vector<AdaptiveFrontierItem> keep;
+        keep.reserve(deferred.size());
+        for (auto& item : deferred) {
+            const int hits = adaptive_count_seed_hits(item, free_probes);
+            if (hits > 0) {
+                item.free_seed_hits = hits;
+                refresh_score(item);
+                frontier.push(std::move(item));
+                out.adaptive_promoted += 1;
+                out.diagnostics["adaptive.promoted_by_seed_probe"] += 1.0;
+            } else {
+                keep.push_back(std::move(item));
+            }
+        }
+        deferred = std::move(keep);
+    };
+
+    const auto& split_descriptor = oracle_->database().split_policy_descriptor();
+    std::size_t first_unconnected_new_index = boxes_.size();
+    int pending_adjacency_boxes = 0;
+    constexpr int kAdaptiveAdjacencyBatchSize = 512;
+    {
+        const bool collect_overlap_ratio =
+            adaptive_config.overlap_ratio_threshold > 0.0 &&
+            adaptive_config.defer_min_depth >= 0;
+        ScopedAdaptiveFullOverlapStats overlap_stats(*oracle_, collect_overlap_ratio);
+        while (!frontier.empty() && !budget_exhausted()) {
+            AdaptiveFrontierItem item = frontier.top();
+            frontier.pop();
+            if (item.intervals.empty()) {
+                out.diagnostics["adaptive.empty_frontier_items"] += 1.0;
+                continue;
+            }
+            const int depth = adaptive_virtual_depth(item.node);
+            adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.validated.", depth);
+            BoxValidation validation = BoxValidation::Unknown;
+            OracleValidationDetail detail;
+            try {
+                validation = oracle_->validate_node(item.node, item.intervals, item.changed_dim);
+                detail = oracle_->last_validation_detail();
+            } catch (const std::exception&) {
+                out.diagnostics["adaptive.validation_exceptions"] += 1.0;
+                validation = BoxValidation::Unknown;
+            }
+            out.adaptive_validated += 1;
+            item.overlap_depth = detail.aabb_overlap_depth;
+            item.overlap_ratio = detail.aabb_overlap_volume_ratio;
+            const bool item_has_seed_hit = item.free_seed_hits > 0;
+            if (item_has_seed_hit) {
+                out.diagnostics["adaptive.seed_hit_validated"] += 1.0;
+            }
+
+            if (validation == BoxValidation::Free) {
+                BoxNode candidate = adaptive_make_box_from_intervals(item.intervals,
+                                                                     item.node,
+                                                                     next_box_id(),
+                                                                     detail.safety_status,
+                                                                     detail.strict_audit_required);
+                bool contained = false;
+                for (const auto& existing : boxes_) {
+                    if (intervals_subset_local(candidate.joint_intervals,
+                                               existing.joint_intervals,
+                                               1e-12)) {
+                        contained = true;
+                        break;
+                    }
+                }
+                if (contained) {
+                    out.diagnostics["adaptive.free_contained_rejects"] += 1.0;
+                    continue;
+                }
+                const std::size_t new_index = boxes_.size();
+                (void)new_index;
+                boxes_.push_back(candidate);
+                raw_boxes_.push_back(candidate);
+	                oracle_->reserve_node(candidate.tree_id, candidate.id);
+	                out.adaptive_free_added += 1;
+	                pending_adjacency_boxes += 1;
+	                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.free.", depth);
+	                if (item_has_seed_hit) {
+	                    out.diagnostics["adaptive.seed_hit_free"] += 1.0;
+	                }
+	                if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+	                    const int appended =
+	                        adaptive_partition_->append_boxes(boxes_, new_index, adjacency_tolerance);
+	                    out.diagnostics["adaptive.partition_incremental_boxes_appended"] +=
+	                        static_cast<double>(std::max(0, appended));
+	                    if (pending_adjacency_boxes >= kAdaptiveAdjacencyBatchSize) {
+	                        refresh_main_from_partition();
+	                        pending_adjacency_boxes = 0;
+	                        out.diagnostics["adaptive.partition_main_refreshes"] += 1.0;
+	                    }
+	                } else {
+	                    adjacency_[candidate.id];
+	                    if (pending_adjacency_boxes >= kAdaptiveAdjacencyBatchSize) {
+	                    connect_incremental_boxes(adjacency_,
+	                                              boxes_,
+	                                              first_unconnected_new_index,
+	                                              adjacency_tolerance);
+	                    first_unconnected_new_index = boxes_.size();
+	                    pending_adjacency_boxes = 0;
+	                    main_ids = adaptive_largest_island_ids(adjacency_);
+	                    out.diagnostics["adaptive.adjacency_batch_updates"] += 1.0;
+	                    }
+	                }
+	                continue;
+	            }
+
+            double active_overlap_depth_threshold = adaptive_config.overlap_depth_threshold;
+            if (adaptive_config.overlap_depth_decay_per_depth > 0.0 &&
+                depth > adaptive_config.defer_min_depth) {
+                active_overlap_depth_threshold =
+                    active_overlap_depth_threshold /
+                    (1.0 + adaptive_config.overlap_depth_decay_per_depth *
+                               static_cast<double>(depth - adaptive_config.defer_min_depth));
+            }
+            if (adaptive_config.overlap_depth_min_threshold > 0.0) {
+                active_overlap_depth_threshold =
+                    std::max(adaptive_config.overlap_depth_min_threshold,
+                             active_overlap_depth_threshold);
+            }
+            const bool high_overlap =
+                depth >= adaptive_config.defer_min_depth &&
+                ((adaptive_config.overlap_depth_threshold > 0.0 &&
+                  item.overlap_depth >= active_overlap_depth_threshold) ||
+                 (adaptive_config.overlap_ratio_threshold > 0.0 &&
+                  item.overlap_ratio >= adaptive_config.overlap_ratio_threshold));
+            const bool protected_by_seed = item_has_seed_hit;
+            const bool protected_by_adjacency =
+                high_overlap && !protected_by_seed &&
+                adaptive_count_adjacent_free(scoring_boxes, item, adjacency_tolerance) > 0;
+            if (depth >= adaptive_config.target_max_depth) {
+                deferred.push_back(std::move(item));
+                out.adaptive_deferred += 1;
+                out.diagnostics["adaptive.deferred_depth_cap"] += 1.0;
+                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
+                if (item_has_seed_hit) {
+                    out.diagnostics["adaptive.seed_hit_deferred"] += 1.0;
+                }
+                continue;
+            }
+            if (high_overlap && !protected_by_seed && !protected_by_adjacency) {
+                deferred.push_back(std::move(item));
+                out.adaptive_deferred += 1;
+                out.diagnostics["adaptive.deferred_high_overlap"] += 1.0;
+                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
+                continue;
+            }
+
+            AdaptiveFrontierItem left;
+            AdaptiveFrontierItem right;
+            if (!adaptive_virtual_split_node(split_descriptor, item, left, right)) {
+                deferred.push_back(std::move(item));
+                out.adaptive_deferred += 1;
+                out.diagnostics["adaptive.deferred_split_failure"] += 1.0;
+                continue;
+            }
+            out.adaptive_splits += 1;
+            if (item_has_seed_hit) {
+                out.diagnostics["adaptive.seed_hit_splits"] += 1.0;
+            }
+            adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.split.", depth);
+            if (planning_domain.empty() || intervals_overlap_local(left.intervals, planning_domain, 0.0)) {
+                push_frontier(std::move(left));
+            } else {
+                out.diagnostics["adaptive.split_child_outside_domain"] += 1.0;
+            }
+            if (planning_domain.empty() || intervals_overlap_local(right.intervals, planning_domain, 0.0)) {
+                push_frontier(std::move(right));
+            } else {
+                out.diagnostics["adaptive.split_child_outside_domain"] += 1.0;
+            }
+            if (adaptive_config.promotion_interval > 0 &&
+                out.adaptive_validated % adaptive_config.promotion_interval == 0) {
+                promote_deferred();
+            }
+        }
+    }
+    promote_deferred();
+	    while (!frontier.empty()) {
+	        deferred.push_back(frontier.top());
+	        frontier.pop();
+	    }
+	    out.unresolved_domains = static_cast<int>(deferred.size());
+	    out.adaptive_ms = std::chrono::duration<double, std::milli>(Clock::now() - adaptive_start).count();
+
+	    const auto coverage_start = Clock::now();
+	    AdjacencyBuildStats final_adjacency_stats;
+	    if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+	        refresh_main_from_partition();
+	    } else if (!use_partition_backend) {
+	        rebuild_adjacency();
+	        final_adjacency_stats = last_adjacency_build_stats();
+	        main_ids = adaptive_largest_island_ids(adjacency_);
+	    } else {
+	        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
+	    }
+    int uncovered_anchor_attempts = 0;
+    StageContext probe_context = StageContext::from_runtime(config_.runtime);
+    FindFreeBoxOptions probe_options = config_.grower.find_free_box;
+    probe_options.max_depth = adaptive_config.target_max_depth;
+    probe_options.reject_seed_collision = false;
+    probe_options.deadline_ms = 5.0;
+    const int anchor_cap = std::max(0, adaptive_config.seed_anchor_probe_cap);
+	    BoxSpatialIndex coverage_index;
+	    const bool use_partition_coverage =
+	        use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_;
+	    if (!use_partition_coverage) {
+	        coverage_index.rebuild(boxes_, adjacency_tolerance);
+	    }
+	    for (const auto& point : free_probes) {
+	        const int owner = use_partition_coverage
+	            ? adaptive_partition_->locate_containing_box(point, false, adjacency_tolerance)
+	            : [&]() {
+	                  const int owner_index = coverage_index.covering_box(boxes_, point, adjacency_tolerance);
+	                  return owner_index >= 0 ? boxes_[static_cast<std::size_t>(owner_index)].id : -1;
+	              }();
+	        if (owner >= 0) {
+	            out.seed_probe_box_covered += 1;
+	            if (main_ids.find(owner) != main_ids.end()) {
+	                out.seed_probe_main_accessible += 1;
+            }
+            continue;
+        }
+        if (uncovered_anchor_attempts >= anchor_cap || planning_domain.empty()) {
+            continue;
+        }
+        ++uncovered_anchor_attempts;
+        const auto ffb = find_free_box_in_domain(point, planning_domain, probe_context, probe_options);
+        if (!ffb.found) {
+            continue;
+        }
+        out.seed_probe_anchor_success += 1;
+	        const BoxNode anchor = adaptive_make_box_from_intervals(ffb.intervals,
+	                                                                ffb.node,
+	                                                                -1,
+	                                                                ffb.validation_detail.safety_status,
+	                                                                ffb.validation_detail.strict_audit_required);
+	        const bool anchor_main_accessible = use_partition_coverage
+	            ? adaptive_partition_->box_adjacent_to_any(anchor, main_ids, adjacency_tolerance)
+	            : (!use_partition_backend &&
+	               adaptive_has_adjacency_to_any(boxes_, anchor, &main_ids, adjacency_tolerance));
+	        if (anchor_main_accessible) {
+	            out.seed_probe_main_accessible += 1;
+	        }
+	    }
+    out.coverage_probe_ms =
+        initial_probe_ms + std::chrono::duration<double, std::milli>(Clock::now() - coverage_start).count();
+    const double free_den = static_cast<double>(std::max(1, out.seed_probe_free_count));
+    out.p_box_covered = static_cast<double>(out.seed_probe_box_covered) / free_den;
+    out.p_anchor_success = static_cast<double>(out.seed_probe_anchor_success) / free_den;
+    out.p_main_accessible = static_cast<double>(out.seed_probe_main_accessible) / free_den;
+
+    out.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+    out.profile = {};
+    out.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
+    out.profile.final_boxes = static_cast<int>(boxes_.size());
+	    out.profile.segment_edges = static_cast<int>(segment_edges_.size());
+	    out.profile.grow_ms = out.leaf_sweep_ms + out.adaptive_ms;
+	    out.profile.total_ms = out.total_ms;
+	    out.profile.grow_largest_island = 0;
+	    if (use_partition_backend) {
+	        if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+	            const auto& partition_stats = adaptive_partition_->stats();
+	            out.profile.grow_adjacency_islands = partition_stats.islands;
+	            out.profile.adjacency_islands = partition_stats.islands;
+	            out.profile.grow_largest_island = partition_stats.largest_island;
+	        }
+	    } else {
+	        const auto graph_islands = find_islands(adjacency_);
+	        out.profile.grow_adjacency_islands = static_cast<int>(graph_islands.size());
+	        out.profile.adjacency_islands = out.profile.grow_adjacency_islands;
+	        for (const auto& island : graph_islands) {
+	            out.profile.grow_largest_island =
+	                std::max(out.profile.grow_largest_island, static_cast<int>(island.size()));
+	        }
+	    }
+    out.profile.connector_ms = 0.0;
+    out.profile.diagnostics = out.leaf_sweep.diagnostics;
+    for (const auto& [key, value] : out.diagnostics) {
+        out.profile.diagnostics[key] += value;
+    }
+    out.profile.diagnostics["adaptive.leaf_sweep_ms"] = out.leaf_sweep_ms;
+    out.profile.diagnostics["adaptive.overlap_depth_threshold"] = adaptive_config.overlap_depth_threshold;
+    out.profile.diagnostics["adaptive.overlap_depth_min_threshold"] = adaptive_config.overlap_depth_min_threshold;
+    out.profile.diagnostics["adaptive.overlap_depth_decay_per_depth"] = adaptive_config.overlap_depth_decay_per_depth;
+    out.profile.diagnostics["adaptive.merge_ms"] = merge_ms;
+    out.profile.diagnostics["adaptive.merge_input_boxes"] = static_cast<double>(merge_stats.input_boxes);
+    out.profile.diagnostics["adaptive.merge_output_boxes"] = static_cast<double>(merge_stats.output_boxes);
+    out.profile.diagnostics["adaptive.merge_grid_ms"] = merge_stats.grid_ms;
+    out.profile.diagnostics["adaptive.merge_grid_merges"] = static_cast<double>(merge_stats.grid_merges);
+    out.profile.diagnostics["adaptive.merge_grid_rounds"] = static_cast<double>(merge_stats.grid_rounds);
+    out.profile.diagnostics["adaptive.merge_tree_ms"] = merge_stats.tree_ms;
+    out.profile.diagnostics["adaptive.merge_tree_merges"] = static_cast<double>(merge_stats.tree_merges);
+    out.profile.diagnostics["adaptive.merge_tree_rounds"] = static_cast<double>(merge_stats.tree_rounds);
+    out.profile.diagnostics["adaptive.merge_containment_ms"] = merge_stats.containment_ms;
+    out.profile.diagnostics["adaptive.merge_exact_ms"] = merge_stats.exact_ms;
+    out.profile.diagnostics["adaptive.merge_containment_pruned"] = static_cast<double>(merge_stats.containment_pruned);
+    out.profile.diagnostics["adaptive.merge_exact_merges"] = static_cast<double>(merge_stats.exact_merges);
+    out.profile.diagnostics["adaptive.merge_rounds"] = static_cast<double>(merge_stats.rounds);
+    out.profile.diagnostics["adaptive.merge_stop_reason"] = static_cast<double>(merge_stats.stop_reason);
+    out.profile.diagnostics["adaptive.partition_merge_enabled"] =
+        out.diagnostics.find("adaptive.partition_merge_enabled") != out.diagnostics.end() ? 1.0 : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_released_boxes"] =
+        out.diagnostics.find("adaptive.partition_merge_released_boxes") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_released_boxes"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_skipped"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_skipped") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_skipped"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_bucket_entries"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_bucket_entries") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_bucket_entries"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_candidates"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_candidates") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_candidates"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_tests"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_tests") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_tests"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_overflow"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_overflow") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_overflow"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_containment_ms"] =
+        out.diagnostics.find("adaptive.partition_merge_containment_ms") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_containment_ms"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.partition_merge_line_ms"] =
+        out.diagnostics.find("adaptive.partition_merge_line_ms") != out.diagnostics.end()
+            ? out.diagnostics["adaptive.partition_merge_line_ms"]
+            : 0.0;
+    out.profile.diagnostics["adaptive.initial_adjacency_ms"] = initial_adjacency_stats.build_ms;
+    out.profile.diagnostics["adaptive.initial_adjacency_candidates"] = static_cast<double>(initial_adjacency_stats.candidate_pairs);
+    out.profile.diagnostics["adaptive.initial_adjacency_exact_tests"] = static_cast<double>(initial_adjacency_stats.exact_tests);
+    out.profile.diagnostics["adaptive.adjacency_ms"] = final_adjacency_stats.build_ms;
+    out.profile.diagnostics["adaptive.adjacency_boxes"] = static_cast<double>(final_adjacency_stats.boxes);
+    out.profile.diagnostics["adaptive.adjacency_selected_dims"] = static_cast<double>(final_adjacency_stats.selected_dims);
+    out.profile.diagnostics["adaptive.adjacency_primary_dim"] = static_cast<double>(final_adjacency_stats.primary_dim);
+    out.profile.diagnostics["adaptive.adjacency_candidates"] = static_cast<double>(final_adjacency_stats.candidate_pairs);
+    out.profile.diagnostics["adaptive.adjacency_exact_tests"] = static_cast<double>(final_adjacency_stats.exact_tests);
+    out.profile.diagnostics["adaptive.adjacency_edges"] = static_cast<double>(final_adjacency_stats.edges);
+    out.profile.diagnostics["adaptive.adaptive_ms"] = out.adaptive_ms;
+    out.profile.diagnostics["adaptive.coverage_probe_ms"] = out.coverage_probe_ms;
+    out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
+    out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
+    out.profile.diagnostics["adaptive.shallow_collision_count"] = static_cast<double>(out.shallow_collision_count);
+    out.profile.diagnostics["adaptive.free_added"] = static_cast<double>(out.adaptive_free_added);
+    out.profile.diagnostics["adaptive.validated"] = static_cast<double>(out.adaptive_validated);
+    out.profile.diagnostics["adaptive.splits"] = static_cast<double>(out.adaptive_splits);
+    out.profile.diagnostics["adaptive.deferred"] = static_cast<double>(out.adaptive_deferred);
+    out.profile.diagnostics["adaptive.promoted"] = static_cast<double>(out.adaptive_promoted);
+    out.profile.diagnostics["adaptive.unresolved_domains"] = static_cast<double>(out.unresolved_domains);
+    out.profile.diagnostics["adaptive.seed_probe_count"] = static_cast<double>(out.seed_probe_count);
+    out.profile.diagnostics["adaptive.seed_probe_free_count"] = static_cast<double>(out.seed_probe_free_count);
+    out.profile.diagnostics["adaptive.seed_probe_box_covered"] = static_cast<double>(out.seed_probe_box_covered);
+    out.profile.diagnostics["adaptive.seed_probe_anchor_success"] = static_cast<double>(out.seed_probe_anchor_success);
+    out.profile.diagnostics["adaptive.seed_probe_main_accessible"] = static_cast<double>(out.seed_probe_main_accessible);
+    out.profile.diagnostics["adaptive.seed_anchor_probe_cap"] = static_cast<double>(anchor_cap);
+    out.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] = static_cast<double>(uncovered_anchor_attempts);
+    out.profile.diagnostics["adaptive.p_box_covered"] = out.p_box_covered;
+    out.profile.diagnostics["adaptive.p_anchor_success"] = out.p_anchor_success;
+    out.profile.diagnostics["adaptive.p_main_accessible"] = out.p_main_accessible;
+	    if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+	        refresh_adaptive_partition_diagnostics(&out.profile);
+	    } else {
+	        rebuild_adaptive_partition(adaptive_config, &out.profile);
+	    }
+    if (adaptive_partition_ && !adaptive_partition_->empty()) {
+        const auto& partition_stats = adaptive_partition_->stats();
+        out.partition_cell_count = partition_stats.cells;
+        out.partition_grid_cell_count = partition_stats.grid_cells;
+        out.partition_non_grid_cell_count = partition_stats.non_grid_cells;
+        out.partition_face_index_entries = partition_stats.face_index_entries;
+        out.partition_islands = partition_stats.islands;
+        out.partition_largest_island = partition_stats.largest_island;
+    }
+    out.diagnostics = out.profile.diagnostics;
+    last_build_ = out.profile;
+    if (config_.database.checkpoint_after_build && database_) {
+        database_->checkpoint();
+    }
+    return out;
 }
 
 LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
@@ -3909,7 +5220,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         result.fail_code = 5;
         return result;
     }
-    if (point_covered_by_existing_box_local(boxes_, seed)) {
+    if (!options.skip_existing_cover_check && point_covered_by_existing_box_local(boxes_, seed)) {
         context.diagnostics().add_counter("forest.find_free_box_in_domain_seed_already_covered");
         result.fail_code = 7;
         return result;
@@ -3928,7 +5239,47 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
     // query-seed coupling is applied to the split values.
     OracleSplitOptions split_options = options.split;
     OracleNodeId node = oracle_->root_node();
+    OracleNodeTopology node_topology = oracle_->node_topology(node);
+    if (!node_topology.valid) {
+        result.fail_code = 5;
+        return result;
+    }
     int changed_dim = -1;
+    const Eigen::VectorXd tree_seed = oracle_->tree_configuration_for_query(seed);
+    std::vector<Interval> tree_intervals = oracle_->node_intervals(node);
+    auto descend_to_seed_child = [&](const OracleNodeTopology& parent_topology) -> bool {
+        const int split_dim = parent_topology.split_dim;
+        if (split_dim < 0 || split_dim >= tree_seed.size()) {
+            return false;
+        }
+        const double split_value = parent_topology.split_value;
+        const OracleNodeId left_child = parent_topology.left;
+        const OracleNodeId right_child = parent_topology.right;
+        const OracleNodeId child =
+            tree_seed[split_dim] <= split_value ? left_child : right_child;
+        if (child == kInvalidOracleNodeId) {
+            return false;
+        }
+        if (split_dim >= 0 && split_dim < static_cast<int>(tree_intervals.size())) {
+            auto& interval = tree_intervals[static_cast<std::size_t>(split_dim)];
+            if (child == left_child) {
+                interval.hi = split_value;
+            } else if (child == right_child) {
+                interval.lo = split_value;
+            } else {
+                tree_intervals = oracle_->node_intervals(child);
+            }
+        } else {
+            tree_intervals = oracle_->node_intervals(child);
+        }
+        changed_dim = split_dim;
+        node = child;
+        node_topology = oracle_->node_topology(node);
+        if (!node_topology.valid) {
+            return false;
+        }
+        return true;
+    };
     while (true) {
         if (context.should_stop() || (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
             result.deadline_reached = context.deadline().expired() || options.deadline_ms > 0.0;
@@ -3936,7 +5287,14 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
 
-        auto tree_intervals = oracle_->node_intervals(node);
+        if (!node_topology.leaf) {
+            if (!descend_to_seed_child(node_topology)) {
+                result.fail_code = 5;
+                break;
+            }
+            continue;
+        }
+
         auto native_intervals = oracle_->query_intervals_for_node(node, tree_intervals, seed);
         if (!intervals_overlap_local(native_intervals, domain, 0.0)) {
             result.node = node;
@@ -3944,18 +5302,9 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             result.fail_code = 5;
             break;
         }
-        if (!oracle_->is_leaf(node)) {
-            changed_dim = oracle_->split_dim(node);
-            node = oracle_->child_containing_point(node, seed);
-            if (node == kInvalidOracleNodeId) {
-                result.fail_code = 5;
-                break;
-            }
-            continue;
-        }
 
         if (!intervals_subset_local(native_intervals, domain, 1e-12)) {
-            if (oracle_->depth(node) >= effective_max_depth) {
+            if (node_topology.depth >= effective_max_depth) {
                 result.hit_unknown_depth_cap = true;
                 result.node = node;
                 result.intervals = std::move(native_intervals);
@@ -3970,9 +5319,13 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 break;
             }
             result.splits += 1;
-            changed_dim = oracle_->split_dim(node);
-            node = oracle_->child_containing_point(node, seed);
-            if (node == kInvalidOracleNodeId) {
+            OracleNodeTopology split_topology = node_topology;
+            split_topology.leaf = false;
+            split_topology.split_dim = split.split_dim;
+            split_topology.split_value = split.split_value;
+            split_topology.left = split.left;
+            split_topology.right = split.right;
+            if (!descend_to_seed_child(split_topology)) {
                 result.fail_code = 5;
                 break;
             }
@@ -3980,7 +5333,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
         }
 
         if (oracle_->is_reserved(node)) {
-            if (oracle_->depth(node) >= effective_max_depth || !options.split_reserved_leaf) {
+            if (node_topology.depth >= effective_max_depth || !options.split_reserved_leaf) {
                 result.hit_reserved_depth_cap = true;
                 result.node = node;
                 result.intervals = std::move(native_intervals);
@@ -3993,9 +5346,40 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
                 break;
             }
             result.splits += 1;
-            changed_dim = oracle_->split_dim(node);
-            node = oracle_->child_containing_point(node, seed);
-            if (node == kInvalidOracleNodeId) {
+            OracleNodeTopology split_topology = node_topology;
+            split_topology.leaf = false;
+            split_topology.split_dim = split.split_dim;
+            split_topology.split_value = split.split_value;
+            split_topology.left = split.left;
+            split_topology.right = split.right;
+            if (!descend_to_seed_child(split_topology)) {
+                result.fail_code = 5;
+                break;
+            }
+            continue;
+        }
+
+        if (node_topology.depth < std::max(options.start_depth, options.skip_to_depth)) {
+            if (node_topology.depth >= effective_max_depth || !options.split_unknown_leaf) {
+                result.hit_unknown_depth_cap = true;
+                result.node = node;
+                result.intervals = std::move(native_intervals);
+                result.fail_code = 2;
+                break;
+            }
+            const auto split = oracle_->split_node(node, tree_intervals, changed_dim, split_options);
+            if (!split.split) {
+                result.fail_code = 6;
+                break;
+            }
+            result.splits += 1;
+            OracleNodeTopology split_topology = node_topology;
+            split_topology.leaf = false;
+            split_topology.split_dim = split.split_dim;
+            split_topology.split_value = split.split_value;
+            split_topology.left = split.left;
+            split_topology.right = split.right;
+            if (!descend_to_seed_child(split_topology)) {
                 result.fail_code = 5;
                 break;
             }
@@ -4019,7 +5403,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             result.fail_code = 3;
             break;
         }
-        if (oracle_->depth(node) >= effective_max_depth || !options.split_unknown_leaf) {
+        if (node_topology.depth >= effective_max_depth || !options.split_unknown_leaf) {
             result.hit_unknown_depth_cap = true;
             result.node = node;
             result.intervals = std::move(native_intervals);
@@ -4032,9 +5416,13 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(const Eigen::Ref<co
             break;
         }
         result.splits += 1;
-        changed_dim = oracle_->split_dim(node);
-        node = oracle_->child_containing_point(node, seed);
-        if (node == kInvalidOracleNodeId) {
+        OracleNodeTopology split_topology = node_topology;
+        split_topology.leaf = false;
+        split_topology.split_dim = split.split_dim;
+        split_topology.split_value = split.split_value;
+        split_topology.left = split.left;
+        split_topology.right = split.right;
+        if (!descend_to_seed_child(split_topology)) {
             result.fail_code = 5;
             break;
         }
@@ -4669,8 +6057,86 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         query_config.collision_shortcut = false;
     }
     const bool do_collision_shortcut = query_config.collision_shortcut;
-    CorridorQuery query_engine(query_config);
-    QueryResult result = query_engine.run(query_cache(), start, goal);
+    const int active_query_index = env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
+    const bool partition_last_query_cache_enabled =
+        partition_native_mode() &&
+        adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        env_int_or_default("RBF_PARTITION_LAST_QUERY_CACHE", 0) != 0;
+    auto same_vector = [](const Eigen::VectorXd& lhs,
+                          const Eigen::Ref<const Eigen::VectorXd>& rhs) {
+        return lhs.size() == rhs.size() &&
+               (lhs.size() == 0 || (lhs - rhs).cwiseAbs().maxCoeff() <= 0.0);
+    };
+    if (partition_last_query_cache_enabled &&
+        partition_last_query_cache_.valid &&
+        partition_last_query_cache_.allow_collision_shortcut == allow_collision_shortcut &&
+        partition_last_query_cache_.active_query_index == active_query_index &&
+        same_vector(partition_last_query_cache_.start, start) &&
+        same_vector(partition_last_query_cache_.goal, goal)) {
+        QueryResult cached = partition_last_query_cache_.result;
+        cached.query_time_ms = 0.0;
+        cached.partition_search_ms = 0.0;
+        cached.audit_time_ms = 0.0;
+        cached.final_simplify_time_ms = 0.0;
+        return cached;
+    }
+    QueryResult result;
+    QueryResult partition_attempt;
+    if (adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        !adaptive_partition_->empty()) {
+        AdaptiveGridPartitionQueryOptions partition_options;
+        partition_options.nearest_if_outside = query_config.nearest_if_outside;
+        partition_options.shortcut_boxes = query_config.shortcut_boxes;
+        partition_options.max_expansions = last_build_.diagnostics.count("adaptive.grid_planning_max_expansions") > 0
+            ? static_cast<int>(last_build_.diagnostics.at("adaptive.grid_planning_max_expansions"))
+            : 0;
+        partition_options.adjacency_tolerance = query_config.adjacency_tolerance;
+        const auto partition_result = adaptive_partition_->query(start, goal, partition_options);
+        result.start_box_id = partition_result.start_box_id;
+        result.goal_box_id = partition_result.goal_box_id;
+        result.partition_search_ms = partition_result.search_ms;
+        result.query_time_ms = partition_result.search_ms;
+        result.non_grid_cells_used = partition_result.non_grid_cells_used;
+        if (partition_result.found) {
+            result.success = true;
+            result.box_sequence = partition_result.box_sequence;
+            result.segment_edge_sequence = partition_result.segment_edge_sequence;
+            if (result.segment_edge_sequence.size() + 1 != result.box_sequence.size()) {
+                result.segment_edge_sequence.assign(
+                    result.box_sequence.size() > 0 ? result.box_sequence.size() - 1 : 0,
+                    -1);
+            }
+            result.partition_cells_used = static_cast<int>(result.box_sequence.size());
+            result.path = partition_result.path;
+            if (result.path.empty()) {
+                if (partition_native_mode()) {
+                    throw std::runtime_error(
+                        "partition_native query returned a box sequence without partition waypoints");
+                }
+                result.path = extract_partition_waypoints_local(result.box_sequence,
+                                                                result.segment_edge_sequence,
+                                                                boxes_,
+                                                                segment_edges_,
+                                                                start,
+                                                                goal,
+                                                                query_config.adjacency_tolerance);
+            }
+            result.path_length = path_length(result.path);
+            result.raw_path_length = result.path_length;
+        }
+        partition_attempt = result;
+    }
+    if (!result.success && !partition_native_mode()) {
+        CorridorQuery query_engine(query_config);
+        QueryResult graph_result = query_engine.run(query_cache(), start, goal);
+        graph_result.partition_search_ms = partition_attempt.partition_search_ms;
+        graph_result.partition_repair_ms = partition_attempt.partition_repair_ms;
+        graph_result.partition_cells_used = partition_attempt.partition_cells_used;
+        graph_result.non_grid_cells_used = partition_attempt.non_grid_cells_used;
+        result = std::move(graph_result);
+    }
     if (result.success && do_collision_shortcut && !query_config.strict_path_audit && result.path.size() > 2) {
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, query_config);
         result.path = collision_shortcut_path(result.path,
@@ -4784,7 +6250,6 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             const double simplify_ms =
                 std::chrono::duration<double, std::milli>(Clock::now() - simplify_t0).count();
             result.final_simplify_time_ms += simplify_ms;
-            result.query_time_ms += simplify_ms;
         };
         const auto audit_t0 = Clock::now();
         PathAuditCheck audit = audit_waypoint_path(result.path,
@@ -4870,12 +6335,21 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             result.remaining_unsafe_assumptions = 0;
         }
     }
+    if (partition_last_query_cache_enabled) {
+        partition_last_query_cache_.valid = true;
+        partition_last_query_cache_.allow_collision_shortcut = allow_collision_shortcut;
+        partition_last_query_cache_.active_query_index = active_query_index;
+        partition_last_query_cache_.start = start;
+        partition_last_query_cache_.goal = goal;
+        partition_last_query_cache_.result = result;
+    }
     return result;
 }
 
 int RBFPlanningForest::anchor_query_endpoint(const Eigen::Ref<const Eigen::VectorXd>& point) {
     StageContext context = StageContext::from_runtime(config_.runtime);
-    return anchor_query_endpoint_box(point, context);
+    const int box_id = anchor_query_endpoint_box(point, context);
+    return box_id;
 }
 
 int RBFPlanningForest::connect_query_endpoint_to_main_island(
@@ -4884,28 +6358,36 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     if (boxes_.empty() || !oracle_) {
         return 0;
     }
-    int source_box_id = locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
-    if (source_box_id < 0) {
-        StageContext context = StageContext::from_runtime(config_.runtime);
-        source_box_id = anchor_query_endpoint_box(point, context);
-        for (const auto& [key, value] : context.diagnostics().snapshot()) {
-            last_build_.diagnostics[key] += value;
-        }
+    const std::size_t boxes_before_endpoint_main = boxes_.size();
+    std::vector<int> pre_anchor_main_island_storage;
+    if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        pre_anchor_main_island_storage = adaptive_partition_->largest_component_box_ids_with_overlay();
     }
-    if (source_box_id < 0) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_missing_source"] += 1.0;
-        return 0;
-    }
+    int source_box_id = locate_box_partition_first(point, config_.query.nearest_if_outside);
 
-    auto islands = find_islands(adjacency_);
-    if (islands.empty()) {
-        return 0;
+    std::vector<int> main_island_storage;
+    if (!pre_anchor_main_island_storage.empty()) {
+        main_island_storage = pre_anchor_main_island_storage;
+    } else if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        main_island_storage = adaptive_partition_->largest_component_box_ids_with_overlay();
     }
-    std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs.size() > rhs.size();
-    });
-    const auto& main_island = islands.front();
-    if (std::find(main_island.begin(), main_island.end(), source_box_id) != main_island.end()) {
+    if (main_island_storage.empty()) {
+        if (partition_native_mode()) {
+            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_partition_missing_no_graph_fallback"] += 1.0;
+            return 0;
+        }
+        auto islands = find_islands(adjacency_);
+        if (islands.empty()) {
+            return 0;
+        }
+        std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.size() > rhs.size();
+        });
+        main_island_storage = islands.front();
+    }
+    const auto& main_island = main_island_storage;
+    if (source_box_id >= 0 &&
+        std::find(main_island.begin(), main_island.end(), source_box_id) != main_island.end()) {
         last_build_.diagnostics["query_bridge.endpoint_to_main_direct_already_main"] += 1.0;
         return 0;
     }
@@ -4913,17 +6395,27 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     int target_box_id = -1;
     Eigen::VectorXd target_point = point;
     double best_dist2 = std::numeric_limits<double>::infinity();
-    for (int box_id : main_island) {
-        const BoxNode* box = find_box_by_id(boxes_, box_id);
-        if (box == nullptr || box->n_dims() != point.size()) {
-            continue;
+    if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        const auto nearest = adaptive_partition_->nearest_boxes(point, main_island, 1);
+        if (!nearest.empty()) {
+            target_box_id = nearest.front().box_id;
+            target_point = nearest.front().closest_point;
+            best_dist2 = nearest.front().distance_sq;
+            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_partition_nearest"] += 1.0;
         }
-        const Eigen::VectorXd candidate = closest_point_in_box(*box, point);
-        const double dist2 = (candidate - point).squaredNorm();
-        if (dist2 < best_dist2) {
-            best_dist2 = dist2;
-            target_box_id = box_id;
-            target_point = candidate;
+    } else {
+        for (int box_id : main_island) {
+            const BoxNode* box = find_box_by_id(boxes_, box_id);
+            if (box == nullptr || box->n_dims() != point.size()) {
+                continue;
+            }
+            const Eigen::VectorXd candidate = closest_point_in_box(*box, point);
+            const double dist2 = (candidate - point).squaredNorm();
+            if (dist2 < best_dist2) {
+                best_dist2 = dist2;
+                target_box_id = box_id;
+                target_point = candidate;
+            }
         }
     }
     if (target_box_id < 0 || best_dist2 <= 1e-18) {
@@ -4934,6 +6426,30 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     if (max_segment_length > 0.0 && length > max_segment_length) {
         last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long"] += 1.0;
         last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long_length"] += length;
+        if (source_box_id < 0) {
+            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long_anchor_skipped"] += 1.0;
+        }
+        return 0;
+    }
+
+    if (source_box_id < 0) {
+        StageContext context = StageContext::from_runtime(config_.runtime);
+        source_box_id = anchor_query_endpoint_box(point, context);
+        for (const auto& [key, value] : context.diagnostics().snapshot()) {
+            last_build_.diagnostics[key] += value;
+        }
+        if (partition_native_mode() &&
+            adaptive_partition_query_enabled_ &&
+            adaptive_partition_ &&
+            boxes_.size() > boxes_before_endpoint_main) {
+            append_adaptive_partition_boxes(boxes_before_endpoint_main,
+                                            &last_build_,
+                                            "query_bridge.endpoint_to_main_direct_anchor");
+            source_box_id = locate_box_partition_first(point, false);
+        }
+    }
+    if (source_box_id < 0) {
+        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_missing_source"] += 1.0;
         return 0;
     }
 
@@ -4948,9 +6464,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
         last_build_.diagnostics["query_bridge.endpoint_to_main_direct_audit_fail"] += 1.0;
         return 0;
     }
-    const int edge_id = add_segment_edge(segment_edges_,
-                                         adjacency_,
-                                         source_box_id,
+    const int edge_id = add_segment_edge_partition_first(                                         source_box_id,
                                          target_box_id,
                                          std::move(waypoints),
                                          SegmentEdgeType::QueryBridge,
@@ -4964,6 +6478,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     }
     last_build_.diagnostics["query_bridge.endpoint_to_main_direct_success"] += 1.0;
     last_build_.diagnostics["query_bridge.endpoint_to_main_direct_length"] += length;
+    sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.endpoint_to_main_direct");
     invalidate_query_cache();
     return 1;
 }
@@ -4995,12 +6510,26 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return 0;
     }
 
+    const std::size_t boxes_before_endpoint_main = boxes_.size();
+    std::vector<int> pre_anchor_main_island_storage;
+    if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        pre_anchor_main_island_storage = adaptive_partition_->largest_component_box_ids_with_overlay();
+    }
     StageContext context = StageContext::from_runtime(config_.runtime);
-    int source_box_id = locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+    int source_box_id = locate_box_partition_first(point, config_.query.nearest_if_outside);
     if (source_box_id < 0) {
         source_box_id = anchor_query_endpoint_box(point, context);
         for (const auto& [key, value] : context.diagnostics().snapshot()) {
             last_build_.diagnostics[key] += value;
+        }
+        if (partition_native_mode() &&
+            adaptive_partition_query_enabled_ &&
+            adaptive_partition_ &&
+            boxes_.size() > boxes_before_endpoint_main) {
+            append_adaptive_partition_boxes(boxes_before_endpoint_main,
+                                            &last_build_,
+                                            "endpoint_main.anchor");
+            source_box_id = locate_box_partition_first(point, false);
         }
     }
     if (source_box_id < 0) {
@@ -5009,20 +6538,45 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return 0;
     }
 
-    auto islands = find_islands(adjacency_);
-    if (islands.empty()) {
-        add_diag("fallback_to_e2e");
-        return 0;
+    std::vector<int> main_island_storage;
+    if (!pre_anchor_main_island_storage.empty()) {
+        main_island_storage = pre_anchor_main_island_storage;
+    } else if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        main_island_storage = adaptive_partition_->largest_component_box_ids_with_overlay();
     }
-    std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
-        return lhs.size() > rhs.size();
-    });
-    const auto& main_island = islands.front();
+    if (main_island_storage.empty()) {
+        if (partition_native_mode()) {
+            add_diag("partition_missing_no_graph_fallback");
+            add_diag("fallback_to_e2e");
+            return 0;
+        }
+        auto islands = find_islands(adjacency_);
+        if (islands.empty()) {
+            add_diag("fallback_to_e2e");
+            return 0;
+        }
+        std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
+            return lhs.size() > rhs.size();
+        });
+        main_island_storage = islands.front();
+    }
+    const auto& main_island = main_island_storage;
     std::unordered_set<int> main_ids(main_island.begin(), main_island.end());
     if (main_ids.find(source_box_id) != main_ids.end()) {
         add_diag("already_main");
         return 0;
     }
+
+    std::unordered_map<int, std::size_t> box_index_by_id;
+    box_index_by_id.reserve(boxes_.size() * 2);
+    for (std::size_t index = 0; index < boxes_.size(); ++index) {
+        box_index_by_id[boxes_[index].id] = index;
+    }
+    const bool graphless_endpoint_main = partition_native_mode();
+    const bool use_partition_endpoint_index =
+        graphless_endpoint_main &&
+        adaptive_partition_query_enabled_ &&
+        adaptive_partition_;
 
     struct TargetCandidate {
         int box_id = -1;
@@ -5030,19 +6584,46 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         double dist2 = 0.0;
     };
     std::vector<TargetCandidate> targets;
-    targets.reserve(main_island.size());
-    for (int box_id : main_island) {
-        const BoxNode* box = find_box_by_id(boxes_, box_id);
-        if (box == nullptr || box->n_dims() != point.size()) {
-            continue;
+    if (use_partition_endpoint_index) {
+        const auto nearest = adaptive_partition_->nearest_boxes(
+            point,
+            main_island,
+            std::max(1, corridor_config.target_k));
+        targets.reserve(nearest.size());
+        for (const auto& item : nearest) {
+            Eigen::VectorXd target_point = item.closest_point;
+            double dist2 = item.distance_sq;
+            if (dist2 <= 1e-18) {
+                Eigen::VectorXd center;
+                if (adaptive_partition_->center_for_box(item.box_id, center) &&
+                    center.size() == point.size()) {
+                    target_point = std::move(center);
+                    dist2 = (target_point - point).squaredNorm();
+                }
+            }
+            targets.push_back({item.box_id, std::move(target_point), dist2});
         }
-        Eigen::VectorXd target_point = closest_point_in_box(*box, point);
-        double dist2 = (target_point - point).squaredNorm();
-        if (dist2 <= 1e-18) {
-            target_point = box->center();
-            dist2 = (target_point - point).squaredNorm();
+        add_diag("partition_nearest_target_queries");
+    } else {
+        targets.reserve(main_island.size());
+        for (int box_id : main_island) {
+            const auto box_it = box_index_by_id.find(box_id);
+            if (box_it == box_index_by_id.end() ||
+                box_it->second >= boxes_.size()) {
+                continue;
+            }
+            const BoxNode& box = boxes_[box_it->second];
+            if (box.n_dims() != point.size()) {
+                continue;
+            }
+            Eigen::VectorXd target_point = closest_point_in_box(box, point);
+            double dist2 = (target_point - point).squaredNorm();
+            if (dist2 <= 1e-18) {
+                target_point = box.center();
+                dist2 = (target_point - point).squaredNorm();
+            }
+            targets.push_back({box_id, std::move(target_point), dist2});
         }
-        targets.push_back({box_id, std::move(target_point), dist2});
     }
     if (targets.empty()) {
         add_diag("missing_target");
@@ -5057,12 +6638,6 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         std::max(1, corridor_config.target_k),
         static_cast<int>(targets.size()));
 
-    std::unordered_map<int, std::size_t> box_index_by_id;
-    box_index_by_id.reserve(boxes_.size() * 2);
-    for (std::size_t index = 0; index < boxes_.size(); ++index) {
-        box_index_by_id[boxes_[index].id] = index;
-    }
-
     std::unordered_map<int, int> node_owner;
     node_owner.reserve(boxes_.size());
     for (const auto& box : boxes_) {
@@ -5071,29 +6646,40 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         }
     }
     BoxSpatialIndex all_box_index;
-    all_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
 
     std::vector<int> main_box_ids;
     std::vector<BoxNode> main_boxes;
-    main_box_ids.reserve(main_island.size());
-    main_boxes.reserve(main_island.size());
-    for (int box_id : main_island) {
-        auto it = box_index_by_id.find(box_id);
-        if (it == box_index_by_id.end()) {
-            continue;
-        }
-        const BoxNode& box = boxes_[it->second];
-        if (box.n_dims() != point.size()) {
-            continue;
-        }
-        main_box_ids.push_back(box_id);
-        main_boxes.push_back(box);
-    }
     BoxSpatialIndex main_box_index;
-    main_box_index.rebuild(main_boxes, config_.query.adjacency_tolerance);
+    if (!use_partition_endpoint_index) {
+        all_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
+        main_box_ids.reserve(main_island.size());
+        main_boxes.reserve(main_island.size());
+        for (int box_id : main_island) {
+            auto it = box_index_by_id.find(box_id);
+            if (it == box_index_by_id.end()) {
+                continue;
+            }
+            const BoxNode& box = boxes_[it->second];
+            if (box.n_dims() != point.size()) {
+                continue;
+            }
+            main_box_ids.push_back(box_id);
+            main_boxes.push_back(box);
+        }
+        main_box_index.rebuild(main_boxes, config_.query.adjacency_tolerance);
+    }
 
-    int next_id = next_box_id();
-    int added_total = 0;
+	int next_id = next_box_id();
+	auto finish_endpoint_main = [&](int value) {
+		if (boxes_.size() > boxes_before_endpoint_main) {
+			append_adaptive_partition_boxes(boxes_before_endpoint_main,
+											&last_build_,
+											"endpoint_main");
+		}
+		sync_adaptive_partition_segment_edges(&last_build_, "endpoint_main");
+		return value;
+	};
+	int added_total = 0;
     int boxes_added = 0;
     int ffb_calls = 0;
     int local_adj_checks = 0;
@@ -5112,12 +6698,24 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return &boxes_[it->second];
     };
     auto contains_point = [&](int box_id, const Eigen::VectorXd& q) {
+        if (use_partition_endpoint_index &&
+            adaptive_partition_->box_contains_point(box_id,
+                                                    q,
+                                                    config_.query.adjacency_tolerance)) {
+            return true;
+        }
         const BoxNode* box = box_by_id(box_id);
         return box != nullptr && box->contains(q, config_.query.adjacency_tolerance);
     };
     auto append_edge_if_connected = [&](int lhs, int rhs) {
         if (lhs == rhs) {
             return true;
+        }
+        if (use_partition_endpoint_index &&
+            adaptive_partition_->contains_box_id(lhs) &&
+            adaptive_partition_->contains_box_id(rhs)) {
+            local_adj_checks += 1;
+            return adaptive_partition_->boxes_are_neighbors(lhs, rhs);
         }
         BoxNode* lhs_box = box_by_id(lhs);
         BoxNode* rhs_box = box_by_id(rhs);
@@ -5128,10 +6726,23 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         if (!boxes_connected(*lhs_box, *rhs_box, config_.query.adjacency_tolerance)) {
             return false;
         }
-        append_local_edge(adjacency_, lhs, rhs);
+        if (!graphless_endpoint_main) {
+            append_local_edge(adjacency_, lhs, rhs);
+        }
         return true;
     };
     auto main_owner = [&](const Eigen::VectorXd& q) {
+        if (use_partition_endpoint_index) {
+            const auto ids = adaptive_partition_->covering_box_ids(
+                q,
+                config_.query.adjacency_tolerance);
+            for (int box_id : ids) {
+                if (main_ids.find(box_id) != main_ids.end()) {
+                    return box_id;
+                }
+            }
+            return -1;
+        }
         auto candidates = main_box_index.point_candidates(q);
         if (candidates.empty()) {
             candidates.reserve(main_boxes.size());
@@ -5151,6 +6762,22 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return -1;
     };
     auto first_existing_cover = [&](const Eigen::VectorXd& q) {
+        if (use_partition_endpoint_index) {
+            const auto ids = adaptive_partition_->covering_box_ids(
+                q,
+                config_.query.adjacency_tolerance);
+            if (!ids.empty()) {
+                return ids.front();
+            }
+            for (std::size_t index = boxes_before_endpoint_main; index < boxes_.size(); ++index) {
+                if (intervals_contain_point_local(boxes_[index].joint_intervals,
+                                                  q,
+                                                  config_.query.adjacency_tolerance)) {
+                    return boxes_[index].id;
+                }
+            }
+            return -1;
+        }
         const int index = all_box_index.covering_box(
             boxes_,
             q,
@@ -5182,19 +6809,49 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         }
         return std::clamp(exit_param, 0.0, 1.0);
     };
+    auto segment_exit_param_intervals = [&](const std::vector<Interval>& intervals,
+                                            const Eigen::VectorXd& from,
+                                            const Eigen::VectorXd& to) {
+        if (intervals.size() != static_cast<std::size_t>(from.size()) ||
+            to.size() != from.size()) {
+            return 0.0;
+        }
+        const Eigen::VectorXd delta = to - from;
+        double exit_param = 1.0;
+        for (int dim = 0; dim < from.size(); ++dim) {
+            const double d = delta[dim];
+            if (std::abs(d) < 1e-15) {
+                continue;
+            }
+            const auto& interval = intervals[static_cast<std::size_t>(dim)];
+            const double boundary = d > 0.0 ? interval.hi : interval.lo;
+            const double t = (boundary - from[dim]) / d;
+            if (t > 1e-12 && t < exit_param) {
+                exit_param = t;
+            }
+        }
+        return std::clamp(exit_param, 0.0, 1.0);
+    };
     auto make_seed_from_face = [&](int box_id,
                                    const Eigen::VectorXd& from,
                                    const Eigen::VectorXd& to) {
-        const BoxNode* box = find_box_by_id(boxes_, box_id);
-        if (box == nullptr) {
-            return from;
-        }
         const Eigen::VectorXd delta = to - from;
         const double norm = delta.norm();
         if (norm <= 1e-12) {
             return from;
         }
-        const double u = segment_exit_param(*box, from, to);
+        double u = 0.0;
+        std::vector<Interval> intervals;
+        if (use_partition_endpoint_index &&
+            adaptive_partition_->intervals_for_box(box_id, intervals)) {
+            u = segment_exit_param_intervals(intervals, from, to);
+        } else {
+            const BoxNode* box = find_box_by_id(boxes_, box_id);
+            if (box == nullptr) {
+                return from;
+            }
+            u = segment_exit_param(*box, from, to);
+        }
         Eigen::VectorXd seed = from + u * delta + corridor_config.face_epsilon * (delta / norm);
         const auto domain = oracle_->planning_intervals();
         for (int dim = 0; dim < seed.size() &&
@@ -5274,8 +6931,21 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             candidate.strict_audit_required = result.validation_detail.strict_audit_required;
             candidate.compute_volume();
             BoxNode* parent_box = box_by_id(parent_box_id);
-            if (parent_box == nullptr ||
-                !boxes_connected(*parent_box, candidate, config_.query.adjacency_tolerance)) {
+            bool parent_adjacent = false;
+            if (use_partition_endpoint_index &&
+                adaptive_partition_->contains_box_id(parent_box_id)) {
+                local_adj_checks += 1;
+                parent_adjacent = adaptive_partition_->box_adjacent_to_box(
+                    parent_box_id,
+                    candidate,
+                    config_.query.adjacency_tolerance);
+            } else if (parent_box != nullptr) {
+                local_adj_checks += 1;
+                parent_adjacent = boxes_connected(*parent_box,
+                                                  candidate,
+                                                  config_.query.adjacency_tolerance);
+            }
+            if (!parent_adjacent) {
                 if (is_max_depth_attempt) {
                     max_depth_ffb_failed = true;
                 }
@@ -5284,7 +6954,8 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 }
                 continue;
             }
-            candidate.root_id = parent_box->root_id >= 0 ? parent_box->root_id : parent_box_id;
+            candidate.root_id =
+                parent_box != nullptr && parent_box->root_id >= 0 ? parent_box->root_id : parent_box_id;
             candidate.id = next_id++;
             const int new_id = candidate.id;
             if (node_owner.find(candidate.tree_id) == node_owner.end()) {
@@ -5295,11 +6966,18 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             raw_boxes_.push_back(candidate);
             const std::size_t new_index = boxes_.size() - 1;
             box_index_by_id[new_id] = new_index;
-            all_box_index.add_box(boxes_.back(),
-                                  static_cast<int>(new_index),
-                                  config_.query.adjacency_tolerance);
-            adjacency_[new_id] = {};
-            append_local_edge(adjacency_, parent_box_id, new_id);
+            if (!use_partition_endpoint_index) {
+                all_box_index.add_box(boxes_.back(),
+                                      static_cast<int>(new_index),
+                                      config_.query.adjacency_tolerance);
+            } else {
+                adaptive_partition_->append_box(boxes_.back(),
+                                                config_.query.adjacency_tolerance);
+            }
+            if (!graphless_endpoint_main) {
+                adjacency_[new_id] = {};
+                append_local_edge(adjacency_, parent_box_id, new_id);
+            }
             boxes_added += 1;
             added_total += 1;
             add_diag("boxes_added");
@@ -5350,13 +7028,24 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         if (!max_depth_ffb_failed || corridor_config.residual_segment_max_length <= 0.0) {
             return false;
         }
-        const BoxNode* front_box = box_by_id(front_box_id);
-        const BoxNode* target_box = box_by_id(target_box_id);
-        if (front_box == nullptr || target_box == nullptr) {
-            return false;
+        Eigen::VectorXd front_point;
+        Eigen::VectorXd main_point;
+        if (use_partition_endpoint_index &&
+            adaptive_partition_->closest_point_for_box(front_box_id,
+                                                       target_point,
+                                                       front_point) &&
+            adaptive_partition_->closest_point_for_box(target_box_id,
+                                                       front_point,
+                                                       main_point)) {
+        } else {
+            const BoxNode* front_box = box_by_id(front_box_id);
+            const BoxNode* target_box = box_by_id(target_box_id);
+            if (front_box == nullptr || target_box == nullptr) {
+                return false;
+            }
+            front_point = closest_point_in_box(*front_box, target_point);
+            main_point = closest_point_in_box(*target_box, front_point);
         }
-        const Eigen::VectorXd front_point = closest_point_in_box(*front_box, target_point);
-        const Eigen::VectorXd main_point = closest_point_in_box(*target_box, front_point);
         const double length = (main_point - front_point).norm();
         if (length > corridor_config.residual_segment_max_length) {
             return false;
@@ -5370,9 +7059,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         if (!audit.passed) {
             return false;
         }
-        const int edge_id = add_segment_edge(segment_edges_,
-                                             adjacency_,
-                                             front_box_id,
+        const int edge_id = add_segment_edge_partition_first(                                             front_box_id,
                                              target_box_id,
                                              std::move(waypoints),
                                              SegmentEdgeType::QueryBridge,
@@ -5443,22 +7130,30 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         while (current_sample_index < target_sample_index &&
                ffb_calls < std::max(1, corridor_config.max_ffb_calls) &&
                boxes_added < std::max(1, corridor_config.max_boxes)) {
-            if (append_edge_if_connected(current_box_id, target_owner)) {
-                add_diag("main_contact_success");
-                set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-                invalidate_query_cache();
-                return std::max(1, added_total);
+		if (append_edge_if_connected(current_box_id, target_owner)) {
+			add_diag("main_contact_success");
+			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+			invalidate_query_cache();
+			return finish_endpoint_main(std::max(1, added_total));
+		}
+            const Eigen::VectorXd current_sample =
+                samples[static_cast<std::size_t>(current_sample_index)];
+            Eigen::VectorXd from = current_sample;
+            if (!contains_point(current_box_id, current_sample)) {
+                if (use_partition_endpoint_index) {
+                    if (!adaptive_partition_->closest_point_for_box(current_box_id,
+                                                                    current_sample,
+                                                                    from)) {
+                        break;
+                    }
+                } else {
+                    const BoxNode* current_box = find_box_by_id(boxes_, current_box_id);
+                    if (current_box == nullptr) {
+                        break;
+                    }
+                    from = closest_point_in_box(*current_box, current_sample);
+                }
             }
-            const BoxNode* current_box = find_box_by_id(boxes_, current_box_id);
-            if (current_box == nullptr) {
-                break;
-            }
-            const Eigen::VectorXd from = current_box->contains(
-                samples[static_cast<std::size_t>(current_sample_index)],
-                config_.query.adjacency_tolerance)
-                ? samples[static_cast<std::size_t>(current_sample_index)]
-                : closest_point_in_box(*current_box,
-                                       samples[static_cast<std::size_t>(current_sample_index)]);
             const Eigen::VectorXd seed = make_seed_from_face(
                 current_box_id,
                 from,
@@ -5471,12 +7166,12 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 local_candidates,
                 target_box_ids,
                 depth_schedule);
-            if (reached_main) {
-                add_diag("main_contact_success");
-                set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-                invalidate_query_cache();
-                return std::max(1, added_total);
-            }
+			if (reached_main) {
+				add_diag("main_contact_success");
+				set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+				invalidate_query_cache();
+				return finish_endpoint_main(std::max(1, added_total));
+			}
             if (new_box_id >= 0) {
                 const int next_sample_index =
                     furthest_sample(new_box_id, samples, current_sample_index, target_sample_index);
@@ -5506,12 +7201,12 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                         local_candidates,
                         target_box_ids,
                         depth_schedule);
-                    if (lat_main) {
-                        add_diag("main_contact_success");
-                        set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-                        invalidate_query_cache();
-                        return std::max(1, added_total);
-                    }
+					if (lat_main) {
+						add_diag("main_contact_success");
+						set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+						invalidate_query_cache();
+						return finish_endpoint_main(std::max(1, added_total));
+					}
                     if (lat_box_id >= 0) {
                         const int next_sample_index =
                             furthest_sample(lat_box_id, samples, current_sample_index, target_sample_index);
@@ -5529,36 +7224,36 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                     continue;
                 }
             }
-            if (try_residual_segment(current_box_id, target_owner, target.point)) {
-                add_diag("main_contact_success");
-                set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-                invalidate_query_cache();
-                return added_total;
-            }
+			if (try_residual_segment(current_box_id, target_owner, target.point)) {
+				add_diag("main_contact_success");
+				set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+				invalidate_query_cache();
+				return finish_endpoint_main(added_total);
+			}
             break;
         }
-        if (append_edge_if_connected(current_box_id, target_owner) ||
-            graph_has_box_path_local(adjacency_, current_box_id, target_owner)) {
-            add_diag("main_contact_success");
-            set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-            invalidate_query_cache();
-            return std::max(1, added_total);
-        }
-        if (try_residual_segment(current_box_id, target_owner, target.point)) {
-            add_diag("main_contact_success");
-            set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-            invalidate_query_cache();
-            return added_total;
-        }
+		if (append_edge_if_connected(current_box_id, target_owner) ||
+			box_only_path_connected_partition_first(current_box_id, target_owner)) {
+			add_diag("main_contact_success");
+			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+			invalidate_query_cache();
+			return finish_endpoint_main(std::max(1, added_total));
+		}
+		if (try_residual_segment(current_box_id, target_owner, target.point)) {
+			add_diag("main_contact_success");
+			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+			invalidate_query_cache();
+			return finish_endpoint_main(added_total);
+		}
     }
 
     for (const auto& [key, value] : context.diagnostics().snapshot()) {
         last_build_.diagnostics[key] += value;
     }
-    set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-    add_diag("fallback_to_e2e");
-    invalidate_query_cache();
-    return 0;
+	set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+	add_diag("fallback_to_e2e");
+	invalidate_query_cache();
+	return finish_endpoint_main(0);
 }
 
 int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
@@ -5568,6 +7263,130 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
     if (max_edges <= 0 || candidate_limit < 2 || boxes_.size() < 2) {
         return 0;
     }
+    if (partition_native_mode()) {
+        if (!adaptive_partition_query_enabled_ || !adaptive_partition_ || adaptive_partition_->empty()) {
+            last_build_.diagnostics["offline_shortcut.partition_native_missing_partition"] += 1.0;
+            return 0;
+        }
+        const int limit = std::min<int>(candidate_limit, static_cast<int>(boxes_.size()));
+        auto landmarks = adaptive_partition_->landmarks(true, limit);
+        if (static_cast<int>(landmarks.size()) < 2) {
+            landmarks = adaptive_partition_->landmarks(false, limit);
+        }
+        if (static_cast<int>(landmarks.size()) < 2) {
+            last_build_.diagnostics["offline_shortcut.partition_native_insufficient_landmarks"] += 1.0;
+            return 0;
+        }
+        auto existing_segment_pairs = partition_segment_pair_set_local(segment_edges_);
+
+        struct ShortcutCandidate {
+            int source = -1;
+            int target = -1;
+            Eigen::VectorXd source_center;
+            Eigen::VectorXd target_center;
+            double direct = 0.0;
+            double partition_cost = 0.0;
+            double score = 0.0;
+        };
+        std::vector<ShortcutCandidate> candidates;
+        const double safe_min_gain = std::max(1.0, min_gain_ratio);
+        const double safe_max_segment_length = std::max(0.0, max_segment_length);
+        AdaptiveGridPartitionQueryOptions query_options;
+        query_options.nearest_if_outside = false;
+        query_options.shortcut_boxes = false;
+        query_options.max_expansions = std::max(0, last_adaptive_partition_config_.grid_planning_max_expansions);
+        query_options.adjacency_tolerance = config_.query.adjacency_tolerance;
+        int tested_pairs = 0;
+        for (std::size_t outer = 0; outer < landmarks.size(); ++outer) {
+            const auto& lhs = landmarks[outer];
+            for (std::size_t inner = outer + 1; inner < landmarks.size(); ++inner) {
+                const auto& rhs = landmarks[inner];
+                if (lhs.center.size() == 0 || lhs.center.size() != rhs.center.size()) {
+                    continue;
+                }
+                ++tested_pairs;
+                const double direct = (lhs.center - rhs.center).norm();
+                if (direct <= 1e-9 ||
+                    (safe_max_segment_length > 0.0 && direct > safe_max_segment_length) ||
+                    existing_segment_pairs.count(
+                        partition_segment_pair_key_local(lhs.box_id, rhs.box_id)) > 0) {
+                    continue;
+                }
+                const auto route = adaptive_partition_->query(lhs.center, rhs.center, query_options);
+                if (!route.found ||
+                    !std::isfinite(route.total_cost) ||
+                    route.total_cost <= direct * safe_min_gain) {
+                    continue;
+                }
+                candidates.push_back({lhs.box_id,
+                                      rhs.box_id,
+                                      lhs.center,
+                                      rhs.center,
+                                      direct,
+                                      route.total_cost,
+                                      route.total_cost - direct});
+            }
+        }
+        std::sort(candidates.begin(), candidates.end(), [](const ShortcutCandidate& lhs,
+                                                           const ShortcutCandidate& rhs) {
+            return lhs.score > rhs.score;
+        });
+
+        int added = 0;
+        int box_corridor_edges = 0;
+        int segment_edges = 0;
+        int pave_added_total = 0;
+        int pave_fail = 0;
+        int audit_fail = 0;
+        for (const auto& candidate : candidates) {
+            if (added >= max_edges) {
+                break;
+            }
+            if (candidate.source_center.size() == 0 ||
+                candidate.source_center.size() != candidate.target_center.size()) {
+                continue;
+            }
+            std::vector<Eigen::VectorXd> waypoints{candidate.source_center,
+                                                   candidate.target_center};
+            const double audit_fail_before =
+                last_build_.diagnostics["offline_shortcut.partition_box_corridor_overlay_audit_fail"];
+            const int overlay_added = add_partition_box_corridor_overlay(candidate.source_center,
+                                                                         candidate.target_center,
+                                                                         waypoints,
+                                                                         "offline_shortcut",
+                                                                         false,
+                                                                         false,
+                                                                         -1,
+                                                                         &last_build_);
+            const double audit_fail_after =
+                last_build_.diagnostics["offline_shortcut.partition_box_corridor_overlay_audit_fail"];
+            if (audit_fail_after > audit_fail_before) {
+                ++audit_fail;
+            }
+            if (overlay_added > 0) {
+                existing_segment_pairs.insert(
+                    partition_segment_pair_key_local(candidate.source, candidate.target));
+                ++box_corridor_edges;
+                ++added;
+                continue;
+            }
+            ++pave_fail;
+        }
+        last_build_.diagnostics["offline_shortcut.partition_native"] += 1.0;
+        last_build_.diagnostics["offline_shortcut.partition_native_direct_overlay"] += 1.0;
+        last_build_.diagnostics["offline_shortcut.partition_native_query_bridge_skipped"] += 1.0;
+        last_build_.diagnostics["offline_shortcut.tested_pairs"] += static_cast<double>(tested_pairs);
+        last_build_.diagnostics["offline_shortcut.candidates"] += static_cast<double>(candidates.size());
+        last_build_.diagnostics["offline_shortcut.audit_fail"] += static_cast<double>(audit_fail);
+        last_build_.diagnostics["offline_shortcut.edges_added"] += static_cast<double>(added);
+        last_build_.diagnostics["offline_shortcut.segment_edges_added"] += static_cast<double>(segment_edges);
+        last_build_.diagnostics["offline_shortcut.box_corridor_edges_added"] += static_cast<double>(box_corridor_edges);
+        last_build_.diagnostics["offline_shortcut.pave_boxes_added"] += static_cast<double>(pave_added_total);
+        last_build_.diagnostics["offline_shortcut.pave_fail"] += static_cast<double>(pave_fail);
+        sync_adaptive_partition_segment_edges(&last_build_, "offline_shortcut.partition_native");
+        return added;
+    }
+
     const int limit = std::min<int>(candidate_limit, static_cast<int>(boxes_.size()));
     std::vector<int> landmarks;
     landmarks.reserve(boxes_.size());
@@ -5660,42 +7479,47 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
             ++audit_fail;
             continue;
         }
-        ChainPaveConfig pave_config = config_.connector.pave;
-        pave_config.fill_gaps = true;
-        pave_config.require_connected_chain = true;
-        pave_config.max_chain = std::max(pave_config.max_chain, 64);
-        pave_config.max_steps_per_waypoint = std::max(pave_config.max_steps_per_waypoint, 16);
-        pave_config.find_free_box.max_depth = std::min(
-            std::max(1, config_.database.max_tree_depth),
-            std::max(1,
-                     config_.query_bridge_pave_depth > 0
-                         ? config_.query_bridge_pave_depth
-                         : pave_config.find_free_box.max_depth));
-        pave_config.adaptive_ffb_depths =
-            config_.query_bridge_adaptive_ffb_depths.empty()
-                ? pave_config.adaptive_ffb_depths
-                : config_.query_bridge_adaptive_ffb_depths;
-        pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 75.0);
-        pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 192);
-        const int pave_added = chain_pave_along_path(waypoints,
-                                                     candidate.source,
-                                                     boxes_,
-                                                     *oracle_,
-                                                     adjacency_,
-                                                     next_id,
-                                                     context,
-                                                     pave_config);
+        int pave_added = 0;
+        if (!partition_native_mode()) {
+            ChainPaveConfig pave_config = config_.connector.pave;
+            pave_config.fill_gaps = true;
+            pave_config.require_connected_chain = true;
+            pave_config.max_chain = std::max(pave_config.max_chain, 64);
+            pave_config.max_steps_per_waypoint = std::max(pave_config.max_steps_per_waypoint, 16);
+            pave_config.find_free_box.max_depth = std::min(
+                std::max(1, config_.database.max_tree_depth),
+                std::max(1,
+                         config_.query_bridge_pave_depth > 0
+                             ? config_.query_bridge_pave_depth
+                             : pave_config.find_free_box.max_depth));
+            pave_config.adaptive_ffb_depths =
+                config_.query_bridge_adaptive_ffb_depths.empty()
+                    ? pave_config.adaptive_ffb_depths
+                    : config_.query_bridge_adaptive_ffb_depths;
+            pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 75.0);
+            pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 192);
+            const std::size_t boxes_before_pave = boxes_.size();
+            pave_added = chain_pave_along_path(waypoints,
+                                               candidate.source,
+                                               boxes_,
+                                               *oracle_,
+                                               adjacency_,
+                                               next_id,
+                                               context,
+                                               pave_config);
+            if (pave_added > 0) {
+                append_adaptive_partition_boxes(boxes_before_pave,
+                                                &last_build_,
+                                                "offline_shortcut.pave");
+            }
+        } else {
+            last_build_.diagnostics["offline_shortcut.partition_legacy_chain_pave_skipped"] += 1.0;
+        }
         pave_added_total += pave_added;
         int edge_id = -1;
         if (pave_added > 0 &&
-            graph_has_certified_box_path_local(boxes_,
-                                               adjacency_,
-                                               candidate.source,
-                                               candidate.target,
-                                               config_.query.adjacency_tolerance)) {
-            edge_id = add_segment_edge(segment_edges_,
-                                       adjacency_,
-                                       candidate.source,
+            box_only_path_connected_partition_first(candidate.source, candidate.target)) {
+            edge_id = add_segment_edge_partition_first(                                       candidate.source,
                                        candidate.target,
                                        waypoints,
                                        SegmentEdgeType::BoxCorridor,
@@ -5708,9 +7532,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
             }
         } else {
             ++pave_fail;
-            edge_id = add_segment_edge(segment_edges_,
-                                       adjacency_,
-                                       candidate.source,
+            edge_id = add_segment_edge_partition_first(                                       candidate.source,
                                        candidate.target,
                                        std::move(waypoints),
                                        SegmentEdgeType::QueryBridge,
@@ -5737,6 +7559,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
     last_build_.diagnostics["offline_shortcut.segment_edges_added"] += static_cast<double>(segment_edges);
     last_build_.diagnostics["offline_shortcut.pave_boxes_added"] += static_cast<double>(pave_added_total);
     last_build_.diagnostics["offline_shortcut.pave_fail"] += static_cast<double>(pave_fail);
+    sync_adaptive_partition_segment_edges(&last_build_, "offline_shortcut");
     return added;
 }
 
@@ -5753,7 +7576,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
         }
     }
     if (existing < 0 && config_.query.nearest_if_outside) {
-        existing = locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+        existing = locate_box_partition_first(point, config_.query.nearest_if_outside);
     }
     if (existing >= 0) {
         context.diagnostics().add_counter("query_bridge.endpoint_anchor_already_covered");
@@ -5772,6 +7595,70 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     root_domain.joint_intervals = oracle_->planning_intervals();
     root_domain.compute_volume();
 
+    if (partition_native_mode()) {
+        const std::size_t boxes_before_anchor = boxes_.size();
+        StageContext local_context = context;
+        auto result = find_free_box_in_domain(point,
+                                              root_domain.joint_intervals,
+                                              local_context,
+                                              options);
+        for (const auto& [key, value] : local_context.diagnostics().snapshot()) {
+            context.diagnostics().add_counter(key, value);
+        }
+        context.diagnostics().add_counter("query_bridge.endpoint_anchor_calls");
+        if (!result.found ||
+            !intervals_contain_point_local(result.intervals,
+                                           point,
+                                           config_.query.adjacency_tolerance)) {
+            context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail");
+            return -1;
+        }
+        context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_success");
+        auto same_intervals = [](const std::vector<Interval>& lhs,
+                                 const std::vector<Interval>& rhs) {
+            if (lhs.size() != rhs.size()) {
+                return false;
+            }
+            for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
+                if (std::abs(lhs[dim].lo - rhs[dim].lo) > 1e-12 ||
+                    std::abs(lhs[dim].hi - rhs[dim].hi) > 1e-12) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        for (const auto& existing_box : boxes_) {
+            if (existing_box.tree_id == result.node ||
+                same_intervals(existing_box.joint_intervals, result.intervals)) {
+                context.diagnostics().add_counter("query_bridge.endpoint_anchor_duplicate_reuse");
+                return existing_box.id;
+            }
+        }
+        if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
+            context.diagnostics().add_counter("query_bridge.endpoint_anchor_commit_rejects");
+            return -1;
+        }
+        BoxNode box;
+        box.id = next_box_id();
+        box.joint_intervals = result.intervals;
+        box.seed_config = point;
+        box.tree_id = result.node;
+        box.parent_box_id = -1;
+        box.root_id = box.id;
+        box.safety_status = result.validation_detail.safety_status;
+        box.strict_audit_required = result.validation_detail.strict_audit_required;
+        box.compute_volume();
+        oracle_->reserve_node(box.tree_id, box.id);
+        const int new_id = box.id;
+        boxes_.push_back(box);
+        raw_boxes_.push_back(box);
+        context.diagnostics().add_counter("query_bridge.endpoint_anchor_boxes_added");
+        append_adaptive_partition_boxes(boxes_before_anchor,
+                                        &last_build_,
+                                        "query_bridge.endpoint_anchor");
+        return new_id;
+    }
+
     BoxSpatialIndex box_index;
     box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
     BuildDisjointSet dsu = make_dsu_from_graph(boxes_, adjacency_);
@@ -5783,6 +7670,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                  const FindFreeBoxOptions& local_options) {
         return this->find_free_box_in_domain(seed, domain, local_context, local_options);
     };
+    const std::size_t boxes_before_anchor = boxes_.size();
     const int new_id = commit_query_root_box(*oracle_,
                                              options,
                                              config_.grower.commit_policy,
@@ -5809,6 +7697,9 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_adjacency_rejects", stats.adjacency_rejects);
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_boxes_added", stats.boxes_added);
     if (new_id >= 0) {
+        append_adaptive_partition_boxes(boxes_before_anchor,
+                                        &last_build_,
+                                        "query_bridge.endpoint_anchor");
         const BoxNode* anchor_box = find_box_by_id(boxes_, new_id);
         int best_target_id = -1;
         Eigen::VectorXd best_target_point = point;
@@ -5851,9 +7742,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                                              config_.query.audit_resolution,
                                                              config_.query.audit_segment_step);
             if (audit.passed) {
-                const int edge_id = add_segment_edge(segment_edges_,
-                                                     adjacency_,
-                                                     new_id,
+                const int edge_id = add_segment_edge_partition_first(                                                     new_id,
                                                      best_target_id,
                                                      std::move(waypoints),
                                                      SegmentEdgeType::QueryBridge,
@@ -5873,6 +7762,74 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
         invalidate_query_cache();
     }
     return new_id;
+}
+
+int RBFPlanningForest::locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
+                                                  bool nearest_if_outside) const {
+    if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        const int partition_box = adaptive_partition_->locate_containing_box(point,
+                                                                             nearest_if_outside,
+                                                                             config_.query.adjacency_tolerance);
+        if (partition_box >= 0) {
+            return partition_box;
+        }
+    }
+    if (partition_native_mode()) {
+        return -1;
+    }
+    return locate_containing_box(query_cache(), point, nearest_if_outside);
+}
+
+bool RBFPlanningForest::box_only_path_connected_partition_first(int source_box_id,
+                                                                int target_box_id) const {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return false;
+    }
+    if (adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        !adaptive_partition_->empty() &&
+        adaptive_partition_->same_island(source_box_id, target_box_id)) {
+        return true;
+    }
+    if (partition_native_mode()) {
+        return false;
+    }
+    return graph_has_certified_box_path_local(boxes_,
+                                              adjacency_,
+                                              source_box_id,
+                                              target_box_id,
+                                              config_.query.adjacency_tolerance);
+}
+
+bool RBFPlanningForest::overlay_path_connected_partition_first(int source_box_id,
+                                                               int target_box_id) const {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return false;
+    }
+    if (adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        !adaptive_partition_->empty() &&
+        adaptive_partition_->same_component_with_overlay(source_box_id, target_box_id)) {
+        return true;
+    }
+    if (partition_native_mode()) {
+        return false;
+    }
+    return graph_has_box_path_local(adjacency_, source_box_id, target_box_id);
+}
+
+bool RBFPlanningForest::partition_native_mode() const {
+    return has_adaptive_partition_config_ &&
+           last_adaptive_partition_config_.planning_backend == "partition_native";
+}
+
+int RBFPlanningForest::island_count_partition_first() const {
+    if (partition_native_mode() &&
+        adaptive_partition_query_enabled_ &&
+        adaptive_partition_) {
+        return adaptive_partition_->component_count_with_overlay();
+    }
+    return static_cast<int>(find_islands(adjacency_).size());
 }
 
 int RBFPlanningForest::bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -5909,14 +7866,14 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
             }
         }
     } diagnostics_flush{last_build_, context};
-    int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         start_box_id = anchor_query_endpoint_box(start, context);
     }
     if (start_box_id < 0) {
         return 0;
     }
-    int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    int goal_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0) {
         goal_box_id = anchor_query_endpoint_box(goal, context);
     }
@@ -5993,15 +7950,23 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     const std::vector<Eigen::VectorXd>& waypoint_path,
     bool short_local_bridge,
     const RRTConnectConfig& bridge_rrt,
-    int query_index) {
+    int query_index,
+    bool allow_residual_segments) {
     if (waypoint_path.empty() || boxes_.empty() || !oracle_) {
         return 0;
     }
-    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    auto finish_bridge = [&](int added_total) {
+        sync_adaptive_partition_segment_edges(&last_build_, "query_bridge");
+        if (added_total > 0) {
+            refresh_adaptive_partition_diagnostics(&last_build_);
+        }
+        return added_total;
+    };
+    const int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         return 0;
     }
-    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    const int goal_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0 || goal_box_id == start_box_id) {
         return 0;
     }
@@ -6022,6 +7987,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     const double query_bridge_depth_failures_before =
         boundary_max_depth_failure_count_local(context);
     int next_id = next_box_id();
+    auto append_partition_after_pave = [&](std::size_t boxes_before, const char* prefix) {
+        if (boxes_.size() > boxes_before) {
+            append_adaptive_partition_boxes(boxes_before, &last_build_, prefix);
+        }
+    };
     auto waypoint_length = [](const std::vector<Eigen::VectorXd>& path) {
         double total = 0.0;
         for (std::size_t i = 1; i < path.size(); ++i) {
@@ -6061,16 +8031,27 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     auto locate_query_boxes = [&]() {
         using Clock = std::chrono::steady_clock;
         const auto locate_t0 = Clock::now();
-        int source_box_id = locate_box_linear(start);
-        int target_box_id = locate_box_linear(goal);
-        if ((source_box_id < 0 || target_box_id < 0) && config_.query.nearest_if_outside) {
-            context.diagnostics().add_counter(
-                "query_bridge.locate_query_boxes_cache_fallbacks");
-            invalidate_query_cache();
+        int source_box_id = -1;
+        int target_box_id = -1;
+        if (partition_native_mode()) {
             source_box_id =
-                locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+                locate_box_partition_first(start, config_.query.nearest_if_outside);
             target_box_id =
-                locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+                locate_box_partition_first(goal, config_.query.nearest_if_outside);
+            context.diagnostics().add_counter(
+                "query_bridge.locate_query_boxes_partition_first");
+        } else {
+            source_box_id = locate_box_linear(start);
+            target_box_id = locate_box_linear(goal);
+            if ((source_box_id < 0 || target_box_id < 0) && config_.query.nearest_if_outside) {
+                context.diagnostics().add_counter(
+                    "query_bridge.locate_query_boxes_cache_fallbacks");
+                invalidate_query_cache();
+                source_box_id =
+                    locate_box_partition_first(start, config_.query.nearest_if_outside);
+                target_box_id =
+                    locate_box_partition_first(goal, config_.query.nearest_if_outside);
+            }
         }
         context.diagnostics().record_timing(
             "query_bridge.locate_query_boxes_ms",
@@ -6079,13 +8060,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return std::pair<int, int>{source_box_id, target_box_id};
     };
     auto query_boxes_connected = [&](int source_box_id, int target_box_id) {
-        return source_box_id >= 0 &&
-               target_box_id >= 0 &&
-               graph_has_certified_box_path_local(boxes_,
-                                                  adjacency_,
-                                                  source_box_id,
-                                                  target_box_id,
-                                                  config_.query.adjacency_tolerance);
+        if (source_box_id < 0 || target_box_id < 0) {
+            return false;
+        }
+        return box_only_path_connected_partition_first(source_box_id, target_box_id);
     };
     auto try_reverse_boundary_pave =
         [&](const ChainPaveConfig& forward_config,
@@ -6093,6 +8071,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             int& accumulated_added) -> std::pair<int, int> {
         auto [source_box_id, target_box_id] = locate_query_boxes();
         if (query_boxes_connected(source_box_id, target_box_id)) {
+            return {source_box_id, target_box_id};
+        }
+        if (partition_native_mode()) {
+            context.diagnostics().add_counter(
+                "query_bridge.partition_legacy_reverse_chain_pave_skipped");
             return {source_box_id, target_box_id};
         }
         const int remaining_chain = forward_config.max_chain - std::max(0, forward_added);
@@ -6104,6 +8087,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         std::vector<Eigen::VectorXd> reverse_path(corridor_path.rbegin(),
                                                   corridor_path.rend());
         context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_attempts");
+        const std::size_t boxes_before_reverse = boxes_.size();
         const int reverse_added = chain_pave_along_path(reverse_path,
                                                         target_box_id,
                                                         boxes_,
@@ -6113,6 +8097,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                         context,
                                                         reverse_config);
         if (reverse_added > 0) {
+            append_partition_after_pave(boxes_before_reverse,
+                                        "query_bridge.reverse_boundary_pave");
             accumulated_added += reverse_added;
             context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_added",
                                               static_cast<double>(reverse_added));
@@ -6195,6 +8181,26 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     auto try_direct_ffb_corridor = [&]() -> int {
         using Clock = std::chrono::steady_clock;
         const auto t0 = Clock::now();
+        const bool graphless_direct_corridor = partition_native_mode();
+        const std::size_t boxes_before_direct_corridor = boxes_.size();
+        auto finish_direct_corridor = [&](int value) {
+            if (boxes_.size() > boxes_before_direct_corridor) {
+                append_adaptive_partition_boxes(boxes_before_direct_corridor,
+                                                &last_build_,
+                                                "query_bridge.direct_corridor");
+            }
+            sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.direct_corridor");
+            return value;
+        };
+        auto refresh_direct_corridor_partition = [&]() {
+            if (boxes_.size() > boxes_before_direct_corridor) {
+                append_adaptive_partition_boxes(boxes_before_direct_corridor,
+                                                &last_build_,
+                                                "query_bridge.direct_corridor");
+            }
+            sync_adaptive_partition_segment_edges(&last_build_,
+                                                  "query_bridge.direct_corridor");
+        };
         const double audit_step = config_.query.audit_segment_step > 0.0
             ? config_.query.audit_segment_step
             : 0.01;
@@ -6214,12 +8220,75 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return 0;
         }
 
+        const bool use_partition_cover_index =
+            graphless_direct_corridor &&
+            adaptive_partition_query_enabled_ &&
+            adaptive_partition_;
+        const bool use_partition_neighbor_candidates =
+            use_partition_cover_index &&
+            env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES", 0) != 0;
+        const bool immediate_partition_append =
+            use_partition_cover_index &&
+            env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE", 0) != 0;
+        const bool detailed_direct_timing =
+            env_int_or_default("RBF_QUERY_BRIDGE_DETAILED_TIMING", 0) != 0;
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_partition_neighbor_candidates_enabled",
+            use_partition_neighbor_candidates ? 1.0 : 0.0);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_immediate_partition_append_enabled",
+            immediate_partition_append ? 1.0 : 0.0);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_detailed_timing_enabled",
+            detailed_direct_timing ? 1.0 : 0.0);
+        BoxSpatialIndex direct_box_index;
+        if (!use_partition_cover_index) {
+            direct_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
+        }
+        std::unordered_map<int, int> box_id_to_index;
+        if (use_partition_neighbor_candidates) {
+            box_id_to_index.reserve(boxes_.size() * 2);
+            for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
+                box_id_to_index.emplace(boxes_[box_index].id, static_cast<int>(box_index));
+            }
+        }
+        std::vector<int> corridor_new_box_indices;
         std::vector<std::vector<int>> sample_layers(samples.size());
         std::vector<bool> covered(samples.size(), false);
         auto mark_from_index = [&](std::size_t from_index) {
             const auto mark_t0 = Clock::now();
             int changed = 0;
             for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                if (from_index == 0) {
+                    std::vector<int> candidates;
+                    if (use_partition_cover_index) {
+                        candidates = adaptive_partition_->covering_box_indices(
+                            samples[sample_index],
+                            config_.query.adjacency_tolerance);
+                    } else {
+                        candidates = direct_box_index.point_candidates(samples[sample_index]);
+                    }
+                    for (int box_index : candidates) {
+                        if (box_index < 0 || box_index >= static_cast<int>(boxes_.size())) {
+                            continue;
+                        }
+                        if (!intervals_contain_point_local(
+                                boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
+                                samples[sample_index],
+                                config_.query.adjacency_tolerance)) {
+                            continue;
+                        }
+                        auto& layer = sample_layers[sample_index];
+                        if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
+                            layer.push_back(box_index);
+                        }
+                        if (!covered[sample_index]) {
+                            covered[sample_index] = true;
+                            changed += 1;
+                        }
+                    }
+                    continue;
+                }
                 for (std::size_t box_index = from_index; box_index < boxes_.size(); ++box_index) {
                     if (!intervals_contain_point_local(boxes_[box_index].joint_intervals,
                                                        samples[sample_index],
@@ -6287,31 +8356,73 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             }
         };
         LocalDsu dsu(boxes_.size());
+        double transition_connected_ms = 0.0;
+        double bad_transitions_ms = 0.0;
+        double current_cover_ms = 0.0;
+        double current_cover_partition_ms = 0.0;
+        double current_cover_corridor_scan_ms = 0.0;
+        double current_cover_direct_index_ms = 0.0;
+        double duplicate_lookup_ms = 0.0;
+        double commit_total_ms = 0.0;
+        double commit_dynamic_policy_ms = 0.0;
+        double commit_partition_append_ms = 0.0;
+        double assimilate_sample_scan_ms = 0.0;
+        double assimilate_candidate_build_ms = 0.0;
+        double assimilate_adjacency_ms = 0.0;
+        double segment_insert_ms = 0.0;
+        double direct_task_build_ms = 0.0;
+        double direct_loop_ms = 0.0;
+        double repair_loop_ms = 0.0;
+        double adaptive_loop_ms = 0.0;
+        double lateral_loop_ms = 0.0;
+        double residual_segment_loop_ms = 0.0;
+        int transition_connected_calls = 0;
+        int bad_transitions_calls = 0;
+        int current_cover_calls = 0;
+        int duplicate_lookup_calls = 0;
+        int commit_calls = 0;
+        int assimilate_calls = 0;
+        int segment_insert_calls = 0;
         auto transition_connected = [&](int transition) {
+            const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            auto finish = [&](bool value) {
+                if (detailed_direct_timing) {
+                    transition_connected_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
+                    transition_connected_calls += 1;
+                }
+                return value;
+            };
             if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
-                return false;
+                return finish(false);
             }
             const auto& lhs_layer = sample_layers[static_cast<std::size_t>(transition)];
             const auto& rhs_layer = sample_layers[static_cast<std::size_t>(transition + 1)];
             if (lhs_layer.empty() || rhs_layer.empty()) {
-                return false;
+                return finish(false);
             }
             for (int lhs : lhs_layer) {
                 const int root = dsu.find(lhs);
                 for (int rhs : rhs_layer) {
                     if (root == dsu.find(rhs)) {
-                        return true;
+                        return finish(true);
                     }
                 }
             }
-            return false;
+            return finish(false);
         };
         auto bad_transitions = [&]() {
+            const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             std::vector<int> bad;
             for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
                 if (!transition_connected(static_cast<int>(sample_index))) {
                     bad.push_back(static_cast<int>(sample_index));
                 }
+            }
+            if (detailed_direct_timing) {
+                bad_transitions_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
+                bad_transitions_calls += 1;
             }
             return bad;
         };
@@ -6329,6 +8440,33 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             }
             return false;
         };
+        auto direct_boxes_adjacent = [&](int lhs, int rhs) {
+            if (lhs < 0 || rhs < 0 ||
+                lhs >= static_cast<int>(boxes_.size()) ||
+                rhs >= static_cast<int>(boxes_.size())) {
+                return false;
+            }
+            const int lhs_box_id = boxes_[static_cast<std::size_t>(lhs)].id;
+            const int rhs_box_id = boxes_[static_cast<std::size_t>(rhs)].id;
+            if (graphless_direct_corridor &&
+                use_partition_cover_index &&
+                adaptive_partition_ &&
+                adaptive_partition_->contains_box_id(lhs_box_id) &&
+                adaptive_partition_->contains_box_id(rhs_box_id)) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_partition_neighbor_tests");
+                const bool adjacent = adaptive_partition_->boxes_are_neighbors(lhs_box_id,
+                                                                               rhs_box_id);
+                if (adjacent) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_partition_neighbor_hits");
+                }
+                return adjacent;
+            }
+            return boxes_connected(boxes_[static_cast<std::size_t>(lhs)],
+                                   boxes_[static_cast<std::size_t>(rhs)],
+                                   config_.query.adjacency_tolerance);
+        };
         auto initialize_dsu = [&]() {
             const auto dsu_t0 = Clock::now();
             for (const auto& layer : sample_layers) {
@@ -6343,13 +8481,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
                 for (int lhs : sample_layers[sample_index]) {
                     for (int rhs : sample_layers[sample_index + 1]) {
-                        if (boxes_connected(boxes_[static_cast<std::size_t>(lhs)],
-                                            boxes_[static_cast<std::size_t>(rhs)],
-                                            config_.query.adjacency_tolerance)) {
+                        if (direct_boxes_adjacent(lhs, rhs)) {
                             dsu.unite(lhs, rhs);
-                            append_local_edge(adjacency_,
-                                              boxes_[static_cast<std::size_t>(lhs)].id,
-                                              boxes_[static_cast<std::size_t>(rhs)].id);
+                            if (!graphless_direct_corridor) {
+                                append_local_edge(adjacency_,
+                                                  boxes_[static_cast<std::size_t>(lhs)].id,
+                                                  boxes_[static_cast<std::size_t>(rhs)].id);
+                            }
                         }
                     }
                 }
@@ -6371,12 +8509,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
         auto find_duplicate_box_index = [&](OracleNodeId node,
                                             const std::vector<Interval>& intervals) {
+            const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            auto finish = [&](int value) {
+                if (detailed_direct_timing) {
+                    duplicate_lookup_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
+                    duplicate_lookup_calls += 1;
+                }
+                return value;
+            };
             if (node != kInvalidOracleNodeId) {
                 const auto node_it = node_to_box_index.find(node);
                 if (node_it != node_to_box_index.end()) {
-                    return node_it->second;
+                    return finish(node_it->second);
                 }
-                return -1;
+                return finish(-1);
             }
             for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
                 const auto& box = boxes_[box_index];
@@ -6392,16 +8539,22 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     }
                 }
                 if (same) {
-                    return static_cast<int>(box_index);
+                    return finish(static_cast<int>(box_index));
                 }
             }
-            return -1;
+            return finish(-1);
         };
         std::vector<int> repair_indices;
         auto assimilate_box = [&](int box_index, int transition_hint) {
+            if (detailed_direct_timing) {
+                assimilate_calls += 1;
+            }
             const auto assimilate_t0 = Clock::now();
             const int box_id = boxes_[static_cast<std::size_t>(box_index)].id;
-            adjacency_[box_id];
+            if (!graphless_direct_corridor) {
+                adjacency_[box_id];
+            }
+            const auto sample_scan_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
                 if (!intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
                                                    samples[sample_index],
@@ -6417,6 +8570,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
                 covered[sample_index] = true;
             }
+            if (detailed_direct_timing) {
+                assimilate_sample_scan_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - sample_scan_t0).count();
+            }
+            const auto candidate_build_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             std::vector<int> candidates;
             auto add_layer = [&](int layer_index) {
                 if (layer_index < 0 || layer_index >= static_cast<int>(sample_layers.size())) {
@@ -6430,8 +8588,28 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             add_layer(transition_hint + 1);
             add_layer(transition_hint + 2);
             candidates.insert(candidates.end(), repair_indices.begin(), repair_indices.end());
+            if (use_partition_neighbor_candidates && adaptive_partition_) {
+                const auto partition_neighbor_ids =
+                    adaptive_partition_->adjacent_box_ids(
+                        boxes_[static_cast<std::size_t>(box_index)],
+                        config_.query.adjacency_tolerance);
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_partition_neighbor_candidates",
+                    static_cast<double>(partition_neighbor_ids.size()));
+                for (int neighbor_box_id : partition_neighbor_ids) {
+                    const auto index_it = box_id_to_index.find(neighbor_box_id);
+                    if (index_it != box_id_to_index.end()) {
+                        candidates.push_back(index_it->second);
+                    }
+                }
+            }
             std::sort(candidates.begin(), candidates.end());
             candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+            if (detailed_direct_timing) {
+                assimilate_candidate_build_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - candidate_build_t0).count();
+            }
+            const auto adjacency_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             int local_edges = 0;
             for (int candidate : candidates) {
                 if (candidate == box_index ||
@@ -6439,18 +8617,24 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     candidate >= static_cast<int>(boxes_.size())) {
                     continue;
                 }
-                if (boxes_connected(boxes_[static_cast<std::size_t>(box_index)],
-                                    boxes_[static_cast<std::size_t>(candidate)],
-                                    config_.query.adjacency_tolerance)) {
-                    const std::size_t before = adjacency_[box_id].size();
+                if (direct_boxes_adjacent(box_index, candidate)) {
                     dsu.unite(box_index, candidate);
-                    append_local_edge(adjacency_,
-                                      box_id,
-                                      boxes_[static_cast<std::size_t>(candidate)].id);
-                    if (adjacency_[box_id].size() > before) {
+                    bool edge_counted = true;
+                    if (!graphless_direct_corridor) {
+                        const std::size_t before = adjacency_[box_id].size();
+                        append_local_edge(adjacency_,
+                                          box_id,
+                                          boxes_[static_cast<std::size_t>(candidate)].id);
+                        edge_counted = adjacency_[box_id].size() > before;
+                    }
+                    if (edge_counted) {
                         local_edges += 1;
                     }
                 }
+            }
+            if (detailed_direct_timing) {
+                assimilate_adjacency_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - adjacency_t0).count();
             }
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_incremental_adjacency_checks",
@@ -6467,20 +8651,38 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         auto commit_result = [&](FindFreeBoxResult result,
                                  const Eigen::VectorXd& seed,
                                  int transition_hint) -> int {
+            const auto commit_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            auto finish = [&](int value) {
+                if (detailed_direct_timing) {
+                    commit_total_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - commit_t0).count();
+                    commit_calls += 1;
+                }
+                return value;
+            };
             if (!result.found ||
                 !intervals_contain_point_local(result.intervals,
                                                seed,
                                                config_.query.adjacency_tolerance)) {
-                return -1;
+                return finish(-1);
             }
             const int duplicate_index = find_duplicate_box_index(result.node,
                                                                  result.intervals);
             if (duplicate_index >= 0) {
                 assimilate_box(duplicate_index, transition_hint);
-                return duplicate_index;
+                return finish(duplicate_index);
             }
+            const auto dynamic_policy_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
-                return -1;
+                if (detailed_direct_timing) {
+                    commit_dynamic_policy_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
+                }
+                return finish(-1);
+            }
+            if (detailed_direct_timing) {
+                commit_dynamic_policy_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
             }
             BoxNode box;
             box.id = next_id++;
@@ -6499,44 +8701,252 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (result.node != kInvalidOracleNodeId) {
                 node_to_box_index.emplace(result.node, box_index);
             }
+            if (use_partition_cover_index) {
+                if (immediate_partition_append && adaptive_partition_) {
+                    const auto partition_append_t0 =
+                        detailed_direct_timing ? Clock::now() : Clock::time_point{};
+                    const bool appended = adaptive_partition_->append_box(
+                        boxes_.back(),
+                        config_.query.adjacency_tolerance);
+                    if (detailed_direct_timing) {
+                        commit_partition_append_ms +=
+                            std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                      partition_append_t0).count();
+                    }
+                    context.diagnostics().add_counter(
+                        appended
+                            ? "query_bridge.direct_corridor_immediate_partition_appends"
+                            : "query_bridge.direct_corridor_immediate_partition_append_rejects");
+                    if (!appended) {
+                        corridor_new_box_indices.push_back(box_index);
+                    }
+                } else {
+                    corridor_new_box_indices.push_back(box_index);
+                }
+            } else {
+                direct_box_index.add_box(boxes_.back(),
+                                         box_index,
+                                         config_.query.adjacency_tolerance);
+            }
+            if (use_partition_neighbor_candidates) {
+                box_id_to_index[box.id] = box_index;
+            }
             dsu.add();
             assimilate_box(box_index, transition_hint);
-            return box_index;
+            return finish(box_index);
         };
         auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
-            for (const auto& box : boxes_) {
-                if (intervals_contain_point_local(box.joint_intervals,
-                                                   point,
-                                                   config_.query.adjacency_tolerance)) {
-                    return true;
+            const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            auto finish = [&](bool value) {
+                if (detailed_direct_timing) {
+                    current_cover_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
+                    current_cover_calls += 1;
+                }
+                return value;
+            };
+            if (use_partition_cover_index) {
+                const auto partition_cover_t0 =
+                    detailed_direct_timing ? Clock::now() : Clock::time_point{};
+                const bool partition_covered =
+                    !adaptive_partition_->covering_box_ids(point,
+                                                           config_.query.adjacency_tolerance).empty();
+                if (detailed_direct_timing) {
+                    current_cover_partition_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                  partition_cover_t0).count();
+                }
+                if (partition_covered) {
+                    return finish(true);
                 }
             }
-            return false;
+            if (use_partition_cover_index) {
+                const auto corridor_scan_t0 =
+                    detailed_direct_timing ? Clock::now() : Clock::time_point{};
+                for (int box_index : corridor_new_box_indices) {
+                    if (box_index >= 0 &&
+                        box_index < static_cast<int>(boxes_.size()) &&
+                        intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
+                                                       point,
+                                                       config_.query.adjacency_tolerance)) {
+                        if (detailed_direct_timing) {
+                            current_cover_corridor_scan_ms +=
+                                std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                          corridor_scan_t0).count();
+                        }
+                        return finish(true);
+                    }
+                }
+                if (detailed_direct_timing) {
+                    current_cover_corridor_scan_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                  corridor_scan_t0).count();
+                }
+                return finish(false);
+            }
+            const auto direct_index_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            const bool covered_by_direct_index =
+                direct_box_index.covering_box(boxes_,
+                                              point,
+                                              config_.query.adjacency_tolerance) >= 0;
+            if (detailed_direct_timing) {
+                current_cover_direct_index_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - direct_index_t0).count();
+            }
+            return finish(covered_by_direct_index);
         };
         FindFreeBoxOptions direct_options = config_.connector.pave.find_free_box;
         direct_options.max_depth = query_bridge_ffb_depth;
         direct_options.reject_seed_collision = false;
-        int direct_calls = 0;
-        int direct_added = 0;
+        direct_options.skip_existing_cover_check = true;
+        direct_options.record_diagnostics =
+            env_int_or_default("RBF_QUERY_BRIDGE_FFB_DIAGNOSTICS", 0) != 0;
+        const std::vector<Interval> direct_planning_domain =
+            oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
         struct DirectFfbTask {
             Eigen::VectorXd seed;
             std::size_t sample_index = 0;
             int transition_hint = 0;
         };
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_ffb_diagnostics_enabled",
+            direct_options.record_diagnostics ? 1.0 : 0.0);
+        int direct_calls = 0;
+        int direct_added = 0;
+        double direct_ffb_ms = 0.0;
+        double repair_ffb_ms = 0.0;
+        double adaptive_repair_ffb_ms = 0.0;
+        double lateral_repair_ffb_ms = 0.0;
+        double residual_segment_audit_ms = 0.0;
         std::vector<DirectFfbTask> direct_tasks;
         direct_tasks.reserve(samples.size());
         const int max_transition_hint =
             std::max(0, static_cast<int>(samples.size()) - 2);
-        for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-            if (!covered[sample_index]) {
-                direct_tasks.push_back(
-                    {samples[sample_index],
-                     sample_index,
-                     std::min(static_cast<int>(sample_index), max_transition_hint)});
+        const bool grouped_direct_seeds =
+            env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_GROUPED_SEEDS", 0) != 0;
+        const int max_group_seeds =
+            std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_SEEDS_PER_GAP", 3));
+        const bool center_out_direct_tasks =
+            env_int_or_default("RBF_QUERY_BRIDGE_CENTER_OUT_DIRECT_TASKS", 1) != 0;
+        int uncovered_gap_groups = 0;
+        auto append_direct_task_for_sample = [&](std::size_t sample_index) {
+            direct_tasks.push_back(
+                {samples[sample_index],
+                 sample_index,
+                 std::min(static_cast<int>(sample_index), max_transition_hint)});
+        };
+        const auto direct_task_build_t0 =
+            detailed_direct_timing ? Clock::now() : Clock::time_point{};
+        if (grouped_direct_seeds) {
+            std::size_t sample_index = 0;
+            while (sample_index < samples.size()) {
+                while (sample_index < samples.size() && covered[sample_index]) {
+                    ++sample_index;
+                }
+                if (sample_index >= samples.size()) {
+                    break;
+                }
+                const std::size_t begin = sample_index;
+                while (sample_index < samples.size() && !covered[sample_index]) {
+                    ++sample_index;
+                }
+                const std::size_t end = sample_index - 1;
+                uncovered_gap_groups += 1;
+                std::vector<std::size_t> chosen;
+                chosen.reserve(static_cast<std::size_t>(
+                    std::min(max_group_seeds, static_cast<int>(end - begin + 1))));
+                auto push_unique_index = [&](std::size_t index) {
+                    index = std::min(end, std::max(begin, index));
+                    if (std::find(chosen.begin(), chosen.end(), index) == chosen.end()) {
+                        chosen.push_back(index);
+                    }
+                };
+                const std::size_t group_count = end - begin + 1;
+                if (group_count <= static_cast<std::size_t>(max_group_seeds)) {
+                    for (std::size_t index = begin; index <= end; ++index) {
+                        push_unique_index(index);
+                    }
+                } else {
+                    push_unique_index((begin + end) / 2);
+                    if (static_cast<int>(chosen.size()) < max_group_seeds) {
+                        push_unique_index(begin);
+                    }
+                    if (static_cast<int>(chosen.size()) < max_group_seeds) {
+                        push_unique_index(end);
+                    }
+                    if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
+                        push_unique_index(begin + (end - begin) / 4);
+                    }
+                    if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
+                        push_unique_index(begin + (3 * (end - begin)) / 4);
+                    }
+                    for (int rank = 1;
+                         static_cast<int>(chosen.size()) < max_group_seeds &&
+                         rank < max_group_seeds - 1;
+                         ++rank) {
+                        const double alpha = static_cast<double>(rank) /
+                                             static_cast<double>(max_group_seeds - 1);
+                        const auto offset = static_cast<std::size_t>(
+                            std::llround(alpha * static_cast<double>(end - begin)));
+                        push_unique_index(begin + offset);
+                    }
+                }
+                for (std::size_t index : chosen) {
+                    append_direct_task_for_sample(index);
+                }
+            }
+        } else if (center_out_direct_tasks) {
+            std::size_t sample_index = 0;
+            while (sample_index < samples.size()) {
+                while (sample_index < samples.size() && covered[sample_index]) {
+                    ++sample_index;
+                }
+                if (sample_index >= samples.size()) {
+                    break;
+                }
+                const std::size_t begin = sample_index;
+                while (sample_index < samples.size() && !covered[sample_index]) {
+                    ++sample_index;
+                }
+                const std::size_t end = sample_index - 1;
+                uncovered_gap_groups += 1;
+                const std::size_t center = (begin + end) / 2;
+                append_direct_task_for_sample(center);
+                for (std::size_t radius = 1;
+                     center >= begin + radius || center + radius <= end;
+                     ++radius) {
+                    if (center >= begin + radius) {
+                        append_direct_task_for_sample(center - radius);
+                    }
+                    if (center + radius <= end) {
+                        append_direct_task_for_sample(center + radius);
+                    }
+                }
+            }
+        } else {
+            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                if (!covered[sample_index]) {
+                    append_direct_task_for_sample(sample_index);
+                }
             }
         }
+        if (detailed_direct_timing) {
+            direct_task_build_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() -
+                                                          direct_task_build_t0).count();
+        }
+        context.diagnostics().set_value("query_bridge.direct_corridor_direct_grouped_seeds",
+                                        grouped_direct_seeds ? 1.0 : 0.0);
+        context.diagnostics().set_value("query_bridge.direct_corridor_center_out_direct_tasks",
+                                        center_out_direct_tasks ? 1.0 : 0.0);
+        context.diagnostics().set_value("query_bridge.direct_corridor_uncovered_gap_groups",
+                                        static_cast<double>(uncovered_gap_groups));
+        context.diagnostics().set_value("query_bridge.direct_corridor_direct_max_seeds_per_gap",
+                                        static_cast<double>(max_group_seeds));
         context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
                                         static_cast<double>(direct_tasks.size()));
+        const auto direct_loop_t0 =
+            detailed_direct_timing ? Clock::now() : Clock::time_point{};
         for (const auto& task : direct_tasks) {
             if (task.sample_index < covered.size() && covered[task.sample_index]) {
                 context.diagnostics().add_counter(
@@ -6546,12 +8956,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             const auto direct_ffb_t0 = Clock::now();
             const FindFreeBoxResult result = find_free_box_in_domain(
                 task.seed,
-                oracle_->planning_intervals(),
+                direct_planning_domain,
                 context,
                 direct_options);
-            context.diagnostics().record_timing(
-                "query_bridge.direct_corridor_direct_ffb_ms",
-                std::chrono::duration<double, std::milli>(Clock::now() - direct_ffb_t0).count());
+            direct_ffb_ms +=
+                std::chrono::duration<double, std::milli>(Clock::now() - direct_ffb_t0).count();
             direct_calls += 1;
             const std::size_t before_boxes = boxes_.size();
             const int box_index = commit_result(std::move(result),
@@ -6560,6 +8969,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (box_index >= 0 && boxes_.size() > before_boxes) {
                 direct_added += 1;
             }
+        }
+        if (detailed_direct_timing) {
+            direct_loop_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() -
+                                                          direct_loop_t0).count();
         }
         std::vector<double> fractions;
         const int base_subdivisions =
@@ -6578,6 +8992,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int repair_calls = 0;
         int repair_added = 0;
         const auto initial_bad = bad_transitions();
+        const auto repair_loop_t0 =
+            detailed_direct_timing ? Clock::now() : Clock::time_point{};
         if (subdivisions > 1) {
             for (int transition : initial_bad) {
                 if (transition_connected(transition)) {
@@ -6598,12 +9014,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     const auto repair_ffb_t0 = Clock::now();
                     const FindFreeBoxResult result = find_free_box_in_domain(
                         seed,
-                        oracle_->planning_intervals(),
+                        direct_planning_domain,
                         context,
                         direct_options);
-                    context.diagnostics().record_timing(
-                        "query_bridge.direct_corridor_repair_ffb_ms",
-                        std::chrono::duration<double, std::milli>(Clock::now() - repair_ffb_t0).count());
+                    repair_ffb_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                  repair_ffb_t0).count();
                     repair_calls += 1;
                     const std::size_t before_boxes = boxes_.size();
                     const int box_index = commit_result(std::move(result), seed, transition);
@@ -6622,13 +9038,108 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
             }
         }
+        if (detailed_direct_timing) {
+            repair_loop_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() -
+                                                          repair_loop_t0).count();
+        }
         std::vector<int> final_bad = bad_transitions();
+        auto transition_length = [&](int transition) {
+            if (transition < 0 ||
+                transition + 1 >= static_cast<int>(samples.size())) {
+                return 0.0;
+            }
+            return (samples[static_cast<std::size_t>(transition + 1)] -
+                    samples[static_cast<std::size_t>(transition)]).norm();
+        };
+        auto bad_transition_length_sum = [&](const std::vector<int>& transitions) {
+            double total = 0.0;
+            for (int transition : transitions) {
+                total += transition_length(transition);
+            }
+            return total;
+        };
+        auto bad_transition_fraction = [&](const std::vector<int>& transitions) {
+            const double denominator =
+                audited_bridge_length > 1e-12
+                    ? audited_bridge_length
+                    : std::max(1e-12, waypoint_length(samples));
+            return bad_transition_length_sum(transitions) / denominator;
+        };
+        const int adaptive_repair_priority_mode =
+            env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY", 1);
+        auto order_adaptive_repair_transitions =
+            [&](const std::vector<int>& transitions) {
+                if (adaptive_repair_priority_mode <= 0 || transitions.size() < 2) {
+                    return transitions;
+                }
+                struct GapGroup {
+                    int begin = 0;
+                    int end = 0;
+                    double length = 0.0;
+                };
+                std::vector<GapGroup> groups;
+                groups.reserve(transitions.size());
+                for (int transition : transitions) {
+                    if (groups.empty() ||
+                        transition > groups.back().end + 1) {
+                        groups.push_back({transition,
+                                          transition,
+                                          transition_length(transition)});
+                    } else {
+                        groups.back().end = transition;
+                        groups.back().length += transition_length(transition);
+                    }
+                }
+                std::stable_sort(groups.begin(), groups.end(), [](const GapGroup& lhs,
+                                                                   const GapGroup& rhs) {
+                    if (std::abs(lhs.length - rhs.length) > 1e-12) {
+                        return lhs.length > rhs.length;
+                    }
+                    return lhs.begin < rhs.begin;
+                });
+                std::vector<int> ordered;
+                ordered.reserve(transitions.size());
+                for (const auto& group : groups) {
+                    const int center = (group.begin + group.end) / 2;
+                    ordered.push_back(center);
+                    for (int radius = 1;
+                         center - radius >= group.begin || center + radius <= group.end;
+                         ++radius) {
+                        if (center - radius >= group.begin) {
+                            ordered.push_back(center - radius);
+                        }
+                        if (center + radius <= group.end) {
+                            ordered.push_back(center + radius);
+                        }
+                    }
+                }
+                return ordered;
+            };
         int adaptive_repair_calls = 0;
         int adaptive_repair_added = 0;
         int adaptive_repair_max_subdivisions_used = subdivisions;
         const bool adaptive_step_repair =
             env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR", 1) != 0;
+        const double adaptive_target_segment_fraction =
+            std::max(0.0,
+                     env_double_or_default(
+                         "RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION",
+                         0.0));
+        const double adaptive_initial_bad_fraction =
+            bad_transition_fraction(final_bad);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_adaptive_repair_priority",
+            static_cast<double>(adaptive_repair_priority_mode));
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_adaptive_repair_target_segment_fraction",
+            adaptive_target_segment_fraction);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
+            adaptive_initial_bad_fraction);
         if (adaptive_step_repair && !final_bad.empty()) {
+            const auto adaptive_loop_t0 =
+                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const int adaptive_max_subdivisions = std::max(
                 subdivisions + 1,
                 env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS",
@@ -6639,10 +9150,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                       std::max(audit_step, sample_step * 0.5)));
             const int adaptive_max_calls = std::max(
                 0,
-                env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
-                                   std::numeric_limits<int>::max()));
-            for (int transition : final_bad) {
+                env_indexed_int_or_default(
+                    "RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
+                    query_index,
+                    env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
+                                       std::numeric_limits<int>::max())));
+            std::vector<int> ordered_final_bad =
+                order_adaptive_repair_transitions(final_bad);
+            for (int transition : ordered_final_bad) {
                 if (adaptive_repair_calls >= adaptive_max_calls) {
+                    break;
+                }
+                if (adaptive_target_segment_fraction > 0.0 &&
+                    bad_transition_fraction(final_bad) <= adaptive_target_segment_fraction) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_adaptive_repair_target_stops");
                     break;
                 }
                 if (transition_connected(transition) ||
@@ -6688,13 +9210,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     const auto adaptive_ffb_t0 = Clock::now();
                     const FindFreeBoxResult result = find_free_box_in_domain(
                         seed,
-                        oracle_->planning_intervals(),
+                        direct_planning_domain,
                         context,
                         direct_options);
-                    context.diagnostics().record_timing(
-                        "query_bridge.direct_corridor_adaptive_repair_ffb_ms",
+                    adaptive_repair_ffb_ms +=
                         std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                  adaptive_ffb_t0).count());
+                                                                  adaptive_ffb_t0).count();
                     adaptive_repair_calls += 1;
                     const std::size_t before_boxes = boxes_.size();
                     const int box_index = commit_result(std::move(result), seed, transition);
@@ -6706,6 +9227,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                         if (boxes_.size() > before_boxes) {
                             adaptive_repair_added += 1;
                         }
+                        if (adaptive_target_segment_fraction > 0.0) {
+                            final_bad = bad_transitions();
+                        }
                         if (transition_connected(transition)) {
                             break;
                         }
@@ -6713,6 +9237,133 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
             }
             final_bad = bad_transitions();
+            if (detailed_direct_timing) {
+                adaptive_loop_ms =
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              adaptive_loop_t0).count();
+            }
+        }
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_adaptive_final_bad_fraction",
+            bad_transition_fraction(final_bad));
+        int lateral_repair_calls = 0;
+        int lateral_repair_added = 0;
+        const bool lateral_repair =
+            env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR", 0) != 0;
+        if (lateral_repair && !final_bad.empty()) {
+            const auto lateral_loop_t0 =
+                detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            const int lateral_dims = std::max(
+                0,
+                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_DIMS", 2));
+            const int lateral_rounds = std::max(
+                1,
+                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_ROUNDS", 1));
+            const int lateral_max_calls = std::max(
+                0,
+                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_MAX_CALLS", 24));
+            const double lateral_offset = std::max(
+                1e-6,
+                env_double_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_OFFSET",
+                                      std::max(0.01, sample_step * 0.25)));
+            const auto domain = oracle_->planning_intervals();
+            auto lateral_candidates = [&](const Eigen::VectorXd& seed,
+                                          const Eigen::VectorXd& direction) {
+                std::vector<int> dims;
+                dims.reserve(static_cast<std::size_t>(seed.size()));
+                for (int dim = 0; dim < seed.size(); ++dim) {
+                    dims.push_back(dim);
+                }
+                std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
+                    const double lhs_abs = std::abs(direction[lhs]);
+                    const double rhs_abs = std::abs(direction[rhs]);
+                    if (std::abs(lhs_abs - rhs_abs) > 1e-12) {
+                        return lhs_abs < rhs_abs;
+                    }
+                    return lhs < rhs;
+                });
+                std::vector<Eigen::VectorXd> out;
+                const int dim_limit = std::min<int>(lateral_dims,
+                                                    static_cast<int>(dims.size()));
+                out.reserve(static_cast<std::size_t>(std::max(0, dim_limit) * lateral_rounds * 2));
+                for (int item = 0; item < dim_limit; ++item) {
+                    const int dim = dims[static_cast<std::size_t>(item)];
+                    for (int round = 1; round <= lateral_rounds; ++round) {
+                        for (double sign : {1.0, -1.0}) {
+                            Eigen::VectorXd candidate = seed;
+                            candidate[dim] += sign * lateral_offset * static_cast<double>(round);
+                            if (dim < static_cast<int>(domain.size())) {
+                                candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
+                                                          std::max(domain[static_cast<std::size_t>(dim)].lo,
+                                                                   candidate[dim]));
+                            }
+                            if ((candidate - seed).norm() > 1e-12) {
+                                out.push_back(std::move(candidate));
+                            }
+                        }
+                    }
+                }
+                return out;
+            };
+            for (int transition : final_bad) {
+                if (lateral_repair_calls >= lateral_max_calls) {
+                    break;
+                }
+                if (transition_connected(transition) ||
+                    transition < 0 ||
+                    transition + 1 >= static_cast<int>(samples.size())) {
+                    continue;
+                }
+                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
+                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
+                const Eigen::VectorXd seed = 0.5 * (a + b);
+                const Eigen::VectorXd direction = b - a;
+                for (const Eigen::VectorXd& lateral_seed : lateral_candidates(seed, direction)) {
+                    if (lateral_repair_calls >= lateral_max_calls) {
+                        break;
+                    }
+                    if (transition_connected(transition)) {
+                        break;
+                    }
+                    if (current_boxes_cover_point(lateral_seed)) {
+                        context.diagnostics().add_counter(
+                            "query_bridge.direct_corridor_lateral_repair_skip_covered");
+                        continue;
+                    }
+                    const auto lateral_ffb_t0 = Clock::now();
+                    const FindFreeBoxResult result = find_free_box_in_domain(
+                        lateral_seed,
+                        direct_planning_domain,
+                        context,
+                        direct_options);
+                    lateral_repair_ffb_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() -
+                                                                  lateral_ffb_t0).count();
+                    lateral_repair_calls += 1;
+                    const std::size_t before_boxes = boxes_.size();
+                    const int box_index = commit_result(std::move(result),
+                                                        lateral_seed,
+                                                        transition);
+                    if (box_index >= 0) {
+                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
+                            repair_indices.end()) {
+                            repair_indices.push_back(box_index);
+                        }
+                        if (boxes_.size() > before_boxes) {
+                            lateral_repair_added += 1;
+                        }
+                        if (transition_connected(transition)) {
+                            break;
+                        }
+                    }
+                }
+            }
+            final_bad = bad_transitions();
+            if (detailed_direct_timing) {
+                lateral_loop_ms =
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              lateral_loop_t0).count();
+            }
         }
         int local_segment_edges_added = 0;
         int local_segment_gap_samples_max = 0;
@@ -6727,8 +9378,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return -1;
         };
         if (!final_bad.empty() &&
+            allow_residual_segments &&
             config_.connector.segment_edges_enabled &&
             config_.connector.rrt_segment_edges) {
+            const auto residual_segment_loop_t0 =
+                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const bool group_residual_gaps =
                 env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
             std::vector<std::pair<int, int>> gap_groups;
@@ -6777,18 +9431,17 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                         checker,
                                         config_.query.audit_resolution,
                                         config_.query.audit_segment_step);
-                context.diagnostics().record_timing(
-                    "query_bridge.direct_corridor_segment_audit_ms",
+                residual_segment_audit_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              segment_audit_t0).count());
+                                                              segment_audit_t0).count();
                 if (!gap_audit.passed) {
                     context.diagnostics().add_counter(
                         "query_bridge.direct_corridor_segment_audit_rejects");
                     continue;
                 }
-                const int edge_id = add_segment_edge(segment_edges_,
-                                                     adjacency_,
-                                                     boxes_[static_cast<std::size_t>(lhs_index)].id,
+                const auto segment_insert_t0 =
+                    detailed_direct_timing ? Clock::now() : Clock::time_point{};
+                const int edge_id = add_segment_edge_partition_first(                                                     boxes_[static_cast<std::size_t>(lhs_index)].id,
                                                      boxes_[static_cast<std::size_t>(rhs_index)].id,
                                                      std::move(gap_path),
                                                      SegmentEdgeType::QueryBridge,
@@ -6796,6 +9449,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                      SegmentEdgeValidation::CollisionChecked,
                                                      true,
                                                      query_index);
+                if (detailed_direct_timing) {
+                    segment_insert_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - segment_insert_t0).count();
+                    segment_insert_calls += 1;
+                }
                 if (edge_id >= 0) {
                     local_segment_edges_added += 1;
                     local_segment_gap_samples_max =
@@ -6803,50 +9461,241 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                  rhs_sample - lhs_sample);
                 }
             }
+            if (detailed_direct_timing) {
+                residual_segment_loop_ms =
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              residual_segment_loop_t0).count();
+            }
         }
+        const double direct_corridor_elapsed_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         context.diagnostics().set_value("query_bridge.direct_corridor_ms",
-                                        std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+                                        direct_corridor_elapsed_ms);
+        context.diagnostics().add_counter("query_bridge.direct_corridor_ms_total",
+                                          direct_corridor_elapsed_ms);
         context.diagnostics().set_value("query_bridge.direct_corridor_samples",
                                         static_cast<double>(samples.size()));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_samples_total",
+                                          static_cast<double>(samples.size()));
         context.diagnostics().set_value("query_bridge.direct_corridor_ffb_calls",
                                         static_cast<double>(direct_calls));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_ffb_calls_total",
+                                          static_cast<double>(direct_calls));
+        context.diagnostics().set_value("query_bridge.direct_corridor_direct_ffb_ms",
+                                        direct_ffb_ms);
+        context.diagnostics().set_value("query_bridge.direct_corridor_repair_ffb_ms",
+                                        repair_ffb_ms);
+        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_ffb_ms",
+                                        adaptive_repair_ffb_ms);
+        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_ffb_ms",
+                                        lateral_repair_ffb_ms);
+        context.diagnostics().set_value("query_bridge.direct_corridor_segment_audit_ms",
+                                        residual_segment_audit_ms);
+        const int all_ffb_calls =
+            direct_calls + repair_calls + adaptive_repair_calls + lateral_repair_calls;
+        context.diagnostics().set_value("query_bridge.direct_corridor_all_ffb_calls",
+                                        static_cast<double>(all_ffb_calls));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_all_ffb_calls_total",
+                                          static_cast<double>(all_ffb_calls));
         context.diagnostics().set_value("query_bridge.direct_corridor_added",
                                         static_cast<double>(direct_added));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_added_total",
+                                          static_cast<double>(direct_added));
         context.diagnostics().set_value("query_bridge.direct_corridor_repair_calls",
                                         static_cast<double>(repair_calls));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_repair_calls_total",
+                                          static_cast<double>(repair_calls));
         context.diagnostics().set_value("query_bridge.direct_corridor_repair_added",
                                         static_cast<double>(repair_added));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_repair_added_total",
+                                          static_cast<double>(repair_added));
         context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_calls",
                                         static_cast<double>(adaptive_repair_calls));
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_adaptive_repair_calls_total",
+            static_cast<double>(adaptive_repair_calls));
         context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_added",
                                         static_cast<double>(adaptive_repair_added));
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_adaptive_repair_added_total",
+            static_cast<double>(adaptive_repair_added));
+        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_enabled",
+                                        lateral_repair ? 1.0 : 0.0);
+        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_calls",
+                                        static_cast<double>(lateral_repair_calls));
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_lateral_repair_calls_total",
+            static_cast<double>(lateral_repair_calls));
+        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_added",
+                                        static_cast<double>(lateral_repair_added));
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_lateral_repair_added_total",
+            static_cast<double>(lateral_repair_added));
         context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_max_subdivisions",
                                         static_cast<double>(adaptive_repair_max_subdivisions_used));
         context.diagnostics().set_value("query_bridge.direct_corridor_repair_subdivisions",
                                         static_cast<double>(subdivisions));
         context.diagnostics().set_value("query_bridge.direct_corridor_bad_initial",
                                         static_cast<double>(initial_bad.size()));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_bad_initial_total",
+                                          static_cast<double>(initial_bad.size()));
         context.diagnostics().set_value("query_bridge.direct_corridor_bad_final",
                                         static_cast<double>(final_bad.size()));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_bad_final_total",
+                                          static_cast<double>(final_bad.size()));
         context.diagnostics().set_value("query_bridge.direct_corridor_segment_edges",
                                         static_cast<double>(local_segment_edges_added));
+        context.diagnostics().add_counter("query_bridge.direct_corridor_segment_edges_total",
+                                          static_cast<double>(local_segment_edges_added));
         context.diagnostics().set_value("query_bridge.direct_corridor_segment_gap_samples_max",
                                         static_cast<double>(local_segment_gap_samples_max));
+        if (detailed_direct_timing) {
+            context.diagnostics().add_counter("query_bridge.direct_corridor_transition_connected_ms",
+                                              transition_connected_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_transition_connected_calls",
+                                              static_cast<double>(transition_connected_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_bad_transitions_ms",
+                                              bad_transitions_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_bad_transitions_calls",
+                                              static_cast<double>(bad_transitions_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_ms",
+                                              current_cover_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_calls",
+                                              static_cast<double>(current_cover_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_partition_ms",
+                                              current_cover_partition_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_corridor_scan_ms",
+                                              current_cover_corridor_scan_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_direct_index_ms",
+                                              current_cover_direct_index_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_duplicate_lookup_ms",
+                                              duplicate_lookup_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_duplicate_lookup_calls",
+                                              static_cast<double>(duplicate_lookup_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_total_ms",
+                                              commit_total_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_calls",
+                                              static_cast<double>(commit_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_dynamic_policy_ms",
+                                              commit_dynamic_policy_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_partition_append_ms",
+                                              commit_partition_append_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_calls",
+                                              static_cast<double>(assimilate_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_sample_scan_ms",
+                                              assimilate_sample_scan_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_candidate_build_ms",
+                                              assimilate_candidate_build_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_adjacency_ms",
+                                              assimilate_adjacency_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_segment_insert_ms",
+                                              segment_insert_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_segment_insert_calls",
+                                              static_cast<double>(segment_insert_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_direct_task_build_ms",
+                                              direct_task_build_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_direct_loop_ms",
+                                              direct_loop_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_repair_loop_ms",
+                                              repair_loop_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_adaptive_loop_ms",
+                                              adaptive_loop_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_lateral_loop_ms",
+                                              lateral_loop_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_residual_segment_loop_ms",
+                                              residual_segment_loop_ms);
+            set_query_bridge_task_value("direct_corridor_transition_connected_ms",
+                                        transition_connected_ms);
+            set_query_bridge_task_value("direct_corridor_transition_connected_calls",
+                                        static_cast<double>(transition_connected_calls));
+            set_query_bridge_task_value("direct_corridor_bad_transitions_ms",
+                                        bad_transitions_ms);
+            set_query_bridge_task_value("direct_corridor_bad_transitions_calls",
+                                        static_cast<double>(bad_transitions_calls));
+            set_query_bridge_task_value("direct_corridor_current_cover_ms",
+                                        current_cover_ms);
+            set_query_bridge_task_value("direct_corridor_current_cover_calls",
+                                        static_cast<double>(current_cover_calls));
+            set_query_bridge_task_value("direct_corridor_current_cover_partition_ms",
+                                        current_cover_partition_ms);
+            set_query_bridge_task_value("direct_corridor_current_cover_corridor_scan_ms",
+                                        current_cover_corridor_scan_ms);
+            set_query_bridge_task_value("direct_corridor_current_cover_direct_index_ms",
+                                        current_cover_direct_index_ms);
+            set_query_bridge_task_value("direct_corridor_duplicate_lookup_ms",
+                                        duplicate_lookup_ms);
+            set_query_bridge_task_value("direct_corridor_duplicate_lookup_calls",
+                                        static_cast<double>(duplicate_lookup_calls));
+            set_query_bridge_task_value("direct_corridor_commit_total_ms",
+                                        commit_total_ms);
+            set_query_bridge_task_value("direct_corridor_commit_calls",
+                                        static_cast<double>(commit_calls));
+            set_query_bridge_task_value("direct_corridor_commit_dynamic_policy_ms",
+                                        commit_dynamic_policy_ms);
+            set_query_bridge_task_value("direct_corridor_commit_partition_append_ms",
+                                        commit_partition_append_ms);
+            set_query_bridge_task_value("direct_corridor_assimilate_calls",
+                                        static_cast<double>(assimilate_calls));
+            set_query_bridge_task_value("direct_corridor_assimilate_sample_scan_ms",
+                                        assimilate_sample_scan_ms);
+            set_query_bridge_task_value("direct_corridor_assimilate_candidate_build_ms",
+                                        assimilate_candidate_build_ms);
+            set_query_bridge_task_value("direct_corridor_assimilate_adjacency_ms",
+                                        assimilate_adjacency_ms);
+            set_query_bridge_task_value("direct_corridor_segment_insert_ms",
+                                        segment_insert_ms);
+            set_query_bridge_task_value("direct_corridor_segment_insert_calls",
+                                        static_cast<double>(segment_insert_calls));
+            set_query_bridge_task_value("direct_corridor_direct_task_build_ms",
+                                        direct_task_build_ms);
+            set_query_bridge_task_value("direct_corridor_direct_loop_ms",
+                                        direct_loop_ms);
+            set_query_bridge_task_value("direct_corridor_repair_loop_ms",
+                                        repair_loop_ms);
+            set_query_bridge_task_value("direct_corridor_adaptive_loop_ms",
+                                        adaptive_loop_ms);
+            set_query_bridge_task_value("direct_corridor_lateral_loop_ms",
+                                        lateral_loop_ms);
+            set_query_bridge_task_value("direct_corridor_residual_segment_loop_ms",
+                                        residual_segment_loop_ms);
+        }
         auto [source_box_id, target_box_id] = locate_query_boxes();
         const bool local_corridor_connected =
             final_bad.empty() && endpoint_layers_connected();
         context.diagnostics().set_value("query_bridge.direct_corridor_local_connected",
                                         local_corridor_connected ? 1.0 : 0.0);
         set_query_bridge_task_value("direct_corridor_ms",
-                                    std::chrono::duration<double, std::milli>(Clock::now() - t0).count());
+                                    direct_corridor_elapsed_ms);
+        set_query_bridge_task_value("direct_corridor_samples",
+                                    static_cast<double>(samples.size()));
+        set_query_bridge_task_value("direct_corridor_ffb_calls",
+                                    static_cast<double>(direct_calls));
+        set_query_bridge_task_value("direct_corridor_direct_ffb_ms",
+                                    direct_ffb_ms);
+        set_query_bridge_task_value("direct_corridor_repair_ffb_ms",
+                                    repair_ffb_ms);
+        set_query_bridge_task_value("direct_corridor_adaptive_repair_ffb_ms",
+                                    adaptive_repair_ffb_ms);
+        set_query_bridge_task_value("direct_corridor_lateral_repair_ffb_ms",
+                                    lateral_repair_ffb_ms);
+        set_query_bridge_task_value("direct_corridor_segment_audit_ms",
+                                    residual_segment_audit_ms);
+        set_query_bridge_task_value("direct_corridor_all_ffb_calls",
+                                    static_cast<double>(all_ffb_calls));
         set_query_bridge_task_value("direct_corridor_added",
                                     static_cast<double>(direct_added));
+        set_query_bridge_task_value("direct_corridor_repair_calls",
+                                    static_cast<double>(repair_calls));
         set_query_bridge_task_value("direct_corridor_repair_added",
                                     static_cast<double>(repair_added));
         set_query_bridge_task_value("direct_corridor_adaptive_repair_calls",
                                     static_cast<double>(adaptive_repair_calls));
         set_query_bridge_task_value("direct_corridor_adaptive_repair_added",
                                     static_cast<double>(adaptive_repair_added));
+        set_query_bridge_task_value("direct_corridor_lateral_repair_calls",
+                                    static_cast<double>(lateral_repair_calls));
+        set_query_bridge_task_value("direct_corridor_lateral_repair_added",
+                                    static_cast<double>(lateral_repair_added));
         set_query_bridge_task_value("direct_corridor_bad_initial",
                                     static_cast<double>(initial_bad.size()));
         set_query_bridge_task_value("direct_corridor_bad_final",
@@ -6859,14 +9708,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             source_box_id >= 0 &&
             target_box_id >= 0 &&
             (local_corridor_connected ||
-             graph_has_certified_box_path_local(boxes_,
-                                                adjacency_,
-                                                source_box_id,
-                                                target_box_id,
-                                                config_.query.adjacency_tolerance))) {
-            const int edge_id = add_segment_edge(segment_edges_,
-                                                 adjacency_,
-                                                 source_box_id,
+             box_only_path_connected_partition_first(source_box_id, target_box_id))) {
+            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
                                                  target_box_id,
                                                  corridor_path,
                                                  SegmentEdgeType::BoxCorridor,
@@ -6876,15 +9719,29 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                  query_index);
             if (edge_id >= 0) {
                 invalidate_query_cache();
-                return direct_added + repair_added + local_segment_edges_added + 1;
+                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added + 1);
             }
-            return direct_added + repair_added + local_segment_edges_added;
+            return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
         }
         if (!final_bad.empty() &&
+            allow_residual_segments &&
             local_segment_edges_added > 0 &&
             source_box_id >= 0 &&
-            target_box_id >= 0 &&
-            graph_has_box_path_local(adjacency_, source_box_id, target_box_id)) {
+            target_box_id >= 0) {
+            refresh_direct_corridor_partition();
+            const bool locally_overlay_connected =
+                overlay_path_connected_partition_first(source_box_id, target_box_id);
+            context.diagnostics().set_value(
+                "query_bridge.direct_corridor_local_residual_overlay_connected",
+                locally_overlay_connected ? 1.0 : 0.0);
+            set_query_bridge_task_value("direct_corridor_local_residual_overlay_connected",
+                                        locally_overlay_connected ? 1.0 : 0.0);
+            if (locally_overlay_connected) {
+                invalidate_query_cache();
+                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
+            }
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_full_residual_without_local_overlay");
             const PathAuditCheck full_residual_audit =
                 audit_waypoint_path(corridor_path,
                                     checker,
@@ -6894,11 +9751,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 context.diagnostics().add_counter(
                     "query_bridge.direct_corridor_full_residual_audit_rejects");
                 invalidate_query_cache();
-                return direct_added + repair_added + local_segment_edges_added;
+                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
             }
-            const int edge_id = add_segment_edge(segment_edges_,
-                                                 adjacency_,
-                                                 source_box_id,
+            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
                                                  target_box_id,
                                                  corridor_path,
                                                  SegmentEdgeType::QueryBridge,
@@ -6909,20 +9764,31 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (edge_id >= 0) {
                 context.diagnostics().add_counter(
                     "query_bridge.direct_corridor_full_residual_edges");
+                if (!locally_overlay_connected) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_full_residual_edges_without_local_overlay");
+                }
                 set_query_bridge_task_value("direct_corridor_full_residual_edge",
                                             1.0);
             }
             invalidate_query_cache();
-            return direct_added + repair_added + local_segment_edges_added +
-                   (edge_id >= 0 ? 1 : 0);
+            return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added +
+                                          (edge_id >= 0 ? 1 : 0));
         }
-        return 0;
+        return finish_direct_corridor(0);
     };
     if (dense_box_corridor_candidate) {
         const int direct_corridor_added = try_direct_ffb_corridor();
         if (direct_corridor_added > 0) {
             return direct_corridor_added;
         }
+        if (partition_native_mode()) {
+            context.diagnostics().add_counter(
+                "query_bridge.partition_legacy_dense_chain_pave_skipped");
+            dense_repair_attempted = true;
+        }
+    }
+    if (dense_box_corridor_candidate && !partition_native_mode()) {
         dense_repair_attempted = true;
         ChainPaveConfig dense_config = config_.connector.pave;
         dense_config.max_chain = std::max(dense_config.max_chain, 256);
@@ -6938,6 +9804,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
         dense_config.require_connected_chain = true;
+        const std::size_t boxes_before_dense = boxes_.size();
         dense_repair_added = chain_pave_along_path(
             corridor_path,
             start_box_id,
@@ -6948,6 +9815,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context,
             dense_config);
         if (dense_repair_added > 0) {
+            append_partition_after_pave(boxes_before_dense,
+                                        "query_bridge.dense_boundary_pave");
             context.diagnostics().add_counter(
                 "query_bridge.full_adjacency_rebuilds_avoided");
             invalidate_query_cache();
@@ -6958,14 +9827,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                       dense_repair_added);
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
-            graph_has_certified_box_path_local(boxes_,
-                                               adjacency_,
-                                               source_box_id,
-                                               target_box_id,
-                                               config_.query.adjacency_tolerance)) {
-            const int edge_id = add_segment_edge(segment_edges_,
-	                                 adjacency_,
-	                                 source_box_id,
+            box_only_path_connected_partition_first(source_box_id, target_box_id)) {
+            const int edge_id = add_segment_edge_partition_first(	                                 source_box_id,
 	                                 target_box_id,
 	                                 corridor_path,
                                                  SegmentEdgeType::BoxCorridor,
@@ -6977,7 +9840,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
             }
-            return dense_repair_added + box_corridor_edges_added;
+            return finish_bridge(dense_repair_added + box_corridor_edges_added);
         }
     }
     ChainPaveConfig pave_config = config_.connector.pave;
@@ -6998,19 +9861,28 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         pave_config.gap_fill_min_arc_gain = 0.0;
         pave_config.require_connected_chain = true;
     }
-    int added = chain_pave_along_path(
-        corridor_path,
-        start_box_id,
-        boxes_,
-        *oracle_,
-        adjacency_,
-        next_id,
-        context,
-        pave_config);
-    if (added > 0) {
+    int added = 0;
+    if (!partition_native_mode()) {
+        const std::size_t boxes_before_forward = boxes_.size();
+        added = chain_pave_along_path(
+            corridor_path,
+            start_box_id,
+            boxes_,
+            *oracle_,
+            adjacency_,
+            next_id,
+            context,
+            pave_config);
+        if (added > 0) {
+            append_partition_after_pave(boxes_before_forward,
+                                        "query_bridge.forward_boundary_pave");
+            context.diagnostics().add_counter(
+                "query_bridge.full_adjacency_rebuilds_avoided");
+            invalidate_query_cache();
+        }
+    } else {
         context.diagnostics().add_counter(
-            "query_bridge.full_adjacency_rebuilds_avoided");
-        invalidate_query_cache();
+            "query_bridge.partition_legacy_forward_chain_pave_skipped");
     }
     auto [source_box_id, target_box_id] =
         try_reverse_boundary_pave(pave_config, added, added);
@@ -7018,14 +9890,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         source_box_id >= 0 &&
         target_box_id >= 0 &&
         (legacy_query_boxcorridor_enabled() ||
-         graph_has_certified_box_path_local(boxes_,
-                                            adjacency_,
-                                            source_box_id,
-                                            target_box_id,
-                                            config_.query.adjacency_tolerance))) {
-        const int edge_id = add_segment_edge(segment_edges_,
-                                             adjacency_,
-                                             source_box_id,
+         box_only_path_connected_partition_first(source_box_id, target_box_id))) {
+        const int edge_id = add_segment_edge_partition_first(                                             source_box_id,
                                              target_box_id,
                                              corridor_path,
                                              SegmentEdgeType::BoxCorridor,
@@ -7037,9 +9903,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
         }
-        return added + box_corridor_edges_added;
+        return finish_bridge(added + box_corridor_edges_added);
     }
-    if (dense_box_corridor_candidate && !dense_repair_attempted) {
+    if (dense_box_corridor_candidate && !dense_repair_attempted && !partition_native_mode()) {
         ChainPaveConfig dense_config = config_.connector.pave;
         dense_config.max_chain = std::max(dense_config.max_chain, 256);
         dense_config.refine_covered_waypoints = true;
@@ -7054,6 +9920,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
         dense_config.require_connected_chain = true;
+        const std::size_t boxes_before_dense_retry = boxes_.size();
         dense_repair_added = chain_pave_along_path(
             corridor_path,
             start_box_id,
@@ -7064,6 +9931,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context,
             dense_config);
         if (dense_repair_added > 0) {
+            append_partition_after_pave(boxes_before_dense_retry,
+                                        "query_bridge.dense_boundary_retry");
             context.diagnostics().add_counter(
                 "query_bridge.full_adjacency_rebuilds_avoided");
             invalidate_query_cache();
@@ -7074,14 +9943,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                       dense_repair_added);
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
-            graph_has_certified_box_path_local(boxes_,
-                                               adjacency_,
-                                               source_box_id,
-                                               target_box_id,
-                                               config_.query.adjacency_tolerance)) {
-            const int edge_id = add_segment_edge(segment_edges_,
-                                                 adjacency_,
-                                                 source_box_id,
+            box_only_path_connected_partition_first(source_box_id, target_box_id)) {
+            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
                                                  target_box_id,
                                                  corridor_path,
                                                  SegmentEdgeType::BoxCorridor,
@@ -7093,29 +9956,28 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
             }
-            return added + dense_repair_added + box_corridor_edges_added;
+            return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
         }
     }
-    IslandConnectorConfig gap_config = config_.connector;
-    gap_config.max_total_bridge_boxes = 0;
-    IslandConnector gap_connector(*oracle_, robot_, checker, gap_config);
-    const auto gap_result = gap_connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
-    (void)gap_result;
-    invalidate_query_cache();
-    source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
-    target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    if (!partition_native_mode()) {
+        IslandConnectorConfig gap_config = config_.connector;
+        gap_config.max_total_bridge_boxes = 0;
+        IslandConnector gap_connector(*oracle_, robot_, checker, gap_config);
+        const auto gap_result = gap_connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
+        (void)gap_result;
+        invalidate_query_cache();
+    } else {
+        context.diagnostics().add_counter(
+            "query_bridge.partition_legacy_gap_connector_skipped");
+    }
+    source_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
+    target_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
     if (added > 0 &&
         source_box_id >= 0 &&
         target_box_id >= 0 &&
         (legacy_query_boxcorridor_enabled() ||
-         graph_has_certified_box_path_local(boxes_,
-                                            adjacency_,
-                                            source_box_id,
-                                            target_box_id,
-                                            config_.query.adjacency_tolerance))) {
-        const int edge_id = add_segment_edge(segment_edges_,
-                                             adjacency_,
-	                                             source_box_id,
+         box_only_path_connected_partition_first(source_box_id, target_box_id))) {
+        const int edge_id = add_segment_edge_partition_first(	                                             source_box_id,
 	                                             target_box_id,
 	                                             corridor_path,
                                              SegmentEdgeType::BoxCorridor,
@@ -7127,7 +9989,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
         }
-        return added + box_corridor_edges_added;
+        return finish_bridge(added + box_corridor_edges_added);
     }
     if (defer_query_segment_edge) {
         const bool max_depth_ffb_failed =
@@ -7144,11 +10006,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 if (!segment_audit.passed) {
                     context.diagnostics().add_counter(
                         "query_bridge.segment_edge_audit_rejects");
-                    return added + dense_repair_added + box_corridor_edges_added;
+                    return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
                 }
-                const int edge_id = add_segment_edge(segment_edges_,
-                                                     adjacency_,
-                                                     source_box_id,
+                const int edge_id = add_segment_edge_partition_first(                                                     source_box_id,
                                                      target_box_id,
                                                      corridor_path,
                                                      SegmentEdgeType::QueryBridge,
@@ -7168,7 +10028,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 "query_bridge.segment_edge_blocked_no_max_depth_ffb_failure");
         }
     }
-    return added + dense_repair_added + box_corridor_edges_added + direct_segment_edges_added;
+    return finish_bridge(added + dense_repair_added + box_corridor_edges_added + direct_segment_edges_added);
 }
 
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
@@ -7177,12 +10037,84 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         throw std::invalid_argument("bridge_queries requires starts/goals with matching sizes");
     }
     std::vector<int> added_by_query(starts.size(), 0);
+    const std::size_t boxes_before_partition_refresh = boxes_.size();
+    const std::size_t segment_edges_before_partition_refresh = segment_edges_.size();
+    OracleCounters oracle_counters_before;
+    bool oracle_counters_before_valid = false;
+    auto finish_batch_bridge = [&]() {
+        if (oracle_counters_before_valid && oracle_) {
+            const auto after = oracle_->counters();
+            auto add_counter_delta = [&](const std::string& key, auto after_value, auto before_value) {
+                last_build_.diagnostics[key] +=
+                    static_cast<double>(after_value - before_value);
+            };
+            add_counter_delta("query_bridge.oracle_node_validations",
+                              after.node_validations,
+                              oracle_counters_before.node_validations);
+            add_counter_delta("query_bridge.oracle_validation_cache_hits",
+                              after.validation_cache_hits,
+                              oracle_counters_before.validation_cache_hits);
+            add_counter_delta("query_bridge.oracle_validation_cache_misses",
+                              after.validation_cache_misses,
+                              oracle_counters_before.validation_cache_misses);
+            add_counter_delta("query_bridge.oracle_materializations",
+                              after.materializations,
+                              oracle_counters_before.materializations);
+            add_counter_delta("query_bridge.oracle_external_exact_hits",
+                              after.materialization_external_exact_hits,
+                              oracle_counters_before.materialization_external_exact_hits);
+            add_counter_delta("query_bridge.oracle_external_exact_misses",
+                              after.materialization_external_exact_misses,
+                              oracle_counters_before.materialization_external_exact_misses);
+            add_counter_delta("query_bridge.oracle_shared_endpoint_cache_hits",
+                              after.materialization_reused_shared_endpoint_cache,
+                              oracle_counters_before.materialization_reused_shared_endpoint_cache);
+            add_counter_delta("query_bridge.oracle_endpoint_path_ms",
+                              after.validate_node_endpoint_path_time_us * 1.0e-3,
+                              oracle_counters_before.validate_node_endpoint_path_time_us * 1.0e-3);
+            add_counter_delta("query_bridge.oracle_classify_ms",
+                              after.validate_node_classify_time_us * 1.0e-3,
+                              oracle_counters_before.validate_node_classify_time_us * 1.0e-3);
+            add_counter_delta("query_bridge.oracle_validate_total_ms",
+                              after.validate_node_total_time_us * 1.0e-3,
+                              oracle_counters_before.validate_node_total_time_us * 1.0e-3);
+            add_counter_delta("query_bridge.oracle_materialization_endpoint_ms",
+                              after.materialization_endpoint_time_us * 1.0e-3,
+                              oracle_counters_before.materialization_endpoint_time_us * 1.0e-3);
+            add_counter_delta("query_bridge.oracle_materialization_envelope_ms",
+                              after.materialization_envelope_time_us * 1.0e-3,
+                              oracle_counters_before.materialization_envelope_time_us * 1.0e-3);
+            add_counter_delta("query_bridge.oracle_envelope_collision_queries",
+                              after.envelope_collision_queries,
+                              oracle_counters_before.envelope_collision_queries);
+            add_counter_delta("query_bridge.oracle_envelope_gjk_tests",
+                              after.envelope_collision_gjk_tests,
+                              oracle_counters_before.envelope_collision_gjk_tests);
+        }
+        const bool changed = boxes_.size() != boxes_before_partition_refresh ||
+                             segment_edges_.size() != segment_edges_before_partition_refresh ||
+                             std::any_of(added_by_query.begin(),
+                                         added_by_query.end(),
+                                         [](int added) { return added > 0; });
+        if (boxes_.size() > boxes_before_partition_refresh) {
+            append_adaptive_partition_boxes(boxes_before_partition_refresh,
+                                            &last_build_,
+                                            "query_bridge.batch");
+        } else if (changed) {
+            sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.batch");
+            refresh_adaptive_partition_diagnostics(&last_build_);
+        }
+        return added_by_query;
+    };
     if (starts.empty() || boxes_.empty() || !oracle_) {
         return added_by_query;
     }
+    oracle_counters_before = oracle_->counters();
+    oracle_counters_before_valid = true;
 
     struct BridgeSearchTask {
         std::size_t index = 0;
+        int query_index = 0;
         Eigen::VectorXd start;
         Eigen::VectorXd goal;
         bool short_local_bridge = false;
@@ -7190,6 +10122,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::vector<RRTConnectConfig> short_local_profiles;
         int attempts = 1;
         std::vector<Eigen::VectorXd> waypoint_path;
+        bool waypoint_path_from_partition_query = false;
     };
     struct BridgeSearchJob {
         std::size_t task_index = 0;
@@ -7225,6 +10158,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                current.path_length <= bridge_accept_max_path_length;
     };
     auto locate_existing_box_for_query_bridge = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
+        if (partition_native_mode()) {
+            return locate_box_partition_first(point, config_.query.nearest_if_outside);
+        }
         for (const auto& box : boxes_) {
             if (box.contains(point, config_.query.adjacency_tolerance)) {
                 return box.id;
@@ -7233,11 +10169,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (!config_.query.nearest_if_outside) {
             return -1;
         }
-        return locate_containing_box(query_cache(), point, config_.query.nearest_if_outside);
+        return locate_box_partition_first(point, config_.query.nearest_if_outside);
     };
     auto query_bridge_forced_index = [](std::size_t index) {
         return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", index);
     };
+    const bool partition_path_first =
+        partition_native_mode() &&
+        env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST", 0) != 0;
+    const bool partition_path_first_allow_long =
+        env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_ALLOW_LONG", 0) != 0;
+    const double partition_path_first_max_segment_fraction =
+        std::max(0.0,
+                 env_double_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_MAX_SEGMENT_FRACTION",
+                                       0.95));
 
     std::vector<BridgeSearchTask> tasks;
     tasks.reserve(starts.size());
@@ -7246,9 +10191,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             throw std::invalid_argument("bridge_queries received a start/goal dimension mismatch");
         }
         const bool forced_task = query_bridge_forced_index(index);
-        if (!forced_task) {
-            QueryResult current = query(starts[index], goals[index]);
-            if (query_result_good(current, starts[index], goals[index])) {
+        QueryResult initial_query;
+        bool has_initial_query = false;
+        if (!forced_task || partition_path_first) {
+            initial_query = query(starts[index], goals[index]);
+            has_initial_query = true;
+            if (!forced_task && query_result_good(initial_query, starts[index], goals[index])) {
                 continue;
             }
         }
@@ -7277,11 +10225,52 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         BridgeSearchTask task;
         task.index = index;
+        task.query_index =
+            env_index_list_value_or_default("RBF_QUERY_BRIDGE_GLOBAL_INDICES",
+                                            index,
+                                            static_cast<int>(index));
+        last_build_.diagnostics["query_bridge.batch_task." +
+                                std::to_string(index) +
+                                ".global_index"] = static_cast<double>(task.query_index);
         task.start = starts[index];
         task.goal = goals[index];
         task.bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, task.start, task.goal);
         task.bridge_rrt.segment_resolution =
             std::max(task.bridge_rrt.segment_resolution, config_.query.audit_resolution);
+        if (partition_path_first &&
+            has_initial_query &&
+            initial_query.success &&
+            initial_query.audit_passed &&
+            !initial_query.path.empty()) {
+            last_build_.diagnostics["query_bridge.partition_path_first_initial_success"] += 1.0;
+            const double direct = (task.goal - task.start).norm();
+            const double raw_length = initial_query.raw_path_length > 1e-12
+                ? initial_query.raw_path_length
+                : initial_query.path_length;
+            const double segment_fraction =
+                raw_length > 1e-12
+                    ? initial_query.segment_edge_length / raw_length
+                    : std::numeric_limits<double>::infinity();
+            const bool segment_reasonable =
+                std::isfinite(segment_fraction) &&
+                segment_fraction <= partition_path_first_max_segment_fraction;
+            const bool length_reasonable =
+                direct <= 1e-9 ||
+                initial_query.path_length <= std::max(direct * bridge_accept_path_ratio,
+                                                      direct + bridge_accept_path_additive) ||
+                initial_query.path_length <= bridge_accept_max_path_length;
+            if (!segment_reasonable) {
+                last_build_.diagnostics["query_bridge.partition_path_first_reject_segment"] += 1.0;
+            }
+            if (!length_reasonable) {
+                last_build_.diagnostics["query_bridge.partition_path_first_reject_length"] += 1.0;
+            }
+            if (segment_reasonable && (length_reasonable || partition_path_first_allow_long)) {
+                task.waypoint_path = initial_query.path;
+                task.waypoint_path_from_partition_query = true;
+                last_build_.diagnostics["query_bridge.partition_path_first_accepted"] += 1.0;
+            }
+        }
         const double bridge_distance = (task.goal - task.start).norm();
         task.short_local_bridge = bridge_distance > 0.55 && bridge_distance < 0.85;
         if (task.short_local_bridge) {
@@ -7319,7 +10308,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     });
 
     if (tasks.empty()) {
-        return added_by_query;
+        return finish_batch_bridge();
     }
     using Clock = std::chrono::steady_clock;
     const auto batch_t0 = Clock::now();
@@ -7338,6 +10327,94 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     };
     auto task_key = [](std::size_t index, const std::string& suffix) {
         return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
+    };
+    auto accumulate_task_direct_corridor_totals = [&](std::size_t index) {
+        auto add = [&](const std::string& suffix, const std::string& total_key) {
+            const auto it = last_build_.diagnostics.find(task_key(index, suffix));
+            if (it != last_build_.diagnostics.end()) {
+                batch_context.diagnostics().add_counter(total_key, it->second);
+            }
+        };
+        add("direct_corridor_ms", "query_bridge.direct_corridor_ms_total");
+        add("direct_corridor_samples", "query_bridge.direct_corridor_samples_total");
+        add("direct_corridor_ffb_calls", "query_bridge.direct_corridor_ffb_calls_total");
+        add("direct_corridor_all_ffb_calls", "query_bridge.direct_corridor_all_ffb_calls_total");
+        add("direct_corridor_direct_ffb_ms", "query_bridge.direct_corridor_direct_ffb_ms");
+        add("direct_corridor_repair_ffb_ms", "query_bridge.direct_corridor_repair_ffb_ms");
+        add("direct_corridor_adaptive_repair_ffb_ms",
+            "query_bridge.direct_corridor_adaptive_repair_ffb_ms");
+        add("direct_corridor_lateral_repair_ffb_ms",
+            "query_bridge.direct_corridor_lateral_repair_ffb_ms");
+        add("direct_corridor_segment_audit_ms",
+            "query_bridge.direct_corridor_segment_audit_ms");
+        add("direct_corridor_added", "query_bridge.direct_corridor_added_total");
+        add("direct_corridor_repair_calls", "query_bridge.direct_corridor_repair_calls_total");
+        add("direct_corridor_repair_added", "query_bridge.direct_corridor_repair_added_total");
+        add("direct_corridor_adaptive_repair_calls",
+            "query_bridge.direct_corridor_adaptive_repair_calls_total");
+        add("direct_corridor_adaptive_repair_added",
+            "query_bridge.direct_corridor_adaptive_repair_added_total");
+        add("direct_corridor_lateral_repair_calls",
+            "query_bridge.direct_corridor_lateral_repair_calls_total");
+        add("direct_corridor_lateral_repair_added",
+            "query_bridge.direct_corridor_lateral_repair_added_total");
+        add("direct_corridor_bad_initial", "query_bridge.direct_corridor_bad_initial_total");
+        add("direct_corridor_bad_final", "query_bridge.direct_corridor_bad_final_total");
+        add("direct_corridor_segment_edges", "query_bridge.direct_corridor_segment_edges_total");
+        add("direct_corridor_transition_connected_ms",
+            "query_bridge.direct_corridor_transition_connected_ms");
+        add("direct_corridor_transition_connected_calls",
+            "query_bridge.direct_corridor_transition_connected_calls");
+        add("direct_corridor_bad_transitions_ms",
+            "query_bridge.direct_corridor_bad_transitions_ms");
+        add("direct_corridor_bad_transitions_calls",
+            "query_bridge.direct_corridor_bad_transitions_calls");
+        add("direct_corridor_current_cover_ms",
+            "query_bridge.direct_corridor_current_cover_ms");
+        add("direct_corridor_current_cover_calls",
+            "query_bridge.direct_corridor_current_cover_calls");
+        add("direct_corridor_current_cover_partition_ms",
+            "query_bridge.direct_corridor_current_cover_partition_ms");
+        add("direct_corridor_current_cover_corridor_scan_ms",
+            "query_bridge.direct_corridor_current_cover_corridor_scan_ms");
+        add("direct_corridor_current_cover_direct_index_ms",
+            "query_bridge.direct_corridor_current_cover_direct_index_ms");
+        add("direct_corridor_duplicate_lookup_ms",
+            "query_bridge.direct_corridor_duplicate_lookup_ms");
+        add("direct_corridor_duplicate_lookup_calls",
+            "query_bridge.direct_corridor_duplicate_lookup_calls");
+        add("direct_corridor_commit_total_ms",
+            "query_bridge.direct_corridor_commit_total_ms");
+        add("direct_corridor_commit_calls",
+            "query_bridge.direct_corridor_commit_calls");
+        add("direct_corridor_commit_dynamic_policy_ms",
+            "query_bridge.direct_corridor_commit_dynamic_policy_ms");
+        add("direct_corridor_commit_partition_append_ms",
+            "query_bridge.direct_corridor_commit_partition_append_ms");
+        add("direct_corridor_assimilate_calls",
+            "query_bridge.direct_corridor_assimilate_calls");
+        add("direct_corridor_assimilate_sample_scan_ms",
+            "query_bridge.direct_corridor_assimilate_sample_scan_ms");
+        add("direct_corridor_assimilate_candidate_build_ms",
+            "query_bridge.direct_corridor_assimilate_candidate_build_ms");
+        add("direct_corridor_assimilate_adjacency_ms",
+            "query_bridge.direct_corridor_assimilate_adjacency_ms");
+        add("direct_corridor_segment_insert_ms",
+            "query_bridge.direct_corridor_segment_insert_ms");
+        add("direct_corridor_segment_insert_calls",
+            "query_bridge.direct_corridor_segment_insert_calls");
+        add("direct_corridor_direct_task_build_ms",
+            "query_bridge.direct_corridor_direct_task_build_ms");
+        add("direct_corridor_direct_loop_ms",
+            "query_bridge.direct_corridor_direct_loop_ms");
+        add("direct_corridor_repair_loop_ms",
+            "query_bridge.direct_corridor_repair_loop_ms");
+        add("direct_corridor_adaptive_loop_ms",
+            "query_bridge.direct_corridor_adaptive_loop_ms");
+        add("direct_corridor_lateral_loop_ms",
+            "query_bridge.direct_corridor_lateral_loop_ms");
+        add("direct_corridor_residual_segment_loop_ms",
+            "query_bridge.direct_corridor_residual_segment_loop_ms");
     };
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));
@@ -7358,6 +10435,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.accept_max_path_length",
         bridge_accept_max_path_length);
+    batch_context.diagnostics().set_value(
+        "query_bridge.partition_path_first",
+        partition_path_first ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.partition_path_first_allow_long",
+        partition_path_first_allow_long ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.partition_path_first_max_segment_fraction",
+        partition_path_first_max_segment_fraction);
     const int segment_only_retry_attempts =
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
     batch_context.diagnostics().set_value(
@@ -7372,14 +10458,28 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
     const int query_bridge_attempt_offset =
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_OFFSET", 0));
+    const int query_bridge_rrt_fixed_iters =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
+    const double query_bridge_rrt_fixed_timeout_ms =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
+    batch_context.diagnostics().set_value(
+        "query_bridge.rrt_fixed_iters",
+        static_cast<double>(query_bridge_rrt_fixed_iters));
+    batch_context.diagnostics().set_value(
+        "query_bridge.rrt_fixed_timeout_ms",
+        query_bridge_rrt_fixed_timeout_ms);
+    const bool post_rrt_skip_forced =
+        env_int_or_default("RBF_QUERY_BRIDGE_POST_RRT_SKIP_FORCED", 0) != 0;
+    batch_context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
+                                          post_rrt_skip_forced ? 1.0 : 0.0);
     auto query_bridge_forced = [&](const BridgeSearchTask& task) {
         return query_bridge_forced_index(task.index);
     };
-    auto current_query_good = [&](const BridgeSearchTask& task) {
+    auto current_query_good = [&](const BridgeSearchTask& task, bool respect_forced) {
         if (env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index)) {
             return false;
         }
-        if (query_bridge_forced(task)) {
+        if (respect_forced && query_bridge_forced(task)) {
             return false;
         }
         if (!skip_deferred_short_edges) {
@@ -7395,7 +10495,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 ? task.bridge_rrt
                 : task.short_local_profiles[
                       static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
-        config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
+        if (query_bridge_rrt_fixed_iters > 0) {
+            config.max_iters = query_bridge_rrt_fixed_iters;
+            config.timeout_ms = query_bridge_rrt_fixed_timeout_ms;
+        } else {
+            config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
+        }
         std::vector<Eigen::VectorXd> path = rrt_connect(
             task.start,
             task.goal,
@@ -7405,7 +10510,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             derived_planner_seed(config_.grower.rng_seed,
                                  kSeedBatchBridgeOffset,
                                  scheduled_attempt,
-                                 static_cast<int>(task.index),
+                                 task.query_index,
                                  task.short_local_bridge ? 0 : kSeedAttemptStride),
             batch_context.native_cancel_flag());
         if (path.empty()) {
@@ -7417,6 +10522,253 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             return std::vector<Eigen::VectorXd>{};
         }
         return path;
+    };
+    const bool direct_line_on_no_path =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_LINE_ON_NO_PATH", 0) != 0;
+    batch_context.diagnostics().set_value(
+        "query_bridge.direct_line_on_no_path",
+        direct_line_on_no_path ? 1.0 : 0.0);
+    auto direct_line_fallback_path = [&](const BridgeSearchTask& task) {
+        if (!direct_line_on_no_path) {
+            return std::vector<Eigen::VectorXd>{};
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.direct_line_on_no_path_attempts");
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        std::vector<Eigen::VectorXd> path{task.start, task.goal};
+        const PathAuditCheck audit =
+            audit_waypoint_path(path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (!audit.passed) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.direct_line_on_no_path_rejects");
+            return std::vector<Eigen::VectorXd>{};
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.direct_line_on_no_path_successes");
+        return path;
+    };
+    const bool detour_on_no_path =
+        env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ON_NO_PATH", 0) != 0;
+    const bool detour_candidate =
+        env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_CANDIDATE", 0) != 0;
+    const double detour_replace_factor =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_REPLACE_FACTOR", 1.0));
+    batch_context.diagnostics().set_value(
+        "query_bridge.detour_on_no_path",
+        detour_on_no_path ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.detour_candidate",
+        detour_candidate ? 1.0 : 0.0);
+    auto deterministic_detour_fallback_path = [&](const BridgeSearchTask& task) {
+        if (!detour_on_no_path ||
+            task.start.size() != task.goal.size() ||
+            task.start.size() <= 0) {
+            return std::vector<Eigen::VectorXd>{};
+        }
+        const auto domain = oracle_->planning_intervals();
+        if (static_cast<int>(domain.size()) != task.start.size()) {
+            return std::vector<Eigen::VectorXd>{};
+        }
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        const Eigen::VectorXd delta = task.goal - task.start;
+        const double direct_length = delta.norm();
+        if (direct_length <= 1e-9) {
+            return std::vector<Eigen::VectorXd>{};
+        }
+        std::vector<int> dims(static_cast<std::size_t>(task.start.size()));
+        std::iota(dims.begin(), dims.end(), 0);
+        std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
+            const double lhs_width = std::max(1e-9, domain[static_cast<std::size_t>(lhs)].width());
+            const double rhs_width = std::max(1e-9, domain[static_cast<std::size_t>(rhs)].width());
+            const double lhs_along = std::abs(delta[lhs]) / lhs_width;
+            const double rhs_along = std::abs(delta[rhs]) / rhs_width;
+            if (std::abs(lhs_along - rhs_along) > 1e-12) {
+                return lhs_along < rhs_along;
+            }
+            return lhs < rhs;
+        });
+        const int dim_limit = std::min<int>(
+            std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_DIMS", 4)),
+            static_cast<int>(dims.size()));
+        const int rounds = std::max(
+            1,
+            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ROUNDS", 2));
+        const int max_candidates = std::max(
+            1,
+            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MAX_CANDIDATES", 32));
+        const double base_offset = std::max(
+            1e-4,
+            env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_OFFSET", 0.35));
+        const double two_bend_alpha = std::min(
+            0.45,
+            std::max(0.15,
+                     env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_TWO_BEND_ALPHA", 0.35)));
+        const Eigen::VectorXd mid = 0.5 * (task.start + task.goal);
+        double best_length = std::numeric_limits<double>::infinity();
+        std::vector<Eigen::VectorXd> best_path;
+        int candidates = 0;
+        auto clamp_to_domain = [&](Eigen::VectorXd point) {
+            for (int dim = 0; dim < point.size(); ++dim) {
+                point[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
+                                      std::max(domain[static_cast<std::size_t>(dim)].lo,
+                                               point[dim]));
+            }
+            return point;
+        };
+        auto try_path = [&](std::vector<Eigen::VectorXd> path) {
+            if (candidates >= max_candidates) {
+                return;
+            }
+            ++candidates;
+            batch_context.diagnostics().add_counter(
+                "query_bridge.detour_on_no_path_candidates");
+            double length = path_length(path);
+            if (!std::isfinite(length) || length + 1e-12 >= best_length) {
+                return;
+            }
+            const PathAuditCheck audit =
+                audit_waypoint_path(path,
+                                    checker,
+                                    config_.query.audit_resolution,
+                                    config_.query.audit_segment_step);
+            if (!audit.passed) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.detour_on_no_path_rejects");
+                return;
+            }
+            best_length = length;
+            best_path = std::move(path);
+        };
+        for (int item = 0; item < dim_limit && candidates < max_candidates; ++item) {
+            const int dim = dims[static_cast<std::size_t>(item)];
+            const double width = domain[static_cast<std::size_t>(dim)].width();
+            for (int round = 1; round <= rounds && candidates < max_candidates; ++round) {
+                const double magnitude = std::min(0.45 * std::max(0.0, width),
+                                                  base_offset * static_cast<double>(round));
+                if (magnitude <= 1e-9) {
+                    continue;
+                }
+                for (double sign : {1.0, -1.0}) {
+                    Eigen::VectorXd single = mid;
+                    single[dim] += sign * magnitude;
+                    single = clamp_to_domain(std::move(single));
+                    if ((single - mid).norm() > 1e-9) {
+                        try_path({task.start, single, task.goal});
+                    }
+                    if (candidates >= max_candidates) {
+                        break;
+                    }
+                    Eigen::VectorXd first = task.start + two_bend_alpha * delta;
+                    Eigen::VectorXd second = task.start + (1.0 - two_bend_alpha) * delta;
+                    first[dim] += sign * magnitude;
+                    second[dim] += sign * magnitude;
+                    first = clamp_to_domain(std::move(first));
+                    second = clamp_to_domain(std::move(second));
+                    if ((first - (task.start + two_bend_alpha * delta)).norm() > 1e-9 ||
+                        (second - (task.start + (1.0 - two_bend_alpha) * delta)).norm() > 1e-9) {
+                        try_path({task.start, first, second, task.goal});
+                    }
+                    if (candidates >= max_candidates) {
+                        break;
+                    }
+                }
+            }
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.detour_on_no_path_attempts");
+        if (!best_path.empty()) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.detour_on_no_path_successes");
+        }
+        return best_path;
+    };
+    auto maybe_apply_detour_path = [&](const BridgeSearchTask& task,
+                                       double& best_length,
+                                       std::vector<Eigen::VectorXd>& waypoint_path) {
+        if (!waypoint_path.empty() && !detour_candidate) {
+            return false;
+        }
+        auto detour_path = deterministic_detour_fallback_path(task);
+        if (detour_path.empty()) {
+            return false;
+        }
+        const double detour_length = path_length(detour_path);
+        if (!waypoint_path.empty() &&
+            detour_length > best_length * detour_replace_factor + 1e-12) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.detour_candidate_not_shorter");
+            return false;
+        }
+        best_length = detour_length;
+        waypoint_path = std::move(detour_path);
+        batch_context.diagnostics().add_counter(
+            "query_bridge.detour_candidate_selected");
+        return true;
+    };
+    const bool waypoint_quality_retry =
+        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY", 0) != 0;
+    const int waypoint_quality_retry_attempts = std::max(
+        0,
+        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS", 4));
+    const double waypoint_quality_max_ratio = std::max(
+        1.0,
+        env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO", 2.0));
+    const double waypoint_quality_max_additive = std::max(
+        0.0,
+        env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_ADDITIVE", 0.75));
+    batch_context.diagnostics().set_value(
+        "query_bridge.waypoint_quality_retry",
+        waypoint_quality_retry ? 1.0 : 0.0);
+    auto improve_waypoint_if_needed = [&](const BridgeSearchTask& task,
+                                          int attempts_already_used,
+                                          double& best_length,
+                                          std::vector<Eigen::VectorXd>& waypoint_path) {
+        if (!waypoint_quality_retry ||
+            waypoint_quality_retry_attempts <= 0 ||
+            waypoint_path.empty()) {
+            return;
+        }
+        const double direct = (task.goal - task.start).norm();
+        const double limit = std::max(direct * waypoint_quality_max_ratio,
+                                      direct + waypoint_quality_max_additive);
+        if (!(best_length > limit)) {
+            return;
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.waypoint_quality_retry_tasks");
+        const auto retry_t0 = Clock::now();
+        int retry_successes = 0;
+        for (int retry = 0; retry < waypoint_quality_retry_attempts; ++retry) {
+            auto retry_path = run_task_attempt(task, attempts_already_used + retry);
+            if (retry_path.empty()) {
+                continue;
+            }
+            retry_successes += 1;
+            const double length = path_length(retry_path);
+            if (length < best_length) {
+                best_length = length;
+                waypoint_path = std::move(retry_path);
+            }
+            if (best_length <= limit) {
+                break;
+            }
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.waypoint_quality_retry_attempts",
+            static_cast<double>(waypoint_quality_retry_attempts));
+        batch_context.diagnostics().add_counter(
+            "query_bridge.waypoint_quality_retry_successes",
+            static_cast<double>(retry_successes));
+        if (best_length <= limit) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.waypoint_quality_retry_fixed");
+        }
+        batch_context.diagnostics().record_timing(
+            "query_bridge.waypoint_quality_retry_ms_total",
+            elapsed_ms_since(retry_t0));
     };
 
     const bool parallel_task_rrt =
@@ -7445,7 +10797,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             auto& task = tasks[task_offset];
             prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
             const auto probe_t0 = Clock::now();
-            if (current_query_good(task)) {
+            if (current_query_good(task, true)) {
                 prepared[task_offset].skipped = true;
                 batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
                 batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
@@ -7461,6 +10813,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             prepared[task_offset].attempts = prepared[task_offset].forced
                 ? std::max(std::max(1, task.attempts), forced_query_attempts)
                 : std::max(1, task.attempts);
+            if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
+                prepared[task_offset].attempts = 0;
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.partition_path_first_tasks");
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "partition_path_first"),
+                    1.0);
+            }
             if (prepared[task_offset].forced) {
                 batch_context.diagnostics().set_value(task_key(task.index, "forced"),
                                                       1.0);
@@ -7511,6 +10871,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().set_value(task_key(task.index, "rrt_ms"),
                                                   rrt_ms);
             double best_length = std::numeric_limits<double>::infinity();
+            if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
+                best_length = path_length(task.waypoint_path);
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.partition_path_first_rrt_skipped");
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "waypoint_from_partition_path"),
+                    1.0);
+            }
             for (auto& path : attempt_paths[task_offset]) {
                 if (path.empty()) {
                     continue;
@@ -7521,6 +10889,25 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     task.waypoint_path = std::move(path);
                 }
             }
+            if (task.waypoint_path.empty()) {
+                auto direct_path = direct_line_fallback_path(task);
+                if (!direct_path.empty()) {
+                    best_length = path_length(direct_path);
+                    task.waypoint_path = std::move(direct_path);
+                    batch_context.diagnostics().set_value(
+                        task_key(task.index, "direct_line_on_no_path"),
+                        1.0);
+                }
+            }
+            if (maybe_apply_detour_path(task, best_length, task.waypoint_path)) {
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "detour_on_no_path"),
+                    1.0);
+            }
+            improve_waypoint_if_needed(task,
+                                       prepared[task_offset].attempts,
+                                       best_length,
+                                       task.waypoint_path);
             if (task.waypoint_path.empty()) {
                 batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
                 batch_context.diagnostics().set_value(task_key(task.index, "no_path"),
@@ -7533,8 +10920,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().set_value(task_key(task.index, "waypoint_length"),
                                                   best_length);
             const auto second_probe_t0 = Clock::now();
-            if (current_query_good(task)) {
+            if (current_query_good(task, !post_rrt_skip_forced)) {
                 batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+                if (prepared[task_offset].forced) {
+                    batch_context.diagnostics().add_counter(
+                        "query_bridge.batch_forced_tasks_skipped_after_rrt");
+                }
                 batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                           elapsed_ms_since(second_probe_t0));
                 batch_context.diagnostics().set_value(task_key(task.index, "skipped_after_rrt"),
@@ -7553,7 +10944,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                 task.waypoint_path,
                                                 task.short_local_bridge,
                                                 task.bridge_rrt,
-                                                static_cast<int>(task.index));
+                                                task.query_index);
+            accumulate_task_direct_corridor_totals(task.index);
             const double pave_ms = elapsed_ms_since(pave_t0);
             batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                                       pave_ms);
@@ -7568,13 +10960,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
                                               elapsed_ms_since(batch_t0));
-        return added_by_query;
+        return finish_batch_bridge();
     }
 
     for (auto& task : tasks) {
         const auto task_t0 = Clock::now();
         const auto probe_t0 = Clock::now();
-        if (current_query_good(task)) {
+        if (current_query_good(task, true)) {
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(probe_t0));
@@ -7591,20 +10983,36 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const int attempts = forced_task
             ? std::max(std::max(1, task.attempts), forced_query_attempts)
             : std::max(1, task.attempts);
+        const int effective_attempts =
+            task.waypoint_path_from_partition_query && !task.waypoint_path.empty()
+                ? 0
+                : attempts;
         if (forced_task) {
             batch_context.diagnostics().set_value(task_key(task.index, "forced"),
                                                   1.0);
         }
         batch_context.diagnostics().set_value(task_key(task.index, "attempts"),
-                                              static_cast<double>(attempts));
-        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(attempts));
+                                              static_cast<double>(effective_attempts));
+        if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.partition_path_first_tasks");
+            batch_context.diagnostics().add_counter(
+                "query_bridge.partition_path_first_rrt_skipped");
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "partition_path_first"),
+                1.0);
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "waypoint_from_partition_path"),
+                1.0);
+        }
+        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(effective_attempts));
         const auto rrt_t0 = Clock::now();
-        if (batch_context.executor().n_threads() > 1 && attempts > 1) {
-            batch_context.executor().parallel_for(0, attempts, [&](int attempt) {
+        if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
+            batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
                 attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt);
             });
         } else {
-            for (int attempt = 0; attempt < attempts; ++attempt) {
+            for (int attempt = 0; attempt < effective_attempts; ++attempt) {
                 attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt);
             }
         }
@@ -7614,6 +11022,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(task_key(task.index, "rrt_ms"),
                                               rrt_ms);
         double best_length = std::numeric_limits<double>::infinity();
+        if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
+            best_length = path_length(task.waypoint_path);
+        }
         for (auto& path : attempt_paths) {
             if (path.empty()) {
                 continue;
@@ -7624,6 +11035,25 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task.waypoint_path = std::move(path);
             }
         }
+        if (task.waypoint_path.empty()) {
+            auto direct_path = direct_line_fallback_path(task);
+            if (!direct_path.empty()) {
+                best_length = path_length(direct_path);
+                task.waypoint_path = std::move(direct_path);
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "direct_line_on_no_path"),
+                    1.0);
+            }
+        }
+        if (maybe_apply_detour_path(task, best_length, task.waypoint_path)) {
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "detour_on_no_path"),
+                1.0);
+        }
+        improve_waypoint_if_needed(task,
+                                   attempts,
+                                   best_length,
+                                   task.waypoint_path);
         const bool segment_only_task =
             env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index);
         if (task.waypoint_path.empty() && segment_only_task &&
@@ -7709,8 +11139,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(task_key(task.index, "waypoint_length"),
                                               best_length);
         const auto second_probe_t0 = Clock::now();
-        if (current_query_good(task)) {
+            if (current_query_good(task, !post_rrt_skip_forced)) {
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+            if (forced_task) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.batch_forced_tasks_skipped_after_rrt");
+            }
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(second_probe_t0));
             batch_context.diagnostics().set_value(task_key(task.index, "skipped_after_rrt"),
@@ -7722,24 +11156,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(second_probe_t0));
         if (segment_only_task) {
-            const int source_box_id = locate_containing_box(query_cache(),
-                                                            task.start,
-                                                            config_.query.nearest_if_outside);
-            const int target_box_id = locate_containing_box(query_cache(),
-                                                            task.goal,
-                                                            config_.query.nearest_if_outside);
+            const int source_box_id = locate_box_partition_first(task.start,
+                                                                 config_.query.nearest_if_outside);
+            const int target_box_id = locate_box_partition_first(task.goal,
+                                                                 config_.query.nearest_if_outside);
             int edge_id = -1;
             if (source_box_id >= 0 && target_box_id >= 0) {
-                edge_id = add_segment_edge(segment_edges_,
-                                           adjacency_,
-                                           source_box_id,
+                edge_id = add_segment_edge_partition_first(                                           source_box_id,
                                            target_box_id,
                                            task.waypoint_path,
                                            SegmentEdgeType::QueryBridge,
                                            task.bridge_rrt.segment_resolution,
                                            SegmentEdgeValidation::CollisionChecked,
                                            true,
-                                           static_cast<int>(task.index));
+                                           task.query_index);
             }
             if (edge_id >= 0) {
                 added_by_query[task.index] = 1;
@@ -7767,7 +11197,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                             task.waypoint_path,
                                             task.short_local_bridge,
                                             task.bridge_rrt,
-                                            static_cast<int>(task.index));
+                                            task.query_index);
+        accumulate_task_direct_corridor_totals(task.index);
         const double pave_ms = elapsed_ms_since(pave_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                                   pave_ms);
@@ -7781,7 +11212,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
                                           elapsed_ms_since(batch_t0));
-    return added_by_query;
+    return finish_batch_bridge();
 }
 
 DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -7791,11 +11222,11 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
     if (boxes_.empty() || !oracle_) {
         return out;
     }
-    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    const int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         return out;
     }
-    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    const int goal_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0 || goal_box_id == start_box_id) {
         return out;
     }
@@ -7832,6 +11263,31 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
                                            config_.query.audit_segment_step)
                            .passed;
     const std::size_t boxes_before = boxes_.size();
+    if (partition_native_mode()) {
+        out.added = add_partition_box_corridor_overlay(start,
+                                                       goal,
+                                                       waypoint_path,
+                                                       "debug_chain_pave",
+                                                       false,
+                                                       false,
+                                                       -1,
+                                                       &last_build_);
+        out.boundary_ffb_calls = static_cast<int>(
+            last_build_.diagnostics["debug_chain_pave.partition_box_corridor_overlay_attempts"]);
+        out.boundary_commits = out.added;
+        for (std::size_t i = boxes_before; i < boxes_.size(); ++i) {
+            out.committed_boxes.push_back(boxes_[i].joint_intervals);
+        }
+        out.all_boxes.reserve(boxes_.size());
+        for (const auto& box : boxes_) {
+            out.all_boxes.push_back(box.joint_intervals);
+        }
+        if (out.added > 0) {
+            invalidate_query_cache();
+        }
+        invalidate_query_cache();
+        return out;
+    }
     int next_id = next_box_id();
     ChainPaveConfig debug_pave = pave;
     debug_pave.debug_boundary_failures = &out.boundary_failures;
@@ -7844,6 +11300,9 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave(const Eigen::Ref<const 
         next_id,
         context,
         debug_pave);
+    if (boxes_.size() > boxes_before) {
+        append_adaptive_partition_boxes(boxes_before, &last_build_, "debug_chain_pave");
+    }
     out.fast_gap_fill_ffb_calls = static_cast<int>(
         context.diagnostics().value("connector.chain_pave_fast_ffb_calls", 0.0));
     out.fast_gap_fill_ms =
@@ -7907,11 +11366,11 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
     }
     const Eigen::VectorXd& start = waypoint_path.front();
     const Eigen::VectorXd& goal = waypoint_path.back();
-    const int start_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
+    const int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         return out;
     }
-    const int goal_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+    const int goal_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
     if (goal_box_id < 0 || goal_box_id == start_box_id) {
         return out;
     }
@@ -7935,6 +11394,32 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
                            .passed;
     StageContext context = StageContext::from_runtime(config_.runtime);
     const std::size_t boxes_before = boxes_.size();
+    if (partition_native_mode()) {
+        out.added = add_partition_box_corridor_overlay(start,
+                                                       goal,
+                                                       waypoint_path,
+                                                       "debug_chain_pave_waypoints",
+                                                       false,
+                                                       false,
+                                                       -1,
+                                                       &last_build_);
+        out.boundary_ffb_calls = static_cast<int>(
+            last_build_.diagnostics[
+                "debug_chain_pave_waypoints.partition_box_corridor_overlay_attempts"]);
+        out.boundary_commits = out.added;
+        for (std::size_t i = boxes_before; i < boxes_.size(); ++i) {
+            out.committed_boxes.push_back(boxes_[i].joint_intervals);
+        }
+        out.all_boxes.reserve(boxes_.size());
+        for (const auto& box : boxes_) {
+            out.all_boxes.push_back(box.joint_intervals);
+        }
+        if (out.added > 0) {
+            invalidate_query_cache();
+        }
+        invalidate_query_cache();
+        return out;
+    }
     int next_id = next_box_id();
     ChainPaveConfig debug_pave = pave;
     debug_pave.debug_boundary_failures = &out.boundary_failures;
@@ -7947,6 +11432,9 @@ DebugChainPaveResult RBFPlanningForest::debug_chain_pave_waypoints(
         next_id,
         context,
         debug_pave);
+    if (boxes_.size() > boxes_before) {
+        append_adaptive_partition_boxes(boxes_before, &last_build_, "debug_chain_pave_waypoints");
+    }
     out.fast_gap_fill_ffb_calls = static_cast<int>(
         context.diagnostics().value("connector.chain_pave_fast_ffb_calls", 0.0));
     out.fast_gap_fill_ms =
@@ -8113,9 +11601,31 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     if (waypoint_path.empty()) {
         return 0;
     }
-    const int anchor_box_id = locate_containing_box(query_cache(), waypoint_path.front(), config_.query.nearest_if_outside);
+    const int anchor_box_id = locate_box_partition_first(waypoint_path.front(), config_.query.nearest_if_outside);
     if (anchor_box_id < 0) {
         return 0;
+    }
+
+    if (partition_native_mode()) {
+        last_build_.diagnostics["refine_query_corridor.partition_native"] = 1.0;
+        const double edge_count_before =
+            last_build_.diagnostics["refine_query_corridor.partition_box_corridor_overlay_added"];
+        const int added = add_partition_box_corridor_overlay(start,
+                                                             goal,
+                                                             waypoint_path,
+                                                             "refine_query_corridor",
+                                                             true,
+                                                             true,
+                                                             -1,
+                                                             &last_build_);
+        const double edge_count_after =
+            last_build_.diagnostics["refine_query_corridor.partition_box_corridor_overlay_added"];
+        if (edge_count_after > edge_count_before) {
+            last_build_.diagnostics["refine_query_corridor.partition_native_direct_overlay"] += 1.0;
+            last_build_.diagnostics["refine_query_corridor.partition_native_query_bridge_skipped"] += 1.0;
+            last_build_.diagnostics["refine_query_corridor.partition_native_box_corridor_edges"] += 1.0;
+        }
+        return added;
     }
 
     ChainPaveConfig pave_config = config_.connector.pave;
@@ -8133,6 +11643,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     }
     StageContext context = StageContext::serial();
     int next_id = next_box_id();
+    const std::size_t boxes_before_refine = boxes_.size();
     const int added = chain_pave_along_path(
         waypoint_path,
         anchor_box_id,
@@ -8143,6 +11654,9 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         context,
         pave_config);
     if (added > 0) {
+        append_adaptive_partition_boxes(boxes_before_refine,
+                                        &last_build_,
+                                        "refine_query_corridor");
         invalidate_query_cache();
         if (add_query_segment_edge &&
             config_.connector.segment_edges_enabled &&
@@ -8152,12 +11666,10 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
                                 config_.query.audit_resolution,
                                 config_.query.audit_segment_step)
                 .passed) {
-            const int source_box_id = locate_containing_box(query_cache(), start, config_.query.nearest_if_outside);
-            const int target_box_id = locate_containing_box(query_cache(), goal, config_.query.nearest_if_outside);
+            const int source_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
+            const int target_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
             if (source_box_id >= 0 && target_box_id >= 0) {
-                add_segment_edge(segment_edges_,
-                                 adjacency_,
-                                 source_box_id,
+                add_segment_edge_partition_first(                                 source_box_id,
                                  target_box_id,
                                  waypoint_path,
                                  SegmentEdgeType::QueryBridge,
@@ -8268,11 +11780,13 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
         segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
         if (!survives) {
             segment_edges_removed_audit += 1;
-            const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
-            const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
-            if (source_box == nullptr || target_box == nullptr ||
-                !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
-                remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+            if (!partition_native_mode()) {
+                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
+                if (source_box == nullptr || target_box == nullptr ||
+                    !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
+                    remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+                }
             }
         }
         return !survives;
@@ -8314,16 +11828,23 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
     }
     profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
 
-    const auto adj_t0 = Clock::now();
-    remove_adjacency_nodes(adjacency_, removed_box_ids);
-    connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
-    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
-    invalidate_query_cache();
-    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
     profile.boxes_after = static_cast<int>(boxes_.size());
     profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
     profile.obstacles_after = scene_.n_obstacles();
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    const auto adj_t0 = Clock::now();
+    if (partition_native_mode()) {
+        refresh_dynamic_partition_after_remove_append(profile,
+                                                      removed_box_ids,
+                                                      first_new_box_index,
+                                                      "insert.partition_delta");
+    } else {
+        remove_adjacency_nodes(adjacency_, removed_box_ids);
+        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+        invalidate_query_cache();
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    }
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
     profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
@@ -8342,7 +11863,7 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
         profile.boxes_after = profile.boxes_before;
         profile.raw_boxes_after = profile.raw_boxes_before;
         profile.obstacles_after = profile.obstacles_before;
-        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.adjacency_islands = island_count_partition_first();
         profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return profile;
     }
@@ -8451,11 +11972,13 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
         segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
         if (!survives) {
             segment_edges_removed_audit += 1;
-            const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
-            const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
-            if (source_box == nullptr || target_box == nullptr ||
-                !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
-                remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+            if (!partition_native_mode()) {
+                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
+                if (source_box == nullptr || target_box == nullptr ||
+                    !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
+                    remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
+                }
             }
         }
         return !survives;
@@ -8497,16 +12020,23 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
     }
     profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
 
-    const auto adj_t0 = Clock::now();
-    remove_adjacency_nodes(adjacency_, removed_box_ids);
-    connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
-    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
-    invalidate_query_cache();
-    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
     profile.boxes_after = static_cast<int>(boxes_.size());
     profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
     profile.obstacles_after = scene_.n_obstacles();
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    const auto adj_t0 = Clock::now();
+    if (partition_native_mode()) {
+        refresh_dynamic_partition_after_remove_append(profile,
+                                                      removed_box_ids,
+                                                      first_new_box_index,
+                                                      "insert_batch.partition_delta");
+    } else {
+        remove_adjacency_nodes(adjacency_, removed_box_ids);
+        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+        invalidate_query_cache();
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    }
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
     profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
@@ -8520,22 +12050,107 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
     profile.boxes_before = static_cast<int>(boxes_.size());
     profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
     profile.obstacles_before = scene_.n_obstacles();
-    profile.obstacles_after = profile.obstacles_before;
-    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
-    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
-    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
-    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(find_islands(adjacency_).size());
+	    profile.obstacles_after = profile.obstacles_before;
+	    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+	    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
+	    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+	    const bool use_partition_backend =
+	        partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
+	    const int islands_before = use_partition_backend
+	        ? adaptive_partition_->component_count_with_overlay()
+	        : static_cast<int>(find_islands(adjacency_).size());
+	    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(islands_before);
 
-    if (!oracle_ || boxes_.empty()) {
-        profile.boxes_after = profile.boxes_before;
-        profile.raw_boxes_after = profile.raw_boxes_before;
-        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
-        profile.fallback_reason = boxes_.empty() ? "empty_forest" : "missing_oracle";
-        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        return profile;
-    }
+	    if (!oracle_ || boxes_.empty()) {
+	        profile.boxes_after = profile.boxes_before;
+	        profile.raw_boxes_after = profile.raw_boxes_before;
+	        profile.adjacency_islands = islands_before;
+	        profile.fallback_reason = boxes_.empty() ? "empty_forest" : "missing_oracle";
+	        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+	        return profile;
+	    }
 
-    const auto connector_t0 = Clock::now();
+	    if (use_partition_backend) {
+	        const auto connector_t0 = Clock::now();
+	        if (islands_before <= 1) {
+	            profile.boxes_after = profile.boxes_before;
+	            profile.raw_boxes_after = profile.raw_boxes_before;
+	            profile.adjacency_islands = islands_before;
+	            profile.diagnostics["segment_fallback.partition_native"] = 1.0;
+	            profile.diagnostics["segment_fallback.connected"] = 1.0;
+	            profile.diagnostics["segment_fallback.segment_edges_after"] =
+	                static_cast<double>(segment_edges_.size());
+	            profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+	            return profile;
+	        }
+	        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+	        int attempted_pairs = 0;
+	        int audit_fail = 0;
+	        int added = 0;
+	        const int pair_candidate_cap = std::max(
+	            8,
+	            env_int_or_default("RBF_PARTITION_SEGMENT_FALLBACK_PAIR_CANDIDATE_CAP", 128));
+	        const auto candidate_pairs =
+	            adaptive_partition_->nearest_component_pairs_to_largest(1, pair_candidate_cap);
+	        for (const auto& pair : candidate_pairs) {
+	            if (pair.source_box_id < 0 || pair.target_box_id < 0 ||
+	                pair.source_point.size() == 0 || pair.target_point.size() == 0) {
+	                continue;
+	            }
+	            ++attempted_pairs;
+	            std::vector<Eigen::VectorXd> waypoints{pair.source_point, pair.target_point};
+	            const auto audit = audit_waypoint_path(waypoints,
+	                                                   checker,
+	                                                   config_.query.audit_resolution,
+	                                                   config_.query.audit_segment_step);
+	            if (!audit.passed) {
+	                ++audit_fail;
+	                continue;
+	            }
+	            const int edge_id = add_segment_edge_partition_first(pair.source_box_id,
+	                                                                 pair.target_box_id,
+	                                                                 std::move(waypoints),
+	                                                                 SegmentEdgeType::QueryBridge,
+	                                                                 config_.query.audit_resolution,
+	                                                                 SegmentEdgeValidation::CollisionChecked,
+	                                                                 true,
+	                                                                 -1,
+	                                                                 nullptr,
+	                                                                 "segment_fallback.partition_native");
+	            if (edge_id >= 0) {
+	                ++added;
+	            }
+	        }
+	        profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - connector_t0).count();
+	        profile.segment_edges_added = added;
+	        profile.rrt_segment_edges_added = added;
+	        profile.point_gap_segment_edges_added = 0;
+	        profile.boxes_added = 0;
+	        profile.raw_boxes_added = 0;
+	        profile.boxes_after = static_cast<int>(boxes_.size());
+	        profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+	        sync_adaptive_partition_segment_edges(nullptr, "segment_fallback.partition_native");
+	        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+	        profile.diagnostics["segment_fallback.partition_native"] = 1.0;
+	        profile.diagnostics["segment_fallback.attempted_pairs"] = static_cast<double>(attempted_pairs);
+	        profile.diagnostics["segment_fallback.audit_fail"] = static_cast<double>(audit_fail);
+	        profile.diagnostics["segment_fallback.partition_pair_candidates"] =
+	            static_cast<double>(candidate_pairs.size());
+	        profile.diagnostics["segment_fallback.connected"] = profile.adjacency_islands <= 1 ? 1.0 : 0.0;
+	        profile.diagnostics["segment_fallback.segment_edges_after"] =
+	            static_cast<double>(segment_edges_.size());
+	        profile.diagnostics["segment_fallback.islands_after"] =
+	            static_cast<double>(profile.adjacency_islands);
+	        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+	        const auto& partition_stats = adaptive_partition_->stats();
+	        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
+	        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
+	        profile.diagnostics["adaptive.partition_overlay_edges"] =
+	            static_cast<double>(partition_stats.overlay_edges);
+	        return profile;
+	    }
+
+	    const auto connector_t0 = Clock::now();
     StageContext context = StageContext::from_runtime(config_.runtime);
     CollisionChecker checker(robot_, scene_);
     IslandConnectorConfig connector_config = config_.connector;
@@ -8582,22 +12197,120 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
     profile.boxes_before = static_cast<int>(boxes_.size());
     profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
     profile.obstacles_before = scene_.n_obstacles();
-    profile.obstacles_after = profile.obstacles_before;
-    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
-    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
-    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
-    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(find_islands(adjacency_).size());
+	    profile.obstacles_after = profile.obstacles_before;
+	    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+	    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
+	    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+	    const bool use_partition_backend =
+	        partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
+	    const int islands_before = use_partition_backend
+	        ? adaptive_partition_->component_count_with_overlay()
+	        : static_cast<int>(find_islands(adjacency_).size());
+	    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(islands_before);
 
-    if (!oracle_ || boxes_.empty() || start.size() != oracle_->n_dims() || goal.size() != oracle_->n_dims()) {
-        profile.boxes_after = profile.boxes_before;
-        profile.raw_boxes_after = profile.raw_boxes_before;
-        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
-        profile.fallback_reason = boxes_.empty() ? "empty_forest" : !oracle_ ? "missing_oracle" : "bad_endpoint_dimension";
-        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        return profile;
-    }
+	    if (!oracle_ || boxes_.empty() || start.size() != oracle_->n_dims() || goal.size() != oracle_->n_dims()) {
+	        profile.boxes_after = profile.boxes_before;
+	        profile.raw_boxes_after = profile.raw_boxes_before;
+	        profile.adjacency_islands = islands_before;
+	        profile.fallback_reason = boxes_.empty() ? "empty_forest" : !oracle_ ? "missing_oracle" : "bad_endpoint_dimension";
+	        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+	        return profile;
+	    }
 
-    const auto endpoint_t0 = Clock::now();
+	    if (use_partition_backend) {
+	        const auto endpoint_t0 = Clock::now();
+	        const std::size_t boxes_before_partition = boxes_.size();
+	        const int edges_before = static_cast<int>(segment_edges_.size());
+	        int start_box = locate_box_partition_first(start, config_.query.nearest_if_outside);
+	        int goal_box = locate_box_partition_first(goal, config_.query.nearest_if_outside);
+	        StageContext context = StageContext::from_runtime(config_.runtime);
+	        if (start_box < 0) {
+	            start_box = anchor_query_endpoint_box(start, context);
+	            profile.regrow_attempts += 1;
+	        } else {
+	            profile.diagnostics["segment_fallback.start_already_covered"] += 1.0;
+	        }
+	        if (goal_box < 0) {
+	            goal_box = anchor_query_endpoint_box(goal, context);
+	            profile.regrow_attempts += 1;
+	        } else {
+	            profile.diagnostics["segment_fallback.goal_already_covered"] += 1.0;
+	        }
+	        for (const auto& [key, value] : context.diagnostics().snapshot()) {
+	            profile.diagnostics[key] += value;
+	        }
+	        if (boxes_.size() > boxes_before_partition) {
+	            append_adaptive_partition_boxes(boxes_before_partition,
+	                                            &last_build_,
+	                                            "segment_fallback.endpoint_partition");
+	        }
+	        start_box = locate_box_partition_first(start, config_.query.nearest_if_outside);
+	        goal_box = locate_box_partition_first(goal, config_.query.nearest_if_outside);
+	        if (start_box >= 0 &&
+	            goal_box >= 0 &&
+	            !overlay_path_connected_partition_first(start_box, goal_box)) {
+	            EndpointMainBoxCorridorConfig corridor_config;
+	            (void)connect_query_endpoint_to_main_box_corridor(start, corridor_config);
+	            (void)connect_query_endpoint_to_main_box_corridor(goal, corridor_config);
+	        }
+	        start_box = locate_box_partition_first(start, config_.query.nearest_if_outside);
+	        goal_box = locate_box_partition_first(goal, config_.query.nearest_if_outside);
+	        if (start_box >= 0 &&
+	            goal_box >= 0 &&
+	            !overlay_path_connected_partition_first(start_box, goal_box)) {
+	            CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+	            std::vector<Eigen::VectorXd> waypoints{start, goal};
+	            const auto audit = audit_waypoint_path(waypoints,
+	                                                   checker,
+	                                                   config_.query.audit_resolution,
+	                                                   config_.query.audit_segment_step);
+	            profile.diagnostics["segment_fallback.endpoint_direct_attempts"] += 1.0;
+	            if (audit.passed) {
+	                const int edge_id = add_segment_edge_partition_first(start_box,
+	                                                                     goal_box,
+	                                                                     std::move(waypoints),
+	                                                                     SegmentEdgeType::QueryBridge,
+	                                                                     config_.query.audit_resolution,
+	                                                                     SegmentEdgeValidation::CollisionChecked,
+	                                                                     true,
+	                                                                     -1,
+	                                                                     nullptr,
+	                                                                     "segment_fallback.endpoint_partition");
+	                if (edge_id >= 0) {
+	                    profile.diagnostics["segment_fallback.endpoint_direct_success"] += 1.0;
+	                }
+	            } else {
+	                profile.diagnostics["segment_fallback.endpoint_direct_audit_fail"] += 1.0;
+	            }
+	        }
+	        sync_adaptive_partition_segment_edges(nullptr, "segment_fallback.endpoint_partition");
+	        profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - endpoint_t0).count();
+	        profile.boxes_added = std::max(0, static_cast<int>(boxes_.size()) - profile.boxes_before);
+	        profile.raw_boxes_added = std::max(0, static_cast<int>(raw_boxes_.size()) - profile.raw_boxes_before);
+	        profile.segment_edges_added = std::max(0, static_cast<int>(segment_edges_.size()) - edges_before);
+	        profile.rrt_segment_edges_added = profile.segment_edges_added;
+	        profile.point_gap_segment_edges_added = 0;
+	        profile.boxes_after = static_cast<int>(boxes_.size());
+	        profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+	        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+	        profile.diagnostics["segment_fallback.endpoint_partition_native"] = 1.0;
+	        profile.diagnostics["segment_fallback.connected"] =
+	            (start_box >= 0 && goal_box >= 0 &&
+	             overlay_path_connected_partition_first(start_box, goal_box)) ? 1.0 : 0.0;
+	        profile.diagnostics["segment_fallback.segment_edges_after"] =
+	            static_cast<double>(segment_edges_.size());
+	        profile.diagnostics["segment_fallback.islands_after"] =
+	            static_cast<double>(profile.adjacency_islands);
+	        const auto& partition_stats = adaptive_partition_->stats();
+	        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
+	        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
+	        profile.diagnostics["adaptive.partition_overlay_edges"] =
+	            static_cast<double>(partition_stats.overlay_edges);
+	        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+	        return profile;
+	    }
+
+	    const auto endpoint_t0 = Clock::now();
     const std::size_t first_new_box_index = boxes_.size();
     StageContext context = StageContext::from_runtime(config_.runtime);
     FindFreeBoxService ffb(*oracle_);
@@ -8712,7 +12425,7 @@ RebuildProfile RBFPlanningForest::remove_obstacle_and_regrow(int obstacle_index)
         profile.boxes_after = profile.boxes_before;
         profile.raw_boxes_after = profile.raw_boxes_before;
         profile.obstacles_after = profile.obstacles_before;
-        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.adjacency_islands = island_count_partition_first();
         profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return profile;
     }
@@ -8723,176 +12436,22 @@ RebuildProfile RBFPlanningForest::remove_obstacle_and_regrow(int obstacle_index)
     const std::size_t first_new_box_index = boxes_.size();
     promote_unblocked_collision_cache(removed_indices, profile);
 
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
     const auto adj_t0_delete = Clock::now();
-    if (profile.boxes_added > 0) {
-        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
-        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
-        invalidate_query_cache();
+    if (partition_native_mode()) {
+        refresh_dynamic_partition_after_append(profile,
+                                               first_new_box_index,
+                                               "remove.partition_append");
+    } else {
+        if (profile.boxes_added > 0) {
+            connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+            apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+            invalidate_query_cache();
+        }
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     }
     profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0_delete).count();
-    profile.boxes_after = static_cast<int>(boxes_.size());
-    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
-    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    invalidate_query_cache();
-    return profile;
-
-    const auto dirty_t0 = Clock::now();
-    std::vector<int> dirty_indices;
-    if (config_.dynamic_update.enable_spatial_dirty_region) {
-        profile.used_spatial_dirty_region = true;
-        dirty_indices = spatial_dirty_box_indices(robot_, boxes_, removed_obstacle, config_.dynamic_update, profile.dirty_boxes);
-        profile.dirty_boxes_used = static_cast<int>(dirty_indices.size());
-    }
-    profile.dirty_region_ms = std::chrono::duration<double, std::milli>(Clock::now() - dirty_t0).count();
-
-    auto fallback_seeds = [&]() {
-        std::vector<Eigen::VectorXd> seeds = last_build_seeds_;
-        if (seeds.empty()) {
-            const int limit = std::max(1, config_.dynamic_update.dirty_seed_limit);
-            seeds.reserve(static_cast<std::size_t>(std::min(limit, static_cast<int>(boxes_.size()))));
-            for (const auto& box : boxes_) {
-                seeds.push_back(box.center());
-                if (static_cast<int>(seeds.size()) >= limit) {
-                    break;
-                }
-            }
-        }
-        return seeds;
-    };
-
-    auto run_warm_rebuild = [&](std::string reason) {
-        const auto rebuild_t0 = Clock::now();
-        auto seeds = fallback_seeds();
-        if (seeds.empty()) {
-            profile.fallback_reason = "warm_rebuild_skipped_no_seeds";
-            return false;
-        }
-        profile.used_warm_rebuild = true;
-        profile.fallback_reason = std::move(reason);
-        StageContext context = StageContext::from_runtime(config_.runtime);
-        const auto before_build = profile.boxes_before;
-        const auto build_profile = build_coverage(scene_.obstacles(), seeds, context);
-        (void)build_profile;
-        profile.warm_rebuild_ms = std::chrono::duration<double, std::milli>(Clock::now() - rebuild_t0).count();
-        profile.boxes_after = static_cast<int>(boxes_.size());
-        profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-        profile.boxes_added = std::max(0, profile.boxes_after - before_build);
-        profile.raw_boxes_added = std::max(0, profile.raw_boxes_after - profile.raw_boxes_before);
-        profile.boxes_removed = std::max(0, before_build - profile.boxes_after);
-        profile.raw_boxes_removed = std::max(0, profile.raw_boxes_before - profile.raw_boxes_after);
-        profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
-        profile.adjacency_islands = last_build_.adjacency_islands;
-        return true;
-    };
-
-    const bool too_many_dirty = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        ((config_.dynamic_update.warm_rebuild_dirty_box_threshold > 0 &&
-          profile.dirty_boxes > config_.dynamic_update.warm_rebuild_dirty_box_threshold) ||
-         (profile.boxes_before > 0 && config_.dynamic_update.warm_rebuild_dirty_box_fraction >= 0.0 &&
-          static_cast<double>(profile.dirty_boxes) / static_cast<double>(profile.boxes_before) >
-              config_.dynamic_update.warm_rebuild_dirty_box_fraction));
-    const bool empty_forest = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_on_empty_forest && profile.boxes_before == 0;
-    const bool empty_dirty = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_on_empty_dirty_region && profile.boxes_before > 0 && profile.dirty_boxes == 0;
-    if (too_many_dirty || empty_forest || empty_dirty) {
-        const char* reason = too_many_dirty ? "dirty_region_too_large"
-            : empty_forest ? "empty_forest_after_obstacle_removal"
-            : "empty_dirty_region";
-        if (run_warm_rebuild(reason)) {
-            profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-            invalidate_query_cache();
-            return profile;
-        }
-    }
-    const auto regrow_t0 = Clock::now();
-    const auto seed_candidates = make_dirty_region_seeds(boxes_,
-                                                         dirty_indices,
-                                                         oracle_->planning_intervals(),
-                                                         config_.dynamic_update,
-                                                         config_.query.adjacency_tolerance,
-                                                         config_.grower.boundary_epsilon);
-    profile.dirty_seed_count = static_cast<int>(seed_candidates.size());
-    if (!seed_candidates.empty() && config_.dynamic_update.local_regrow_box_limit > 0) {
-        const Deadline deadline = config_.dynamic_update.local_regrow_timeout_ms > 0.0
-            ? Deadline::after_ms(config_.dynamic_update.local_regrow_timeout_ms)
-            : Deadline{};
-        StageContext context = StageContext::from_runtime(config_.runtime, deadline);
-        FindFreeBoxService ffb(*oracle_);
-        FindFreeBoxOptions options = config_.grower.find_free_box;
-        int next_id = next_box_id();
-        for (const auto& candidate : seed_candidates) {
-            if (context.should_stop() || profile.boxes_added >= config_.dynamic_update.local_regrow_box_limit) {
-                break;
-            }
-            if (point_covered_by_existing_box_local(boxes_, candidate.seed)) {
-                continue;
-            }
-            profile.regrow_attempts += 1;
-            auto result = ffb.find(candidate.seed, context, options);
-            if (!result.found || !intervals_contain_point_local(result.intervals, candidate.seed, config_.query.adjacency_tolerance)) {
-                continue;
-            }
-            if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
-                continue;
-            }
-            BoxNode box;
-            box.id = next_id++;
-            box.joint_intervals = std::move(result.intervals);
-            box.seed_config = candidate.seed;
-            box.tree_id = result.node;
-            box.parent_box_id = candidate.parent_box_id;
-            box.root_id = candidate.root_id >= 0 ? candidate.root_id : box.id;
-            box.safety_status = result.validation_detail.safety_status;
-            box.strict_audit_required = result.validation_detail.strict_audit_required;
-            box.compute_volume();
-            bool contained = false;
-            for (const auto& existing : boxes_) {
-                if (box_contains_box_exact_local(existing, box)) {
-                    contained = true;
-                    break;
-                }
-            }
-            if (contained) {
-                continue;
-            }
-            if (candidate.parent_box_id >= 0) {
-                const BoxNode* parent = find_box_by_id(boxes_, candidate.parent_box_id);
-                if (parent != nullptr && !boxes_connected(*parent, box, config_.query.adjacency_tolerance)) {
-                    const double gap = std::sqrt(interval_bounds_gap_squared_local(parent->joint_intervals, box.joint_intervals));
-                    if (gap > config_.grower.boundary_epsilon + config_.query.adjacency_tolerance) {
-                        continue;
-                    }
-                }
-            }
-            oracle_->reserve_node(box.tree_id, box.id);
-            boxes_.push_back(box);
-            raw_boxes_.push_back(std::move(box));
-            profile.boxes_added += 1;
-            profile.raw_boxes_added += 1;
-        }
-    }
-    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
-
-    const bool local_below_min = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_min_local_boxes_added >= 0 &&
-        profile.regrow_attempts > 0 &&
-        profile.boxes_added < config_.dynamic_update.warm_rebuild_min_local_boxes_added;
-    if (local_below_min && run_warm_rebuild("local_regrow_below_minimum")) {
-        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        invalidate_query_cache();
-        return profile;
-    }
-
-    const auto adj_t0 = Clock::now();
-    if (profile.boxes_added > 0) {
-        rebuild_adjacency();
-    }
-    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
-    profile.boxes_after = static_cast<int>(boxes_.size());
-    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
     return profile;
@@ -8912,7 +12471,7 @@ RebuildProfile RBFPlanningForest::remove_obstacle_suffix_and_regrow(int target_o
         profile.boxes_after = profile.boxes_before;
         profile.raw_boxes_after = profile.raw_boxes_before;
         profile.obstacles_after = profile.obstacles_before;
-        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+        profile.adjacency_islands = island_count_partition_first();
         profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return profile;
     }
@@ -8934,177 +12493,22 @@ RebuildProfile RBFPlanningForest::remove_obstacle_suffix_and_regrow(int target_o
     const std::size_t first_new_box_index = boxes_.size();
     promote_unblocked_collision_cache(removed_indices, profile);
 
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
     const auto adj_t0_delete = Clock::now();
-    if (profile.boxes_added > 0) {
-        connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
-        apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
-        invalidate_query_cache();
+    if (partition_native_mode()) {
+        refresh_dynamic_partition_after_append(profile,
+                                               first_new_box_index,
+                                               "remove_suffix.partition_append");
+    } else {
+        if (profile.boxes_added > 0) {
+            connect_incremental_boxes(adjacency_, boxes_, first_new_box_index, config_.query.adjacency_tolerance);
+            apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+            invalidate_query_cache();
+        }
+        profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     }
     profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0_delete).count();
-    profile.boxes_after = static_cast<int>(boxes_.size());
-    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
-    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    invalidate_query_cache();
-    return profile;
-
-    const auto dirty_t0 = Clock::now();
-    std::vector<int> dirty_indices;
-    if (config_.dynamic_update.enable_spatial_dirty_region) {
-        profile.used_spatial_dirty_region = true;
-        dirty_indices = spatial_dirty_box_indices(robot_, boxes_, removed_obstacles, config_.dynamic_update, profile.dirty_boxes);
-        profile.dirty_boxes_used = static_cast<int>(dirty_indices.size());
-    }
-    profile.dirty_region_ms = std::chrono::duration<double, std::milli>(Clock::now() - dirty_t0).count();
-
-    auto fallback_seeds = [&]() {
-        std::vector<Eigen::VectorXd> seeds = last_build_seeds_;
-        if (seeds.empty()) {
-            const int limit = std::max(1, config_.dynamic_update.dirty_seed_limit);
-            seeds.reserve(static_cast<std::size_t>(std::min(limit, static_cast<int>(boxes_.size()))));
-            for (const auto& box : boxes_) {
-                seeds.push_back(box.center());
-                if (static_cast<int>(seeds.size()) >= limit) {
-                    break;
-                }
-            }
-        }
-        return seeds;
-    };
-
-    auto run_warm_rebuild = [&](std::string reason) {
-        const auto rebuild_t0 = Clock::now();
-        auto seeds = fallback_seeds();
-        if (seeds.empty()) {
-            profile.fallback_reason = "warm_rebuild_skipped_no_seeds";
-            return false;
-        }
-        profile.used_warm_rebuild = true;
-        profile.fallback_reason = std::move(reason);
-        StageContext context = StageContext::from_runtime(config_.runtime);
-        const auto before_build = profile.boxes_before;
-        const auto build_profile = build_coverage(scene_.obstacles(), seeds, context);
-        (void)build_profile;
-        profile.warm_rebuild_ms = std::chrono::duration<double, std::milli>(Clock::now() - rebuild_t0).count();
-        profile.boxes_after = static_cast<int>(boxes_.size());
-        profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-        profile.boxes_added = std::max(0, profile.boxes_after - before_build);
-        profile.raw_boxes_added = std::max(0, profile.raw_boxes_after - profile.raw_boxes_before);
-        profile.boxes_removed = std::max(0, before_build - profile.boxes_after);
-        profile.raw_boxes_removed = std::max(0, profile.raw_boxes_before - profile.raw_boxes_after);
-        profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
-        profile.adjacency_islands = last_build_.adjacency_islands;
-        return true;
-    };
-
-    const bool too_many_dirty = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        ((config_.dynamic_update.warm_rebuild_dirty_box_threshold > 0 &&
-          profile.dirty_boxes > config_.dynamic_update.warm_rebuild_dirty_box_threshold) ||
-         (profile.boxes_before > 0 && config_.dynamic_update.warm_rebuild_dirty_box_fraction >= 0.0 &&
-          static_cast<double>(profile.dirty_boxes) / static_cast<double>(profile.boxes_before) >
-              config_.dynamic_update.warm_rebuild_dirty_box_fraction));
-    const bool empty_forest = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_on_empty_forest && profile.boxes_before == 0;
-    const bool empty_dirty = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_on_empty_dirty_region && profile.boxes_before > 0 && profile.dirty_boxes == 0;
-    if (too_many_dirty || empty_forest || empty_dirty) {
-        const char* reason = too_many_dirty ? "dirty_region_too_large_batch"
-            : empty_forest ? "empty_forest_after_obstacle_removal_batch"
-            : "empty_dirty_region_batch";
-        if (run_warm_rebuild(reason)) {
-            profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-            invalidate_query_cache();
-            return profile;
-        }
-    }
-
-    const auto regrow_t0 = Clock::now();
-    const auto seed_candidates = make_dirty_region_seeds(boxes_,
-                                                         dirty_indices,
-                                                         oracle_->planning_intervals(),
-                                                         config_.dynamic_update,
-                                                         config_.query.adjacency_tolerance,
-                                                         config_.grower.boundary_epsilon);
-    profile.dirty_seed_count = static_cast<int>(seed_candidates.size());
-    if (!seed_candidates.empty() && config_.dynamic_update.local_regrow_box_limit > 0) {
-        const Deadline deadline = config_.dynamic_update.local_regrow_timeout_ms > 0.0
-            ? Deadline::after_ms(config_.dynamic_update.local_regrow_timeout_ms)
-            : Deadline{};
-        StageContext context = StageContext::from_runtime(config_.runtime, deadline);
-        FindFreeBoxService ffb(*oracle_);
-        FindFreeBoxOptions options = config_.grower.find_free_box;
-        int next_id = next_box_id();
-        for (const auto& candidate : seed_candidates) {
-            if (context.should_stop() || profile.boxes_added >= config_.dynamic_update.local_regrow_box_limit) {
-                break;
-            }
-            if (point_covered_by_existing_box_local(boxes_, candidate.seed)) {
-                continue;
-            }
-            profile.regrow_attempts += 1;
-            auto result = ffb.find(candidate.seed, context, options);
-            if (!result.found || !intervals_contain_point_local(result.intervals, candidate.seed, config_.query.adjacency_tolerance)) {
-                continue;
-            }
-            if (!allow_dynamic_commit(*oracle_, result, config_.grower.commit_policy)) {
-                continue;
-            }
-            BoxNode box;
-            box.id = next_id++;
-            box.joint_intervals = std::move(result.intervals);
-            box.seed_config = candidate.seed;
-            box.tree_id = result.node;
-            box.parent_box_id = candidate.parent_box_id;
-            box.root_id = candidate.root_id >= 0 ? candidate.root_id : box.id;
-            box.safety_status = result.validation_detail.safety_status;
-            box.strict_audit_required = result.validation_detail.strict_audit_required;
-            box.compute_volume();
-            bool contained = false;
-            for (const auto& existing : boxes_) {
-                if (box_contains_box_exact_local(existing, box)) {
-                    contained = true;
-                    break;
-                }
-            }
-            if (contained) {
-                continue;
-            }
-            if (candidate.parent_box_id >= 0) {
-                const BoxNode* parent = find_box_by_id(boxes_, candidate.parent_box_id);
-                if (parent != nullptr && !boxes_connected(*parent, box, config_.query.adjacency_tolerance)) {
-                    const double gap = std::sqrt(interval_bounds_gap_squared_local(parent->joint_intervals, box.joint_intervals));
-                    if (gap > config_.grower.boundary_epsilon + config_.query.adjacency_tolerance) {
-                        continue;
-                    }
-                }
-            }
-            oracle_->reserve_node(box.tree_id, box.id);
-            boxes_.push_back(box);
-            raw_boxes_.push_back(std::move(box));
-            profile.boxes_added += 1;
-            profile.raw_boxes_added += 1;
-        }
-    }
-    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - regrow_t0).count();
-
-    const bool local_below_min = config_.dynamic_update.enable_warm_rebuild_fallback &&
-        config_.dynamic_update.warm_rebuild_min_local_boxes_added >= 0 &&
-        profile.regrow_attempts > 0 &&
-        profile.boxes_added < config_.dynamic_update.warm_rebuild_min_local_boxes_added;
-    if (local_below_min && run_warm_rebuild("local_regrow_below_minimum_batch")) {
-        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        invalidate_query_cache();
-        return profile;
-    }
-
-    const auto adj_t0 = Clock::now();
-    if (profile.boxes_added > 0) {
-        rebuild_adjacency();
-    }
-    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
-    profile.boxes_after = static_cast<int>(boxes_.size());
-    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
-    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
     return profile;
@@ -9115,6 +12519,9 @@ void RBFPlanningForest::clear_forest() {
     raw_boxes_.clear();
     adjacency_.clear();
     segment_edges_.clear();
+    adaptive_partition_.reset();
+    adaptive_partition_query_enabled_ = false;
+    has_adaptive_partition_config_ = false;
     dynamic_collision_box_cache_.clear();
     if (oracle_) {
         oracle_->clear_reservations();
@@ -9158,11 +12565,466 @@ void RBFPlanningForest::rebuild_adjacency() {
     invalidate_query_cache();
 }
 
+void RBFPlanningForest::rebuild_adaptive_partition(const AdaptiveLeafSweepConfig& config,
+                                                   BuildProfile* profile) {
+    adaptive_partition_query_enabled_ = false;
+    last_adaptive_partition_config_ = config;
+    has_adaptive_partition_config_ = true;
+    if (config.planning_backend != "partition_native" ||
+        !config.grid_face_index_enabled ||
+        boxes_.empty() ||
+        !oracle_) {
+        adaptive_partition_.reset();
+        if (profile) {
+            profile->diagnostics["adaptive.offline_backend_grid_partition"] = 0.0;
+            profile->diagnostics["adaptive.online_backend_partition_native"] = 0.0;
+        }
+        return;
+    }
+    if (!adaptive_partition_) {
+        adaptive_partition_ = std::make_unique<AdaptiveGridPartition>();
+    }
+    const int target_depth = config.grid_target_depth > 0
+        ? config.grid_target_depth
+        : config.target_max_depth;
+    bool ok = false;
+    try {
+        auto root_copies = oracle_->native_root_interval_copies();
+        if (root_copies.empty()) {
+            root_copies.push_back(oracle_->planning_intervals());
+        }
+        ok = adaptive_partition_->rebuild(root_copies,
+                                          oracle_->database().split_policy_descriptor(),
+                                          oracle_->database().root_depth(),
+                                          target_depth,
+                                          boxes_,
+                                          config_.query.adjacency_tolerance);
+    } catch (const std::exception&) {
+        ok = false;
+    }
+    adaptive_partition_query_enabled_ = ok && !adaptive_partition_->empty();
+    if (!adaptive_partition_query_enabled_) {
+        adaptive_partition_.reset();
+    }
+    refresh_adaptive_partition_diagnostics(profile);
+}
+
+void RBFPlanningForest::refresh_adaptive_partition_diagnostics(BuildProfile* profile) const {
+    if (profile == nullptr) {
+        return;
+    }
+    profile->diagnostics["adaptive.offline_backend_grid_partition"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    profile->diagnostics["adaptive.online_backend_partition_native"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    if (has_adaptive_partition_config_) {
+        const int target_depth = last_adaptive_partition_config_.grid_target_depth > 0
+            ? last_adaptive_partition_config_.grid_target_depth
+            : last_adaptive_partition_config_.target_max_depth;
+        profile->diagnostics["adaptive.grid_target_depth"] = static_cast<double>(target_depth);
+        profile->diagnostics["adaptive.grid_face_index_enabled"] =
+            last_adaptive_partition_config_.grid_face_index_enabled ? 1.0 : 0.0;
+        profile->diagnostics["adaptive.grid_planning_max_expansions"] =
+            static_cast<double>(std::max(0, last_adaptive_partition_config_.grid_planning_max_expansions));
+    }
+    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+        const auto& stats = adaptive_partition_->stats();
+        profile->diagnostics["adaptive.partition_cells"] = static_cast<double>(stats.cells);
+        profile->diagnostics["adaptive.partition_grid_cells"] = static_cast<double>(stats.grid_cells);
+        profile->diagnostics["adaptive.partition_non_grid_cells"] = static_cast<double>(stats.non_grid_cells);
+        profile->diagnostics["adaptive.partition_face_index_entries"] =
+            static_cast<double>(stats.face_index_entries);
+        profile->diagnostics["adaptive.partition_point_index_dims"] =
+            static_cast<double>(stats.point_index_dims);
+        profile->diagnostics["adaptive.partition_point_index_entries"] =
+            static_cast<double>(stats.point_index_entries);
+        profile->diagnostics["adaptive.partition_point_index_overflow_cells"] =
+            static_cast<double>(stats.point_index_overflow_cells);
+        profile->diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
+        profile->diagnostics["adaptive.partition_largest_island"] =
+            static_cast<double>(stats.largest_island);
+        profile->diagnostics["adaptive.partition_adjacency_candidates"] =
+            static_cast<double>(stats.adjacency_candidates);
+        profile->diagnostics["adaptive.partition_adjacency_tests"] =
+            static_cast<double>(stats.adjacency_tests);
+        profile->diagnostics["adaptive.partition_adjacency_edges"] =
+            static_cast<double>(stats.adjacency_edges);
+        profile->diagnostics["adaptive.partition_overlay_edges"] =
+            static_cast<double>(stats.overlay_edges);
+        profile->diagnostics["adaptive.partition_build_ms"] = stats.build_ms;
+        profile->diagnostics["adaptive.partition_index_rebuild_ms"] = stats.index_rebuild_ms;
+        profile->diagnostics["adaptive.partition_face_index_ms"] = stats.face_index_ms;
+        profile->diagnostics["adaptive.partition_point_index_ms"] = stats.point_index_ms;
+        profile->diagnostics["adaptive.partition_neighbor_cache_ms"] = stats.neighbor_cache_ms;
+        profile->diagnostics["adaptive.partition_island_rebuild_ms"] = stats.island_rebuild_ms;
+    }
+}
+
+void RBFPlanningForest::refresh_dynamic_partition_after_update(RebuildProfile& profile,
+                                                               const char* diagnostic_prefix) {
+    if (!partition_native_mode()) {
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    rebuild_adaptive_partition(last_adaptive_partition_config_, nullptr);
+    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, diagnostic_prefix);
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
+        ? std::string(diagnostic_prefix)
+        : std::string("dynamic.partition");
+    profile.diagnostics[prefix + ".rebuild_ms"] += ms;
+    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
+    profile.diagnostics["adaptive.offline_backend_grid_partition"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    profile.diagnostics["adaptive.online_backend_partition_native"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+        const auto& stats = adaptive_partition_->stats();
+        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(stats.cells);
+        profile.diagnostics["adaptive.partition_grid_cells"] = static_cast<double>(stats.grid_cells);
+        profile.diagnostics["adaptive.partition_non_grid_cells"] = static_cast<double>(stats.non_grid_cells);
+        profile.diagnostics["adaptive.partition_face_index_entries"] =
+            static_cast<double>(stats.face_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_dims"] =
+            static_cast<double>(stats.point_index_dims);
+        profile.diagnostics["adaptive.partition_point_index_entries"] =
+            static_cast<double>(stats.point_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
+            static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
+        profile.diagnostics["adaptive.partition_largest_island"] =
+            static_cast<double>(stats.largest_island);
+        profile.diagnostics["adaptive.partition_overlay_edges"] =
+            static_cast<double>(stats.overlay_edges);
+    }
+    invalidate_query_cache();
+}
+
+void RBFPlanningForest::refresh_dynamic_partition_after_append(RebuildProfile& profile,
+                                                               std::size_t first_box_index,
+                                                               const char* diagnostic_prefix) {
+    if (!partition_native_mode()) {
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
+        ? std::string(diagnostic_prefix)
+        : std::string("dynamic.partition_append");
+    int appended = 0;
+    if (first_box_index < boxes_.size()) {
+        appended = adaptive_partition_->append_boxes(boxes_,
+                                                     first_box_index,
+                                                     config_.query.adjacency_tolerance);
+    }
+    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, prefix.c_str());
+    if (first_box_index < boxes_.size() && appended <= 0) {
+        profile.diagnostics[prefix + ".append_failed_rebuilds"] += 1.0;
+        refresh_dynamic_partition_after_update(profile,
+                                               (prefix + ".rebuild_after_append_failure").c_str());
+        return;
+    }
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    profile.diagnostics[prefix + ".append_ms"] += ms;
+    profile.diagnostics[prefix + ".boxes_appended"] += static_cast<double>(appended);
+    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
+    profile.diagnostics["adaptive.offline_backend_grid_partition"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    profile.diagnostics["adaptive.online_backend_partition_native"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    refresh_adaptive_partition_diagnostics(nullptr);
+    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+        const auto& stats = adaptive_partition_->stats();
+        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(stats.cells);
+        profile.diagnostics["adaptive.partition_grid_cells"] = static_cast<double>(stats.grid_cells);
+        profile.diagnostics["adaptive.partition_non_grid_cells"] = static_cast<double>(stats.non_grid_cells);
+        profile.diagnostics["adaptive.partition_face_index_entries"] =
+            static_cast<double>(stats.face_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_dims"] =
+            static_cast<double>(stats.point_index_dims);
+        profile.diagnostics["adaptive.partition_point_index_entries"] =
+            static_cast<double>(stats.point_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
+            static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
+        profile.diagnostics["adaptive.partition_largest_island"] =
+            static_cast<double>(stats.largest_island);
+        profile.diagnostics["adaptive.partition_overlay_edges"] =
+            static_cast<double>(stats.overlay_edges);
+    }
+    invalidate_query_cache();
+}
+
+void RBFPlanningForest::refresh_dynamic_partition_after_remove_append(
+    RebuildProfile& profile,
+    const std::unordered_set<int>& removed_box_ids,
+    std::size_t first_box_index,
+    const char* diagnostic_prefix) {
+    if (!partition_native_mode()) {
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
+        ? std::string(diagnostic_prefix)
+        : std::string("dynamic.partition_delta");
+    const std::size_t expected_appended =
+        first_box_index < boxes_.size() ? boxes_.size() - first_box_index : 0u;
+    AdaptiveGridPartitionDeltaResult delta;
+    if (adaptive_partition_) {
+        delta = adaptive_partition_->replace_box_ids_with_boxes(removed_box_ids,
+                                                                boxes_,
+                                                                first_box_index,
+                                                                config_.query.adjacency_tolerance);
+    }
+    if (!removed_box_ids.empty() &&
+        delta.boxes_removed != static_cast<int>(removed_box_ids.size())) {
+        profile.diagnostics[prefix + ".remove_failed_rebuilds"] += 1.0;
+        profile.diagnostics[prefix + ".boxes_removed_before_rebuild"] +=
+            static_cast<double>(delta.boxes_removed);
+        refresh_dynamic_partition_after_update(profile,
+                                               (prefix + ".rebuild_after_remove_failure").c_str());
+        return;
+    }
+    if (expected_appended > 0u &&
+        delta.boxes_appended != static_cast<int>(expected_appended)) {
+        profile.diagnostics[prefix + ".append_failed_rebuilds"] += 1.0;
+        profile.diagnostics[prefix + ".boxes_appended_before_rebuild"] +=
+            static_cast<double>(delta.boxes_appended);
+        refresh_dynamic_partition_after_update(profile,
+                                               (prefix + ".rebuild_after_append_failure").c_str());
+        return;
+    }
+    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, prefix.c_str());
+    const double ms = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    profile.diagnostics[prefix + ".delta_ms"] += ms;
+    profile.diagnostics[prefix + ".replace_ms"] += delta.update_ms;
+    profile.diagnostics[prefix + ".boxes_removed"] += static_cast<double>(delta.boxes_removed);
+    profile.diagnostics[prefix + ".boxes_appended"] += static_cast<double>(delta.boxes_appended);
+    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
+    profile.diagnostics["adaptive.offline_backend_grid_partition"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    profile.diagnostics["adaptive.online_backend_partition_native"] =
+        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
+    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+        const auto& stats = adaptive_partition_->stats();
+        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(stats.cells);
+        profile.diagnostics["adaptive.partition_grid_cells"] = static_cast<double>(stats.grid_cells);
+        profile.diagnostics["adaptive.partition_non_grid_cells"] = static_cast<double>(stats.non_grid_cells);
+        profile.diagnostics["adaptive.partition_face_index_entries"] =
+            static_cast<double>(stats.face_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_dims"] =
+            static_cast<double>(stats.point_index_dims);
+        profile.diagnostics["adaptive.partition_point_index_entries"] =
+            static_cast<double>(stats.point_index_entries);
+        profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
+            static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
+        profile.diagnostics["adaptive.partition_largest_island"] =
+            static_cast<double>(stats.largest_island);
+        profile.diagnostics["adaptive.partition_overlay_edges"] =
+            static_cast<double>(stats.overlay_edges);
+    }
+    invalidate_query_cache();
+}
+
+int RBFPlanningForest::append_adaptive_partition_boxes(std::size_t first_box_index,
+                                                       BuildProfile* profile,
+                                                       const char* diagnostic_prefix) {
+    if (!adaptive_partition_query_enabled_ || !adaptive_partition_ || first_box_index >= boxes_.size()) {
+        return 0;
+    }
+    const int appended = adaptive_partition_->append_boxes(boxes_,
+                                                           first_box_index,
+                                                           config_.query.adjacency_tolerance);
+    if (appended <= 0) {
+        return 0;
+    }
+    if (profile != nullptr && diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0') {
+        profile->diagnostics[std::string(diagnostic_prefix) + ".partition_boxes_appended"] +=
+            static_cast<double>(appended);
+    }
+    sync_adaptive_partition_segment_edges(profile, diagnostic_prefix);
+    refresh_adaptive_partition_diagnostics(profile);
+    return appended;
+}
+
+int RBFPlanningForest::sync_adaptive_partition_segment_edges(BuildProfile* profile,
+                                                             const char* diagnostic_prefix) {
+    if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
+        return 0;
+    }
+    const int appended = adaptive_partition_->sync_segment_edges(segment_edges_);
+    if (appended > 0 && profile != nullptr && diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0') {
+        profile->diagnostics[std::string(diagnostic_prefix) + ".partition_edges_appended"] +=
+            static_cast<double>(appended);
+    }
+    if (appended > 0) {
+        refresh_adaptive_partition_diagnostics(profile);
+    }
+    return appended;
+}
+
+int RBFPlanningForest::add_partition_box_corridor_overlay(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    const char* diagnostic_prefix,
+    bool anchor_endpoints,
+    bool skip_if_connected,
+    int query_index,
+    BuildProfile* profile) {
+    BuildProfile* out_profile = profile != nullptr ? profile : &last_build_;
+    const std::string prefix =
+        (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
+            ? std::string(diagnostic_prefix)
+            : std::string("partition_box_corridor");
+    auto& diagnostics = out_profile->diagnostics;
+    diagnostics[prefix + ".partition_box_corridor_overlay_attempts"] += 1.0;
+
+    if (!partition_native_mode()) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_not_partition_native"] += 1.0;
+        return 0;
+    }
+    if (!adaptive_partition_query_enabled_ || !adaptive_partition_ || adaptive_partition_->empty()) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_missing_partition"] += 1.0;
+        return 0;
+    }
+    if (waypoint_path.size() < 2) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_missing_waypoints"] += 1.0;
+        return 0;
+    }
+
+    StageContext anchor_context = StageContext::from_runtime(config_.runtime);
+    const std::size_t boxes_before_anchor = boxes_.size();
+    int source_box_id = locate_box_partition_first(start, false);
+    if (source_box_id < 0 && anchor_endpoints) {
+        source_box_id = anchor_query_endpoint_box(start, anchor_context);
+    }
+    int target_box_id = locate_box_partition_first(goal, false);
+    if (target_box_id < 0 && anchor_endpoints) {
+        target_box_id = anchor_query_endpoint_box(goal, anchor_context);
+    }
+    for (const auto& [key, value] : anchor_context.diagnostics().snapshot()) {
+        diagnostics[prefix + ".partition_box_corridor_anchor." + key] += value;
+    }
+
+    int anchors_added = 0;
+    if (boxes_.size() > boxes_before_anchor) {
+        const std::string anchor_prefix = prefix + ".partition_box_corridor_anchor";
+        anchors_added = append_adaptive_partition_boxes(boxes_before_anchor,
+                                                        out_profile,
+                                                        anchor_prefix.c_str());
+        source_box_id = locate_box_partition_first(start, false);
+        target_box_id = locate_box_partition_first(goal, false);
+    }
+    if (anchors_added > 0) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_anchor_boxes_added"] +=
+            static_cast<double>(anchors_added);
+    }
+
+    if (source_box_id < 0 || target_box_id < 0) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_missing_endpoint"] += 1.0;
+        return anchors_added;
+    }
+    if (source_box_id == target_box_id ||
+        (skip_if_connected && overlay_path_connected_partition_first(source_box_id, target_box_id))) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_already_connected"] += 1.0;
+        return anchors_added;
+    }
+
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    const PathAuditCheck audit = audit_waypoint_path(waypoint_path,
+                                                     checker,
+                                                     config_.query.audit_resolution,
+                                                     config_.query.audit_segment_step);
+    if (!audit.passed) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_audit_fail"] += 1.0;
+        return anchors_added;
+    }
+
+    const std::string edge_prefix = prefix + ".partition_native";
+    const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                         target_box_id,
+                                                         waypoint_path,
+                                                         SegmentEdgeType::BoxCorridor,
+                                                         std::max(1, config_.query.audit_resolution),
+                                                         SegmentEdgeValidation::CollisionChecked,
+                                                         false,
+                                                         query_index,
+                                                         out_profile,
+                                                         edge_prefix.c_str());
+    if (edge_id < 0) {
+        diagnostics[prefix + ".partition_box_corridor_overlay_edge_fail"] += 1.0;
+        return anchors_added;
+    }
+    diagnostics[prefix + ".partition_box_corridor_overlay_added"] += 1.0;
+    invalidate_query_cache();
+    return anchors_added + 1;
+}
+
+int RBFPlanningForest::add_segment_edge_partition_first(
+    int source_box_id,
+    int target_box_id,
+    std::vector<Eigen::VectorXd> waypoints,
+    SegmentEdgeType type,
+    int segment_resolution,
+    SegmentEdgeValidation validation,
+    bool strict_audit_required,
+    int query_index,
+    BuildProfile* profile,
+    const char* diagnostic_prefix) {
+    const bool use_partition_overlay = partition_native_mode();
+    const int edge_id = use_partition_overlay
+        ? append_segment_edge(segment_edges_,
+                              source_box_id,
+                              target_box_id,
+                              std::move(waypoints),
+                              type,
+                              segment_resolution,
+                              validation,
+                              strict_audit_required,
+                              query_index)
+        : add_segment_edge(segment_edges_,
+                           adjacency_,
+                           source_box_id,
+                           target_box_id,
+                           std::move(waypoints),
+                           type,
+                           segment_resolution,
+                           validation,
+                           strict_audit_required,
+                           query_index);
+    if (edge_id < 0) {
+        return -1;
+    }
+    if (use_partition_overlay) {
+        sync_adaptive_partition_segment_edges(profile != nullptr ? profile : &last_build_,
+                                              diagnostic_prefix != nullptr ? diagnostic_prefix
+                                                                           : "partition_segment_edge");
+    } else {
+        invalidate_query_cache();
+    }
+    return edge_id;
+}
+
 void RBFPlanningForest::invalidate_query_cache() const {
     query_cache_dirty_ = true;
+    partition_last_query_cache_.valid = false;
 }
 
 const QueryGraphCache& RBFPlanningForest::query_cache() const {
+    if (partition_native_mode() &&
+        env_int_or_default("RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE", 0) == 0) {
+        throw std::logic_error(
+            "partition_native mode forbids QueryGraphCache fallback; "
+            "use AdaptiveGridPartition query/locate/connect APIs instead "
+            "or set RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE=1 for legacy debugging");
+    }
     if (query_cache_dirty_) {
         query_cache_ = build_query_graph_cache(boxes_, adjacency_, segment_edges_);
         query_cache_dirty_ = false;

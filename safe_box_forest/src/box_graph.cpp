@@ -3,6 +3,7 @@
 #include <sbf/core/union_find.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cmath>
 #include <cstdint>
@@ -16,6 +17,8 @@
 
 namespace rbf {
 namespace {
+
+thread_local AdjacencyBuildStats g_last_adjacency_build_stats;
 
 double env_double_or_default(const char* name, double fallback) {
     const char* raw = std::getenv(name);
@@ -210,6 +213,78 @@ double index_origin(const std::vector<BoxNode>& boxes, int dim, double tolerance
     return origin - std::max(tolerance, 0.0) - 1e-12;
 }
 
+struct IntervalBinIndex {
+    int dim = -1;
+    double origin = 0.0;
+    double bin_width = 1.0;
+    std::unordered_map<long long, std::vector<int>> bins;
+    std::uint64_t estimated_pairs = 0;
+};
+
+IntervalBinIndex build_interval_bin_index(const std::vector<BoxNode>& boxes,
+                                          int dim,
+                                          double tolerance) {
+    IntervalBinIndex index;
+    index.dim = dim;
+    if (boxes.empty() || dim < 0) {
+        return index;
+    }
+    index.bin_width = choose_bin_width(boxes, dim, tolerance);
+    index.origin = index_origin(boxes, dim, tolerance);
+    index.bins.reserve(static_cast<std::size_t>(std::max(1, static_cast<int>(boxes.size()) * 2)));
+    for (int i = 0; i < static_cast<int>(boxes.size()); ++i) {
+        const auto& interval = boxes[static_cast<std::size_t>(i)].joint_intervals[static_cast<std::size_t>(dim)];
+        const long long lo_bin = interval_bin(interval.lo - tolerance, index.origin, index.bin_width);
+        const long long hi_bin = interval_bin(interval.hi + tolerance, index.origin, index.bin_width);
+        for (long long bin = lo_bin; bin <= hi_bin; ++bin) {
+            index.bins[bin].push_back(i);
+        }
+    }
+    for (const auto& [_, members] : index.bins) {
+        const std::uint64_t m = static_cast<std::uint64_t>(members.size());
+        if (m > 1) {
+            index.estimated_pairs += (m * (m - 1)) / 2;
+        }
+    }
+    return index;
+}
+
+std::vector<IntervalBinIndex> select_adjacency_indices(const std::vector<BoxNode>& boxes,
+                                                       double tolerance) {
+    std::vector<IntervalBinIndex> indices;
+    if (boxes.empty() || boxes.front().n_dims() <= 0) {
+        return indices;
+    }
+    const int nd = boxes.front().n_dims();
+    indices.reserve(static_cast<std::size_t>(nd));
+    for (int dim = 0; dim < nd; ++dim) {
+        indices.push_back(build_interval_bin_index(boxes, dim, tolerance));
+    }
+    std::sort(indices.begin(), indices.end(), [](const IntervalBinIndex& lhs, const IntervalBinIndex& rhs) {
+        if (lhs.estimated_pairs != rhs.estimated_pairs) {
+            return lhs.estimated_pairs < rhs.estimated_pairs;
+        }
+        return lhs.dim < rhs.dim;
+    });
+    const int default_dim_count = static_cast<int>(boxes.size()) >= env_int_or_default("RBF_ADJACENCY_MULTI_DIM_THRESHOLD", 3000)
+                                      ? 3
+                                      : 1;
+    const int dim_count = std::max(1, env_int_or_default("RBF_ADJACENCY_INDEX_DIMS", default_dim_count));
+    if (static_cast<int>(indices.size()) > dim_count) {
+        indices.resize(static_cast<std::size_t>(dim_count));
+    }
+    return indices;
+}
+
+bool intervals_may_connect_on_dim(const BoxNode& lhs,
+                                  const BoxNode& rhs,
+                                  int dim,
+                                  double tolerance) {
+    const auto& li = lhs.joint_intervals[static_cast<std::size_t>(dim)];
+    const auto& ri = rhs.joint_intervals[static_cast<std::size_t>(dim)];
+    return std::min(li.hi, ri.hi) >= std::max(li.lo, ri.lo) - tolerance;
+}
+
 double waypoint_path_length(const std::vector<Eigen::VectorXd>& waypoints) {
     double total = 0.0;
     for (std::size_t index = 1; index < waypoints.size(); ++index) {
@@ -283,31 +358,32 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
                                  double tolerance,
                                  int max_degree,
                                  double gap_tolerance) {
+    const auto start_time = std::chrono::steady_clock::now();
     AdjacencyGraph graph;
     for (const auto& box : boxes) {
         graph[box.id] = {};
     }
     const int n = static_cast<int>(boxes.size());
     const double effective_tol = std::max(tolerance, gap_tolerance);
-    const int index_dim = choose_index_dimension(boxes);
-    if (n <= 1 || index_dim < 0) {
+    g_last_adjacency_build_stats = {};
+    g_last_adjacency_build_stats.boxes = n;
+    if (n <= 1) {
+        g_last_adjacency_build_stats.build_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
         return graph;
     }
-    const double bin_width = choose_bin_width(boxes, index_dim, effective_tol);
-    const double origin = index_origin(boxes, index_dim, effective_tol);
-    std::unordered_map<long long, std::vector<int>> bins;
-    bins.reserve(static_cast<std::size_t>(std::max(1, n * 2)));
-    for (int i = 0; i < n; ++i) {
-        const auto& interval = boxes[static_cast<std::size_t>(i)].joint_intervals[static_cast<std::size_t>(index_dim)];
-        const long long lo_bin = interval_bin(interval.lo - effective_tol, origin, bin_width);
-        const long long hi_bin = interval_bin(interval.hi + effective_tol, origin, bin_width);
-        for (long long bin = lo_bin; bin <= hi_bin; ++bin) {
-            bins[bin].push_back(i);
-        }
+    const std::vector<IntervalBinIndex> indices = select_adjacency_indices(boxes, effective_tol);
+    if (indices.empty() || indices.front().dim < 0) {
+        g_last_adjacency_build_stats.build_ms =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
+        return graph;
     }
+    const IntervalBinIndex& primary = indices.front();
+    g_last_adjacency_build_stats.selected_dims = static_cast<int>(indices.size());
+    g_last_adjacency_build_stats.primary_dim = primary.dim;
     std::unordered_set<std::uint64_t> tested;
     tested.reserve(static_cast<std::size_t>(std::max(1, n * 8)));
-    for (const auto& [_, members] : bins) {
+    for (const auto& [_, members] : primary.bins) {
         for (std::size_t outer = 0; outer < members.size(); ++outer) {
             const int i = members[outer];
             for (std::size_t inner = outer + 1; inner < members.size(); ++inner) {
@@ -316,9 +392,26 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
                 if (!tested.insert(key).second) {
                     continue;
                 }
+                g_last_adjacency_build_stats.candidate_pairs += 1;
+                bool selected_dims_overlap = true;
+                for (std::size_t dim_index = 1; dim_index < indices.size(); ++dim_index) {
+                    const int dim = indices[dim_index].dim;
+                    if (!intervals_may_connect_on_dim(boxes[static_cast<std::size_t>(i)],
+                                                      boxes[static_cast<std::size_t>(j)],
+                                                      dim,
+                                                      effective_tol)) {
+                        selected_dims_overlap = false;
+                        break;
+                    }
+                }
+                if (!selected_dims_overlap) {
+                    continue;
+                }
+                g_last_adjacency_build_stats.exact_tests += 1;
                 if (boxes_connected(boxes[static_cast<std::size_t>(i)], boxes[static_cast<std::size_t>(j)], effective_tol)) {
                     graph[boxes[static_cast<std::size_t>(i)].id].push_back(boxes[static_cast<std::size_t>(j)].id);
                     graph[boxes[static_cast<std::size_t>(j)].id].push_back(boxes[static_cast<std::size_t>(i)].id);
+                    g_last_adjacency_build_stats.edges += 1;
                 }
             }
         }
@@ -339,7 +432,13 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
             }
         }
     }
+    g_last_adjacency_build_stats.build_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
     return graph;
+}
+
+AdjacencyBuildStats last_adjacency_build_stats() {
+    return g_last_adjacency_build_stats;
 }
 
 QueryGraphCache build_query_graph_cache(const std::vector<BoxNode>& boxes,
@@ -387,16 +486,15 @@ QueryGraphCache build_query_graph_cache(const std::vector<BoxNode>& boxes,
     return cache;
 }
 
-int add_segment_edge(SegmentEdgeList& edges,
-                     AdjacencyGraph& graph,
-                     int source_box_id,
-                     int target_box_id,
-                     std::vector<Eigen::VectorXd> waypoints,
-                     SegmentEdgeType type,
-                     int segment_resolution,
-                     SegmentEdgeValidation validation,
-                     bool strict_audit_required,
-                     int query_index) {
+int append_segment_edge(SegmentEdgeList& edges,
+                        int source_box_id,
+                        int target_box_id,
+                        std::vector<Eigen::VectorXd> waypoints,
+                        SegmentEdgeType type,
+                        int segment_resolution,
+                        SegmentEdgeValidation validation,
+                        bool strict_audit_required,
+                        int query_index) {
     if (source_box_id < 0 || target_box_id < 0) {
         return -1;
     }
@@ -416,6 +514,31 @@ int add_segment_edge(SegmentEdgeList& edges,
     edge.strict_audit_required = strict_audit_required;
     edge.query_index = query_index;
     edges.push_back(std::move(edge));
+    return next_id;
+}
+
+int add_segment_edge(SegmentEdgeList& edges,
+                     AdjacencyGraph& graph,
+                     int source_box_id,
+                     int target_box_id,
+                     std::vector<Eigen::VectorXd> waypoints,
+                     SegmentEdgeType type,
+                     int segment_resolution,
+                     SegmentEdgeValidation validation,
+                     bool strict_audit_required,
+                     int query_index) {
+    const int next_id = append_segment_edge(edges,
+                                            source_box_id,
+                                            target_box_id,
+                                            std::move(waypoints),
+                                            type,
+                                            segment_resolution,
+                                            validation,
+                                            strict_audit_required,
+                                            query_index);
+    if (next_id < 0) {
+        return -1;
+    }
     append_graph_edge(graph, source_box_id, target_box_id);
     return next_id;
 }

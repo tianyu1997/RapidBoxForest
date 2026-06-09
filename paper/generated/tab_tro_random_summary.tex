@@ -1,7 +1,7 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the v6 multi-query catalog; PRM, RRTConnect, and BIT* use current saved-catalog rows with the globally fixed 0.01~s final-simplify budget. The IRIS-NP+GCS column restores the legacy random-scene contextual result. RBF Online/q excludes final simplification; Simplify/q reports the measured post-processing cost. Full budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
+\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. Full curves appear in \Cref{fig:tro_random_tradeoff}.}
 \label{tab:tro-random-summary}
 \scriptsize
 \setlength{\tabcolsep}{1.35pt}
@@ -9,17 +9,17 @@
 \toprule
 Scenario & \multicolumn{7}{c|}{RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\
 \cmidrule(lr){2-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}\cmidrule(lr){13-14}\cmidrule(lr){15-16}
- & Build & Online/q & Simplify/q & Amort@10 & Path & Boxes & SR & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\
+ & Build$_{50}$ & Online/q$_{50}$ & Simplify/q$_{50}$ & Amort@10$_{50}$ & $L_\mu$ & Boxes & SR & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ \\
 \midrule
-IIWA-Easy & 0.276 & 0.022 & 0.003 & 0.050 & 3.66 & 200 & 80/80 & 10.267 & 1.84 & 10.492 & 2.30 & 0.001 & 3.86 & 0.012 & 3.65 \\
-IIWA-Medium & 0.254 & 0.022 & 0.003 & 0.048 & 3.93 & 400 & 80/80 & 20.180 & 2.12 & 5.473 & 2.24 & 0.001 & 4.12 & 0.012 & 4.00 \\
-IIWA-Hard & 0.313 & 0.022 & 0.004 & 0.053 & 3.90 & 400 & 80/80 & 31.206 & 2.13 & 1.507 & 2.71 & 0.001 & 4.06 & 0.012 & 3.83 \\
-UR5-Easy & 0.186 & 0.001 & 0.006 & 0.020 & 4.99 & 400 & 80/80 & 3.448 & 3.87 & 0.893 & 4.39 & 0.003 & 6.07 & 0.012 & 4.24 \\
-UR5-Medium & 0.332 & 0.044 & 0.009 & 0.077 & 5.57 & 100 & 80/80 & 5.684 & 4.77 & 10.491 & 4.53 & 0.006 & 7.39 & 0.017 & 4.47 \\
-UR5-Hard & 0.313 & 0.047 & 0.008 & 0.078 & 4.99 & 200 & 80/80 & 7.535 & 4.35 & 10.497 & 4.15 & 0.004 & 6.22 & 0.012 & 4.34 \\
-PANDA-Easy & 0.201 & 0.001 & 0.002 & 0.022 & 3.75 & 400 & 80/80 & 3.410 & 3.45 & 1.034 & 3.60 & 0.001 & 3.87 & 0.007 & 3.87 \\
-PANDA-Medium & 0.199 & 0.001 & 0.003 & 0.021 & 3.73 & 400 & 80/80 & 6.371 & 3.58 & 1.034 & 3.67 & 0.001 & 3.83 & 0.007 & 3.86 \\
-PANDA-Hard & 0.205 & 0.002 & 0.003 & 0.023 & 3.84 & 400 & 80/80 & 7.932 & 3.18 & 1.051 & 3.70 & 0.001 & 3.95 & 0.007 & 3.96 \\
+IIWA-Easy & 0.291 & 0.012 & 0.004 & 0.041 & 3.65 & 1600 & 60/80 & 10.267 & 1.84 & 10.492 & 2.30 & 0.001 & 3.86 & 0.012 & 3.73 \\
+IIWA-Medium & 0.246 & 0.000 & 0.000 & 0.025 & -- & 400 & 7/80 & 20.180 & 2.12 & 5.473 & 2.24 & 0.001 & 4.12 & 0.012 & 4.00 \\
+IIWA-Hard & 0.227 & 0.000 & 0.000 & 0.023 & 4.02 & 400 & 10/80 & 31.206 & 2.13 & 1.507 & 2.71 & 0.001 & 4.06 & 0.012 & 3.83 \\
+UR5-Easy & 0.202 & 0.013 & 0.007 & 0.033 & 4.44 & 800 & 64/80 & 3.448 & 3.87 & 0.893 & 4.39 & 0.003 & 6.07 & 0.012 & 4.24 \\
+UR5-Medium & 0.195 & 0.013 & 0.007 & 0.033 & 4.05 & 1200 & 73/80 & 5.684 & 4.77 & 1.495 & 4.82 & 0.004 & 5.76 & 0.022 & 4.21 \\
+UR5-Hard & 0.192 & 0.015 & 0.007 & 0.034 & 4.88 & 1200 & 56/80 & 7.535 & 4.35 & 10.497 & 4.15 & 0.004 & 6.22 & 0.012 & 4.34 \\
+PANDA-Easy & 0.224 & 0.009 & 0.004 & 0.031 & 3.64 & 800 & 80/80 & 3.410 & 3.45 & 1.034 & 3.60 & 0.001 & 3.87 & 0.007 & 3.78 \\
+PANDA-Medium & 0.238 & 0.011 & 0.005 & 0.035 & 3.67 & 1600 & 80/80 & 6.371 & 3.58 & 1.034 & 3.67 & 0.001 & 3.83 & 0.007 & 3.86 \\
+PANDA-Hard & 0.235 & 0.013 & 0.006 & 0.036 & 3.87 & 1600 & 80/80 & 7.932 & 3.18 & 1.051 & 3.70 & 0.001 & 3.95 & 0.007 & 3.96 \\
 \bottomrule
 \end{tabular}
 \par\endgroup

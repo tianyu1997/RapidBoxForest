@@ -1210,6 +1210,24 @@ OracleNodeId DatabaseBoxOracle::right_child(OracleNodeId node) const {
     return from_database_node(id);
 }
 
+OracleNodeTopology DatabaseBoxOracle::node_topology(OracleNodeId node) const {
+    OracleNodeTopology out;
+    if (node < 0) {
+        return out;
+    }
+    const auto topology = online_cache_ != nullptr
+        ? online_cache_->topology(to_database_node(node))
+        : database_.topology(to_database_node(node));
+    out.valid = topology.id != lect_database::kInvalidNodeId;
+    out.leaf = topology.leaf;
+    out.depth = topology.depth;
+    out.split_dim = topology.split_dim;
+    out.split_value = topology.split_value;
+    out.left = from_database_node(topology.left);
+    out.right = from_database_node(topology.right);
+    return out;
+}
+
 SplitNodeResult DatabaseBoxOracle::split_node(OracleNodeId node,
                                               const std::vector<Interval>& intervals,
                                               int changed_dim,

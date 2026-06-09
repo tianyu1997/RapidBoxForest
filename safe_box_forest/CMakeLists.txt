@@ -80,6 +80,7 @@ set(SBF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set(SBF_LECTDB_INCLUDE_DIR ${SBF_LECT_DATABASE_MODULE_DIR}/include)
 
 add_library(sbf_core STATIC
+    src/adaptive_grid_partition.cpp
     src/box_graph.cpp
     src/connector.cpp
     src/find_free_box.cpp

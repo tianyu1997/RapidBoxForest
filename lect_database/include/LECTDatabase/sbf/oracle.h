@@ -86,6 +86,16 @@ struct SplitNodeResult {
     double split_value = 0.0;
 };
 
+struct OracleNodeTopology {
+    bool valid = false;
+    bool leaf = true;
+    int depth = 0;
+    int split_dim = -1;
+    double split_value = 0.0;
+    OracleNodeId left = kInvalidOracleNodeId;
+    OracleNodeId right = kInvalidOracleNodeId;
+};
+
 struct OracleValidationConfig {
     OracleValidationMode mode = OracleValidationMode::Strict;
     bool accept_unsafe_free = false;
@@ -293,6 +303,22 @@ public:
     virtual double split_value(OracleNodeId node) const = 0;
     virtual OracleNodeId left_child(OracleNodeId node) const = 0;
     virtual OracleNodeId right_child(OracleNodeId node) const = 0;
+    virtual OracleNodeTopology node_topology(OracleNodeId node) const {
+        OracleNodeTopology topology;
+        if (node < 0) {
+            return topology;
+        }
+        topology.valid = true;
+        topology.leaf = is_leaf(node);
+        topology.depth = depth(node);
+        if (!topology.leaf) {
+            topology.split_dim = split_dim(node);
+            topology.split_value = split_value(node);
+            topology.left = left_child(node);
+            topology.right = right_child(node);
+        }
+        return topology;
+    }
     virtual SplitNodeResult split_node(OracleNodeId node,
                                        const std::vector<Interval>& intervals,
                                        int changed_dim,
@@ -386,6 +412,7 @@ public:
     double split_value(OracleNodeId node) const override;
     OracleNodeId left_child(OracleNodeId node) const override;
     OracleNodeId right_child(OracleNodeId node) const override;
+    OracleNodeTopology node_topology(OracleNodeId node) const override;
     SplitNodeResult split_node(OracleNodeId node,
                                const std::vector<Interval>& intervals,
                                int changed_dim,

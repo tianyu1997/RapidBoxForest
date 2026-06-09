@@ -325,6 +325,7 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "offline_shortcut_box_corridor_edges_added_median": median(row.get("offline_shortcut_box_corridor_edges_added", math.nan) for row in items),
             "offline_shortcut_segment_edges_added_median": median(row.get("offline_shortcut_segment_edges_added", math.nan) for row in items),
             "offline_shortcut_pave_boxes_added_median": median(row.get("offline_shortcut_pave_boxes_added", math.nan) for row in items),
+            "offline_shortcut_pave_fail_median": median(row.get("offline_shortcut_pave_fail", math.nan) for row in items),
             "final_boxes_median": median(row.get("final_boxes", math.nan) for row in items),
             "final_segment_edges_median": median(row.get("final_segment_edges", math.nan) for row in items),
             "final_adjacency_islands_median": median(row.get("final_adjacency_islands", math.nan) for row in items),
@@ -525,6 +526,7 @@ def main() -> int:
             "offline_shortcut_box_corridor_edges_added": int(row.get("offline_shortcut_box_corridor_edges_added", 0)),
             "offline_shortcut_segment_edges_added": int(row.get("offline_shortcut_segment_edges_added", 0)),
             "offline_shortcut_pave_boxes_added": int(row.get("offline_shortcut_pave_boxes_added", 0)),
+            "offline_shortcut_pave_fail": int(row.get("offline_shortcut_pave_fail", 0)),
         })
         row["query_bridge_per_query_s"] = float(row.get("query_bridge_s", 0.0)) / max(1, int(row.get("query_count", 1)))
         rows.append(row)
@@ -557,7 +559,7 @@ def main() -> int:
         "offline_anchor_roots_added", "offline_segment_edges_added",
         "offline_shortcut_edges_requested", "offline_shortcut_edges_added",
         "offline_shortcut_box_corridor_edges_added", "offline_shortcut_segment_edges_added",
-        "offline_shortcut_pave_boxes_added",
+        "offline_shortcut_pave_boxes_added", "offline_shortcut_pave_fail",
         "final_boxes", "final_segment_edges", "final_adjacency_islands",
     ]
     summary_fields = [
@@ -588,6 +590,7 @@ def main() -> int:
         "offline_segment_edges_added_median", "offline_shortcut_edges_requested_median",
         "offline_shortcut_edges_added_median", "offline_shortcut_box_corridor_edges_added_median",
         "offline_shortcut_segment_edges_added_median", "offline_shortcut_pave_boxes_added_median",
+        "offline_shortcut_pave_fail_median",
         "final_boxes_median", "final_segment_edges_median", "final_adjacency_islands_median",
     ]
     write_csv(args.out_dir / "offline_online_tradeoff_runs.csv", rows, run_fields)

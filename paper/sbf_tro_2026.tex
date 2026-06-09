@@ -1383,11 +1383,13 @@ JSON/CSV artifacts with recorded provenance.
 Planner success means that the returned path passes the fixed-resolution
 query-validation check. Validation time is reported separately and is not charged to planning
 time. Path-length statistics are success-only means, while success rate is reported
-over all scheduled runs. Query-time shortcut boxes and final collision
+over all scheduled runs. Unless a caption states otherwise, reported time columns
+are medians over the scheduled runs/scenes, and reported path columns are
+success-only means. Query-time shortcut boxes and final collision
 shortcut boxes are disabled for the RBF rows. Main online tables define
 Online/q as solver time only: endpoint anchoring, online repair, graph search,
 or an OMPL solve call. Final simplification is fixed globally to a 10~ms OMPL
-budget and reported separately as Simplify/q; it is not included in Online/q or
+budget and is not included in Online/q or
 in amortized online-efficiency numbers. The independent strict audit remains
 reported separately. Appendix trade-off curves additionally sweep 0, 5, 10,
 and 50~ms simplification budgets, with 50~ms interpreted as a full-polish
@@ -1396,28 +1398,30 @@ upper-budget setting rather than the primary online-efficiency number.
 \paragraph{RBF planning profile.}
 Unless otherwise stated, RBF uses the profile selected in the Shelf+IIWA
 ablation: a query-agnostic offline build followed by reusable online queries.
-The offline phase uses a parallel virtual leaf sweep from depth 8 to 14,
-overlap pruning from depth 14, deterministic random offline anchors that spread
-root boxes across the native joint-limit space, and bounded connector repair.
-No start/goal, query waypoint, or query label is passed to the offline build.
-The online solve phase then performs endpoint anchoring, query bridge/local
-repair, and graph search; the fixed 10~ms OMPL simplification attempt is run
-afterward and charged only to the Simplify/q column. The selected
-trade-off point uses a 400-box offline/bridge budget,
-\textsc{FindFreeBox} binary descent with active-tree maximum depth 64, paving
-depth 62, and skip-to-depth 5. The connector is capped at two 30~ms pair
-attempts per gap with a 200-box bridge budget. Support-hull collision uses an
-AABB broadphase followed by support-hull GJK narrow-phase validation.
-Online query-bridge repair is applied to all five shelf query pairs after
-probing the existing box graph; the CS--LB pair receives additional short
-repair attempts because it is the most sensitive residual gap. Virtual leaf
-validation uses eight workers.
-Build-stage RRT segment witnesses are enabled and
-explicitly accounted. Connector segment validation uses the same 0.01~rad
-maximum joint-space sample spacing as the final strict audit, so a segment
-witness cannot be accepted under a looser build-time collision check.
+The offline phase constructs an adaptive grid-partition representation over
+the native joint-limit space. Canonical symmetry is used only inside LECT; the
+planner inputs, outputs, query endpoints, and final audits remain in native
+joint coordinates. The selected shelf profile uses a parallel virtual leaf
+sweep from depth 8 to 13, d23 external endpoint evidence, budgeted grid merging,
+and partition-native adjacency/index construction. No start/goal, query
+waypoint, or query label is passed to the offline build, and the selected shelf
+profile does not add offline shortcut or segment edges.
+The online solve phase then probes the partition, applies query bridge/local
+repair to the five query pairs, and runs partition-native graph search; the
+fixed 10~ms OMPL simplification attempt is run afterward under the common
+final-processing protocol. The registered shelf profile fixes the b100
+offline/bridge budget and keeps \textsc{FindFreeBox} binary descent with skip-to-depth
+32, query-corridor paving depth 52, 12 forced bridge attempts with 1600
+bridge-RRT iterations per online repair task, direct-corridor sample step
+0.08~rad, and an adaptive repair cap of 24 calls. Support-hull collision uses an AABB broadphase followed by
+support-hull GJK narrow-phase validation. Query bridge repair is applied using
+the same global parameters for all five shelf query pairs. Residual segment
+witnesses, when inserted online after maximum-depth box repair fails, are
+explicitly accounted. Segment validation uses the same 0.01~rad maximum
+joint-space sample spacing as the final strict audit, so a segment witness
+cannot be accepted under a looser build-time collision check.
 Shelf+IIWA baseline rows additionally use the
-\texttt{Exp4-d23-b400} warm-cache setting, where the d23 external LECT
+\texttt{Exp4-d23-b100} warm-cache setting, where the d23 external LECT
 evidence cache is read-only. Random-scene rows use the same
 algorithm defaults, robot-local LECTDB caches, and query-independent random
 offline anchors rather than Shelf-specific anchors.
@@ -1426,11 +1430,9 @@ offline anchors rather than Shelf-specific anchors.
 \label{sec:exp_shelf_iiwa}
 
 \Cref{fig:tro_shelf_tradeoff,tab:tro-shelf-ablation} show the Shelf+IIWA
-trade-off over seeds 0--7 and the five canonical query pairs. The tabulated
-rows use design points selected from their budget curves, while
-the figure shows the complete budget sweep. The table reports offline build
-time, online time per query, and build amortized over the five shelf queries at
-the 400-box trade-off point. CritSample rows are
+b100 registered profile over seeds 0--7 and the five canonical query pairs. The table reports offline build
+time, batch-amortized online time, and build amortized over the five shelf queries at
+this fixed profile. CritSample rows are
 included only as endpoint-source diagnostics: they use the same planner and
 strict audit, but the envelope approximation is not a conservative-complete
 support-hull certificate.
@@ -1446,7 +1448,7 @@ support-hull certificate.
     \centering
     \includegraphics[height=0.162\textheight]{generated/fig_tro_shelf_tradeoff.pdf}
     \refstepcounter{figure}\label{fig:tro_shelf_tradeoff}
-    \hspace*{0.5em}\makebox[\linewidth][c]{\begin{minipage}{0.84\linewidth}
+    \makebox[\linewidth][c]{\begin{minipage}{0.84\linewidth}
       \footnotesize\raggedright
       Fig.~\thefigure. Shelf+IIWA RBF ablation.\\
       Amortized time/query versus audited path length;\\
@@ -1457,7 +1459,7 @@ support-hull certificate.
     \centering
     \includegraphics[height=0.162\textheight]{generated/fig_tro_shelf_cross_tradeoff.pdf}
     \refstepcounter{figure}\label{fig:tro_shelf_cross_tradeoff}
-    \hspace*{0.5em}\makebox[\linewidth][r]{\begin{minipage}{0.78\linewidth}
+    \makebox[\linewidth][r]{\begin{minipage}{0.78\linewidth}
       \footnotesize\raggedright
       Fig.~\thefigure. Shelf+IIWA cross-algorithm trade-off.\\
       Panel (a) shows full-success amortized time--path points;\\
@@ -1471,10 +1473,16 @@ support-hull certificate.
 
 The Shelf+IIWA cross-algorithm experiment uses the same five canonical queries
 and 0.01~rad final-audit setting for RBF, IRIS-NP+GCS, PRM, RRTConnect, and
-BIT*. RBF rows come from the reusable-planner budget curve in
+BIT*. RBF rows use the Exp.~4 b100 reusable-planner profile in
 \cref{fig:tro_shelf_tradeoff}; \cref{tab:tro-shelf-cross-algorithm} reports the
-selected trade-off point from that curve. PRM is reported as a reusable
-build/query planner whose roadmap is shared across the five queries.
+same registered profile. For the per-query entries in
+\cref{tab:tro-shelf-cross-algorithm}, the RBF online latency is measured by a
+separate artifact that reruns each shelf query independently from the same
+query-agnostic profile; it is not obtained by dividing the five-query batch run
+or by summing overlapping bridge-task diagnostics. The Shelf+IIWA ablation in
+\cref{tab:tro-shelf-ablation} separately reports reusable batched
+amortization. PRM is reported as a reusable build/query planner whose roadmap
+is shared across the five queries.
 RRTConnect and BIT* are one-shot online baselines with zero build time.
 PRM, RRTConnect, and BIT* are full-joint-space reruns under the same
 native-query semantics and final audit. IRIS-NP+GCS is restored as the legacy
@@ -1500,10 +1508,11 @@ length or single-query total time.
   \includegraphics[width=\textwidth]{generated/fig_tro_random_tradeoff.pdf}
 \caption{Saved-catalog random-scene trade-off. Rows separate IIWA, UR5, and
   Panda; columns show easy, medium, hard, and per-robot query-count
-  amortization. Blue curves are RBF budget sweeps on the saved v6
+  amortization. Blue curves are RBF budget sweeps on the saved v7
   multi-query catalog. PRM and BIT* are saved-catalog reruns with the same
-  0.01~rad final audit. The IRIS-NP+GCS table column restores the legacy
-  random-scene contextual result. Only 100\% success-rate points are plotted;
+  0.01~rad final audit. The IRIS-NP+GCS column is reported from the saved
+  v7 catalog context when full-success. Only 100\% success-rate points are
+  plotted;
   black rings mark the first full-success point on each curve and gold rings
   mark the tabulated trade-off point. Context rows for non-RBF reusable
   planners are shown when available under the same saved-scene protocol.}
@@ -1512,7 +1521,7 @@ length or single-query total time.
   \input{generated/tab_tro_random_summary.tex}
 \end{figure*}
 
-The random-scene experiment uses a saved v6 catalog generated before planner
+The random-scene experiment uses a saved v7 catalog generated before planner
 execution and then reused by every evaluated planner. Each obstacle scene
 stores ten fixed query pairs. The generator samples actual start and goal
 configurations in native joint space, stores their canonical representatives as
@@ -1525,10 +1534,10 @@ so the three difficulty strata are not shared prefixes of a single query set.
 Random-scene RBF rows build one query-agnostic forest per obstacle scene and
 then reuse it for the ten online queries. They do not reuse Shelf+IIWA anchors
 or the Shelf d23 cache; UR5 and Panda use robot-local d20 LECTDB caches, while
-IIWA uses a d23 LECTDB root. The random-scene scan selected a shallower
-coverage profile for most strata (leaf depth 10 with FFB/connector/query-bridge
-depth 62) and a deeper leaf sweep with shallower paving for the harder UR5
-strata (leaf depth 16 with FFB/connector/query-bridge depth 56). The table
+IIWA uses a d23 LECTDB root. The random-scene scan follows the paper Exp.4/Exp.5
+defaults (leaf max depth 13, deep FFB depth 62, connector/query-bridge 52, seed
+set from
+the offline query-independent planner). The table
 reports one readable RBF trade-off point per robot--difficulty stratum: among
 full-success budget points within 8\% of the shortest audited mean path, it
 first minimizes online time per query and then the ten-query amortized time.
@@ -1536,8 +1545,8 @@ first minimizes online time per query and then the ten-query amortized time.
 shows the complete RBF box-budget curve. PRM is built once per saved
 obstacle scene and queried on the same ten pairs; RRTConnect and BIT* solve each
 query independently as one-shot online baselines. The IRIS-NP+GCS column is
-kept as the legacy random-scene context row rather than as a newly rerun
-0.01~s-simplify artifact. The selected RBF rows pass the
+kept as the full-success saved-v7 context row rather than a legacy cross-run
+entry. The selected RBF rows pass the
 same final audit on all 80 queries in each robot--difficulty stratum. These
 results should be read as a reusable-planner study: RBF's advantage is expected
 to appear in online reuse and amortized multi-query cost, while BIT* and

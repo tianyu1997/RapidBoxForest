@@ -23,7 +23,11 @@ struct LeafSweepConfig {
 	bool parallel_virtual_validation = false;
 	int collision_overlap_prune_min_depth = -1;
 	double collision_overlap_prune_threshold = 0.0;
+	double collision_overlap_prune_min_threshold = 0.0;
+	double collision_overlap_prune_decay_per_depth = 0.0;
 	double collision_overlap_prune_ratio_threshold = 0.0;
+	int max_free_boxes = 0;
+	int max_collision_boxes = 0;
 };
 
 struct LeafSweepGroupResult {

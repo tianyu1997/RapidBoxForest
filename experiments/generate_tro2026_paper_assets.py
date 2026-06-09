@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from experiments.common.experiment_io import environment_metadata, write_json  # noqa: E402
 from experiments.common.metrics import mean, median  # noqa: E402
-from experiments.common.rbf_defaults import DEFAULT_RBF_DEEP_MAX_BOXES  # noqa: E402
+from experiments.common.rbf_defaults import DEFAULT_RBF_SHELF_BOX_BUDGET  # noqa: E402
 
 
 REQUIRED_TABLES = {
@@ -123,7 +123,7 @@ def parse_args() -> argparse.Namespace:
         default=True,
         help=(
             "Merge exp06/current_ompl_baselines into Table VI/figure generation. "
-            "Enabled by default because the registered Exp.6 OMPL baselines use the saved v6 catalog "
+            "Enabled by default because the registered Exp.6 OMPL baselines use the saved catalog "
             "and the global strict-audit/final-simplify policy."
         ),
     )
@@ -223,6 +223,9 @@ def amortized_query_time(row: dict[str, Any], k: int) -> float:
 
 
 def method_time(row: dict[str, Any]) -> float:
+    reported_amortized = as_float(row.get("amortized_s_k5"))
+    if math.isfinite(reported_amortized):
+        return reported_amortized
     amortized = amortized_query_time(row, 5)
     if math.isfinite(amortized):
         return amortized
@@ -661,6 +664,32 @@ def find_exp05_manifest(out_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
+def find_exp05_rbf_single_query_summary(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "rbf_single_query_online" / "shelf_rbf_single_query_online_summary.csv",
+        out_dir / "rbf_single_query_online" / "shelf_rbf_single_query_online_summary.csv",
+        out_dir / "exp05_rbf_single_query_online_b100_fixed1600_a12_step0p08_20260609" / "shelf_rbf_single_query_online_summary.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    matches = sorted(out_dir.glob("**/shelf_rbf_single_query_online_summary.csv"))
+    return matches[-1] if matches else None
+
+
+def find_exp05_rbf_single_query_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "rbf_single_query_online" / "shelf_rbf_single_query_online_manifest.json",
+        out_dir / "rbf_single_query_online" / "shelf_rbf_single_query_online_manifest.json",
+        out_dir / "exp05_rbf_single_query_online_b100_fixed1600_a12_step0p08_20260609" / "shelf_rbf_single_query_online_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    matches = sorted(out_dir.glob("**/shelf_rbf_single_query_online_manifest.json"))
+    return matches[-1] if matches else None
+
+
 def find_exp05_current_baseline_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp05" / "current_ompl_baselines_001" / "shelf_cross_algorithm_summary.csv",
@@ -979,6 +1008,18 @@ def first_full_success_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
     )[0]
 
 
+def select_registered_rbf_budget_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select the Exp.4 registered RBF budget for cross-experiment tables."""
+    registered = [
+        row for row in rows
+        if int(float(row.get("deep_max_boxes", -1) or -1)) == DEFAULT_RBF_SHELF_BOX_BUDGET
+        and is_full_success(row)
+    ]
+    if registered:
+        return sorted(registered, key=measured_time_key)[0]
+    return select_tradeoff_row(rows, budget_field="deep_max_boxes")
+
+
 def query_stats_from_runs(
     run_rows: list[dict[str, Any]],
     predicate: Any,
@@ -1067,6 +1108,38 @@ def bitstar_first_full_success_query_stats(
     return stats, success_total, run_total
 
 
+def rbf_single_query_stats_from_summary(
+    rows: list[dict[str, Any]],
+) -> tuple[dict[str, dict[str, float]], int, int, float]:
+    stats: dict[str, dict[str, float]] = {
+        label: {"query_s": math.nan, "path": math.nan, "segment": math.nan}
+        for label in QUERY_ORDER
+    }
+    success = 0
+    total = 0
+    builds: list[float] = []
+    for row in rows:
+        label = str(row.get("query_label", ""))
+        if label not in stats:
+            continue
+        success += int(float(row.get("success_queries", 0) or 0))
+        total += int(float(row.get("total_queries", row.get("runs", 0)) or 0))
+        build = as_float(row.get("offline_build_s_median"))
+        if math.isfinite(build):
+            builds.append(build)
+        stats[label] = {
+            "query_s": as_float(
+                row.get(
+                    "online_solve_wall_s_median",
+                    row.get("online_per_query_s_median", row.get("online_solve_per_query_s_median")),
+                )
+            ),
+            "path": as_float(row.get("path_length_mean", row.get("path_length_median"))),
+            "segment": as_float(row.get("raw_segment_fraction_median")),
+        }
+    return stats, success, total, median(builds)
+
+
 def old_shelf_iris_query_stats() -> dict[str, dict[str, float]]:
     old_table = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated/tab_tro_main_shelf_best_tradeoff.tex")
     if not old_table.exists():
@@ -1127,7 +1200,9 @@ def grouped_query_table(
     label: str,
     methods: list[dict[str, Any]],
     include_segment: bool = False,
+    time_unit: str = "s",
 ) -> None:
+    time_scale = 1000.0 if time_unit == "ms" else 1.0
     per_method_cols = 3 if include_segment else 2
     colspec = "@{}l" + ("rrr|" if include_segment else "rr|") * len(methods)
     colspec = colspec.rstrip("|") + "@{}"
@@ -1156,14 +1231,18 @@ def grouped_query_table(
         cmid.append(rf"\cmidrule(lr){{{start}-{end}}}")
         start = end + 1
     lines.append("".join(cmid))
-    metric_cols = "Solve/q (s) & Path & Seg." if include_segment else "Solve/q (s) & Path"
-    lines.append("Query & " + " & ".join(metric_cols for _method in methods) + r" \\")
+    default_time_metric = rf"$T_{{50}}$ ({time_unit})"
+    metric_cols = []
+    for method in methods:
+        time_metric = str(method.get("time_metric_label") or default_time_metric)
+        metric_cols.append(f"{time_metric} & $L_\\mu$ & Seg." if include_segment else f"{time_metric} & $L_\\mu$")
+    lines.append("Query & " + " & ".join(metric_cols) + r" \\")
     lines.append(r"\midrule")
     for query_label in QUERY_ORDER:
         cells = [QUERY_LABELS[query_label]]
         for method in methods:
             stats = method.get("queries", {}).get(query_label, {})
-            cells.append(tex_num(stats.get("query_s")))
+            cells.append(tex_num(as_float(stats.get("query_s")) * time_scale))
             cells.append(tex_num(stats.get("path"), 2))
             if include_segment:
                 cells.append(tex_num(stats.get("segment"), 2))
@@ -1177,9 +1256,9 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
         "critsample_d23_cache": "CritSample d23",
         "no_cache_full_root_ts": "No-cache full-root",
-        "critsample_support_hull": "CritSample",
+        "critsample_support_hull": "CritSample endpoints",
         "critsample_support_hull_unsafe": "CritSample",
-        "no_external_lect": "No LECT replay",
+        "no_external_lect": "No LECT replay, live d17",
         "support_hull_no_aabb": "SH w/o broadphase",
         "link_aabb": "Link AABB",
         "single_thread": "No LECT, 1 thread",
@@ -1187,7 +1266,7 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
     table_rows = [
         row
         for row in rows
-        if int(float(row.get("deep_max_boxes", -1) or -1)) == DEFAULT_RBF_DEEP_MAX_BOXES
+        if int(float(row.get("deep_max_boxes", -1) or -1)) == DEFAULT_RBF_SHELF_BOX_BUDGET
     ]
     if not table_rows:
         table_rows = rows
@@ -1195,11 +1274,11 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA reusable RBF ablation at the selected design point. Build is query-agnostic offline coverage. Online/q charges online anchoring, query bridge, local repair, and graph search, excluding final simplification. Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget and is not included in Online/q. Amort@5 amortizes Build over the five shelf queries plus Online/q. Path is the success-only mean path length. Seg. is raw pre-simplification segment-edge length fraction; the full trade-off curve is shown in \Cref{fig:tro_shelf_tradeoff}.}",
+        r"\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Times are in seconds; Path is the success-only mean and Seg. is the raw segment fraction.}",
         r"\label{tab:tro-shelf-ablation}",
-        r"\begin{tabular}{lrrrrrrrr}",
+        r"\begin{tabular}{lrrrrrrr}",
         r"\toprule",
-        r"Case & Build & Online/q & Simplify/q & Amort@5 & Path & Seg. & Boxes & SR \\",
+        r"Case & Build & Batch/q & Amort@5 & Path & Seg. & Boxes & SR \\",
         r"\midrule",
     ]
     for row in table_rows:
@@ -1211,10 +1290,9 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         lines.append(
             f"{label} & {tex_num(row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s'))))} & "
             f"{tex_num(online_query_time(row))} & "
-            f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
-            f"{tex_num(amortized_query_time(row, 5))} & "
+            f"{tex_num(row.get('amortized_s_k5', amortized_query_time(row, 5)))} & "
             f"{tex_num(path_length)} & {tex_num(segment_fraction)} & "
-            f"{tex_num(row.get('final_boxes_median'))} & {success}/{runs} \\\\"
+            f"{tex_num(row.get('final_boxes_median'), 1)} & {success}/{runs} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -1226,7 +1304,7 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
         "critsample_support_hull": "CritSample",
         "critsample_support_hull_unsafe": "CritSample",
         "link_aabb": "Link AABB",
-        "no_external_lect": "No LECT replay",
+        "no_external_lect": "No LECT replay, live d17",
         "single_thread": "1 thread",
     }
     order = [
@@ -1280,11 +1358,12 @@ def generate_exp05_table(
     *,
     rbf_manifest: dict[str, Any],
     baseline_manifest: dict[str, Any],
+    rbf_single_query_summary_rows: list[dict[str, Any]] | None = None,
 ) -> None:
     order = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
     def best_rbf_row() -> dict[str, Any] | None:
         rbf_rows = [row for row in rows if str(row.get("method")) == "sbf_leaf_rrt"]
-        return select_tradeoff_row(rbf_rows, budget_field="deep_max_boxes")
+        return select_registered_rbf_budget_row(rbf_rows)
 
     def selected_method_row(method: str) -> dict[str, Any] | None:
         items = [row for row in rows if str(row.get("method")) == method]
@@ -1341,15 +1420,27 @@ def generate_exp05_table(
             continue
         runs = int(float(row.get("total_queries", row.get("runs", 0)) or 0))
         success = int(float(row.get("success_queries", row.get("success_runs", 0)) or 0))
+        time_metric_label = None
         if method == "sbf_leaf_rrt":
             deep_boxes = int(float(row.get("deep_max_boxes", 0) or 0))
-            query_stats = query_stats_from_runs(
-                rbf_runs,
-                lambda run, deep_boxes=deep_boxes: (
-                    str(run.get("case")) == "baseline_d23_aafk_support_hull_8t"
-                    and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
-                ),
-            )
+            single_query_rows = [
+                item for item in (rbf_single_query_summary_rows or [])
+                if int(float(item.get("deep_max_boxes", deep_boxes) or deep_boxes)) == deep_boxes
+            ]
+            if single_query_rows:
+                query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_summary(single_query_rows)
+            else:
+                query_stats = query_stats_from_runs(
+                    rbf_runs,
+                    lambda run, deep_boxes=deep_boxes: (
+                        (
+                            str(run.get("case")) == "baseline_d23_aafk_support_hull_8t"
+                            or str(run.get("method")) == "sbf_leaf_rrt"
+                        )
+                        and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
+                    ),
+                )
+            time_metric_label = r"$T_{50}$ (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         elif method == "iris_np_gcs":
@@ -1384,28 +1475,21 @@ def generate_exp05_table(
         methods.append({
             "label": label,
             "build_s": build_s,
-            "simplify_s": row.get("online_simplify_per_query_s_median", row.get("simplify_s_median")),
+            "simplify_s": None,
             "time_label": time_label,
+            "time_metric_label": time_metric_label,
             "sr": f"{success}/{runs}",
             "queries": query_stats,
         })
     grouped_query_table(
         path,
         caption=(
-            r"Shelf+IIWA cross-algorithm rows selected from Fig.~\ref{fig:tro_shelf_cross_tradeoff}, "
-            r"reported by query. Gold rings in the figure mark these tabulated rows; "
-            r"the full curves remain the primary evidence. RBF uses the selected leaf-sweep--RRT grower profile. "
-            r"PRM, RRTConnect, and BIT* are rerun under the same native-query and audit settings; "
-            r"IRIS-NP+GCS restores the legacy Shelf+IIWA contextual result. "
-            r"For RRTConnect and BIT*, Solve is the observed "
-            r"return time under the timeout cap rather than the cap itself. BIT* is run as a single timed trace with dense checkpoints around the first full-success transition; "
-            r"the table reports each BIT* query at its first checkpoint with 100\% success over seeds. "
-            r"Only full-success points are plotted; black rings mark first full-success points and gold rings mark tabulated trade-off points. Solve/q excludes final simplification; the main table records artifacts generated with a 0.01~s common final-simplify budget; OMPL planning, final simplify, and fixed-resolution "
-            r"final audit use the same 0.01 joint-space segment step with zero collision tolerance."
+            r"Shelf+IIWA per-query cross-algorithm comparison. $T_{50}$ is median online solve time in seconds; $L_\mu$ is success-only mean path length. RBF uses independent single-query runs and the selected Exp.~4 profile. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
         ),
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         include_segment=False,
+        time_unit="s",
     )
 
 
@@ -1430,14 +1514,14 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         )
         for method in method_order
     }
-    selected_rows = {
-        method: select_tradeoff_row(
-            method_rows[method],
-            budget_field="deep_max_boxes" if method == "sbf_leaf_rrt" else "budget_s",
-        )
-        for method in method_order
-        if method_rows.get(method)
-    }
+    selected_rows = {}
+    for method in method_order:
+        if not method_rows.get(method):
+            continue
+        if method == "sbf_leaf_rrt":
+            selected_rows[method] = select_registered_rbf_budget_row(method_rows[method])
+        else:
+            selected_rows[method] = select_tradeoff_row(method_rows[method], budget_field="budget_s")
 
     fig, axes = plt.subplots(1, 2, figsize=(5.25, 2.15))
     ax = axes[0]
@@ -1530,7 +1614,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
         ("critsample_support_hull", "Crit.", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
-        ("no_external_lect", "No LECT", "#ff7f0e", "D"),
+        ("no_external_lect", "No LECT live d17", "#ff7f0e", "D"),
         ("single_thread", "1T", "#9467bd", "^"),
     ]
     selected_rows: dict[str, dict[str, Any]] = {}
@@ -1612,8 +1696,12 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     if summary is None:
         return {"status": "missing", "summary": None}
     rows = read_csv_rows(summary)
-    rbf_manifest_path = find_exp04_manifest(out_dir)
+    rbf_manifest_path = find_exp05_manifest(out_dir) or find_exp04_manifest(out_dir)
     rbf_manifest = load_json_file(rbf_manifest_path)
+    if isinstance(rbf_manifest, dict):
+        for run in rbf_manifest.get("rows", []):
+            if str(run.get("method")) == "sbf_leaf_rrt":
+                run["case"] = "baseline_d23_aafk_support_hull_8t"
     rbf_query_manifest_path: Path | None = None
     if (
         (not isinstance(rbf_manifest, dict) or not rbf_manifest.get("rows"))
@@ -1627,6 +1715,9 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     current_iris_manifest = find_exp05_current_iris_manifest(out_dir)
     bitstar_trace_summary = find_exp05_bitstar_trace_summary(out_dir)
     bitstar_trace_manifest = find_exp05_bitstar_trace_manifest(out_dir)
+    rbf_single_query_summary = find_exp05_rbf_single_query_summary(out_dir)
+    rbf_single_query_manifest = find_exp05_rbf_single_query_manifest(out_dir)
+    rbf_single_query_rows = read_csv_rows(rbf_single_query_summary) if rbf_single_query_summary is not None else []
     baseline_manifest = load_json_file(current_baseline_manifest)
     baseline_manifest_ok = manifest_uses_required_simplify(baseline_manifest)
     if current_baseline_summary is not None and current_baseline_summary != summary and baseline_manifest_ok:
@@ -1743,7 +1834,13 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     table_path = generated / "tab_tro_shelf_cross_algorithm.tex"
     pdf_path = generated / "fig_tro_shelf_cross_tradeoff.pdf"
     png_path = generated / "fig_tro_shelf_cross_tradeoff.png"
-    generate_exp05_table(table_path, rows, rbf_manifest=rbf_manifest, baseline_manifest=baseline_manifest)
+    generate_exp05_table(
+        table_path,
+        rows,
+        rbf_manifest=rbf_manifest,
+        baseline_manifest=baseline_manifest,
+        rbf_single_query_summary_rows=rbf_single_query_rows,
+    )
     generate_exp05_figure(pdf_path, png_path, rows)
     return {
         "status": "generated",
@@ -1767,6 +1864,10 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "rbf_manifest": str(rbf_manifest_path) if rbf_manifest_path is not None else None,
         "rbf_query_manifest": str(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
         "rbf_query_manifest_sha256": file_sha256(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
+        "rbf_single_query_summary": str(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
+        "rbf_single_query_summary_sha256": file_sha256(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
+        "rbf_single_query_manifest": str(rbf_single_query_manifest) if rbf_single_query_manifest is not None else None,
+        "rbf_single_query_manifest_sha256": file_sha256(rbf_single_query_manifest) if rbf_single_query_manifest is not None else None,
         "exp04_registered_summary": str(exp04_summary) if exp04_summary is not None else None,
         "rows": len(rows),
         "table": str(table_path),
@@ -1874,10 +1975,10 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        (
-            r"\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the v6 multi-query catalog; PRM, RRTConnect, and BIT* use current saved-catalog rows with the globally fixed 0.01~s final-simplify budget. The IRIS-NP+GCS column restores the legacy random-scene contextual result. RBF Online/q excludes final simplification; Simplify/q reports the measured post-processing cost. Full budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            (
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
             if has_current_baselines else
-            r"\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. RBF rows are selected from the v6 multi-query catalog. The IRIS-NP+GCS column restores the legacy random-scene contextual result. RBF Online/q excludes final simplification; Simplify/q reports the measured post-processing cost under the globally fixed 0.01~s OMPL budget. Full budget curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
         ),
         r"\label{tab:tro-random-summary}",
         r"\scriptsize",
@@ -1886,7 +1987,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\toprule",
         r"Scenario & \multicolumn{7}{c|}{RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
         r"\cmidrule(lr){2-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}\cmidrule(lr){13-14}\cmidrule(lr){15-16}",
-        r" & Build & Online/q & Simplify/q & Amort@10 & Path & Boxes & SR & Time (s) & Path & Time (s) & Path & Time (s) & Path & Time (s) & Path \\",
+        r" & Build$_{50}$ & Online/q$_{50}$ & Simplify/q$_{50}$ & Amort@10$_{50}$ & $L_\mu$ & Boxes & SR & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ \\",
         r"\midrule",
     ]
     for robot in robot_order:

@@ -96,6 +96,7 @@ public:
     const SplitPolicyDescriptor& split_policy_descriptor() const noexcept { return split_policy_.descriptor(); }
     const std::vector<Interval>& root_intervals() const noexcept { return root_intervals_; }
     const std::vector<Interval>& coverage_intervals() const noexcept { return coverage_intervals_; }
+    int root_depth() const noexcept { return config_.root_depth; }
     const LectDatabaseStats& stats() const noexcept { return stats_; }
     std::uint64_t generation() const noexcept { return generation_; }
     std::size_t node_count() const noexcept { return static_cast<std::size_t>(node_count_); }
