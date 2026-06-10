@@ -368,6 +368,20 @@ class RBFLeafRRTOptions:
     adaptive_seed_promote_uncovered: bool = True
     adaptive_seed_anchor_probe_cap: int = 256
     adaptive_promotion_interval: int = 1024
+    adaptive_depth_enabled: bool = True
+    adaptive_depth_min: int = DEFAULT_RBF_LEAF_MAX_DEPTH
+    adaptive_depth_max: int = 16
+    adaptive_depth_probe_count: int = 512
+    adaptive_depth_anchor_probe_cap: int = 32
+    adaptive_depth_probe_seed: int = 20260607
+    adaptive_depth_min_free_probes: int = 64
+    adaptive_depth_min_covered_probes: int = 3
+    adaptive_depth_min_main_probes: int = 3
+    adaptive_depth_min_main_ratio: float = 0.35
+    adaptive_depth_min_cells: int = 0
+    adaptive_depth_min_main_cells: int = 0
+    adaptive_depth_max_online_cells: int = 180
+    adaptive_depth_max_probe_ms: float = 5.0
     adaptive_max_merge_ms: float = 1500.0
     adaptive_max_merge_rounds: int = 2
     adaptive_max_merge_input_boxes: int = 100000
@@ -1118,6 +1132,34 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
     cfg.seed_promote_uncovered = bool(options.adaptive_seed_promote_uncovered)
     cfg.seed_anchor_probe_cap = int(options.adaptive_seed_anchor_probe_cap)
     cfg.promotion_interval = int(options.adaptive_promotion_interval)
+    if hasattr(cfg, "adaptive_depth_enabled"):
+        cfg.adaptive_depth_enabled = bool(options.adaptive_depth_enabled)
+    if hasattr(cfg, "adaptive_depth_min"):
+        cfg.adaptive_depth_min = int(options.adaptive_depth_min)
+    if hasattr(cfg, "adaptive_depth_max"):
+        cfg.adaptive_depth_max = int(options.adaptive_depth_max)
+    if hasattr(cfg, "adaptive_depth_probe_count"):
+        cfg.adaptive_depth_probe_count = int(options.adaptive_depth_probe_count)
+    if hasattr(cfg, "adaptive_depth_anchor_probe_cap"):
+        cfg.adaptive_depth_anchor_probe_cap = int(options.adaptive_depth_anchor_probe_cap)
+    if hasattr(cfg, "adaptive_depth_probe_seed"):
+        cfg.adaptive_depth_probe_seed = int(options.adaptive_depth_probe_seed)
+    if hasattr(cfg, "adaptive_depth_min_free_probes"):
+        cfg.adaptive_depth_min_free_probes = int(options.adaptive_depth_min_free_probes)
+    if hasattr(cfg, "adaptive_depth_min_covered_probes"):
+        cfg.adaptive_depth_min_covered_probes = int(options.adaptive_depth_min_covered_probes)
+    if hasattr(cfg, "adaptive_depth_min_main_probes"):
+        cfg.adaptive_depth_min_main_probes = int(options.adaptive_depth_min_main_probes)
+    if hasattr(cfg, "adaptive_depth_min_main_ratio"):
+        cfg.adaptive_depth_min_main_ratio = float(options.adaptive_depth_min_main_ratio)
+    if hasattr(cfg, "adaptive_depth_min_cells"):
+        cfg.adaptive_depth_min_cells = int(options.adaptive_depth_min_cells)
+    if hasattr(cfg, "adaptive_depth_min_main_cells"):
+        cfg.adaptive_depth_min_main_cells = int(options.adaptive_depth_min_main_cells)
+    if hasattr(cfg, "adaptive_depth_max_online_cells"):
+        cfg.adaptive_depth_max_online_cells = int(options.adaptive_depth_max_online_cells)
+    if hasattr(cfg, "adaptive_depth_max_probe_ms"):
+        cfg.adaptive_depth_max_probe_ms = float(options.adaptive_depth_max_probe_ms)
     if hasattr(cfg, "max_merge_ms"):
         cfg.max_merge_ms = float(options.adaptive_max_merge_ms)
     if hasattr(cfg, "max_merge_rounds"):
@@ -1922,6 +1964,15 @@ def run_leaf_rrt(
         "coverage_box_covered_probability": float(getattr(build, "p_box_covered", diagnostics.get("adaptive.p_box_covered", math.nan))),
         "coverage_anchor_success_probability": float(getattr(build, "p_anchor_success", diagnostics.get("adaptive.p_anchor_success", math.nan))),
         "coverage_main_accessible_probability": float(getattr(build, "p_main_accessible", diagnostics.get("adaptive.p_main_accessible", math.nan))),
+        "coverage_anchor_to_main_uncovered_probability": float(
+            getattr(build, "p_anchor_to_main_uncovered", diagnostics.get("adaptive.p_anchor_to_main_uncovered", math.nan))
+        ),
+        "selected_leaf_depth": int(getattr(build, "selected_leaf_depth", diagnostics.get("adaptive.selected_leaf_depth", options.leaf_max_depth))),
+        "adaptive_depth_readiness_met": bool(
+            getattr(build, "adaptive_depth_readiness_met", diagnostics.get("adaptive.depth_readiness_met", 0.0) > 0.5)
+        ),
+        "adaptive_depth_stop_reason": str(getattr(build, "adaptive_depth_stop_reason", "")),
+        "adaptive_depth_snapshots_json": str(getattr(build, "adaptive_depth_snapshots_json", "")),
         "rrt_grower_s": float(getattr(build, "rrt_grower_ms", 0.0)) / 1000.0,
         "connector_s": float(getattr(build, "connector_ms", 0.0)) / 1000.0,
         "corridor_refine_s": float(corridor_refine_s),

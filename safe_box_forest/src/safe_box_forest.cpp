@@ -1537,6 +1537,60 @@ struct AdaptiveFrontierItem {
     double score = 0.0;
 };
 
+struct AdaptiveDepthSnapshot {
+    int depth = 0;
+    int free_probe_count = 0;
+    int covered_count = 0;
+    int main_accessible_count = 0;
+    int anchor_success_count = 0;
+    int anchor_to_main_count = 0;
+    int anchor_probe_attempts = 0;
+    int cell_count = 0;
+    int collision_count = 0;
+    int island_count = 0;
+    int main_island_cell_count = 0;
+    double p_box_covered = 0.0;
+    double p_main_accessible = 0.0;
+    double main_connected_ratio = 0.0;
+    double p_anchor_to_main_uncovered = 0.0;
+    double probe_ms = 0.0;
+    bool readiness_met = false;
+    std::string stop_reason;
+};
+
+std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnapshot>& snapshots) {
+    std::ostringstream out;
+    out << '[';
+    for (std::size_t i = 0; i < snapshots.size(); ++i) {
+        const auto& snap = snapshots[i];
+        if (i > 0) {
+            out << ',';
+        }
+        out << '{'
+            << "\"depth\":" << snap.depth
+            << ",\"free_probe_count\":" << snap.free_probe_count
+            << ",\"covered_count\":" << snap.covered_count
+            << ",\"main_accessible_count\":" << snap.main_accessible_count
+            << ",\"anchor_success_count\":" << snap.anchor_success_count
+            << ",\"anchor_to_main_count\":" << snap.anchor_to_main_count
+            << ",\"anchor_probe_attempts\":" << snap.anchor_probe_attempts
+            << ",\"cell_count\":" << snap.cell_count
+            << ",\"collision_count\":" << snap.collision_count
+            << ",\"island_count\":" << snap.island_count
+            << ",\"main_island_cell_count\":" << snap.main_island_cell_count
+            << ",\"p_box_covered\":" << snap.p_box_covered
+            << ",\"p_main_accessible\":" << snap.p_main_accessible
+            << ",\"main_connected_ratio\":" << snap.main_connected_ratio
+            << ",\"p_anchor_to_main_uncovered\":" << snap.p_anchor_to_main_uncovered
+            << ",\"probe_ms\":" << snap.probe_ms
+            << ",\"readiness_met\":" << (snap.readiness_met ? "true" : "false")
+            << ",\"stop_reason\":\"" << snap.stop_reason << "\""
+            << '}';
+    }
+    out << ']';
+    return out.str();
+}
+
 bool adaptive_virtual_split_node(const lect_database::SplitPolicyDescriptor& descriptor,
                                  const AdaptiveFrontierItem& item,
                                  AdaptiveFrontierItem& left,
@@ -4020,6 +4074,24 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     out.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
     out.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
 
+    const bool adaptive_depth_enabled = adaptive_config.adaptive_depth_enabled;
+    const int adaptive_depth_min = std::max(
+        adaptive_config.shallow_start_depth,
+        adaptive_config.adaptive_depth_min > 0
+            ? adaptive_config.adaptive_depth_min
+            : adaptive_config.shallow_max_depth);
+    const int adaptive_depth_max = std::max(
+        adaptive_depth_min,
+        adaptive_config.adaptive_depth_max > 0
+            ? adaptive_config.adaptive_depth_max
+            : adaptive_config.target_max_depth);
+    const int initial_leaf_depth = adaptive_depth_enabled
+        ? adaptive_depth_min
+        : adaptive_config.shallow_max_depth;
+    const int target_leaf_depth = adaptive_depth_enabled
+        ? adaptive_depth_max
+        : adaptive_config.target_max_depth;
+
     LeafSweepConfig leaf_config;
     leaf_config.obstacle_cluster_gap = adaptive_config.obstacle_cluster_gap;
     leaf_config.n_threads = std::max(1, adaptive_config.threads);
@@ -4038,7 +4110,434 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     leaf_config.collision_overlap_prune_decay_per_depth = 0.0;
     leaf_config.collision_overlap_prune_ratio_threshold = 0.0;
 
-    if (adaptive_config.node_budget <= 0) {
+    AdaptiveLeafSweepConfig partition_config = adaptive_config;
+    partition_config.shallow_max_depth = initial_leaf_depth;
+    partition_config.target_max_depth = target_leaf_depth;
+    if (adaptive_depth_enabled || partition_config.grid_target_depth <= 0) {
+        partition_config.grid_target_depth = target_leaf_depth;
+    }
+
+    auto next_fast_depth_checkpoint = [&](int depth) {
+        const int step = depth < 16 ? 1 : 2;
+        return std::min(target_leaf_depth, depth + step);
+    };
+    auto snapshot_readiness_met = [&](const AdaptiveDepthSnapshot& snapshot) {
+        const int min_covered_probes = std::max(0, adaptive_config.adaptive_depth_min_covered_probes);
+        const int min_main_probes = std::max(0, adaptive_config.adaptive_depth_min_main_probes);
+        const int min_cells = std::max(0, adaptive_config.adaptive_depth_min_cells);
+        const int min_main_cells = std::max(0, adaptive_config.adaptive_depth_min_main_cells);
+        const bool probe_gate =
+            snapshot.covered_count >= min_covered_probes &&
+            snapshot.main_accessible_count >= min_main_probes &&
+            (min_covered_probes <= 0 ||
+             snapshot.main_connected_ratio >= adaptive_config.adaptive_depth_min_main_ratio);
+        const bool cell_gate =
+            snapshot.cell_count >= min_cells &&
+            snapshot.main_island_cell_count >= min_main_cells;
+        return probe_gate &&
+               cell_gate &&
+               (adaptive_config.adaptive_depth_max_online_cells <= 0 ||
+                snapshot.cell_count <= adaptive_config.adaptive_depth_max_online_cells);
+    };
+    auto snapshot_from_fast_candidate = [&](const AdaptiveLeafSweepResult& candidate,
+                                            int depth) {
+        AdaptiveDepthSnapshot snapshot;
+        snapshot.depth = depth;
+        snapshot.free_probe_count = candidate.seed_probe_free_count;
+        snapshot.covered_count = candidate.seed_probe_box_covered;
+        snapshot.main_accessible_count =
+            std::min(candidate.seed_probe_main_accessible, candidate.seed_probe_box_covered);
+        snapshot.anchor_success_count = candidate.seed_probe_anchor_success;
+        snapshot.anchor_to_main_count =
+            std::max(0, candidate.seed_probe_main_accessible - snapshot.main_accessible_count);
+        const auto attempts_it = candidate.profile.diagnostics.find("adaptive.seed_anchor_probe_attempts");
+        if (attempts_it != candidate.profile.diagnostics.end()) {
+            snapshot.anchor_probe_attempts = static_cast<int>(std::llround(attempts_it->second));
+        }
+        snapshot.cell_count = candidate.partition_cell_count > 0
+            ? candidate.partition_cell_count
+            : candidate.profile.final_boxes;
+        snapshot.collision_count = candidate.shallow_collision_count;
+        snapshot.island_count = candidate.partition_islands > 0
+            ? candidate.partition_islands
+            : candidate.profile.adjacency_islands;
+        snapshot.main_island_cell_count = candidate.partition_largest_island > 0
+            ? candidate.partition_largest_island
+            : candidate.profile.grow_largest_island;
+        const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
+        snapshot.p_box_covered = static_cast<double>(snapshot.covered_count) / free_den;
+        snapshot.p_main_accessible = static_cast<double>(snapshot.main_accessible_count) / free_den;
+        snapshot.main_connected_ratio =
+            static_cast<double>(snapshot.main_accessible_count) /
+            static_cast<double>(std::max(1, snapshot.covered_count));
+        snapshot.p_anchor_to_main_uncovered =
+            static_cast<double>(snapshot.anchor_to_main_count) /
+            static_cast<double>(std::max(1, snapshot.anchor_probe_attempts));
+        snapshot.probe_ms = candidate.coverage_probe_ms;
+        snapshot.readiness_met = snapshot_readiness_met(snapshot);
+        return snapshot;
+    };
+    if (adaptive_depth_enabled && adaptive_config.node_budget <= 0) {
+        std::vector<AdaptiveDepthSnapshot> depth_snapshots;
+        AdaptiveLeafSweepResult selected;
+        bool have_selected = false;
+        double accumulated_leaf_sweep_ms = 0.0;
+        auto materialize_fast_checkpoint_candidate = [&](const LeafSweepResult& leaf_result,
+                                                         int depth,
+                                                         int sweep_count) {
+            AdaptiveLeafSweepResult candidate;
+            candidate.leaf_sweep = leaf_result;
+            candidate.leaf_sweep_ms = accumulated_leaf_sweep_ms;
+            candidate.selected_leaf_depth = depth;
+            candidate.shallow_free_count = static_cast<int>(leaf_result.free_boxes.size());
+            candidate.shallow_collision_count = static_cast<int>(leaf_result.collision_boxes.size());
+            candidate.adaptive_deferred = static_cast<int>(leaf_result.collision_boxes.size());
+            candidate.unresolved_domains = static_cast<int>(leaf_result.collision_boxes.size());
+
+            scene_.set_obstacles(obstacles);
+            if (oracle_) {
+                oracle_->set_scene(scene_);
+            }
+            boxes_ = leaf_result.free_boxes;
+            raw_boxes_ = boxes_;
+            adjacency_.clear();
+            segment_edges_.clear();
+            dynamic_collision_box_cache_.clear();
+            invalidate_query_cache();
+            populate_dynamic_collision_cache(leaf_result, static_cast<int>(obstacles.size()));
+            reserve_existing_boxes();
+
+            const double adjacency_tolerance = config_.query.adjacency_tolerance;
+            const auto merge_start = Clock::now();
+            BudgetedMergeStats merge_stats;
+            if (config_.enable_merger && !boxes_.empty()) {
+                bool merged_by_partition = false;
+                if (adaptive_config.planning_backend == "partition_native") {
+                    rebuild_adaptive_partition(partition_config, nullptr);
+                    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+                        AdaptiveGridPartitionMergeOptions options;
+                        options.max_ms = adaptive_config.max_merge_ms;
+                        options.max_rounds = adaptive_config.max_merge_rounds;
+                        options.grid_line_merge = true;
+                        options.containment_prune = false;
+                        const auto partition_merge =
+                            adaptive_partition_->merge_boxes(boxes_, options, adjacency_tolerance);
+                        for (int released_id : partition_merge.released_box_ids) {
+                            oracle_->release_box(released_id);
+                        }
+                        merge_stats.input_boxes = partition_merge.input_boxes;
+                        merge_stats.output_boxes = partition_merge.output_boxes;
+                        merge_stats.grid_merges = partition_merge.grid_merges;
+                        merge_stats.grid_rounds = partition_merge.rounds;
+                        merge_stats.containment_pruned = partition_merge.containment_pruned;
+                        merge_stats.stop_reason =
+                            partition_merge.stop_reason == 0 ? 1 : partition_merge.stop_reason;
+                        merge_stats.total_ms = partition_merge.total_ms;
+                        merge_stats.grid_ms = partition_merge.total_ms;
+                        candidate.diagnostics["adaptive.partition_merge_enabled"] = 1.0;
+                        candidate.diagnostics["adaptive.partition_merge_released_boxes"] =
+                            static_cast<double>(partition_merge.released_box_ids.size());
+                        merged_by_partition = true;
+                    }
+                }
+                if (!merged_by_partition) {
+                    MergerConfig leaf_merge_config = config_.merger;
+                    leaf_merge_config.containment_prune = true;
+                    merge_stats = budgeted_leaf_merge(*oracle_,
+                                                      boxes_,
+                                                      leaf_merge_config,
+                                                      adaptive_config.max_merge_ms,
+                                                      adaptive_config.max_merge_rounds,
+                                                      adaptive_config.max_merge_input_boxes,
+                                                      adjacency_tolerance);
+                }
+                raw_boxes_ = boxes_;
+            } else {
+                merge_stats.input_boxes = static_cast<int>(boxes_.size());
+                merge_stats.output_boxes = static_cast<int>(boxes_.size());
+                merge_stats.stop_reason = 0;
+            }
+            const double merge_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - merge_start).count();
+
+            const bool use_partition_backend = adaptive_config.planning_backend == "partition_native";
+            AdjacencyBuildStats adjacency_stats;
+            std::unordered_set<int> main_ids;
+            int partition_island_count_for_profile = 0;
+            int partition_largest_island_for_profile = 0;
+            if (use_partition_backend) {
+                if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
+                    rebuild_adaptive_partition(partition_config, nullptr);
+                }
+                if (adaptive_partition_query_enabled_ && adaptive_partition_) {
+                    const auto largest = adaptive_partition_->largest_component_box_ids_with_overlay();
+                    main_ids.insert(largest.begin(), largest.end());
+                    const auto& partition_stats = adaptive_partition_->stats();
+                    partition_island_count_for_profile = partition_stats.islands;
+                    partition_largest_island_for_profile = static_cast<int>(largest.size());
+                    candidate.diagnostics["adaptive.partition_skipped_graph_adjacency"] = 1.0;
+                }
+            }
+            if (!use_partition_backend) {
+                rebuild_adjacency();
+                adjacency_stats = last_adjacency_build_stats();
+                main_ids = adaptive_largest_island_ids(adjacency_);
+            } else if (main_ids.empty()) {
+                candidate.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
+            }
+
+            const auto coverage_start = Clock::now();
+            const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
+            int probe_attempted = 0;
+            std::vector<Eigen::VectorXd> free_probes =
+                oracle_ ? adaptive_generate_free_probes(*oracle_,
+                                                        planning_domain,
+                                                        std::max(0, adaptive_config.adaptive_depth_probe_count),
+                                                        adaptive_config.adaptive_depth_probe_seed,
+                                                        probe_attempted)
+                        : std::vector<Eigen::VectorXd>{};
+            candidate.seed_probe_count = probe_attempted;
+            candidate.seed_probe_free_count = static_cast<int>(free_probes.size());
+            int uncovered_anchor_attempts = 0;
+            StageContext probe_context = StageContext::from_runtime(config_.runtime);
+            FindFreeBoxOptions probe_options = config_.grower.find_free_box;
+            probe_options.max_depth = target_leaf_depth;
+            probe_options.reject_seed_collision = false;
+            probe_options.deadline_ms = std::max(1.0, adaptive_config.adaptive_depth_max_probe_ms);
+            const int anchor_cap = std::max(0, adaptive_config.adaptive_depth_anchor_probe_cap);
+            BoxSpatialIndex coverage_index;
+            const bool use_partition_coverage =
+                use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_;
+            if (!use_partition_coverage) {
+                coverage_index.rebuild(boxes_, adjacency_tolerance);
+            }
+            for (const auto& point : free_probes) {
+                const int owner = use_partition_coverage
+                    ? adaptive_partition_->locate_containing_box(point, false, adjacency_tolerance)
+                    : [&]() {
+                          const int owner_index = coverage_index.covering_box(boxes_, point, adjacency_tolerance);
+                          return owner_index >= 0 ? boxes_[static_cast<std::size_t>(owner_index)].id : -1;
+                      }();
+                if (owner >= 0) {
+                    candidate.seed_probe_box_covered += 1;
+                    if (main_ids.find(owner) != main_ids.end()) {
+                        candidate.seed_probe_main_accessible += 1;
+                    }
+                    continue;
+                }
+                if (uncovered_anchor_attempts >= anchor_cap || planning_domain.empty()) {
+                    continue;
+                }
+                ++uncovered_anchor_attempts;
+                const auto ffb = find_free_box_in_domain(point, planning_domain, probe_context, probe_options);
+                if (!ffb.found) {
+                    continue;
+                }
+                candidate.seed_probe_anchor_success += 1;
+                const BoxNode anchor = adaptive_make_box_from_intervals(
+                    ffb.intervals,
+                    ffb.node,
+                    -1,
+                    ffb.validation_detail.safety_status,
+                    ffb.validation_detail.strict_audit_required);
+                const bool anchor_main_accessible = use_partition_coverage
+                    ? adaptive_partition_->box_adjacent_to_any(anchor, main_ids, adjacency_tolerance)
+                    : (!use_partition_backend &&
+                       adaptive_has_adjacency_to_any(boxes_, anchor, &main_ids, adjacency_tolerance));
+                if (anchor_main_accessible) {
+                    candidate.seed_probe_main_accessible += 1;
+                }
+            }
+            candidate.coverage_probe_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - coverage_start).count();
+            const double free_den = static_cast<double>(std::max(1, candidate.seed_probe_free_count));
+            candidate.p_box_covered = static_cast<double>(candidate.seed_probe_box_covered) / free_den;
+            candidate.p_anchor_success = static_cast<double>(candidate.seed_probe_anchor_success) / free_den;
+            candidate.p_main_accessible = static_cast<double>(candidate.seed_probe_main_accessible) / free_den;
+
+            candidate.total_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+            candidate.profile = {};
+            candidate.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
+            candidate.profile.final_boxes = static_cast<int>(boxes_.size());
+            candidate.profile.segment_edges = static_cast<int>(segment_edges_.size());
+            candidate.profile.grow_ms = candidate.total_ms;
+            candidate.profile.total_ms = candidate.total_ms;
+            if (use_partition_backend) {
+                candidate.profile.grow_adjacency_islands = partition_island_count_for_profile;
+                candidate.profile.adjacency_islands = partition_island_count_for_profile;
+                candidate.profile.grow_largest_island = partition_largest_island_for_profile;
+            } else {
+                const auto graph_islands = find_islands(adjacency_);
+                candidate.profile.grow_adjacency_islands = static_cast<int>(graph_islands.size());
+                candidate.profile.adjacency_islands = candidate.profile.grow_adjacency_islands;
+                for (const auto& island : graph_islands) {
+                    candidate.profile.grow_largest_island =
+                        std::max(candidate.profile.grow_largest_island, static_cast<int>(island.size()));
+                }
+            }
+            candidate.profile.diagnostics = leaf_result.diagnostics;
+            for (const auto& [key, value] : candidate.diagnostics) {
+                candidate.profile.diagnostics[key] = value;
+            }
+            candidate.profile.diagnostics["adaptive.fast_checkpoint_mode"] = 1.0;
+            candidate.profile.diagnostics["adaptive.in_sweep_checkpoint_mode"] = 1.0;
+            candidate.profile.diagnostics["adaptive.in_sweep_checkpoints"] =
+                static_cast<double>(sweep_count);
+            candidate.profile.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
+            candidate.profile.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
+            candidate.profile.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
+            candidate.profile.diagnostics["adaptive.leaf_sweep_ms"] = candidate.leaf_sweep_ms;
+            candidate.profile.diagnostics["adaptive.merge_ms"] = merge_ms;
+            candidate.profile.diagnostics["adaptive.merge_input_boxes"] =
+                static_cast<double>(merge_stats.input_boxes);
+            candidate.profile.diagnostics["adaptive.merge_output_boxes"] =
+                static_cast<double>(merge_stats.output_boxes);
+            candidate.profile.diagnostics["adaptive.adjacency_ms"] = adjacency_stats.build_ms;
+            candidate.profile.diagnostics["adaptive.adjacency_boxes"] =
+                static_cast<double>(adjacency_stats.boxes);
+            candidate.profile.diagnostics["adaptive.adjacency_selected_dims"] =
+                static_cast<double>(adjacency_stats.selected_dims);
+            candidate.profile.diagnostics["adaptive.adjacency_primary_dim"] =
+                static_cast<double>(adjacency_stats.primary_dim);
+            candidate.profile.diagnostics["adaptive.adjacency_candidates"] =
+                static_cast<double>(adjacency_stats.candidate_pairs);
+            candidate.profile.diagnostics["adaptive.adjacency_exact_tests"] =
+                static_cast<double>(adjacency_stats.exact_tests);
+            candidate.profile.diagnostics["adaptive.adjacency_edges"] =
+                static_cast<double>(adjacency_stats.edges);
+            candidate.profile.diagnostics["adaptive.coverage_probe_ms"] = candidate.coverage_probe_ms;
+            candidate.profile.diagnostics["adaptive.total_ms"] = candidate.total_ms;
+            candidate.profile.diagnostics["adaptive.shallow_free_count"] =
+                static_cast<double>(candidate.shallow_free_count);
+            candidate.profile.diagnostics["adaptive.shallow_collision_count"] =
+                static_cast<double>(candidate.shallow_collision_count);
+            candidate.profile.diagnostics["adaptive.seed_probe_count"] =
+                static_cast<double>(candidate.seed_probe_count);
+            candidate.profile.diagnostics["adaptive.seed_probe_free_count"] =
+                static_cast<double>(candidate.seed_probe_free_count);
+            candidate.profile.diagnostics["adaptive.seed_probe_box_covered"] =
+                static_cast<double>(candidate.seed_probe_box_covered);
+            candidate.profile.diagnostics["adaptive.seed_probe_anchor_success"] =
+                static_cast<double>(candidate.seed_probe_anchor_success);
+            candidate.profile.diagnostics["adaptive.seed_probe_main_accessible"] =
+                static_cast<double>(candidate.seed_probe_main_accessible);
+            candidate.profile.diagnostics["adaptive.seed_anchor_probe_cap"] =
+                static_cast<double>(anchor_cap);
+            candidate.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] =
+                static_cast<double>(uncovered_anchor_attempts);
+            candidate.profile.diagnostics["adaptive.p_box_covered"] = candidate.p_box_covered;
+            candidate.profile.diagnostics["adaptive.p_anchor_success"] = candidate.p_anchor_success;
+            candidate.profile.diagnostics["adaptive.p_main_accessible"] = candidate.p_main_accessible;
+            rebuild_adaptive_partition(partition_config, &candidate.profile);
+            if (adaptive_partition_ && !adaptive_partition_->empty()) {
+                const auto& partition_stats = adaptive_partition_->stats();
+                candidate.partition_cell_count = partition_stats.cells;
+                candidate.partition_grid_cell_count = partition_stats.grid_cells;
+                candidate.partition_non_grid_cell_count = partition_stats.non_grid_cells;
+                candidate.partition_face_index_entries = partition_stats.face_index_entries;
+                candidate.partition_islands = partition_stats.islands;
+                candidate.partition_largest_island = candidate.profile.grow_largest_island;
+            }
+            candidate.diagnostics = candidate.profile.diagnostics;
+            return candidate;
+        };
+        int depth = initial_leaf_depth;
+        int sweep_count = 0;
+        std::vector<int> checkpoint_depths;
+        for (int checkpoint = initial_leaf_depth;
+             checkpoint <= target_leaf_depth;
+             checkpoint = next_fast_depth_checkpoint(checkpoint)) {
+            checkpoint_depths.push_back(checkpoint);
+            if (checkpoint >= target_leaf_depth) {
+                break;
+            }
+        }
+        const auto adaptive_sweep_start = Clock::now();
+        LeafSweepConfig checkpoint_leaf_config = leaf_config;
+        checkpoint_leaf_config.checkpoint_depths = checkpoint_depths;
+        checkpoint_leaf_config.checkpoint_callback = [&](const LeafSweepResult& checkpoint_leaf,
+                                                         int checkpoint_depth) {
+            depth = checkpoint_depth;
+            ++sweep_count;
+            accumulated_leaf_sweep_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - adaptive_sweep_start).count();
+            AdaptiveLeafSweepResult candidate =
+                materialize_fast_checkpoint_candidate(checkpoint_leaf, depth, sweep_count);
+            auto snapshot = snapshot_from_fast_candidate(candidate, depth);
+            if (snapshot.readiness_met) {
+                snapshot.stop_reason = "coverage_ready";
+            } else if (depth >= target_leaf_depth) {
+                snapshot.stop_reason = "max_depth";
+            } else {
+                snapshot.stop_reason = "checkpoint";
+            }
+            depth_snapshots.push_back(snapshot);
+
+            selected = std::move(candidate);
+            selected.selected_leaf_depth = depth;
+            have_selected = true;
+            return snapshot.readiness_met || depth >= target_leaf_depth;
+        };
+        out.leaf_sweep = build_leaf_sweep(obstacles,
+                                          adaptive_config.shallow_start_depth,
+                                          target_leaf_depth,
+                                          checkpoint_leaf_config);
+        if (!have_selected) {
+            ++sweep_count;
+            accumulated_leaf_sweep_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - adaptive_sweep_start).count();
+            selected = materialize_fast_checkpoint_candidate(out.leaf_sweep,
+                                                             target_leaf_depth,
+                                                             sweep_count);
+            auto snapshot = snapshot_from_fast_candidate(selected, target_leaf_depth);
+            snapshot.stop_reason = snapshot.readiness_met ? "coverage_ready" : "max_depth";
+            depth_snapshots.push_back(snapshot);
+            selected.selected_leaf_depth = target_leaf_depth;
+            selected.adaptive_depth_readiness_met = snapshot.readiness_met;
+            selected.adaptive_depth_stop_reason = snapshot.stop_reason;
+            have_selected = true;
+        }
+        if (have_selected) {
+            const auto& final_snapshot = depth_snapshots.back();
+            selected.selected_leaf_depth = final_snapshot.depth;
+            selected.adaptive_depth_readiness_met = final_snapshot.readiness_met;
+            selected.adaptive_depth_stop_reason = final_snapshot.stop_reason;
+            selected.adaptive_depth_snapshots_json =
+                adaptive_depth_snapshots_to_json(depth_snapshots);
+            selected.seed_probe_box_covered = final_snapshot.covered_count;
+            selected.seed_probe_main_accessible =
+                final_snapshot.main_accessible_count + final_snapshot.anchor_to_main_count;
+            selected.p_box_covered = final_snapshot.p_box_covered;
+            selected.p_main_accessible =
+                static_cast<double>(selected.seed_probe_main_accessible) /
+                static_cast<double>(std::max(1, final_snapshot.free_probe_count));
+            selected.p_anchor_to_main_uncovered = final_snapshot.p_anchor_to_main_uncovered;
+            selected.total_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+            selected.profile.total_ms = selected.total_ms;
+            selected.profile.grow_ms = selected.total_ms;
+            selected.profile.diagnostics["adaptive.in_sweep_checkpoints"] =
+                static_cast<double>(sweep_count);
+            selected.profile.diagnostics["adaptive.fast_checkpoint_mode"] = 1.0;
+            selected.profile.diagnostics["adaptive.in_sweep_checkpoint_mode"] = 1.0;
+            selected.profile.diagnostics["adaptive.selected_leaf_depth"] =
+                static_cast<double>(selected.selected_leaf_depth);
+            selected.profile.diagnostics["adaptive.depth_readiness_met"] =
+                selected.adaptive_depth_readiness_met ? 1.0 : 0.0;
+            selected.profile.diagnostics["adaptive.depth_enabled"] = 1.0;
+            selected.profile.diagnostics["adaptive.depth_min"] = static_cast<double>(adaptive_depth_min);
+            selected.profile.diagnostics["adaptive.depth_max"] = static_cast<double>(target_leaf_depth);
+            selected.diagnostics = selected.profile.diagnostics;
+            last_build_ = selected.profile;
+            if (config_.database.checkpoint_after_build && database_) {
+                database_->checkpoint();
+            }
+            return selected;
+        }
+    }
+
+    if (adaptive_config.node_budget <= 0 && !adaptive_depth_enabled) {
         leaf_config.collision_overlap_prune_min_depth = adaptive_config.defer_min_depth;
         leaf_config.collision_overlap_prune_threshold = adaptive_config.overlap_depth_threshold;
         leaf_config.collision_overlap_prune_min_threshold = adaptive_config.overlap_depth_min_threshold;
@@ -4046,8 +4545,11 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         leaf_config.collision_overlap_prune_ratio_threshold = adaptive_config.overlap_ratio_threshold;
         out.leaf_sweep = build_leaf_sweep(obstacles,
                                           adaptive_config.shallow_start_depth,
-                                          adaptive_config.target_max_depth,
+                                          target_leaf_depth,
                                           leaf_config);
+        out.selected_leaf_depth = target_leaf_depth;
+        out.adaptive_depth_readiness_met = false;
+        out.adaptive_depth_stop_reason = "fixed_depth";
         out.leaf_sweep_ms = out.leaf_sweep.total_ms;
         out.shallow_free_count = static_cast<int>(out.leaf_sweep.free_boxes.size());
         out.shallow_collision_count = static_cast<int>(out.leaf_sweep.collision_boxes.size());
@@ -4060,7 +4562,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         if (config_.enable_merger && !boxes_.empty()) {
             bool merged_by_partition = false;
             if (adaptive_config.planning_backend == "partition_native") {
-                rebuild_adaptive_partition(adaptive_config, nullptr);
+                rebuild_adaptive_partition(partition_config, nullptr);
                 if (adaptive_partition_query_enabled_ && adaptive_partition_) {
                     AdaptiveGridPartitionMergeOptions options;
                     options.max_ms = adaptive_config.max_merge_ms;
@@ -4126,7 +4628,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         int partition_largest_island_for_profile = 0;
         if (use_partition_backend) {
             if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
-                rebuild_adaptive_partition(adaptive_config, nullptr);
+                rebuild_adaptive_partition(partition_config, nullptr);
             }
             if (adaptive_partition_query_enabled_ && adaptive_partition_) {
                 const auto largest = adaptive_partition_->largest_component_box_ids_with_overlay();
@@ -4160,7 +4662,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         int uncovered_anchor_attempts = 0;
         StageContext probe_context = StageContext::from_runtime(config_.runtime);
         FindFreeBoxOptions probe_options = config_.grower.find_free_box;
-        probe_options.max_depth = adaptive_config.target_max_depth;
+        probe_options.max_depth = target_leaf_depth;
         probe_options.reject_seed_collision = false;
         probe_options.deadline_ms = 5.0;
         const int anchor_cap = std::max(0, adaptive_config.seed_anchor_probe_cap);
@@ -4303,9 +4805,24 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         out.profile.diagnostics["adaptive.adjacency_exact_tests"] = static_cast<double>(adjacency_stats.exact_tests);
         out.profile.diagnostics["adaptive.adjacency_edges"] = static_cast<double>(adjacency_stats.edges);
         out.profile.diagnostics["adaptive.adaptive_ms"] = 0.0;
-        out.profile.diagnostics["adaptive.coverage_probe_ms"] = out.coverage_probe_ms;
-        out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
-        out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
+	    out.profile.diagnostics["adaptive.coverage_probe_ms"] = out.coverage_probe_ms;
+	    out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
+    out.profile.diagnostics["adaptive.depth_enabled"] = adaptive_depth_enabled ? 1.0 : 0.0;
+    out.profile.diagnostics["adaptive.depth_min"] = static_cast<double>(adaptive_depth_min);
+    out.profile.diagnostics["adaptive.depth_max"] = static_cast<double>(target_leaf_depth);
+    out.profile.diagnostics["adaptive.depth_min_covered_probes"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_covered_probes);
+    out.profile.diagnostics["adaptive.depth_min_main_probes"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_main_probes);
+    out.profile.diagnostics["adaptive.depth_min_main_ratio"] =
+        adaptive_config.adaptive_depth_min_main_ratio;
+    out.profile.diagnostics["adaptive.depth_min_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_cells);
+    out.profile.diagnostics["adaptive.depth_min_main_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_main_cells);
+    out.profile.diagnostics["adaptive.depth_max_online_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_max_online_cells);
+	    out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
         out.profile.diagnostics["adaptive.shallow_collision_count"] = static_cast<double>(out.shallow_collision_count);
         out.profile.diagnostics["adaptive.deferred"] = static_cast<double>(out.adaptive_deferred);
         out.profile.diagnostics["adaptive.unresolved_domains"] = static_cast<double>(out.unresolved_domains);
@@ -4316,10 +4833,15 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         out.profile.diagnostics["adaptive.seed_probe_main_accessible"] = static_cast<double>(out.seed_probe_main_accessible);
         out.profile.diagnostics["adaptive.seed_anchor_probe_cap"] = static_cast<double>(anchor_cap);
         out.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] = static_cast<double>(uncovered_anchor_attempts);
-        out.profile.diagnostics["adaptive.p_box_covered"] = out.p_box_covered;
-        out.profile.diagnostics["adaptive.p_anchor_success"] = out.p_anchor_success;
-        out.profile.diagnostics["adaptive.p_main_accessible"] = out.p_main_accessible;
-        rebuild_adaptive_partition(adaptive_config, &out.profile);
+	        out.profile.diagnostics["adaptive.p_box_covered"] = out.p_box_covered;
+	        out.profile.diagnostics["adaptive.p_anchor_success"] = out.p_anchor_success;
+	        out.profile.diagnostics["adaptive.p_main_accessible"] = out.p_main_accessible;
+	        out.profile.diagnostics["adaptive.p_anchor_to_main_uncovered"] = out.p_anchor_to_main_uncovered;
+	        out.profile.diagnostics["adaptive.selected_leaf_depth"] =
+	            static_cast<double>(out.selected_leaf_depth);
+	        out.profile.diagnostics["adaptive.depth_readiness_met"] =
+	            out.adaptive_depth_readiness_met ? 1.0 : 0.0;
+	        rebuild_adaptive_partition(partition_config, &out.profile);
         if (adaptive_partition_ && !adaptive_partition_->empty()) {
             const auto& partition_stats = adaptive_partition_->stats();
             out.partition_cell_count = partition_stats.cells;
@@ -4339,7 +4861,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 
     out.leaf_sweep = build_leaf_sweep(obstacles,
                                       adaptive_config.shallow_start_depth,
-                                      adaptive_config.shallow_max_depth,
+                                      initial_leaf_depth,
                                       leaf_config);
     out.leaf_sweep_ms = out.leaf_sweep.total_ms;
     out.shallow_free_count = static_cast<int>(out.leaf_sweep.free_boxes.size());
@@ -4351,7 +4873,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     if (config_.enable_merger && !boxes_.empty()) {
         bool merged_by_partition = false;
         if (adaptive_config.planning_backend == "partition_native") {
-            rebuild_adaptive_partition(adaptive_config, nullptr);
+            rebuild_adaptive_partition(partition_config, nullptr);
             if (adaptive_partition_query_enabled_ && adaptive_partition_) {
                 AdaptiveGridPartitionMergeOptions options;
                 options.max_ms = adaptive_config.max_merge_ms;
@@ -4423,7 +4945,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 	    };
 	    if (use_partition_backend) {
 	        if (!adaptive_partition_query_enabled_ || !adaptive_partition_) {
-	            rebuild_adaptive_partition(adaptive_config, nullptr);
+	            rebuild_adaptive_partition(partition_config, nullptr);
 	        }
 	        if (refresh_main_from_partition()) {
 	            out.diagnostics["adaptive.partition_skipped_graph_adjacency"] = 1.0;
@@ -4436,19 +4958,52 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 	    } else if (main_ids.empty()) {
 	        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
 	    }
-	    const std::vector<BoxNode> scoring_boxes = boxes_;
+    const std::vector<BoxNode> scoring_boxes = boxes_;
     std::vector<AdaptiveFrontierItem> deferred;
     deferred.reserve(out.leaf_sweep.collision_boxes.size());
     const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
     int probe_attempted = 0;
+    const int requested_probe_count = adaptive_depth_enabled
+        ? std::max(0, adaptive_config.adaptive_depth_probe_count)
+        : std::max(0, adaptive_config.seed_probe_count);
+    const int requested_probe_seed = adaptive_depth_enabled
+        ? adaptive_config.adaptive_depth_probe_seed
+        : adaptive_config.seed_probe_rng_seed;
     const auto probe_seed_start = Clock::now();
     std::vector<Eigen::VectorXd> free_probes =
         oracle_ ? adaptive_generate_free_probes(*oracle_,
                                                 planning_domain,
-                                                adaptive_config.seed_probe_count,
-                                                adaptive_config.seed_probe_rng_seed,
+                                                requested_probe_count,
+                                                requested_probe_seed,
                                                 probe_attempted)
                 : std::vector<Eigen::VectorXd>{};
+    if (adaptive_depth_enabled && oracle_ &&
+        adaptive_config.adaptive_depth_min_free_probes > 0 &&
+        static_cast<int>(free_probes.size()) < adaptive_config.adaptive_depth_min_free_probes) {
+        const int supplement_limit = std::max(
+            requested_probe_count,
+            std::min(8192, std::max(requested_probe_count * 4,
+                                    adaptive_config.adaptive_depth_min_free_probes * 64)));
+        int supplement_seed_offset = 1;
+        while (probe_attempted < supplement_limit &&
+               static_cast<int>(free_probes.size()) < adaptive_config.adaptive_depth_min_free_probes) {
+            const int batch = std::min(std::max(128, requested_probe_count), supplement_limit - probe_attempted);
+            int extra_attempted = 0;
+            auto extra = adaptive_generate_free_probes(*oracle_,
+                                                       planning_domain,
+                                                       batch,
+                                                       requested_probe_seed + supplement_seed_offset,
+                                                       extra_attempted);
+            probe_attempted += extra_attempted;
+            free_probes.insert(free_probes.end(),
+                               std::make_move_iterator(extra.begin()),
+                               std::make_move_iterator(extra.end()));
+            ++supplement_seed_offset;
+            if (batch <= 0 || extra_attempted <= 0) {
+                break;
+            }
+        }
+    }
     const double initial_probe_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - probe_seed_start).count();
     out.seed_probe_count = probe_attempted;
@@ -4528,12 +5083,184 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     std::size_t first_unconnected_new_index = boxes_.size();
     int pending_adjacency_boxes = 0;
     constexpr int kAdaptiveAdjacencyBatchSize = 512;
+    std::vector<AdaptiveDepthSnapshot> depth_snapshots;
+    double checkpoint_probe_ms_total = 0.0;
+    auto evaluate_depth_snapshot = [&](int depth, bool allow_anchor_probe) {
+        const auto snapshot_start = Clock::now();
+        if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+            refresh_main_from_partition();
+        } else if (!use_partition_backend && pending_adjacency_boxes > 0) {
+            connect_incremental_boxes(adjacency_,
+                                      boxes_,
+                                      first_unconnected_new_index,
+                                      adjacency_tolerance);
+            first_unconnected_new_index = boxes_.size();
+            pending_adjacency_boxes = 0;
+            main_ids = adaptive_largest_island_ids(adjacency_);
+        }
+        AdaptiveDepthSnapshot snapshot;
+        snapshot.depth = depth;
+        snapshot.free_probe_count = static_cast<int>(free_probes.size());
+        snapshot.collision_count = static_cast<int>(out.leaf_sweep.collision_boxes.size());
+        if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+            const auto& stats = adaptive_partition_->stats();
+            snapshot.cell_count = stats.cells;
+            snapshot.island_count = stats.islands;
+            snapshot.main_island_cell_count = static_cast<int>(main_ids.size());
+        } else {
+            snapshot.cell_count = static_cast<int>(boxes_.size());
+            snapshot.island_count = static_cast<int>(find_islands(adjacency_).size());
+            snapshot.main_island_cell_count = static_cast<int>(main_ids.size());
+        }
+        BoxSpatialIndex coverage_index;
+        const bool use_partition_coverage =
+            use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_;
+        if (!use_partition_coverage) {
+            coverage_index.rebuild(boxes_, adjacency_tolerance);
+        }
+        std::vector<const Eigen::VectorXd*> uncovered;
+        uncovered.reserve(free_probes.size());
+        for (const auto& point : free_probes) {
+            const int owner = use_partition_coverage
+                ? adaptive_partition_->locate_containing_box(point, false, adjacency_tolerance)
+                : [&]() {
+                      const int owner_index = coverage_index.covering_box(boxes_, point, adjacency_tolerance);
+                      return owner_index >= 0 ? boxes_[static_cast<std::size_t>(owner_index)].id : -1;
+                  }();
+            if (owner >= 0) {
+                snapshot.covered_count += 1;
+                if (main_ids.find(owner) != main_ids.end()) {
+                    snapshot.main_accessible_count += 1;
+                }
+            } else {
+                uncovered.push_back(&point);
+            }
+        }
+        const int anchor_cap = allow_anchor_probe
+            ? std::max(0, adaptive_depth_enabled
+                           ? adaptive_config.adaptive_depth_anchor_probe_cap
+                           : adaptive_config.seed_anchor_probe_cap)
+            : 0;
+        if (anchor_cap > 0 && !planning_domain.empty() && !uncovered.empty()) {
+            StageContext probe_context = StageContext::from_runtime(config_.runtime);
+            FindFreeBoxOptions probe_options = config_.grower.find_free_box;
+            probe_options.max_depth = target_leaf_depth;
+            probe_options.reject_seed_collision = false;
+            probe_options.deadline_ms = adaptive_depth_enabled ? 3.0 : 5.0;
+            const double max_probe_ms = adaptive_depth_enabled
+                ? std::max(0.0, adaptive_config.adaptive_depth_max_probe_ms)
+                : 0.0;
+            for (const Eigen::VectorXd* point : uncovered) {
+                if (snapshot.anchor_probe_attempts >= anchor_cap) {
+                    break;
+                }
+                const double elapsed_ms =
+                    std::chrono::duration<double, std::milli>(Clock::now() - snapshot_start).count();
+                if (max_probe_ms > 0.0 && elapsed_ms >= max_probe_ms) {
+                    break;
+                }
+                ++snapshot.anchor_probe_attempts;
+                const auto ffb = find_free_box_in_domain(*point, planning_domain, probe_context, probe_options);
+                if (!ffb.found) {
+                    continue;
+                }
+                snapshot.anchor_success_count += 1;
+                const BoxNode anchor = adaptive_make_box_from_intervals(
+                    ffb.intervals,
+                    ffb.node,
+                    -1,
+                    ffb.validation_detail.safety_status,
+                    ffb.validation_detail.strict_audit_required);
+                const bool anchor_main_accessible = use_partition_coverage
+                    ? adaptive_partition_->box_adjacent_to_any(anchor, main_ids, adjacency_tolerance)
+                    : (!use_partition_backend &&
+                       adaptive_has_adjacency_to_any(boxes_, anchor, &main_ids, adjacency_tolerance));
+                if (anchor_main_accessible) {
+                    snapshot.anchor_to_main_count += 1;
+                }
+            }
+        }
+        const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
+        snapshot.p_box_covered = static_cast<double>(snapshot.covered_count) / free_den;
+        snapshot.p_main_accessible = static_cast<double>(snapshot.main_accessible_count) / free_den;
+        snapshot.main_connected_ratio =
+            static_cast<double>(snapshot.main_accessible_count) /
+            static_cast<double>(std::max(1, snapshot.covered_count));
+        snapshot.p_anchor_to_main_uncovered =
+            static_cast<double>(snapshot.anchor_to_main_count) /
+            static_cast<double>(std::max(1, snapshot.anchor_probe_attempts));
+        snapshot.probe_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - snapshot_start).count();
+        const int min_covered_probes = std::max(0, adaptive_config.adaptive_depth_min_covered_probes);
+        const int min_main_probes = std::max(0, adaptive_config.adaptive_depth_min_main_probes);
+        const int min_cells = std::max(0, adaptive_config.adaptive_depth_min_cells);
+        const int min_main_cells = std::max(0, adaptive_config.adaptive_depth_min_main_cells);
+        const bool probe_gate =
+            snapshot.covered_count >= min_covered_probes &&
+            snapshot.main_accessible_count >= min_main_probes &&
+            (min_covered_probes <= 0 ||
+             snapshot.main_connected_ratio >= adaptive_config.adaptive_depth_min_main_ratio);
+        const bool cell_gate =
+            snapshot.cell_count >= min_cells &&
+            snapshot.main_island_cell_count >= min_main_cells;
+        snapshot.readiness_met =
+            adaptive_depth_enabled &&
+            probe_gate &&
+            cell_gate &&
+            (adaptive_config.adaptive_depth_max_online_cells <= 0 ||
+             snapshot.cell_count <= adaptive_config.adaptive_depth_max_online_cells);
+        return snapshot;
+    };
+    auto apply_final_depth_snapshot = [&](const AdaptiveDepthSnapshot& snapshot) {
+        out.selected_leaf_depth = snapshot.depth;
+        out.adaptive_depth_readiness_met = snapshot.readiness_met;
+        out.adaptive_depth_stop_reason = snapshot.stop_reason;
+        out.seed_probe_box_covered = snapshot.covered_count;
+        out.seed_probe_anchor_success = snapshot.anchor_success_count;
+        out.seed_probe_main_accessible = snapshot.main_accessible_count + snapshot.anchor_to_main_count;
+        out.p_box_covered = snapshot.p_box_covered;
+        const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
+        out.p_anchor_success = static_cast<double>(snapshot.anchor_success_count) / free_den;
+        out.p_main_accessible = static_cast<double>(out.seed_probe_main_accessible) / free_den;
+        out.p_anchor_to_main_uncovered = snapshot.p_anchor_to_main_uncovered;
+    };
+    auto record_depth_snapshot = [&](AdaptiveDepthSnapshot snapshot) {
+        checkpoint_probe_ms_total += snapshot.probe_ms;
+        depth_snapshots.push_back(std::move(snapshot));
+    };
+    auto next_depth_checkpoint = [&](int depth) {
+        const int step = depth < 16 ? 1 : 2;
+        return std::min(target_leaf_depth, depth + step);
+    };
+    bool adaptive_depth_stop = false;
+    int next_checkpoint_depth = initial_leaf_depth;
+    if (adaptive_depth_enabled) {
+        auto initial_snapshot = evaluate_depth_snapshot(initial_leaf_depth, true);
+        if (initial_snapshot.readiness_met) {
+            initial_snapshot.stop_reason = "coverage_ready";
+            adaptive_depth_stop = true;
+        } else if (initial_leaf_depth >= target_leaf_depth) {
+            initial_snapshot.stop_reason = "max_depth";
+            adaptive_depth_stop = true;
+        } else {
+            initial_snapshot.stop_reason = "checkpoint";
+            next_checkpoint_depth = next_depth_checkpoint(initial_leaf_depth);
+        }
+        record_depth_snapshot(std::move(initial_snapshot));
+    }
+    std::vector<AdaptiveFrontierItem> checkpoint_hold;
+    auto restore_checkpoint_hold = [&]() {
+        for (auto& held : checkpoint_hold) {
+            frontier.push(std::move(held));
+        }
+        checkpoint_hold.clear();
+    };
     {
         const bool collect_overlap_ratio =
             adaptive_config.overlap_ratio_threshold > 0.0 &&
             adaptive_config.defer_min_depth >= 0;
         ScopedAdaptiveFullOverlapStats overlap_stats(*oracle_, collect_overlap_ratio);
-        while (!frontier.empty() && !budget_exhausted()) {
+        while (!frontier.empty() && !budget_exhausted() && !adaptive_depth_stop) {
             AdaptiveFrontierItem item = frontier.top();
             frontier.pop();
             if (item.intervals.empty()) {
@@ -4541,6 +5268,25 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 continue;
             }
             const int depth = adaptive_virtual_depth(item.node);
+            if (adaptive_depth_enabled && depth > next_checkpoint_depth) {
+                checkpoint_hold.push_back(std::move(item));
+                if (frontier.empty()) {
+                    restore_checkpoint_hold();
+                    auto snapshot = evaluate_depth_snapshot(next_checkpoint_depth, true);
+                    if (snapshot.readiness_met) {
+                        snapshot.stop_reason = "coverage_ready";
+                        adaptive_depth_stop = true;
+                    } else if (next_checkpoint_depth >= target_leaf_depth) {
+                        snapshot.stop_reason = "max_depth";
+                        adaptive_depth_stop = true;
+                    } else {
+                        snapshot.stop_reason = "checkpoint";
+                        next_checkpoint_depth = next_depth_checkpoint(next_checkpoint_depth);
+                    }
+                    record_depth_snapshot(std::move(snapshot));
+                }
+                continue;
+            }
             adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.validated.", depth);
             BoxValidation validation = BoxValidation::Unknown;
             OracleValidationDetail detail;
@@ -4638,7 +5384,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             const bool protected_by_adjacency =
                 high_overlap && !protected_by_seed &&
                 adaptive_count_adjacent_free(scoring_boxes, item, adjacency_tolerance) > 0;
-            if (depth >= adaptive_config.target_max_depth) {
+            if (depth >= target_leaf_depth) {
                 deferred.push_back(std::move(item));
                 out.adaptive_deferred += 1;
                 out.diagnostics["adaptive.deferred_depth_cap"] += 1.0;
@@ -4685,6 +5431,24 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             }
         }
     }
+    restore_checkpoint_hold();
+    if (adaptive_depth_enabled && !adaptive_depth_stop && budget_exhausted()) {
+        auto snapshot = evaluate_depth_snapshot(depth_snapshots.empty()
+                                                    ? initial_leaf_depth
+                                                    : depth_snapshots.back().depth,
+                                                true);
+        snapshot.stop_reason = "budget";
+        adaptive_depth_stop = true;
+        record_depth_snapshot(std::move(snapshot));
+    } else if (adaptive_depth_enabled && !adaptive_depth_stop && frontier.empty()) {
+        auto snapshot = evaluate_depth_snapshot(depth_snapshots.empty()
+                                                    ? initial_leaf_depth
+                                                    : depth_snapshots.back().depth,
+                                                true);
+        snapshot.stop_reason = "frontier_empty";
+        adaptive_depth_stop = true;
+        record_depth_snapshot(std::move(snapshot));
+    }
     promote_deferred();
 	    while (!frontier.empty()) {
 	        deferred.push_back(frontier.top());
@@ -4693,72 +5457,32 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 	    out.unresolved_domains = static_cast<int>(deferred.size());
 	    out.adaptive_ms = std::chrono::duration<double, std::milli>(Clock::now() - adaptive_start).count();
 
-	    const auto coverage_start = Clock::now();
-	    AdjacencyBuildStats final_adjacency_stats;
-	    if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
-	        refresh_main_from_partition();
-	    } else if (!use_partition_backend) {
-	        rebuild_adjacency();
+		    AdjacencyBuildStats final_adjacency_stats;
+		    if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
+		        refresh_main_from_partition();
+		    } else if (!use_partition_backend) {
+		        rebuild_adjacency();
 	        final_adjacency_stats = last_adjacency_build_stats();
 	        main_ids = adaptive_largest_island_ids(adjacency_);
-	    } else {
-	        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
-	    }
-    int uncovered_anchor_attempts = 0;
-    StageContext probe_context = StageContext::from_runtime(config_.runtime);
-    FindFreeBoxOptions probe_options = config_.grower.find_free_box;
-    probe_options.max_depth = adaptive_config.target_max_depth;
-    probe_options.reject_seed_collision = false;
-    probe_options.deadline_ms = 5.0;
-    const int anchor_cap = std::max(0, adaptive_config.seed_anchor_probe_cap);
-	    BoxSpatialIndex coverage_index;
-	    const bool use_partition_coverage =
-	        use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_;
-	    if (!use_partition_coverage) {
-	        coverage_index.rebuild(boxes_, adjacency_tolerance);
-	    }
-	    for (const auto& point : free_probes) {
-	        const int owner = use_partition_coverage
-	            ? adaptive_partition_->locate_containing_box(point, false, adjacency_tolerance)
-	            : [&]() {
-	                  const int owner_index = coverage_index.covering_box(boxes_, point, adjacency_tolerance);
-	                  return owner_index >= 0 ? boxes_[static_cast<std::size_t>(owner_index)].id : -1;
-	              }();
-	        if (owner >= 0) {
-	            out.seed_probe_box_covered += 1;
-	            if (main_ids.find(owner) != main_ids.end()) {
-	                out.seed_probe_main_accessible += 1;
-            }
-            continue;
-        }
-        if (uncovered_anchor_attempts >= anchor_cap || planning_domain.empty()) {
-            continue;
-        }
-        ++uncovered_anchor_attempts;
-        const auto ffb = find_free_box_in_domain(point, planning_domain, probe_context, probe_options);
-        if (!ffb.found) {
-            continue;
-        }
-        out.seed_probe_anchor_success += 1;
-	        const BoxNode anchor = adaptive_make_box_from_intervals(ffb.intervals,
-	                                                                ffb.node,
-	                                                                -1,
-	                                                                ffb.validation_detail.safety_status,
-	                                                                ffb.validation_detail.strict_audit_required);
-	        const bool anchor_main_accessible = use_partition_coverage
-	            ? adaptive_partition_->box_adjacent_to_any(anchor, main_ids, adjacency_tolerance)
-	            : (!use_partition_backend &&
-	               adaptive_has_adjacency_to_any(boxes_, anchor, &main_ids, adjacency_tolerance));
-	        if (anchor_main_accessible) {
-	            out.seed_probe_main_accessible += 1;
-	        }
-	    }
-    out.coverage_probe_ms =
-        initial_probe_ms + std::chrono::duration<double, std::milli>(Clock::now() - coverage_start).count();
-    const double free_den = static_cast<double>(std::max(1, out.seed_probe_free_count));
-    out.p_box_covered = static_cast<double>(out.seed_probe_box_covered) / free_den;
-    out.p_anchor_success = static_cast<double>(out.seed_probe_anchor_success) / free_den;
-    out.p_main_accessible = static_cast<double>(out.seed_probe_main_accessible) / free_den;
+		    } else {
+		        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
+		    }
+    if (depth_snapshots.empty()) {
+        auto snapshot = evaluate_depth_snapshot(adaptive_depth_enabled ? initial_leaf_depth : target_leaf_depth,
+                                                true);
+        snapshot.stop_reason = adaptive_depth_enabled ? "max_depth" : "fixed_depth";
+        record_depth_snapshot(std::move(snapshot));
+    } else if (!adaptive_depth_enabled || depth_snapshots.back().stop_reason == "checkpoint") {
+        auto snapshot = evaluate_depth_snapshot(adaptive_depth_enabled
+                                                    ? depth_snapshots.back().depth
+                                                    : target_leaf_depth,
+                                                true);
+        snapshot.stop_reason = adaptive_depth_enabled ? "max_depth" : "fixed_depth";
+        record_depth_snapshot(std::move(snapshot));
+    }
+    apply_final_depth_snapshot(depth_snapshots.back());
+    out.adaptive_depth_snapshots_json = adaptive_depth_snapshots_to_json(depth_snapshots);
+    out.coverage_probe_ms = initial_probe_ms + checkpoint_probe_ms_total;
 
     out.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
     out.profile = {};
@@ -4855,28 +5579,53 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     out.profile.diagnostics["adaptive.adaptive_ms"] = out.adaptive_ms;
     out.profile.diagnostics["adaptive.coverage_probe_ms"] = out.coverage_probe_ms;
     out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
+    out.profile.diagnostics["adaptive.depth_enabled"] = adaptive_depth_enabled ? 1.0 : 0.0;
+    out.profile.diagnostics["adaptive.depth_min"] = static_cast<double>(adaptive_depth_min);
+    out.profile.diagnostics["adaptive.depth_max"] = static_cast<double>(target_leaf_depth);
+    out.profile.diagnostics["adaptive.depth_min_covered_probes"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_covered_probes);
+    out.profile.diagnostics["adaptive.depth_min_main_probes"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_main_probes);
+    out.profile.diagnostics["adaptive.depth_min_main_ratio"] =
+        adaptive_config.adaptive_depth_min_main_ratio;
+    out.profile.diagnostics["adaptive.depth_min_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_cells);
+    out.profile.diagnostics["adaptive.depth_min_main_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_min_main_cells);
+    out.profile.diagnostics["adaptive.depth_max_online_cells"] =
+        static_cast<double>(adaptive_config.adaptive_depth_max_online_cells);
     out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
     out.profile.diagnostics["adaptive.shallow_collision_count"] = static_cast<double>(out.shallow_collision_count);
     out.profile.diagnostics["adaptive.free_added"] = static_cast<double>(out.adaptive_free_added);
     out.profile.diagnostics["adaptive.validated"] = static_cast<double>(out.adaptive_validated);
     out.profile.diagnostics["adaptive.splits"] = static_cast<double>(out.adaptive_splits);
-    out.profile.diagnostics["adaptive.deferred"] = static_cast<double>(out.adaptive_deferred);
-    out.profile.diagnostics["adaptive.promoted"] = static_cast<double>(out.adaptive_promoted);
-    out.profile.diagnostics["adaptive.unresolved_domains"] = static_cast<double>(out.unresolved_domains);
-    out.profile.diagnostics["adaptive.seed_probe_count"] = static_cast<double>(out.seed_probe_count);
+	    out.profile.diagnostics["adaptive.deferred"] = static_cast<double>(out.adaptive_deferred);
+	    out.profile.diagnostics["adaptive.promoted"] = static_cast<double>(out.adaptive_promoted);
+	    out.profile.diagnostics["adaptive.unresolved_domains"] = static_cast<double>(out.unresolved_domains);
+    const int final_anchor_cap = adaptive_depth_enabled
+        ? std::max(0, adaptive_config.adaptive_depth_anchor_probe_cap)
+        : std::max(0, adaptive_config.seed_anchor_probe_cap);
+    const int final_anchor_attempts = depth_snapshots.empty()
+        ? 0
+        : depth_snapshots.back().anchor_probe_attempts;
+	    out.profile.diagnostics["adaptive.seed_probe_count"] = static_cast<double>(out.seed_probe_count);
     out.profile.diagnostics["adaptive.seed_probe_free_count"] = static_cast<double>(out.seed_probe_free_count);
     out.profile.diagnostics["adaptive.seed_probe_box_covered"] = static_cast<double>(out.seed_probe_box_covered);
     out.profile.diagnostics["adaptive.seed_probe_anchor_success"] = static_cast<double>(out.seed_probe_anchor_success);
     out.profile.diagnostics["adaptive.seed_probe_main_accessible"] = static_cast<double>(out.seed_probe_main_accessible);
-    out.profile.diagnostics["adaptive.seed_anchor_probe_cap"] = static_cast<double>(anchor_cap);
-    out.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] = static_cast<double>(uncovered_anchor_attempts);
+	    out.profile.diagnostics["adaptive.seed_anchor_probe_cap"] = static_cast<double>(final_anchor_cap);
+	    out.profile.diagnostics["adaptive.seed_anchor_probe_attempts"] = static_cast<double>(final_anchor_attempts);
     out.profile.diagnostics["adaptive.p_box_covered"] = out.p_box_covered;
     out.profile.diagnostics["adaptive.p_anchor_success"] = out.p_anchor_success;
     out.profile.diagnostics["adaptive.p_main_accessible"] = out.p_main_accessible;
+    out.profile.diagnostics["adaptive.p_anchor_to_main_uncovered"] = out.p_anchor_to_main_uncovered;
+    out.profile.diagnostics["adaptive.selected_leaf_depth"] = static_cast<double>(out.selected_leaf_depth);
+    out.profile.diagnostics["adaptive.depth_readiness_met"] =
+        out.adaptive_depth_readiness_met ? 1.0 : 0.0;
 	    if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
 	        refresh_adaptive_partition_diagnostics(&out.profile);
 	    } else {
-	        rebuild_adaptive_partition(adaptive_config, &out.profile);
+	        rebuild_adaptive_partition(partition_config, &out.profile);
 	    }
     if (adaptive_partition_ && !adaptive_partition_->empty()) {
         const auto& partition_stats = adaptive_partition_->stats();

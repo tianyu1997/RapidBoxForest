@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import statistics
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -27,7 +28,7 @@ BALANCED_PROBE_RANGE = 0.35
 BALANCED_PROBE_SEGMENT_STEP = 0.06
 BALANCED_PROBE_SIMPLIFY_TIME_S = 0.0
 TIMED_PROBE_RANGE = 0.35
-TIMED_PROBE_SEGMENT_STEP = 0.06
+TIMED_PROBE_SEGMENT_STEP = 0.01
 TIMED_PROBE_SIMPLIFY_TIME_S = 0.0
 BITSTAR_PROBE_TIMEOUT_S = 0.50
 BITSTAR_PROBE_CHECKPOINT_INTERVAL_S = 0.005
@@ -35,10 +36,21 @@ BITSTAR_PROBE_MIN_FIRST_SUCCESS_S = 0.10
 BITSTAR_PROBE_SAMPLES_PER_BATCH = 100
 BITSTAR_PROBE_REWIRE_FACTOR = 5.0
 TIMED_PROBE_TIMEOUT_WINDOWS_S = {
-    "easy": (0.0, 0.05),
-    "medium": (0.05, 0.20),
-    "hard": (0.20, 1.00),
+    "easy": (0.0, 0.003),
+    "medium": (0.003, 0.007),
+    "hard": (0.007, 0.050),
 }
+BITSTAR_MEDIAN_FIRST_SOLUTION_WINDOWS_S = {
+    "easy": (0.0, 0.05),
+    "medium": (0.05, 0.10),
+    "hard": (0.10, BITSTAR_PROBE_TIMEOUT_S),
+}
+INCREMENTAL_DIFFICULTY_MAX_ADDED_OBSTACLES = {
+    "easy": 0,
+    "medium": 48,
+    "hard": 80,
+}
+INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT = 1
 NARROW_PASSAGE_TIMEOUT_WINDOWS_S = {
     "easy": (0.02, 0.10),
     "medium": (0.10, 0.40),
@@ -164,6 +176,10 @@ def obstacle_from_bounds(bounds: Sequence[float]) -> Any:
     return sbf.Obstacle(*values)
 
 
+def normalize_obstacles(obstacles: Iterable[Any]) -> list[Any]:
+    return [obstacle if hasattr(obstacle, "bounds") else obstacle_from_bounds(obstacle) for obstacle in obstacles]
+
+
 def inflate_obstacle(obstacle: Any, margin: float) -> Any:
     b = obstacle_bounds(obstacle)
     return sbf.Obstacle(b[0] - margin, b[1] - margin, b[2] - margin, b[3] + margin, b[4] + margin, b[5] + margin)
@@ -270,6 +286,59 @@ def random_obstacle_colliding_with_path_config(
         alpha = rng.uniform(0.18, 0.82)
         q = interpolate(start, goal, alpha)
         candidate = random_obstacle_near_workspace_path_config(rng, base)
+        if not obstacle_clears_fixed_robot(robot_name, candidate):
+            continue
+        if not sbf.check_config_collision(robot, [candidate], q):
+            continue
+        if not endpoint_pair_has_clearance(robot, [candidate], start, goal, margin=endpoint_clearance_margin_m):
+            continue
+        return candidate
+    return None
+
+
+def random_query_wall_obstacle_colliding_with_path_config(
+    robot_name: str,
+    robot: Any,
+    start: list[float],
+    goal: list[float],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts: int = 512,
+) -> Any | None:
+    for _ in range(max(1, int(attempts))):
+        alpha = rng.uniform(0.14, 0.86)
+        q = interpolate(start, goal, alpha)
+        if rng.random() < 0.75:
+            candidate = random_narrow_workspace_obstacle(rng, max(float(base), 0.22))
+        else:
+            candidate = random_workspace_obstacle(rng, max(float(base), 0.22))
+        if not obstacle_clears_fixed_robot(robot_name, candidate):
+            continue
+        if not sbf.check_config_collision(robot, [candidate], q):
+            continue
+        if not endpoint_pair_has_clearance(robot, [candidate], start, goal, margin=endpoint_clearance_margin_m):
+            continue
+        return candidate
+    return None
+
+
+def random_query_wall_obstacle_colliding_with_config(
+    robot_name: str,
+    robot: Any,
+    q: list[float],
+    start: list[float],
+    goal: list[float],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts: int = 512,
+) -> Any | None:
+    for _ in range(max(1, int(attempts))):
+        if rng.random() < 0.80:
+            candidate = random_narrow_workspace_obstacle(rng, max(float(base), 0.24))
+        else:
+            candidate = random_workspace_obstacle(rng, max(float(base), 0.24))
         if not obstacle_clears_fixed_robot(robot_name, candidate):
             continue
         if not sbf.check_config_collision(robot, [candidate], q):
@@ -451,6 +520,7 @@ def interpolate(a: list[float], b: list[float], alpha: float) -> list[float]:
 
 
 def segment_is_collision_free(robot: Any, obstacles: list[Any], start: list[float], goal: list[float], resolution: int = SEGMENT_RESOLUTION) -> bool:
+    obstacles = normalize_obstacles(obstacles)
     steps = max(1, int(resolution))
     for index in range(steps + 1):
         if sbf.check_config_collision(robot, obstacles, interpolate(start, goal, index / steps)):
@@ -465,6 +535,7 @@ def path_is_collision_free(robot: Any, obstacles: list[Any], path: list[list[flo
 
 
 def direct_obstruction_probe(robot: Any, obstacles: list[Any], start: list[float], goal: list[float], resolution: int = SEGMENT_RESOLUTION) -> dict[str, Any]:
+    obstacles = normalize_obstacles(obstacles)
     steps = max(1, int(resolution))
     hits = 0
     for index in range(steps + 1):
@@ -521,6 +592,10 @@ def scene_profile_requires_timed_probe(scene_profile: str) -> bool:
         "narrow_passage_independent",
         "narrow",
         "narrow_independent",
+        "narrow_passage_strict_time",
+        "narrow_passage_independent_strict_time",
+        "narrow_strict_time",
+        "narrow_independent_strict_time",
     }
 
 
@@ -554,6 +629,7 @@ def scene_profile_requires_strict_time_probe(scene_profile: str) -> bool:
 
 
 def scene_passes_balanced_probe(robot: Any, obstacles: list[Any], start: list[float], goal: list[float], seed: int) -> bool:
+    obstacles = normalize_obstacles(obstacles)
     try:
         result = sbf.ompl_rrt_connect_path(
             robot,
@@ -587,6 +663,7 @@ def rrtconnect_timed_probe(
     difficulty: str,
     strict_time: bool = False,
 ) -> dict[str, Any]:
+    obstacles = normalize_obstacles(obstacles)
     min_s, max_s = timed_probe_window_s(difficulty, strict_time=bool(strict_time))
     obstruction = direct_obstruction_probe(robot, obstacles, start, goal, SEGMENT_RESOLUTION)
     obs_min, obs_max = obstruction_window(difficulty)
@@ -680,6 +757,7 @@ def bitstar_first_solution_probe(
     timeout_s: float = BITSTAR_PROBE_TIMEOUT_S,
     checkpoint_interval_s: float = BITSTAR_PROBE_CHECKPOINT_INTERVAL_S,
 ) -> dict[str, Any]:
+    obstacles = normalize_obstacles(obstacles)
     try:
         result = sbf.ompl_bitstar_trace(
             robot,
@@ -736,6 +814,189 @@ def bitstar_first_solution_probe(
         "checkpoint_count": len(checkpoints),
         "success_checkpoint_count": sum(1 for row in checkpoints if bool(row.get("ok"))),
     }
+
+
+def bitstar_median_window_s(difficulty: str) -> tuple[float, float]:
+    return BITSTAR_MEDIAN_FIRST_SOLUTION_WINDOWS_S.get(
+        str(difficulty).lower(),
+        BITSTAR_MEDIAN_FIRST_SOLUTION_WINDOWS_S["medium"],
+    )
+
+
+def rrtconnect_first_solution_probe(
+    robot: Any,
+    obstacles: list[Any],
+    start: list[float],
+    goal: list[float],
+    seed: int,
+    timeout_s: float,
+) -> dict[str, Any]:
+    obstacles = normalize_obstacles(obstacles)
+    try:
+        result = sbf.ompl_rrt_connect_path(
+            robot,
+            obstacles,
+            start,
+            goal,
+            float(timeout_s) * 1000.0,
+            TIMED_PROBE_RANGE,
+            TIMED_PROBE_SEGMENT_STEP,
+            TIMED_PROBE_SIMPLIFY_TIME_S,
+            int(seed),
+        )
+    except AttributeError:
+        return {
+            "planner": "OMPL_RRTConnect",
+            "ok": False,
+            "status": "binding_unavailable",
+            "first_success_s": math.nan,
+            "timeout_s": float(timeout_s),
+        }
+    path = [list(point) for point in result.get("path", [])]
+    ok = (
+        bool(result.get("ok"))
+        and str(result.get("status", "")) == "Exact solution"
+        and path_is_collision_free(robot, obstacles, path)
+    )
+    solve_s = float(result.get("solve_s", result.get("t_s", math.nan)) or math.nan)
+    return {
+        "planner": "OMPL_RRTConnect",
+        "ok": bool(ok and math.isfinite(solve_s)),
+        "status": str(result.get("status", "")) if ok else "no_strict_solution_before_timeout",
+        "first_success_s": solve_s if ok else math.nan,
+        "path": path if ok else [],
+        "timeout_s": float(timeout_s),
+        "range": float(TIMED_PROBE_RANGE),
+        "segment_step": float(TIMED_PROBE_SEGMENT_STEP),
+        "simplify_time_s": float(TIMED_PROBE_SIMPLIFY_TIME_S),
+        "nodes": int(result.get("nodes", 0) or 0),
+    }
+
+
+def median_probe_summary(
+    planner: str,
+    probes: list[dict[str, Any]],
+    *,
+    time_key: str,
+    window: tuple[float, float],
+) -> dict[str, Any]:
+    times = [
+        float(row.get(time_key, math.nan))
+        for row in probes
+        if bool(row.get("ok")) and math.isfinite(float(row.get(time_key, math.nan)))
+    ]
+    median_s = statistics.median(times) if times else math.nan
+    lo, hi = window
+    in_window = (
+        len(times) == len(probes)
+        and math.isfinite(median_s)
+        and median_s >= float(lo) - 1e-12
+        and median_s <= float(hi) + 1e-12
+    )
+    return {
+        "planner": str(planner),
+        "ok": bool(in_window),
+        "query_count": int(len(probes)),
+        "success_count": int(len(times)),
+        "all_success": len(times) == len(probes),
+        "median_first_success_s": float(median_s),
+        "mean_first_success_s": float(sum(times) / len(times)) if times else math.nan,
+        "min_first_success_s": float(min(times)) if times else math.nan,
+        "max_first_success_s": float(max(times)) if times else math.nan,
+        "window_s": [float(lo), float(hi)],
+        "probes": probes,
+    }
+
+
+def scene_median_difficulty_probe(
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    seed: int,
+    difficulty: str,
+) -> dict[str, Any]:
+    rrt = scene_rrtconnect_median_probe(robot, obstacles, queries, seed, difficulty)
+    bitstar = scene_bitstar_median_probe(robot, obstacles, queries, seed, difficulty)
+    return {
+        "planner": "OMPL_RRTConnect+BITstar",
+        "policy": "shared_query_median_first_solution_time_windows",
+        "ok": bool(rrt.get("ok")) and bool(bitstar.get("ok")),
+        "difficulty": str(difficulty),
+        "query_count": int(len(queries)),
+        "planner_seed_count": int(INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT),
+        "rrtconnect": rrt,
+        "bitstar": bitstar,
+    }
+
+
+def scene_rrtconnect_median_probe(
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    seed: int,
+    difficulty: str,
+) -> dict[str, Any]:
+    rrt_lo, rrt_hi = timed_probe_window_s(str(difficulty), strict_time=False)
+    rrt_probes: list[dict[str, Any]] = []
+    for query_index, query in enumerate(queries):
+        start = [float(value) for value in query["start"]]
+        goal = [float(value) for value in query["goal"]]
+        for seed_index in range(max(1, int(INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT))):
+            probe_seed = int(seed) + 1009 * int(query_index) + 65537 * int(seed_index)
+            rrt_probes.append(
+                {
+                    **rrtconnect_first_solution_probe(
+                        robot,
+                        obstacles,
+                        start,
+                        goal,
+                        probe_seed,
+                        timeout_s=float(rrt_hi),
+                    ),
+                    "query_index": int(query_index),
+                    "seed_index": int(seed_index),
+                }
+            )
+    return median_probe_summary(
+        "OMPL_RRTConnect",
+        rrt_probes,
+        time_key="first_success_s",
+        window=(rrt_lo, rrt_hi),
+    )
+
+
+def scene_bitstar_median_probe(
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    seed: int,
+    difficulty: str,
+) -> dict[str, Any]:
+    bit_lo, bit_hi = bitstar_median_window_s(str(difficulty))
+    bitstar_probes: list[dict[str, Any]] = []
+    for query_index, query in enumerate(queries):
+        start = [float(value) for value in query["start"]]
+        goal = [float(value) for value in query["goal"]]
+        for seed_index in range(max(1, int(INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT))):
+            probe_seed = int(seed) + 1009 * int(query_index) + 65537 * int(seed_index)
+            bitstar_probes.append(
+                bitstar_first_solution_probe(
+                    robot,
+                    obstacles,
+                    start,
+                    goal,
+                    probe_seed + 524287,
+                    min_first_success_s=0.0,
+                    timeout_s=BITSTAR_PROBE_TIMEOUT_S,
+                    checkpoint_interval_s=BITSTAR_PROBE_CHECKPOINT_INTERVAL_S,
+                )
+            )
+    return median_probe_summary(
+        "OMPL_BITstar_trace",
+        bitstar_probes,
+        time_key="first_success_checkpoint_s",
+        window=(bit_lo, bit_hi),
+    )
 
 
 def timed_difficulty_probe(
@@ -943,6 +1204,254 @@ def append_path_blocker(
         obstacles.append(candidate)
         return True
     return False
+
+
+def query_direct_obstruction_values(robot: Any, obstacles: list[Any], queries: list[dict[str, Any]]) -> list[float]:
+    return [
+        float(direct_obstruction_probe(robot, obstacles, list(query["start"]), list(query["goal"]), SEGMENT_RESOLUTION)["collision_fraction"])
+        for query in queries
+    ]
+
+
+def all_query_endpoints_have_clearance(robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], margin: float) -> bool:
+    for query in queries:
+        if not endpoint_pair_has_clearance(robot, obstacles, list(query["start"]), list(query["goal"]), margin=margin):
+            return False
+    return True
+
+
+def append_shared_query_blocker(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts: int = 4096,
+) -> bool:
+    values = query_direct_obstruction_values(robot, obstacles, queries)
+    order = sorted(range(len(queries)), key=lambda index: values[index])
+    for query_index in order:
+        query = queries[query_index]
+        current_fraction = values[query_index]
+        for _ in range(max(1, int(attempts))):
+            if rng.random() < 0.80:
+                candidate = random_query_wall_obstacle_colliding_with_path_config(
+                    robot_name,
+                    robot,
+                    list(query["start"]),
+                    list(query["goal"]),
+                    rng,
+                    base,
+                    endpoint_clearance_margin_m,
+                    attempts=1,
+                )
+            else:
+                candidate = random_obstacle_colliding_with_path_config(
+                    robot_name,
+                    robot,
+                    list(query["start"]),
+                    list(query["goal"]),
+                    rng,
+                    base,
+                    endpoint_clearance_margin_m,
+                    attempts=1,
+                )
+            if candidate is None:
+                continue
+            proposed = [*obstacles, candidate]
+            if not all_query_endpoints_have_clearance(robot, proposed, queries, endpoint_clearance_margin_m):
+                continue
+            fraction = float(direct_obstruction_probe(robot, proposed, list(query["start"]), list(query["goal"]), SEGMENT_RESOLUTION)["collision_fraction"])
+            if fraction <= current_fraction:
+                continue
+            obstacles.append(candidate)
+            return True
+    return False
+
+
+def append_rrt_path_blocker(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    rrt_probe: dict[str, Any],
+    rng: random.Random,
+    base: float,
+    endpoint_clearance_margin_m: float,
+    attempts_per_probe: int = 256,
+) -> bool:
+    raw_probes = rrt_probe.get("probes", [])
+    probes = [dict(probe) for probe in raw_probes] if isinstance(raw_probes, list) else []
+    probes = [
+        probe
+        for probe in probes
+        if bool(probe.get("ok"))
+        and math.isfinite(float(probe.get("first_success_s", math.nan)))
+        and len(probe.get("path", [])) >= 2
+    ]
+    probes.sort(key=lambda probe: float(probe.get("first_success_s", math.inf)))
+    for probe in probes:
+        query_index = int(probe.get("query_index", 0) or 0)
+        if query_index < 0 or query_index >= len(queries):
+            continue
+        query = queries[query_index]
+        path = [[float(value) for value in point] for point in probe.get("path", [])]
+        candidate_indices = list(range(1, max(1, len(path) - 1)))
+        if not candidate_indices:
+            candidate_indices = [0]
+        rng.shuffle(candidate_indices)
+        for path_index in candidate_indices[: min(len(candidate_indices), 6)]:
+            q = path[path_index]
+            for _ in range(max(1, int(attempts_per_probe))):
+                candidate = random_query_wall_obstacle_colliding_with_config(
+                    robot_name,
+                    robot,
+                    q,
+                    list(query["start"]),
+                    list(query["goal"]),
+                    rng,
+                    base,
+                    endpoint_clearance_margin_m,
+                    attempts=1,
+                )
+                if candidate is None:
+                    continue
+                proposed = [*obstacles, candidate]
+                if not all_query_endpoints_have_clearance(robot, proposed, queries, endpoint_clearance_margin_m):
+                    continue
+                obstacles.append(candidate)
+                return True
+    return False
+
+
+def grow_shared_query_obstruction(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    rng: random.Random,
+    *,
+    target_mean: float,
+    min_added: int,
+    max_added: int,
+    base: float,
+    endpoint_clearance_margin_m: float,
+) -> int:
+    added = 0
+    while added < max(0, int(max_added)):
+        values = query_direct_obstruction_values(robot, obstacles, queries)
+        if added >= int(min_added) and sum(values) / max(1, len(values)) >= float(target_mean):
+            break
+        if not append_shared_query_blocker(
+            robot_name,
+            robot,
+            obstacles,
+            queries,
+            rng,
+            base,
+            endpoint_clearance_margin_m,
+        ):
+            break
+        added += 1
+    return added
+
+
+def probe_median_value(probe: dict[str, Any], planner_key: str) -> float:
+    try:
+        return float(probe.get(planner_key, {}).get("median_first_success_s", math.nan))
+    except Exception:
+        return math.nan
+
+
+def probe_too_slow_for_difficulty(probe: dict[str, Any], difficulty: str) -> bool:
+    rrt_median = probe_median_value(probe, "rrtconnect")
+    bit_median = probe_median_value(probe, "bitstar")
+    _rrt_lo, rrt_hi = timed_probe_window_s(difficulty, strict_time=False)
+    _bit_lo, bit_hi = bitstar_median_window_s(difficulty)
+    return (
+        (math.isfinite(rrt_median) and rrt_median > float(rrt_hi) + 1e-12)
+        or (math.isfinite(bit_median) and bit_median > float(bit_hi) + 1e-12)
+    )
+
+
+def difficulty_probe_brief(probe: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for key in ("rrtconnect", "bitstar"):
+        item = probe.get(key, {})
+        if not isinstance(item, dict):
+            continue
+        parts.append(
+            (
+                f"{key}:ok={bool(item.get('ok'))},"
+                f"succ={int(item.get('success_count', 0) or 0)}/{int(item.get('query_count', 0) or 0)},"
+                f"median={float(item.get('median_first_success_s', math.nan)):.4g},"
+                f"window={item.get('window_s')}"
+            )
+        )
+    return "; ".join(parts) if parts else str(probe.get("status", "no_probe"))
+
+
+def grow_until_shared_query_median_gate(
+    robot_name: str,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    rng: random.Random,
+    *,
+    difficulty: str,
+    seed: int,
+    base: float,
+    endpoint_clearance_margin_m: float,
+) -> tuple[bool, dict[str, Any], int]:
+    max_added = int(INCREMENTAL_DIFFICULTY_MAX_ADDED_OBSTACLES.get(str(difficulty).lower(), 16))
+    added = 0
+    last_probe: dict[str, Any] = {
+        "planner": "OMPL_RRTConnect+BITstar",
+        "policy": "shared_query_median_first_solution_time_windows",
+        "ok": False,
+        "difficulty": str(difficulty),
+    }
+    while added <= max_added:
+        rrt_probe = scene_rrtconnect_median_probe(robot, obstacles, queries, int(seed) + 104729 * added, str(difficulty))
+        last_probe["rrtconnect"] = rrt_probe
+        if bool(rrt_probe.get("ok")):
+            bitstar_probe = scene_bitstar_median_probe(robot, obstacles, queries, int(seed) + 524287 + 104729 * added, str(difficulty))
+            last_probe["bitstar"] = bitstar_probe
+            last_probe["ok"] = bool(bitstar_probe.get("ok"))
+            last_probe["query_count"] = int(len(queries))
+            last_probe["planner_seed_count"] = int(INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT)
+            if bool(last_probe.get("ok")):
+                break
+        if probe_too_slow_for_difficulty(last_probe, str(difficulty)):
+            break
+        if added >= max_added:
+            break
+        appended = append_rrt_path_blocker(
+            robot_name,
+            robot,
+            obstacles,
+            queries,
+            rrt_probe,
+            rng,
+            base,
+            endpoint_clearance_margin_m,
+        )
+        if not appended:
+            appended = append_shared_query_blocker(
+                robot_name,
+                robot,
+                obstacles,
+                queries,
+                rng,
+                base,
+                endpoint_clearance_margin_m,
+            )
+        if not appended:
+            break
+        added += 1
+    return bool(last_probe.get("ok")), last_probe, added
 
 
 def make_narrow_passage_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, strict_time: bool = False) -> SceneSpec:
@@ -1395,6 +1904,62 @@ def scene_to_record(
     }
 
 
+def scene_to_record_with_queries(
+    scene: SceneSpec,
+    *,
+    scene_seed: int,
+    generator_seed: int,
+    scene_profile: str,
+    queries: list[dict[str, Any]],
+    difficulty_probe: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    robot = make_robot(str(scene.robot_name))
+    copied_queries = [dict(query) for query in queries]
+    first = copied_queries[0]
+    canonical_start = [float(value) for value in first["canonical_start"]]
+    canonical_goal = [float(value) for value in first["canonical_goal"]]
+    start = [float(value) for value in first["start"]]
+    goal = [float(value) for value in first["goal"]]
+    record = {
+        "schema": CATALOG_SCHEMA,
+        "robot": str(scene.robot_name),
+        "difficulty": str(scene.difficulty),
+        "scene_seed": int(scene_seed),
+        "generator_seed": int(generator_seed),
+        "scene_profile": str(scene_profile),
+        "queries_per_scene": int(len(copied_queries)),
+        "queries": copied_queries,
+        "start": start,
+        "goal": goal,
+        "canonical_start": canonical_start,
+        "canonical_goal": canonical_goal,
+        "symmetry_shift": int(first.get("symmetry_shift", scene.symmetry_shift)),
+        "symmetry_sector": int(first.get("symmetry_sector", scene.symmetry_sector)),
+        "obstacles": [obstacle_bounds(obstacle) for obstacle in scene.obstacles],
+        "sample_domain": LECT_SAMPLE_DOMAIN,
+        "canonical_cache": True,
+        "lect_root_intervals": interval_pairs(canonical_root_intervals(robot)),
+        "planning_root_intervals": interval_pairs(robot_joint_limit_intervals(robot)),
+        "sector_expanded_root_intervals": interval_pairs(sector_expanded_lect_root_intervals(robot)),
+        "canonical_start_in_lect_root": q_in_intervals(canonical_start, canonical_root_intervals(robot)),
+        "canonical_goal_in_lect_root": q_in_intervals(canonical_goal, canonical_root_intervals(robot)),
+        "actual_start_in_lect_root": q_in_lect_root(robot, start),
+        "actual_goal_in_lect_root": q_in_lect_root(robot, goal),
+        "endpoint_clearance_margin_m": float(scene.endpoint_clearance_margin_m),
+        "fixed_robot_clearance_margin_m": float(scene.fixed_robot_clearance_margin_m),
+        "max_query_l2": float(MAX_QUERY_L2),
+        "direct_segment_blocked": not segment_is_collision_free(robot, list(scene.obstacles), start, goal),
+        "segment_resolution": int(scene.segment_resolution),
+        "incremental_scene": {
+            "shared_query_set": True,
+            "obstacle_prefix_difficulty": str(scene.difficulty),
+        },
+    }
+    if difficulty_probe is not None:
+        record["difficulty_probe"] = dict(difficulty_probe)
+    return record
+
+
 def scene_from_record(record: dict[str, Any]) -> SceneSpec:
     return SceneSpec(
         robot_name=str(record["robot"]),
@@ -1469,6 +2034,15 @@ def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
         return False
 
 
+def record_has_shared_query_median_gate(record: dict[str, Any]) -> bool:
+    probe = record.get("difficulty_probe", {})
+    return (
+        isinstance(probe, dict)
+        and str(probe.get("policy", "")) == "shared_query_median_first_solution_time_windows"
+        and bool(probe.get("ok"))
+    )
+
+
 def expected_keys(robots: Iterable[str], difficulties: Iterable[str], scene_seeds: int) -> list[str]:
     return [
         scene_cache_key(robot, difficulty, seed)
@@ -1499,9 +2073,14 @@ def catalog_metadata(*, robots: list[str], difficulties: list[str], scene_seeds:
         },
         "difficulty_probe": {
             "planner": "OMPL_RRTConnect+BITstar",
-            "policy": "rrtconnect_time_or_direct_obstruction_plus_bitstar_first_success_lower_bound",
+            "policy": "shared_query_median_first_solution_time_windows",
             "windows_s": {key: [float(lo), float(hi)] for key, (lo, hi) in TIMED_PROBE_TIMEOUT_WINDOWS_S.items()},
             "narrow_windows_s": {key: [float(lo), float(hi)] for key, (lo, hi) in NARROW_PASSAGE_TIMEOUT_WINDOWS_S.items()},
+            "bitstar_median_windows_s": {
+                key: [float(lo), float(hi)]
+                for key, (lo, hi) in BITSTAR_MEDIAN_FIRST_SOLUTION_WINDOWS_S.items()
+            },
+            "planner_seed_count": int(INCREMENTAL_DIFFICULTY_PROBE_SEED_COUNT),
             "direct_obstruction_fraction_windows": {
                 key: [float(lo), float(hi)]
                 for key, (lo, hi) in DIRECT_OBSTRUCTION_FRACTION_WINDOWS.items()
@@ -1594,9 +2173,189 @@ def generate_catalog(
                 f"scene catalog {path} has {len(too_few_queries)} records with too few queries; "
                 f"first={too_few_queries[0]}"
             )
+        if scene_profile_uses_nested_prefixes(scene_profile) and "independent" not in str(scene_profile).lower():
+            missing_probe = [key for key in keys if not record_has_shared_query_median_gate(existing[key])]
+            if missing_probe:
+                raise RuntimeError(
+                    f"scene catalog {path} has {len(missing_probe)} records without the shared-query median difficulty gate; "
+                    f"first={missing_probe[0]}"
+                )
         return load_catalog(path)
     records = dict(existing) if mode == "auto" else {}
     total = len(keys)
+    if scene_profile_uses_nested_prefixes(scene_profile) and "independent" not in str(scene_profile).lower():
+        for robot_name in robots:
+            for scene_seed in range(max(1, int(scene_seeds))):
+                group_keys = [scene_cache_key(robot_name, difficulty, scene_seed) for difficulty in difficulties]
+                if all(
+                    key in records
+                    and record_satisfies_lect_root(records[key])
+                    and len(query_records_from_record(records[key])) >= max(1, int(queries_per_scene))
+                    and record_has_shared_query_median_gate(records[key])
+                    for key in group_keys
+                ):
+                    continue
+                base_generator_seed = int(seed_base) + 1009 * int(scene_seed)
+                print(f"[catalog] generating nested {robot_name}:{scene_seed} ({len(records) + 1}/{total})", flush=True)
+                robot = make_robot(robot_name)
+                accepted: tuple[
+                    Any,
+                    list[dict[str, Any]],
+                    dict[str, list[Any]],
+                    dict[str, dict[str, Any]],
+                    int,
+                ] | None = None
+                last_error: Exception | None = None
+                full_difficulty = "hard" if "hard" in RANDOM_DIFFICULTY_ORDER else difficulties[-1]
+                for scene_try in range(max(1, int(max_scene_tries))):
+                    generator_seed = base_generator_seed + 1_000_003 * int(scene_try)
+                    try:
+                        full_scene = make_random_scene(
+                            robot_name,
+                            full_difficulty,
+                            generator_seed,
+                            max_scene_tries=int(max_scene_tries),
+                            scene_profile=scene_profile,
+                        )
+                        easy_seed_scene = SceneSpec(
+                            robot_name=robot_name,
+                            difficulty="easy",
+                            obstacles=obstacle_prefix(list(full_scene.obstacles), "easy"),
+                            start=list(full_scene.start),
+                            goal=list(full_scene.goal),
+                            canonical_start=list(full_scene.canonical_start or full_scene.start),
+                            canonical_goal=list(full_scene.canonical_goal or full_scene.goal),
+                            symmetry_shift=int(full_scene.symmetry_shift),
+                            symmetry_sector=int(full_scene.symmetry_sector),
+                            endpoint_clearance_margin_m=float(full_scene.endpoint_clearance_margin_m),
+                            fixed_robot_clearance_margin_m=float(full_scene.fixed_robot_clearance_margin_m),
+                            direct_segment_blocked=True,
+                            segment_resolution=int(full_scene.segment_resolution),
+                        )
+                        query_seed_scene = SceneSpec(
+                            robot_name=robot_name,
+                            difficulty=full_difficulty,
+                            obstacles=list(full_scene.obstacles),
+                            start=list(full_scene.start),
+                            goal=list(full_scene.goal),
+                            canonical_start=list(full_scene.canonical_start or full_scene.start),
+                            canonical_goal=list(full_scene.canonical_goal or full_scene.goal),
+                            symmetry_shift=int(full_scene.symmetry_shift),
+                            symmetry_sector=int(full_scene.symmetry_sector),
+                            endpoint_clearance_margin_m=float(full_scene.endpoint_clearance_margin_m),
+                            fixed_robot_clearance_margin_m=float(full_scene.fixed_robot_clearance_margin_m),
+                            direct_segment_blocked=True,
+                            segment_resolution=int(full_scene.segment_resolution),
+                        )
+                        query_seed_record = scene_to_record(
+                            query_seed_scene,
+                            scene_seed=scene_seed,
+                            generator_seed=generator_seed,
+                            scene_profile=scene_profile,
+                            queries_per_scene=int(queries_per_scene),
+                            max_scene_tries=int(max_scene_tries),
+                        )
+                        shared_queries = query_records_from_record(query_seed_record)[: max(1, int(queries_per_scene))]
+                        prefix_obstacles: dict[str, list[Any]] = {"easy": list(easy_seed_scene.obstacles)}
+                        difficulty_probes: dict[str, dict[str, Any]] = {}
+                        easy_probe = scene_median_difficulty_probe(
+                            robot,
+                            prefix_obstacles["easy"],
+                            shared_queries,
+                            generator_seed + 65_537,
+                            "easy",
+                        )
+                        if not bool(easy_probe.get("ok")):
+                            last_error = RuntimeError(
+                                "easy shared-query median gate failed: "
+                                + difficulty_probe_brief(easy_probe)
+                            )
+                            continue
+                        difficulty_probes["easy"] = easy_probe
+                        rng = random.Random(generator_seed + 4_194_301)
+                        previous_obstacles = list(prefix_obstacles["easy"])
+                        failed = False
+                        for difficulty in RANDOM_DIFFICULTY_ORDER[1:]:
+                            candidate_obstacles = list(previous_obstacles)
+                            ok, probe, _added = grow_until_shared_query_median_gate(
+                                robot_name,
+                                robot,
+                                candidate_obstacles,
+                                shared_queries,
+                                rng,
+                                difficulty=difficulty,
+                                seed=generator_seed + 65_537 + 8191 * RANDOM_DIFFICULTY_ORDER.index(difficulty),
+                                base=random_obstacle_scale(difficulty),
+                                endpoint_clearance_margin_m=float(full_scene.endpoint_clearance_margin_m),
+                            )
+                            if not ok:
+                                last_error = RuntimeError(
+                                    f"{difficulty} shared-query median gate failed: "
+                                    + difficulty_probe_brief(probe)
+                                )
+                                failed = True
+                                break
+                            prefix_obstacles[difficulty] = candidate_obstacles
+                            difficulty_probes[difficulty] = probe
+                            previous_obstacles = candidate_obstacles
+                        if failed:
+                            continue
+                        accepted = (full_scene, shared_queries, prefix_obstacles, difficulty_probes, generator_seed)
+                        break
+                    except Exception as exc:
+                        last_error = exc
+                        continue
+                if accepted is None:
+                    raise RuntimeError(
+                        f"could not generate incremental median-gated scene for {robot_name}/{scene_seed} "
+                        f"after {max_scene_tries} attempts: {last_error}"
+                    )
+                full_scene, shared_queries, prefix_obstacles, difficulty_probes, generator_seed = accepted
+                for difficulty in difficulties:
+                    scene = SceneSpec(
+                        robot_name=robot_name,
+                        difficulty=difficulty,
+                        obstacles=list(prefix_obstacles[difficulty]),
+                        start=list(full_scene.start),
+                        goal=list(full_scene.goal),
+                        canonical_start=list(full_scene.canonical_start or full_scene.start),
+                        canonical_goal=list(full_scene.canonical_goal or full_scene.goal),
+                        symmetry_shift=int(full_scene.symmetry_shift),
+                        symmetry_sector=int(full_scene.symmetry_sector),
+                        endpoint_clearance_margin_m=float(full_scene.endpoint_clearance_margin_m),
+                        fixed_robot_clearance_margin_m=float(full_scene.fixed_robot_clearance_margin_m),
+                        direct_segment_blocked=True,
+                        segment_resolution=int(full_scene.segment_resolution),
+                    )
+                    records[scene_cache_key(robot_name, difficulty, scene_seed)] = scene_to_record_with_queries(
+                        scene,
+                        scene_seed=scene_seed,
+                        generator_seed=generator_seed,
+                        scene_profile=scene_profile,
+                        queries=shared_queries,
+                        difficulty_probe=difficulty_probes.get(difficulty),
+                    )
+        payload = {
+            **catalog_metadata(
+                robots=robots,
+                difficulties=difficulties,
+                scene_seeds=int(scene_seeds),
+                scene_profile=scene_profile,
+                seed_base=int(seed_base),
+                queries_per_scene=int(queries_per_scene),
+            ),
+            "records": [records[key] for key in keys],
+            "incremental_scene_policy": {
+                "obstacle_prefixes": True,
+                "shared_queries_across_difficulties": True,
+                "base_scene_difficulty": "hard",
+                "difficulty_acceptance": "RRTConnect and BIT* shared-query median first-solution time windows",
+                "obstacle_counts_are_not_fixed": True,
+            },
+        }
+        write_catalog(path, payload)
+        return payload
+
     for key in keys:
         if (
             key in records

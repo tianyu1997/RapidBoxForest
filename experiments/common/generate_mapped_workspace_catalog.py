@@ -116,6 +116,13 @@ def median_in_window(median_s: float, window: tuple[float, float] | None) -> boo
     return float(median_s) >= float(lo) - 1e-12 and float(median_s) <= float(hi) + 1e-12
 
 
+def query_max_l2_limit(value: float) -> float:
+    raw = float(value)
+    if raw <= 0.0 or not math.isfinite(raw):
+        return math.inf
+    return raw
+
+
 def prefilter_min_for_window(window: tuple[float, float] | None, default_min: float) -> float:
     if window is None:
         return float(default_min)
@@ -161,11 +168,15 @@ def difficulty_params(robot_name: str, difficulty: str, rng: random.Random, scen
     key = str(difficulty).lower()
     robot_key = str(robot_name).lower()
     if robot_key == "ur5":
-        dim_boost = {"easy": 3, "medium": 3, "hard": 3}.get(key, 3)
-        base_gap = {"easy": 0.40, "medium": 0.40, "hard": 0.38}.get(key, 0.40)
-        base_wall = {"easy": 0.40, "medium": 0.40, "hard": 0.40}.get(key, 0.40)
-        base_local = {"easy": 1.55, "medium": 1.55, "hard": 1.55}.get(key, 1.55)
-        gate_offset = {"easy": 0.34, "medium": 0.34, "hard": 0.34}.get(key, 0.34)
+        # UR5 has a lower-dimensional and shorter kinematic chain than iiwa,
+        # so small geometric changes produced almost identical BIT* difficulty
+        # in Exp.6. Use explicitly separated gate families and let the strict
+        # BIT* median window below reject out-of-band scenes.
+        dim_boost = {"easy": 1, "medium": 3, "hard": 4}.get(key, 3)
+        base_gap = {"easy": 0.58, "medium": 0.40, "hard": 0.30}.get(key, 0.40)
+        base_wall = {"easy": 0.28, "medium": 0.40, "hard": 0.50}.get(key, 0.40)
+        base_local = {"easy": 1.10, "medium": 1.55, "hard": 1.75}.get(key, 1.55)
+        gate_offset = {"easy": 0.26, "medium": 0.34, "hard": 0.38}.get(key, 0.34)
         hardening = min(0.40, 0.035 * int(scene_try))
         return {
             "gate_count": dim_boost,
@@ -520,6 +531,46 @@ def query_difficulty_close(candidate_median_s: float, reference_median_s: float,
     return abs(float(candidate_median_s) - float(reference_median_s)) <= tolerance + 1e-12
 
 
+def clamp(value: float, lo: float, hi: float) -> float:
+    return min(float(hi), max(float(lo), float(value)))
+
+
+def sample_local_free_pair(
+    *,
+    sbf: Any,
+    robot: Any,
+    obstacles: Sequence[Any],
+    rng: random.Random,
+    base_start: Sequence[float],
+    base_goal: Sequence[float],
+    radius: float,
+    min_l2: float,
+    max_l2: float,
+    max_tries: int,
+) -> tuple[list[float], list[float], int, int]:
+    from experiments.common.rbf_defaults import robot_joint_limit_tuples
+
+    limits = robot_joint_limit_tuples(robot)
+    for _ in range(max(1, int(max_tries))):
+        start = [
+            clamp(float(value) + rng.uniform(-float(radius), float(radius)), limits[index][0], limits[index][1])
+            for index, value in enumerate(base_start)
+        ]
+        goal = [
+            clamp(float(value) + rng.uniform(-float(radius), float(radius)), limits[index][0], limits[index][1])
+            for index, value in enumerate(base_goal)
+        ]
+        if sbf.check_config_collision(robot, list(obstacles), start):
+            continue
+        if sbf.check_config_collision(robot, list(obstacles), goal):
+            continue
+        distance = l2(start, goal)
+        if distance < float(min_l2) or distance > float(max_l2):
+            continue
+        return start, goal, 0, 0
+    raise RuntimeError("could not sample a local collision-free query pair")
+
+
 def single_obstacle_direct_hits(
     sbf: Any,
     robot: Any,
@@ -539,6 +590,17 @@ def single_obstacle_direct_hits(
 def obstacle_volume(bounds: Sequence[float]) -> float:
     b = [float(value) for value in bounds]
     return max(0.0, b[3] - b[0]) * max(0.0, b[4] - b[1]) * max(0.0, b[5] - b[2])
+
+
+def ur5_workspace_blocker_defaults(difficulty: str) -> tuple[int, float]:
+    key = str(difficulty).lower()
+    if key == "easy":
+        return 0, 0.06
+    if key == "medium":
+        return 3, 0.08
+    if key == "hard":
+        return 8, 0.10
+    return 0, 0.06
 
 
 def bitstar_probe_many(
@@ -620,6 +682,425 @@ def bitstar_probe_many(
     }
 
 
+def bitstar_path_probe_many(
+    *,
+    sbf: Any,
+    robot: Any,
+    obstacles: Sequence[Any],
+    start: Sequence[float],
+    goal: Sequence[float],
+    planner_seeds: int,
+    seed_offset: int,
+    timeout_s: float,
+    checkpoint_interval_s: float,
+    segment_step: float,
+    samples_per_batch: int,
+    rewire_factor: float,
+) -> dict[str, Any]:
+    del checkpoint_interval_s
+    probes: list[dict[str, Any]] = []
+    for seed_index in range(max(1, int(planner_seeds))):
+        seed = int(seed_offset) + seed_index
+        result = sbf.ompl_bitstar_path(
+            robot,
+            list(obstacles),
+            [float(value) for value in start],
+            [float(value) for value in goal],
+            float(timeout_s) * 1000.0,
+            float(segment_step),
+            0.0,
+            seed,
+            int(samples_per_batch),
+            float(rewire_factor),
+            True,
+        )
+        path = [[float(value) for value in point] for point in result.get("path", [])]
+        ok = bool(result.get("ok")) and strict_path_collision_free(sbf, robot, obstacles, path, segment_step)
+        solve_s = float(result.get("solve_s", result.get("t_s", math.nan))) if ok else math.nan
+        probes.append(
+            {
+                "planner": "OMPL_BITstar_path_first_solution",
+                "seed": seed,
+                "ok": ok,
+                "status": str(result.get("status", "")) if ok else "no_strict_solution_before_timeout",
+                "first_success_checkpoint_s": solve_s,
+                "first_success_elapsed_s": solve_s,
+                "final_ok": bool(result.get("ok")),
+                "final_solve_s": float(result.get("solve_s", math.nan)),
+                "checkpoint_count": 1,
+                "success_checkpoint_count": 1 if ok else 0,
+            }
+        )
+    times = [
+        float(row["first_success_checkpoint_s"])
+        for row in probes
+        if bool(row.get("ok")) and math.isfinite(float(row.get("first_success_checkpoint_s", math.nan)))
+    ]
+    return {
+        "planner": "OMPL_BITstar_path_first_solution",
+        "planner_seed_count": int(planner_seeds),
+        "ok_count": len(times),
+        "all_success": len(times) == max(1, int(planner_seeds)),
+        "median_first_success_checkpoint_s": statistics.median(times) if times else math.nan,
+        "mean_first_success_checkpoint_s": sum(times) / len(times) if times else math.nan,
+        "min_first_success_checkpoint_s": min(times) if times else math.nan,
+        "max_first_success_checkpoint_s": max(times) if times else math.nan,
+        "timeout_s": float(timeout_s),
+        "checkpoint_interval_s": 0.0,
+        "segment_step": float(segment_step),
+        "samples_per_batch": int(samples_per_batch),
+        "rewire_factor": float(rewire_factor),
+        "probes": probes,
+    }
+
+
+def additional_query_probe_fn(args: argparse.Namespace) -> Any:
+    return bitstar_path_probe_many if str(getattr(args, "additional_query_probe_mode", "path")) == "path" else bitstar_probe_many
+
+
+def scene_probe_fn(args: argparse.Namespace) -> Any:
+    return bitstar_path_probe_many if str(getattr(args, "scene_probe_mode", "trace")) == "path" else bitstar_probe_many
+
+
+def adaptive_additional_query_prefilter_timeout(args: argparse.Namespace, reference_median_s: float) -> float:
+    explicit = float(getattr(args, "additional_query_prefilter_timeout_s", 0.0))
+    if explicit > 0.0:
+        return min(float(args.bitstar_timeout_s), explicit)
+    close_tol = max(
+        float(args.query_difficulty_abs_tol_s),
+        float(args.query_difficulty_rel_tol) * max(1e-9, abs(float(reference_median_s))),
+    )
+    return min(float(args.bitstar_timeout_s), max(0.15, float(reference_median_s) + close_tol))
+
+
+def sample_matching_query_records(
+    args: argparse.Namespace,
+    *,
+    sbf: Any,
+    robot: Any,
+    obstacles: Sequence[Any],
+    queries: list[dict[str, Any]],
+    reference_median_s: float,
+    scene_seed: int,
+    seed_offset_base: int,
+    target_queries: int,
+    target_window: tuple[float, float] | None,
+    query_record_fn: Any,
+    sample_free_pair_fn: Any,
+) -> tuple[list[dict[str, Any]], int, dict[str, int]]:
+    query_rejections: dict[str, int] = {}
+    additional_attempts = 0
+
+    def reject(reason: str) -> None:
+        query_rejections[reason] = int(query_rejections.get(reason, 0)) + 1
+
+    if int(target_queries) <= len(queries):
+        return queries[: int(target_queries)], additional_attempts, query_rejections
+
+    query_rng = random.Random(int(seed_offset_base) + 1_299_709 + 7919 * int(scene_seed))
+    max_attempts = max(0, int(args.additional_query_max_tries))
+    prefilter_seed_count = max(0, int(getattr(args, "additional_query_prefilter_planner_seeds", 1)))
+    prefilter_timeout_s = adaptive_additional_query_prefilter_timeout(args, reference_median_s)
+    prefilter_tol_scale = max(1.0, float(getattr(args, "additional_query_prefilter_tolerance_scale", 2.0)))
+    probe_fn = additional_query_probe_fn(args)
+    local_prob = max(0.0, min(1.0, float(getattr(args, "query_local_perturbation_prob", 0.85))))
+    local_radius = max(1e-6, float(getattr(args, "query_local_perturbation_radius", 0.20)))
+    while len(queries) < int(target_queries) and additional_attempts < max_attempts:
+        additional_attempts += 1
+        try:
+            if query_rng.random() < local_prob:
+                base_query = queries[query_rng.randrange(len(queries))]
+                cand_start, cand_goal, shift, sector = sample_local_free_pair(
+                    sbf=sbf,
+                    robot=robot,
+                    obstacles=obstacles,
+                    rng=query_rng,
+                    base_start=base_query["start"],
+                    base_goal=base_query["goal"],
+                    radius=local_radius,
+                    min_l2=float(args.query_min_l2),
+                    max_l2=query_max_l2_limit(float(args.query_max_l2)),
+                    max_tries=int(args.query_endpoint_max_tries),
+                )
+            else:
+                cand_start, cand_goal, _cand_cstart, _cand_cgoal, shift, sector = sample_free_pair_fn(
+                    robot,
+                    list(obstacles),
+                    query_rng,
+                    min_l2=float(args.query_min_l2),
+                    max_l2=query_max_l2_limit(float(args.query_max_l2)),
+                    clearance_margin_m=float(args.query_clearance_margin_m),
+                    max_tries=int(args.query_endpoint_max_tries),
+                )
+        except RuntimeError:
+            reject("sample_failed")
+            continue
+        if any(
+            query_pair_distance(
+                cand_start,
+                cand_goal,
+                existing["start"],
+                existing["goal"],
+            )
+            < float(args.query_pair_min_separation)
+            for existing in queries
+        ):
+            reject("duplicate_or_too_close")
+            continue
+        cand_direct_fraction = math.nan
+        if bool(getattr(args, "require_direct_obstruction_for_additional_queries", False)):
+            cand_direct_fraction = direct_obstruction_fraction(
+                sbf,
+                robot,
+                obstacles,
+                cand_start,
+                cand_goal,
+                int(args.direct_obstruction_samples),
+            )
+            if cand_direct_fraction <= 0.0:
+                reject("direct_path_not_blocked")
+                continue
+        if prefilter_seed_count > 0 and prefilter_seed_count < int(args.planner_seeds):
+            prefilter = probe_fn(
+                sbf=sbf,
+                robot=robot,
+                obstacles=obstacles,
+                start=cand_start,
+                goal=cand_goal,
+                planner_seeds=prefilter_seed_count,
+                seed_offset=(
+                    int(seed_offset_base)
+                    + 2_097_169
+                    + 8191 * int(scene_seed)
+                    + 65_537 * int(additional_attempts)
+                    + 1_000_003 * len(queries)
+                ),
+                timeout_s=prefilter_timeout_s,
+                checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+                segment_step=float(args.audit_segment_step),
+                samples_per_batch=int(args.bitstar_samples_per_batch),
+                rewire_factor=float(args.bitstar_rewire_factor),
+            )
+            prefilter_median = float(prefilter.get("median_first_success_checkpoint_s", math.nan))
+            if not bool(prefilter.get("all_success")):
+                reject("prefilter_not_all_success")
+                continue
+            if not math.isfinite(prefilter_median) or prefilter_median < float(args.min_median_first_success_s) - 1e-12:
+                reject("prefilter_median_too_fast")
+                continue
+            if bool(args.enforce_difficulty_median_window) and not median_in_window(prefilter_median, target_window):
+                reject("prefilter_median_out_of_window")
+                continue
+            if not query_difficulty_close(
+                prefilter_median,
+                reference_median_s,
+                float(args.query_difficulty_abs_tol_s) * prefilter_tol_scale,
+                float(args.query_difficulty_rel_tol) * prefilter_tol_scale,
+            ):
+                reject("prefilter_difficulty_not_close_to_q0")
+                continue
+        cand_probe = probe_fn(
+            sbf=sbf,
+            robot=robot,
+            obstacles=obstacles,
+            start=cand_start,
+            goal=cand_goal,
+            planner_seeds=int(args.planner_seeds),
+            seed_offset=(
+                int(seed_offset_base)
+                + 1_048_573
+                + 8191 * int(scene_seed)
+                + 131_071 * int(additional_attempts)
+                + 1_000_003 * len(queries)
+            ),
+            timeout_s=float(args.bitstar_timeout_s),
+            checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+            segment_step=float(args.audit_segment_step),
+            samples_per_batch=int(args.bitstar_samples_per_batch),
+            rewire_factor=float(args.bitstar_rewire_factor),
+        )
+        cand_median = float(cand_probe.get("median_first_success_checkpoint_s", math.nan))
+        if not bool(cand_probe.get("all_success")):
+            reject("bitstar_not_all_success")
+            continue
+        if not math.isfinite(cand_median) or cand_median < float(args.min_median_first_success_s) - 1e-12:
+            reject("bitstar_median_too_fast")
+            continue
+        if bool(args.enforce_difficulty_median_window) and not median_in_window(cand_median, target_window):
+            reject("bitstar_median_out_of_window")
+            continue
+        if not query_difficulty_close(
+            cand_median,
+            reference_median_s,
+            float(args.query_difficulty_abs_tol_s),
+            float(args.query_difficulty_rel_tol),
+        ):
+            reject("difficulty_not_close_to_q0")
+            continue
+        cand_record = query_record_fn(
+            label=f"q{len(queries)}",
+            robot=robot,
+            start=cand_start,
+            goal=cand_goal,
+            symmetry_shift=shift,
+            symmetry_sector=sector,
+            difficulty_probe=cand_probe,
+        )
+        if not math.isfinite(float(cand_direct_fraction)):
+            cand_direct_fraction = direct_obstruction_fraction(
+                sbf,
+                robot,
+                obstacles,
+                cand_start,
+                cand_goal,
+                int(args.direct_obstruction_samples),
+            )
+        cand_record["direct_obstruction_fraction"] = float(cand_direct_fraction)
+        cand_record["difficulty_match"] = {
+            "reference_label": "q0",
+            "reference_median_first_success_s": float(reference_median_s),
+            "median_first_success_s": float(cand_median),
+            "abs_delta_s": abs(float(cand_median) - float(reference_median_s)),
+            "abs_tol_s": float(args.query_difficulty_abs_tol_s),
+            "rel_tol": float(args.query_difficulty_rel_tol),
+            "passed": True,
+        }
+        queries.append(cand_record)
+    return queries, additional_attempts, query_rejections
+
+
+def augment_record_queries(args: argparse.Namespace, record: dict[str, Any]) -> dict[str, Any]:
+    from experiments.common.random_scene_catalog import (
+        make_robot,
+        obstacle_from_bounds,
+        query_record,
+        sample_free_pair_with_canonical_record,
+    )
+    from experiments.common.sbf_import import import_sbf
+
+    sbf = import_sbf()
+    robot = make_robot(str(record["robot"]))
+    obstacles = [obstacle_from_bounds(bounds) for bounds in record.get("obstacles", [])]
+    target_window = difficulty_median_window(str(record.get("difficulty", "")), str(args.difficulty_median_windows))
+    target_queries = max(1, int(args.queries_per_scene))
+    queries = [dict(item) for item in record.get("queries", [])]
+    if not queries:
+        q0_probe = bitstar_probe_many(
+            sbf=sbf,
+            robot=robot,
+            obstacles=obstacles,
+            start=record["start"],
+            goal=record["goal"],
+            planner_seeds=int(args.planner_seeds),
+            seed_offset=int(args.seed_base) + 524287 + 8191 * int(record.get("scene_seed", 0)),
+            timeout_s=float(args.bitstar_timeout_s),
+            checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+            segment_step=float(args.audit_segment_step),
+            samples_per_batch=int(args.bitstar_samples_per_batch),
+            rewire_factor=float(args.bitstar_rewire_factor),
+        )
+        queries = [query_record(label="q0", robot=robot, start=record["start"], goal=record["goal"], difficulty_probe=q0_probe)]
+    q0 = dict(queries[0])
+    q0_probe = dict(q0.get("difficulty_probe", {}))
+    q0_median = float(q0_probe.get("median_first_success_checkpoint_s", math.nan))
+    if not math.isfinite(q0_median):
+        q0_probe = bitstar_probe_many(
+            sbf=sbf,
+            robot=robot,
+            obstacles=obstacles,
+            start=q0["start"],
+            goal=q0["goal"],
+            planner_seeds=int(args.planner_seeds),
+            seed_offset=int(args.seed_base) + 524287 + 8191 * int(record.get("scene_seed", 0)),
+            timeout_s=float(args.bitstar_timeout_s),
+            checkpoint_interval_s=float(args.bitstar_checkpoint_interval_s),
+            segment_step=float(args.audit_segment_step),
+            samples_per_batch=int(args.bitstar_samples_per_batch),
+            rewire_factor=float(args.bitstar_rewire_factor),
+        )
+        q0["difficulty_probe"] = q0_probe
+        q0_median = float(q0_probe.get("median_first_success_checkpoint_s", math.nan))
+    direct0 = direct_obstruction_fraction(
+        sbf,
+        robot,
+        obstacles,
+        q0["start"],
+        q0["goal"],
+        int(args.direct_obstruction_samples),
+    )
+    q0["direct_obstruction_fraction"] = float(direct0)
+    q0["difficulty_match"] = {
+        "reference_label": "q0",
+        "reference_median_first_success_s": float(q0_median),
+        "median_first_success_s": float(q0_median),
+        "abs_delta_s": 0.0,
+        "passed": True,
+    }
+    queries[0] = q0
+    seed_offset_base = (
+        int(args.seed_base)
+        + 1_000_003 * {"iiwa": 0, "ur5": 1, "panda": 2}.get(str(record.get("robot", "")).lower(), 7)
+        + 104_729 * {"easy": 0, "medium": 1, "hard": 2}.get(str(record.get("difficulty", "")).lower(), 5)
+    )
+    queries, attempts, rejections = sample_matching_query_records(
+        args,
+        sbf=sbf,
+        robot=robot,
+        obstacles=obstacles,
+        queries=queries,
+        reference_median_s=q0_median,
+        scene_seed=int(record.get("scene_seed", 0)),
+        seed_offset_base=seed_offset_base,
+        target_queries=target_queries,
+        target_window=target_window,
+        query_record_fn=query_record,
+        sample_free_pair_fn=sample_free_pair_with_canonical_record,
+    )
+    if len(queries) < target_queries and not bool(args.accept_first_candidate):
+        raise RuntimeError(
+            f"could only sample {len(queries)}/{target_queries} queries for "
+            f"{record.get('robot')}/{record.get('difficulty')}/{record.get('scene_seed')}; "
+            f"attempts={attempts}; rejections={rejections}"
+        )
+    out = dict(record)
+    out["queries"] = queries[:target_queries]
+    out["queries_per_scene"] = len(out["queries"])
+    first = out["queries"][0]
+    out["start"] = [float(value) for value in first["start"]]
+    out["goal"] = [float(value) for value in first["goal"]]
+    out["canonical_start"] = [float(value) for value in first.get("canonical_start", first["start"])]
+    out["canonical_goal"] = [float(value) for value in first.get("canonical_goal", first["goal"])]
+    out["symmetry_shift"] = int(first.get("symmetry_shift", 0))
+    out["symmetry_sector"] = int(first.get("symmetry_sector", 0))
+    out["direct_obstruction_fraction"] = float(direct0)
+    out["query_sampling"] = {
+        "target_queries_per_scene": int(target_queries),
+        "matching_query_attempts": int(attempts),
+        "matching_query_rejections": rejections,
+        "require_direct_obstruction": bool(args.require_direct_obstruction_for_additional_queries),
+        "query_pair_min_separation": float(args.query_pair_min_separation),
+        "query_local_perturbation_prob": float(args.query_local_perturbation_prob),
+        "query_local_perturbation_radius": float(args.query_local_perturbation_radius),
+        "query_min_l2": float(args.query_min_l2),
+        "query_max_l2": None if math.isinf(query_max_l2_limit(float(args.query_max_l2))) else float(args.query_max_l2),
+        "query_max_l2_unbounded": math.isinf(query_max_l2_limit(float(args.query_max_l2))),
+        "query_clearance_margin_m": float(args.query_clearance_margin_m),
+        "difficulty_reference": "q0",
+        "difficulty_abs_tol_s": float(args.query_difficulty_abs_tol_s),
+        "difficulty_rel_tol": float(args.query_difficulty_rel_tol),
+        "additional_query_probe_mode": str(getattr(args, "additional_query_probe_mode", "path")),
+        "additional_query_prefilter_planner_seeds": int(getattr(args, "additional_query_prefilter_planner_seeds", 1)),
+        "additional_query_prefilter_timeout_s": float(adaptive_additional_query_prefilter_timeout(args, q0_median)),
+        "additional_query_prefilter_tolerance_scale": float(getattr(args, "additional_query_prefilter_tolerance_scale", 2.0)),
+    }
+    out["gate_passed"] = all(
+        bool(query.get("difficulty_probe", {}).get("all_success"))
+        and math.isfinite(float(query.get("difficulty_probe", {}).get("median_first_success_checkpoint_s", math.nan)))
+        for query in out["queries"]
+    )
+    return out
+
+
 def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
     from experiments.common.random_scene_catalog import (
         CATALOG_SCHEMA,
@@ -632,10 +1113,12 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
         q_in_intervals,
         q_in_lect_root,
         query_record,
+        random_obstacle_colliding_with_path_config,
         robot_joint_limit_intervals,
         sample_free_pair_with_canonical_record,
         sector_expanded_lect_root_intervals,
     )
+    from experiments.common.random_scene_catalog import obstacle_bounds as obstacle_bounds_fn
     from experiments.common.rbf_defaults import robot_joint_limit_tuples
     from experiments.common.sbf_import import import_sbf
 
@@ -649,6 +1132,7 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
     wall_dim = resolved_wall_dim(int(args.wall_dim), robot_name, len(limits))
     subbox_cap = resolved_subbox_cap(int(args.max_subboxes_per_cspace_box), robot_name)
     target_window = difficulty_median_window(str(difficulty), str(args.difficulty_median_windows))
+    primary_probe_fn = scene_probe_fn(args)
     for scene_try in range(max(1, int(args.max_scene_tries))):
         rng = random.Random(int(args.seed_base) + 1009 * int(scene_seed) + robot_offset + difficulty_offset + 104729 * scene_try)
         start, goal, cspace_obstacles, cspace_meta = make_local_hyper_gate(
@@ -743,6 +1227,41 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
         if sbf.check_config_collision(robot, obstacles, start) or sbf.check_config_collision(robot, obstacles, goal):
             last_reason = "endpoint_collision_after_mapping"
             continue
+        ur5_blocker_count = 0
+        ur5_blocker_base = 0.0
+        if str(robot_name).lower() == "ur5" and bool(args.ur5_workspace_path_blockers):
+            default_count, default_base = ur5_workspace_blocker_defaults(str(difficulty))
+            ur5_blocker_count = int(args.ur5_workspace_path_blocker_count) if int(args.ur5_workspace_path_blocker_count) >= 0 else default_count
+            ur5_blocker_base = float(args.ur5_workspace_path_blocker_base) if float(args.ur5_workspace_path_blocker_base) > 0.0 else default_base
+            blocker_rng = random.Random(
+                int(args.seed_base)
+                + 4_194_301
+                + 1009 * int(scene_seed)
+                + robot_offset
+                + difficulty_offset
+                + 104729 * scene_try
+            )
+            appended = 0
+            for _ in range(max(0, ur5_blocker_count)):
+                candidate = random_obstacle_colliding_with_path_config(
+                    str(robot_name),
+                    robot,
+                    start,
+                    goal,
+                    blocker_rng,
+                    ur5_blocker_base,
+                    0.0,
+                    attempts=int(args.ur5_workspace_path_blocker_attempts),
+                )
+                if candidate is None:
+                    continue
+                proposed = [*obstacles, candidate]
+                if sbf.check_config_collision(robot, proposed, start) or sbf.check_config_collision(robot, proposed, goal):
+                    continue
+                obstacles.append(candidate)
+                obstacle_bounds.append(obstacle_bounds_fn(candidate))
+                appended += 1
+            ur5_blocker_count = appended
         direct_fraction = direct_obstruction_fraction(sbf, robot, obstacles, start, goal, int(args.direct_obstruction_samples))
         if direct_fraction <= 0.0:
             max_single_hits = 0
@@ -768,7 +1287,7 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
             and int(args.planner_seeds) > int(args.prefilter_planner_seeds)
             and not bool(args.accept_first_candidate)
         ):
-            prefilter = bitstar_probe_many(
+            prefilter = primary_probe_fn(
                 sbf=sbf,
                 robot=robot,
                 obstacles=obstacles,
@@ -796,7 +1315,7 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
             ):
                 last_reason = f"prefilter_median_too_fast({prefilter_median:.4f}<min{prefilter_min:.4f})"
                 continue
-        probe = bitstar_probe_many(
+        probe = primary_probe_fn(
             sbf=sbf,
             robot=robot,
             obstacles=obstacles,
@@ -863,7 +1382,7 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
                         list(obstacles),
                         query_rng,
                         min_l2=float(args.query_min_l2),
-                        max_l2=float(args.query_max_l2),
+                        max_l2=query_max_l2_limit(float(args.query_max_l2)),
                         clearance_margin_m=float(args.query_clearance_margin_m),
                         max_tries=int(args.query_endpoint_max_tries),
                     )
@@ -997,7 +1516,8 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
                 "matching_query_rejections": query_rejections,
                 "query_pair_min_separation": float(args.query_pair_min_separation),
                 "query_min_l2": float(args.query_min_l2),
-                "query_max_l2": float(args.query_max_l2),
+                "query_max_l2": None if math.isinf(query_max_l2_limit(float(args.query_max_l2))) else float(args.query_max_l2),
+                "query_max_l2_unbounded": math.isinf(query_max_l2_limit(float(args.query_max_l2))),
                 "query_clearance_margin_m": float(args.query_clearance_margin_m),
                 "difficulty_reference": "q0",
                 "difficulty_abs_tol_s": float(args.query_difficulty_abs_tol_s),
@@ -1028,6 +1548,9 @@ def build_record(args: argparse.Namespace, robot_name: str, difficulty: str, sce
                 "min_active_link_idx": int(args.min_active_link_idx),
                 "max_active_link_idx": int(args.max_active_link_idx),
                 "allowed_link_idxs": list(allowed_link_idxs),
+                "ur5_workspace_path_blockers": bool(args.ur5_workspace_path_blockers),
+                "ur5_workspace_path_blocker_count": int(ur5_blocker_count),
+                "ur5_workspace_path_blocker_base": float(ur5_blocker_base),
                 "wall_dim": int(wall_dim),
                 "envelope_subdivisions": int(args.envelope_subdivisions),
                 "mapped_obstacle_count": len(obstacle_bounds),
@@ -1051,6 +1574,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate Exp.6 workspace catalogs from mapped C-space gate boxes.")
     parser.add_argument("--worker-map", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--out", type=Path, default=REPO_ROOT / "outputs" / "new_experiments" / "tro2026" / "exp06" / "mapped_workspace_catalog.json")
+    parser.add_argument("--augment-catalog", type=Path, default=None, help="Reuse saved scenes from this catalog and only add/verify queries.")
     parser.add_argument("--robots", default="iiwa,ur5,panda")
     parser.add_argument("--difficulties", default="easy,medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=1)
@@ -1059,6 +1583,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-scene-tries", type=int, default=96)
     parser.add_argument("--accept-first-candidate", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--planner-seeds", type=int, default=8)
+    parser.add_argument("--scene-probe-mode", choices=["trace", "path"], default="trace")
     parser.add_argument("--prefilter-planner-seeds", type=int, default=2)
     parser.add_argument("--prefilter-timeout-s", type=float, default=1.0)
     parser.add_argument("--prefilter-min-median-first-success-s", type=float, default=0.08)
@@ -1075,12 +1600,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bitstar-rewire-factor", type=float, default=5.0)
     parser.add_argument("--audit-segment-step", type=float, default=0.01)
     parser.add_argument("--direct-obstruction-samples", type=int, default=96)
+    parser.add_argument("--require-direct-obstruction-for-additional-queries", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--additional-query-max-tries", type=int, default=2048)
+    parser.add_argument("--additional-query-probe-mode", choices=["path", "trace"], default="path")
+    parser.add_argument("--additional-query-prefilter-planner-seeds", type=int, default=1)
+    parser.add_argument("--additional-query-prefilter-timeout-s", type=float, default=0.0)
+    parser.add_argument("--additional-query-prefilter-tolerance-scale", type=float, default=2.0)
     parser.add_argument("--query-endpoint-max-tries", type=int, default=2000)
     parser.add_argument("--query-min-l2", type=float, default=0.8)
-    parser.add_argument("--query-max-l2", type=float, default=4.0)
+    parser.add_argument("--query-max-l2", type=float, default=math.inf, help="Maximum start-goal L2 distance; <=0 or inf disables the upper bound.")
     parser.add_argument("--query-clearance-margin-m", type=float, default=0.0)
-    parser.add_argument("--query-pair-min-separation", type=float, default=0.75)
+    parser.add_argument("--query-pair-min-separation", type=float, default=0.25)
+    parser.add_argument("--query-local-perturbation-prob", type=float, default=0.85)
+    parser.add_argument("--query-local-perturbation-radius", type=float, default=0.20)
     parser.add_argument("--query-difficulty-abs-tol-s", type=float, default=0.10)
     parser.add_argument("--query-difficulty-rel-tol", type=float, default=0.50)
     parser.add_argument("--wall-dim", type=int, default=-1)
@@ -1101,6 +1633,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--min-active-link-idx", type=int, default=0)
     parser.add_argument("--max-active-link-idx", type=int, default=1000000)
     parser.add_argument("--allowed-link-idxs", default="auto")
+    parser.add_argument("--ur5-workspace-path-blockers", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--ur5-workspace-path-blocker-count", type=int, default=-1)
+    parser.add_argument("--ur5-workspace-path-blocker-base", type=float, default=0.0)
+    parser.add_argument("--ur5-workspace-path-blocker-attempts", type=int, default=512)
     return parser.parse_args()
 
 
@@ -1115,9 +1651,83 @@ def main() -> int:
 
     robots = [item.strip() for item in str(args.robots).split(",") if item.strip()]
     difficulties = [item.strip() for item in str(args.difficulties).split(",") if item.strip()]
+    t0 = time.perf_counter()
+    if args.augment_catalog is not None:
+        base_payload = json.loads(Path(args.augment_catalog).read_text(encoding="utf-8"))
+        selected_records = [
+            dict(record)
+            for record in base_payload.get("records", [])
+            if str(record.get("robot")) in robots and str(record.get("difficulty")) in difficulties
+        ]
+        records: list[dict[str, Any]] = []
+
+        def write_augmented_payload(partial: bool) -> None:
+            payload = dict(base_payload)
+            payload.update(
+                {
+                    "robots": robots,
+                    "difficulties": difficulties,
+                    "queries_per_scene": int(args.queries_per_scene),
+                    "records": records,
+                    "partial": bool(partial),
+                    "expected_records": len(selected_records),
+                    "generation_s": time.perf_counter() - t0,
+                    "environment": environment_metadata(),
+                }
+            )
+            generation_policy = dict(base_payload.get("generation_policy", {}))
+            generation_policy["query_augmentation"] = {
+                "source_catalog": str(args.augment_catalog),
+                "target_queries_per_scene": int(args.queries_per_scene),
+                "planner_seed_count": int(args.planner_seeds),
+                "min_median_first_success_s": float(args.min_median_first_success_s),
+                "bitstar_timeout_s": float(args.bitstar_timeout_s),
+                "bitstar_checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
+                "audit_segment_step": float(args.audit_segment_step),
+                "additional_query_max_tries": int(args.additional_query_max_tries),
+                "additional_query_probe_mode": str(args.additional_query_probe_mode),
+                "require_direct_obstruction_for_additional_queries": bool(args.require_direct_obstruction_for_additional_queries),
+                "additional_query_prefilter_planner_seeds": int(args.additional_query_prefilter_planner_seeds),
+                "additional_query_prefilter_timeout_s": float(args.additional_query_prefilter_timeout_s),
+                "additional_query_prefilter_tolerance_scale": float(args.additional_query_prefilter_tolerance_scale),
+                "query_pair_min_separation": float(args.query_pair_min_separation),
+                "query_local_perturbation_prob": float(args.query_local_perturbation_prob),
+                "query_local_perturbation_radius": float(args.query_local_perturbation_radius),
+                "query_difficulty_abs_tol_s": float(args.query_difficulty_abs_tol_s),
+                "query_difficulty_rel_tol": float(args.query_difficulty_rel_tol),
+            }
+            payload["generation_policy"] = generation_policy
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            args.out.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+        for record in progress(selected_records, total=len(selected_records), desc="augment-catalog"):
+            augmented = augment_record_queries(args, record)
+            records.append(augmented)
+            medians = [
+                float(query.get("difficulty_probe", {}).get("median_first_success_checkpoint_s", math.nan))
+                for query in augmented.get("queries", [])
+            ]
+            finite_medians = [value for value in medians if math.isfinite(value)]
+            print(
+                "[augment-catalog]",
+                augmented.get("robot"),
+                augmented.get("difficulty"),
+                augmented.get("scene_seed"),
+                f"obs={len(augmented.get('obstacles', []))}",
+                f"queries={len(augmented.get('queries', []))}",
+                f"median_range=[{min(finite_medians):.4f},{max(finite_medians):.4f}]"
+                if finite_medians
+                else "median_range=[nan,nan]",
+                f"attempts={augmented.get('query_sampling', {}).get('matching_query_attempts', 0)}",
+                flush=True,
+            )
+            write_augmented_payload(partial=True)
+        write_augmented_payload(partial=False)
+        print({"out": str(args.out), "records": len(records), "generation_s": time.perf_counter() - t0})
+        return 0
+
     keys = [(robot, difficulty, seed) for robot in robots for difficulty in difficulties for seed in range(max(1, int(args.scene_seeds)))]
     records: list[dict[str, Any]] = []
-    t0 = time.perf_counter()
 
     def write_current_payload(partial: bool) -> None:
         payload = {
@@ -1133,6 +1743,7 @@ def main() -> int:
                 "workspace_mapping": "link_interval_envelope link_iaabb AABB obstacles",
                 "gate": "all planner seeds solve; median BIT* first strict solution >= min_median_first_success_s",
                 "planner_seed_count": int(args.planner_seeds),
+                "scene_probe_mode": str(args.scene_probe_mode),
                 "min_median_first_success_s": float(args.min_median_first_success_s),
                 "difficulty_median_windows": str(args.difficulty_median_windows),
                 "enforce_difficulty_median_window": bool(args.enforce_difficulty_median_window),
@@ -1142,9 +1753,14 @@ def main() -> int:
                 "same_scene_query_policy": {
                     "target_queries_per_scene": int(args.queries_per_scene),
                     "additional_query_max_tries": int(args.additional_query_max_tries),
+                    "additional_query_probe_mode": str(args.additional_query_probe_mode),
+                    "require_direct_obstruction_for_additional_queries": bool(args.require_direct_obstruction_for_additional_queries),
                     "query_pair_min_separation": float(args.query_pair_min_separation),
+                    "query_local_perturbation_prob": float(args.query_local_perturbation_prob),
+                    "query_local_perturbation_radius": float(args.query_local_perturbation_radius),
                     "query_min_l2": float(args.query_min_l2),
-                    "query_max_l2": float(args.query_max_l2),
+                    "query_max_l2": None if math.isinf(query_max_l2_limit(float(args.query_max_l2))) else float(args.query_max_l2),
+                    "query_max_l2_unbounded": math.isinf(query_max_l2_limit(float(args.query_max_l2))),
                     "query_clearance_margin_m": float(args.query_clearance_margin_m),
                     "difficulty_abs_tol_s": float(args.query_difficulty_abs_tol_s),
                     "difficulty_rel_tol": float(args.query_difficulty_rel_tol),

@@ -697,6 +697,15 @@ void test_adaptive_leaf_sweep_empty_scene() {
     adaptive_config.parallel_virtual_validation = false;
     adaptive_config.seed_probe_count = 32;
     adaptive_config.seed_anchor_probe_cap = 0;
+    adaptive_config.adaptive_depth_enabled = true;
+    adaptive_config.adaptive_depth_min = 1;
+    adaptive_config.adaptive_depth_max = 4;
+    adaptive_config.adaptive_depth_probe_count = 32;
+    adaptive_config.adaptive_depth_anchor_probe_cap = 0;
+    adaptive_config.adaptive_depth_min_free_probes = 0;
+    adaptive_config.adaptive_depth_min_covered_probes = 4;
+    adaptive_config.adaptive_depth_min_main_probes = 4;
+    adaptive_config.adaptive_depth_max_online_cells = 16;
     auto result = forest.build_adaptive_deep_leaf_sweep_cover({}, adaptive_config);
     assert(result.shallow_free_count == 4);
     assert(result.shallow_collision_count == 0);
@@ -706,6 +715,10 @@ void test_adaptive_leaf_sweep_empty_scene() {
     assert(result.seed_probe_free_count == 32);
     assert(result.seed_probe_box_covered == 32);
     assert(result.p_box_covered == 1.0);
+    assert(result.selected_leaf_depth == 1);
+    assert(result.adaptive_depth_readiness_met);
+    assert(result.adaptive_depth_stop_reason == "coverage_ready");
+    assert(!result.adaptive_depth_snapshots_json.empty());
     assert(result.diagnostics.at("adaptive.qroot_pairs_total") == 0.0);
     assert(result.diagnostics.find("adaptive.merge_input_boxes") != result.diagnostics.end());
     assert(result.diagnostics.find("adaptive.adjacency_exact_tests") != result.diagnostics.end());

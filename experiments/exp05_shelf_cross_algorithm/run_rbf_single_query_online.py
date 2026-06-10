@@ -189,6 +189,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
     parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
     parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     return parser.parse_args()
 
 

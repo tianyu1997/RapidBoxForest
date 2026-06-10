@@ -93,6 +93,22 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["leaf_sweep"]["leaf_max_depth"] = int(args.leaf_max_depth)
     profile["leaf_sweep"]["adaptive_target_depth"] = resolved_adaptive_target_depth(args)
     profile["leaf_sweep"]["adaptive_grid_target_depth"] = resolved_adaptive_grid_target_depth(args)
+    profile["leaf_sweep"]["adaptive_depth"] = {
+        "enabled": bool(args.adaptive_depth_enabled),
+        "min": int(args.adaptive_depth_min),
+        "max": int(args.adaptive_depth_max),
+        "probe_count": int(args.adaptive_depth_probe_count),
+        "anchor_probe_cap": int(args.adaptive_depth_anchor_probe_cap),
+        "probe_seed": int(args.adaptive_depth_probe_seed),
+        "min_free_probes": int(args.adaptive_depth_min_free_probes),
+        "min_covered_probes": int(args.adaptive_depth_min_covered_probes),
+        "min_main_probes": int(args.adaptive_depth_min_main_probes),
+        "min_main_ratio": float(args.adaptive_depth_min_main_ratio),
+        "min_cells": int(args.adaptive_depth_min_cells),
+        "min_main_cells": int(args.adaptive_depth_min_main_cells),
+        "max_online_cells": int(args.adaptive_depth_max_online_cells),
+        "max_probe_ms": float(args.adaptive_depth_max_probe_ms),
+    }
     profile["leaf_sweep"]["leaf_threads"] = int(args.threads)
     profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
@@ -159,6 +175,20 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adaptive-overlap-ratio-threshold", type=float, default=0.0)
     parser.add_argument("--coverage-probe-count", type=int, default=4096)
     parser.add_argument("--adaptive-seed-anchor-probe-cap", type=int, default=256)
+    parser.add_argument("--adaptive-depth-enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-depth-min", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-depth-max", type=int, default=18)
+    parser.add_argument("--adaptive-depth-probe-count", type=int, default=2048)
+    parser.add_argument("--adaptive-depth-anchor-probe-cap", type=int, default=128)
+    parser.add_argument("--adaptive-depth-probe-seed", type=int, default=20260607)
+    parser.add_argument("--adaptive-depth-min-free-probes", type=int, default=64)
+    parser.add_argument("--adaptive-depth-min-covered-probes", type=int, default=32)
+    parser.add_argument("--adaptive-depth-min-main-probes", type=int, default=24)
+    parser.add_argument("--adaptive-depth-min-main-ratio", type=float, default=0.40)
+    parser.add_argument("--adaptive-depth-min-cells", type=int, default=0)
+    parser.add_argument("--adaptive-depth-min-main-cells", type=int, default=0)
+    parser.add_argument("--adaptive-depth-max-online-cells", type=int, default=1500)
+    parser.add_argument("--adaptive-depth-max-probe-ms", type=float, default=20.0)
     parser.add_argument("--adaptive-max-merge-ms", type=float, default=1500.0)
     parser.add_argument("--adaptive-max-merge-rounds", type=int, default=2)
     parser.add_argument("--adaptive-max-merge-input-boxes", type=int, default=100000)
@@ -410,6 +440,20 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             adaptive_overlap_ratio_threshold=float(args.adaptive_overlap_ratio_threshold),
             adaptive_seed_probe_count=int(args.coverage_probe_count),
             adaptive_seed_anchor_probe_cap=int(args.adaptive_seed_anchor_probe_cap),
+            adaptive_depth_enabled=bool(args.adaptive_depth_enabled),
+            adaptive_depth_min=int(args.adaptive_depth_min),
+            adaptive_depth_max=int(args.adaptive_depth_max),
+            adaptive_depth_probe_count=int(args.adaptive_depth_probe_count),
+            adaptive_depth_anchor_probe_cap=int(args.adaptive_depth_anchor_probe_cap),
+            adaptive_depth_probe_seed=int(args.adaptive_depth_probe_seed),
+            adaptive_depth_min_free_probes=int(args.adaptive_depth_min_free_probes),
+            adaptive_depth_min_covered_probes=int(args.adaptive_depth_min_covered_probes),
+            adaptive_depth_min_main_probes=int(args.adaptive_depth_min_main_probes),
+            adaptive_depth_min_main_ratio=float(args.adaptive_depth_min_main_ratio),
+            adaptive_depth_min_cells=int(args.adaptive_depth_min_cells),
+            adaptive_depth_min_main_cells=int(args.adaptive_depth_min_main_cells),
+            adaptive_depth_max_online_cells=int(args.adaptive_depth_max_online_cells),
+            adaptive_depth_max_probe_ms=float(args.adaptive_depth_max_probe_ms),
             adaptive_max_merge_ms=float(args.adaptive_max_merge_ms),
             adaptive_max_merge_rounds=int(args.adaptive_max_merge_rounds),
             adaptive_max_merge_input_boxes=int(args.adaptive_max_merge_input_boxes),
@@ -1211,6 +1255,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success_items),
                 "adaptive_deep_leaf_s_median": median(row.get("adaptive_deep_leaf_s", math.nan) for row in items),
                 "adaptive_target_depth_median": median(row.get("adaptive_target_depth", math.nan) for row in items),
+                "selected_leaf_depth_median": median(row.get("selected_leaf_depth", math.nan) for row in items),
+                "adaptive_depth_readiness_rate": mean(1.0 if row.get("adaptive_depth_readiness_met", False) else 0.0 for row in items),
                 "adaptive_validated_median": median(row.get("adaptive_validated", math.nan) for row in items),
                 "adaptive_splits_median": median(row.get("adaptive_splits", math.nan) for row in items),
                 "adaptive_deferred_median": median(row.get("adaptive_deferred", math.nan) for row in items),

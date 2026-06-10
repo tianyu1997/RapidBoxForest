@@ -6,11 +6,14 @@
 
 #include <rbf/core.h>
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace rbf {
+
+struct LeafSweepResult;
 
 struct LeafSweepConfig {
 	double obstacle_cluster_gap = 0.0;
@@ -28,6 +31,8 @@ struct LeafSweepConfig {
 	double collision_overlap_prune_ratio_threshold = 0.0;
 	int max_free_boxes = 0;
 	int max_collision_boxes = 0;
+	std::vector<int> checkpoint_depths;
+	std::function<bool(const LeafSweepResult&, int)> checkpoint_callback;
 };
 
 struct LeafSweepGroupResult {

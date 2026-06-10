@@ -19,21 +19,19 @@ from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import generate_catalog, make_robot, scene_for_key
 from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
-    DEFAULT_RBF_DEEP_MAX_BOXES,
     DEFAULT_RBF_DEEP_FFB_DEPTH,
-    DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_MAX_DEPTH,
-    DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+    DEFAULT_RBF_SHELF_BOX_BUDGET,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
-    rbf_budget_grid,
     robot_lectdb_profile,
 )
 from experiments.common.rbf_leaf_rrt import (
     QuerySpec,
     RBFLeafRRTOptions,
+    bridge_all_queries,
     canonical_priority_points,
     configure_leaf_rrt,
     make_adaptive_leaf_sweep_config,
@@ -46,6 +44,9 @@ from experiments.common.sbf_import import import_sbf
 
 
 TRANSITIONS = ["easy->medium", "medium->hard", "hard->medium", "medium->easy"]
+EXP07_RBF_LEAF_MAX_DEPTH = 16
+EXP07_RBF_FFB_START_DEPTH = 16
+EXP07_RBF_QUERY_BRIDGE_PAVE_DEPTH = 56
 sbf = import_sbf()
 
 
@@ -60,15 +61,43 @@ def exp04_profile_tag(args: argparse.Namespace) -> str:
 
 def exp04_profile_overrides(args: argparse.Namespace) -> dict[str, Any]:
     return {
-        "source": "Exp.4 registered partition-native RBF-SH d23 with Exp.7 dynamic-update coverage override",
+        "source": (
+            "Exp.4/5 registered b100 partition-native RBF profile with "
+            "Exp.7 adaptive warm-build coverage override"
+        ),
         "deep_max_boxes": int(args.deep_max_boxes),
         "rbf_max_depth": int(args.rbf_max_depth),
         "leaf_start_depth": int(args.leaf_start_depth),
         "leaf_max_depth": int(args.leaf_max_depth),
+        "adaptive_target_depth": int(args.leaf_max_depth),
+        "adaptive_grid_target_depth": int(args.leaf_max_depth),
+        "adaptive_planning_backend": "partition_native",
+        "adaptive_max_free_boxes": int(args.deep_max_boxes),
+        "adaptive_depth": {
+            "enabled": bool(args.adaptive_depth_enabled),
+            "min": int(args.adaptive_depth_min),
+            "max": int(args.adaptive_depth_max),
+            "probe_count": int(args.adaptive_depth_probe_count),
+            "anchor_probe_cap": int(args.adaptive_depth_anchor_probe_cap),
+            "probe_seed": int(args.adaptive_depth_probe_seed),
+            "min_free_probes": int(args.adaptive_depth_min_free_probes),
+            "min_covered_probes": int(args.adaptive_depth_min_covered_probes),
+            "min_main_probes": int(args.adaptive_depth_min_main_probes),
+            "min_main_ratio": float(args.adaptive_depth_min_main_ratio),
+            "min_cells": int(args.adaptive_depth_min_cells),
+            "min_main_cells": int(args.adaptive_depth_min_main_cells),
+            "max_online_cells": int(args.adaptive_depth_max_online_cells),
+            "max_probe_ms": float(args.adaptive_depth_max_probe_ms),
+        },
         "deep_ffb_depth": int(args.deep_ffb_depth),
         "connector_pave_depth": int(args.connector_pave_depth),
         "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
         "ffb_start_depth": int(args.ffb_start_depth),
+        "override_reason": (
+            "Exp.7 uses fast adaptive checkpoints over d13..d16; pilot "
+            "validation selected d13 for easy reusable skeletons and d15 for "
+            "harder transitions, with d16 kept as a fallback checkpoint."
+        ),
         "threads": int(args.threads),
         "parallel_virtual_validation": True,
         "leaf_threads": int(args.threads),
@@ -92,14 +121,28 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-profile", choices=["balanced", "balanced_probe", "legacy"], default="balanced")
     parser.add_argument("--max-scene-tries", type=int, default=64)
     parser.add_argument("--seed-base", type=int, default=9176)
-    parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
+    parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_SHELF_BOX_BUDGET)
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
-    parser.add_argument("--leaf-max-depth", type=int, default=16)
+    parser.add_argument("--leaf-max-depth", type=int, default=EXP07_RBF_LEAF_MAX_DEPTH)
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
-    parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
-    parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
+    parser.add_argument("--query-bridge-pave-depth", type=int, default=EXP07_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--ffb-start-depth", type=int, default=EXP07_RBF_FFB_START_DEPTH)
+    parser.add_argument("--adaptive-depth-enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-depth-min", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-depth-max", type=int, default=EXP07_RBF_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-depth-probe-count", type=int, default=1024)
+    parser.add_argument("--adaptive-depth-anchor-probe-cap", type=int, default=64)
+    parser.add_argument("--adaptive-depth-probe-seed", type=int, default=20260607)
+    parser.add_argument("--adaptive-depth-min-free-probes", type=int, default=64)
+    parser.add_argument("--adaptive-depth-min-covered-probes", type=int, default=0)
+    parser.add_argument("--adaptive-depth-min-main-probes", type=int, default=0)
+    parser.add_argument("--adaptive-depth-min-main-ratio", type=float, default=0.0)
+    parser.add_argument("--adaptive-depth-min-cells", type=int, default=5)
+    parser.add_argument("--adaptive-depth-min-main-cells", type=int, default=1)
+    parser.add_argument("--adaptive-depth-max-online-cells", type=int, default=320)
+    parser.add_argument("--adaptive-depth-max-probe-ms", type=float, default=10.0)
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
@@ -272,6 +315,22 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         leaf_max_depth=int(args.leaf_max_depth),
         adaptive_target_depth=int(args.leaf_max_depth),
         adaptive_grid_target_depth=int(args.leaf_max_depth),
+        adaptive_planning_backend="partition_native",
+        adaptive_max_free_boxes=int(args.deep_max_boxes),
+        adaptive_depth_enabled=bool(args.adaptive_depth_enabled),
+        adaptive_depth_min=int(args.adaptive_depth_min),
+        adaptive_depth_max=int(args.adaptive_depth_max),
+        adaptive_depth_probe_count=int(args.adaptive_depth_probe_count),
+        adaptive_depth_anchor_probe_cap=int(args.adaptive_depth_anchor_probe_cap),
+        adaptive_depth_probe_seed=int(args.adaptive_depth_probe_seed),
+        adaptive_depth_min_free_probes=int(args.adaptive_depth_min_free_probes),
+        adaptive_depth_min_covered_probes=int(args.adaptive_depth_min_covered_probes),
+        adaptive_depth_min_main_probes=int(args.adaptive_depth_min_main_probes),
+        adaptive_depth_min_main_ratio=float(args.adaptive_depth_min_main_ratio),
+        adaptive_depth_min_cells=int(args.adaptive_depth_min_cells),
+        adaptive_depth_min_main_cells=int(args.adaptive_depth_min_main_cells),
+        adaptive_depth_max_online_cells=int(args.adaptive_depth_max_online_cells),
+        adaptive_depth_max_probe_ms=float(args.adaptive_depth_max_probe_ms),
         deep_ffb_depth=int(args.deep_ffb_depth),
         connector_pave_depth=int(args.connector_pave_depth),
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
@@ -323,9 +382,15 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
             make_refine_config(opt),
             canonical_priority_points(robot, [query], canonicalize=False),
         )
+    source_bridge_s = 0.0
     source_bridge_added = 0
-    if hasattr(forest, "bridge_query"):
-        source_bridge_added = int(forest.bridge_query(list(query.start), list(query.goal)))
+    if hasattr(forest, "bridge_queries") or hasattr(forest, "bridge_query"):
+        source_bridge_s, source_bridge_added, _source_bridge_attempts, _source_bridge_timings, _source_bridge_added_by_label = bridge_all_queries(
+            forest,
+            robot,
+            [query],
+            opt,
+        )
     source_query = query_rows(
         forest,
         robot,
@@ -375,17 +440,27 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         target_source = "endpoint_segment_fallback"
     if (
         not bool(target_query["audit_passed"])
-        and hasattr(forest, "bridge_query")
+        and (hasattr(forest, "bridge_queries") or hasattr(forest, "bridge_query"))
     ):
-        t0 = time.perf_counter()
-        bridge_added = int(forest.bridge_query(list(target_query_spec.start), list(target_query_spec.goal)))
-        bridge_wall_ms = 1000.0 * (time.perf_counter() - t0)
+        boxes_before_bridge = len(list(forest.boxes()))
+        segments_before_bridge = len(list(forest.segment_edges()))
+        bridge_s, bridge_added, _bridge_attempts, _bridge_timings, _bridge_added_by_label = bridge_all_queries(
+            forest,
+            robot,
+            [target_query_spec],
+            opt,
+        )
+        boxes_after_bridge = len(list(forest.boxes()))
+        segments_after_bridge = len(list(forest.segment_edges()))
+        bridge_wall_ms = 1000.0 * bridge_s
         bridge_profile = merge_profile_rows([])
-        bridge_profile["boxes_before"] = int(update.get("boxes_after", 0))
-        bridge_profile["boxes_after"] = int(update.get("boxes_after", 0)) + max(0, int(bridge_added))
-        bridge_profile["boxes_added"] = max(0, int(bridge_added))
+        bridge_profile["boxes_before"] = boxes_before_bridge
+        bridge_profile["boxes_after"] = boxes_after_bridge
+        bridge_profile["boxes_added"] = max(0, boxes_after_bridge - boxes_before_bridge)
+        bridge_profile["segment_edges_added"] = max(0, segments_after_bridge - segments_before_bridge)
         bridge_profile["total_ms"] = float(bridge_wall_ms)
         bridge_profile["fallback_reason"] = "query_bridge_after_failed_update"
+        bridge_profile["diagnostics"] = {"query_bridge_after_update.reported_added": float(bridge_added)}
         update = add_profile_rows(update, bridge_profile)
         target_query = query_rows(
             forest,
@@ -411,10 +486,15 @@ def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition
         "target_obstacles": target_count,
         "source_audit_passed": bool(source_query["audit_passed"]),
         "source_bridge_added": int(source_bridge_added),
+        "source_bridge_s": float(source_bridge_s),
         "target_audit_passed": bool(target_query["audit_passed"]),
         "target_source": target_source,
         "update_s": update["total_ms"] / 1000.0,
         "warm_rebuild_s": float(warm["planning_s"]),
+        "warm_selected_leaf_depth": int(warm.get("selected_leaf_depth", -1)),
+        "warm_adaptive_depth_readiness_met": bool(warm.get("adaptive_depth_readiness_met", False)),
+        "warm_adaptive_depth_stop_reason": str(warm.get("adaptive_depth_stop_reason", "")),
+        "warm_adaptive_depth_snapshots_json": str(warm.get("adaptive_depth_snapshots_json", "")),
         "speedup_vs_warm": (float(warm["planning_s"]) / (update["total_ms"] / 1000.0)) if update["total_ms"] > 1e-9 else math.nan,
         "target_path_length": float(target_query["path_length"]) if bool(target_query["audit_passed"]) else math.nan,
         "target_segment_fraction": float(target_query["segment_fraction"]) if bool(target_query["audit_passed"]) else math.nan,
@@ -506,6 +586,11 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "success_runs": sum(1 for row in items if bool(row["target_audit_passed"])),
                 "update_s_median": median(row["update_s"] for row in items),
                 "warm_rebuild_s_median": median(row["warm_rebuild_s"] for row in items),
+                "warm_selected_leaf_depth_median": median(row.get("warm_selected_leaf_depth", math.nan) for row in items),
+                "warm_adaptive_depth_readiness_rate": mean(
+                    1.0 if row.get("warm_adaptive_depth_readiness_met", False) else 0.0
+                    for row in items
+                ),
                 "speedup_median": median(row["speedup_vs_warm"] for row in items),
                 "dirty_boxes_median": median(row["dirty_boxes"] for row in items),
                 "boxes_added_median": median(row["boxes_added"] for row in items),
@@ -564,6 +649,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows({field: row.get(field) for field in fields} for row in rows)
 
 
+def tex_sec(value: Any) -> str:
+    numeric = finite_or_nan(value)
+    if not math.isfinite(numeric):
+        return "--"
+    return f"{numeric:.4f}"
+
+
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table}[t]",
@@ -579,8 +671,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     for row in rows:
         sr = f"{int(row.get('success_runs', 0))}/{int(row.get('runs', 0))}"
         lines.append(
-            f"{row.get('transition')} & {sr} & {tex_num(row.get('update_s_median'))} & "
-            f"{tex_num(row.get('warm_rebuild_s_median'))} & {tex_num(row.get('speedup_median'))} \\\\"
+            f"{row.get('transition')} & {sr} & {tex_sec(row.get('update_s_median'))} & "
+            f"{tex_sec(row.get('warm_rebuild_s_median'))} & {tex_num(row.get('speedup_median'))} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -629,7 +721,7 @@ def main() -> int:
             "rbf_default_profile": default_rbf_profile(),
             "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
             "rbf_robot_lectdb": robot_lectdb_profile(str(args.robot)),
-            "rbf_box_budgets": rbf_budget_grid(args.phase),
+            "rbf_registered_box_budget": int(args.deep_max_boxes),
             "status": "planned" if args.dry_run else "planned_for_execution",
             "metrics": ["update_s", "warm_rebuild_s", "invalidated_boxes", "promoted_boxes", "audit_success", "segment_fraction"],
         }

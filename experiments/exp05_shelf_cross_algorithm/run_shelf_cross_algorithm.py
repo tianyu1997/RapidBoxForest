@@ -256,6 +256,7 @@ def run_sbf(seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any
         offline_anchor_candidate_count=int(args.offline_anchor_candidate_count),
         offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
         offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+        query_bridge_to_main_island=bool(getattr(args, "query_bridge_to_main_island", False)),
         adaptive_max_free_boxes=budget,
         final_rrt_simplify_timeout_ms=1000.0 * float(args.ompl_simplify_time_s),
         final_rrt_simplify_attempts=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
