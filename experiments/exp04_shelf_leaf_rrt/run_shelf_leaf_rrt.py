@@ -117,7 +117,7 @@ CASE_LABELS = {
     "critsample_d23_cache": "CritSample d23",
     "no_cache_full_root_ts": "No-cache full-root TS",
     "critsample_support_hull": "CritSample endpoints",
-    "no_external_lect": "No LECT replay, live d17",
+    "no_external_lect": "No external LECT, HIFK-5",
     "support_hull_no_aabb": "SH w/o broadphase",
     "link_aabb": "Link AABB",
     "single_thread": "No LECT, 1 thread",
@@ -156,7 +156,10 @@ ALLOWED_CONFIG_DIFFS = {
     },
     "no_cache_full_root_ts": set(),
     "no_external_lect": {
-        "ref.leaf_max_depth",
+        "option.endpoint_source",
+        "option.hifk_max_depth",
+        "cfg.endpoint_source.source",
+        "cfg.endpoint_source.hifk_max_depth",
     },
     "support_hull_no_aabb": {
         "option.support_hull_skip_aabb_broadphase",
@@ -244,9 +247,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         warm_cache_label = CRITSAMPLE_D23_CACHE_LABEL
     leaf_max_depth = int(args.leaf_max_depth)
     adaptive_target_depth = int(args.adaptive_target_depth)
-    if case == "no_external_lect":
-        leaf_max_depth = max(leaf_max_depth, 17)
-        adaptive_target_depth = max(adaptive_target_depth, leaf_max_depth)
     options = RBFLeafRRTOptions(
         seed=int(seed),
         offline_grower=str(args.offline_grower),
@@ -259,6 +259,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         adaptive_target_depth=adaptive_target_depth,
         adaptive_time_budget_ms=float(args.adaptive_time_budget_ms),
         adaptive_node_budget=int(args.adaptive_node_budget),
+        adaptive_fast_virtual_checkpoint_mode=bool(args.adaptive_fast_virtual_checkpoint_mode),
         adaptive_defer_min_depth=int(args.adaptive_defer_min_depth),
         adaptive_overlap_depth_threshold=float(args.adaptive_overlap_depth_threshold),
         adaptive_overlap_depth_min_threshold=float(args.adaptive_overlap_depth_min_threshold),
@@ -303,7 +304,12 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         envelope="link_aabb" if case == "link_aabb" else "support_hull",
         support_hull_skip_aabb_broadphase=(case == "support_hull_no_aabb"),
         support_hull_direct_collision=(case == "support_hull_direct"),
-        endpoint_source="critsample" if case in {"critsample_support_hull", "critsample_d23_cache"} else "ifk",
+        endpoint_source=(
+            "critsample"
+            if case in {"critsample_support_hull", "critsample_d23_cache"}
+            else ("hifk" if case == "no_external_lect" else "ifk")
+        ),
+        hifk_max_depth=5 if case == "no_external_lect" else 9,
         unsafe_sampling_validation=False,
         use_external_evidence=(
             case.startswith("baseline_d23")
@@ -458,8 +464,10 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.envelope": str(options.envelope),
         "option.support_hull_skip_aabb_broadphase": bool(options.support_hull_skip_aabb_broadphase),
         "option.support_hull_direct_collision": bool(options.support_hull_direct_collision),
+        "option.hifk_max_depth": int(options.hifk_max_depth),
         "option.threads": int(options.threads),
         "option.leaf_threads": int(options.leaf_threads),
+        "option.adaptive_fast_virtual_checkpoint_mode": bool(options.adaptive_fast_virtual_checkpoint_mode),
         "option.adaptive_depth_enabled": bool(options.adaptive_depth_enabled),
         "option.adaptive_depth_min": int(options.adaptive_depth_min),
         "option.adaptive_depth_max": int(options.adaptive_depth_max),
@@ -520,6 +528,7 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.endpoint_main_lateral_rounds": int(options.endpoint_main_lateral_rounds),
         "option.endpoint_main_face_epsilon": float(options.endpoint_main_face_epsilon),
         "cfg.endpoint_source.source": str(cfg.endpoint_source.source),
+        "cfg.endpoint_source.hifk_max_depth": int(getattr(cfg.endpoint_source, "hifk_max_depth", 0)),
         "cfg.envelope_type.type": str(cfg.envelope_type.type),
         "cfg.envelope_type.support_hull_config.skip_aabb_broadphase": bool(getattr(cfg.envelope_type.support_hull_config, "skip_aabb_broadphase", False)),
         "cfg.envelope_type.support_hull_config.direct_collision": bool(getattr(cfg.envelope_type.support_hull_config, "direct_collision", False)),
@@ -790,6 +799,22 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "partition_point_index_dims_median": median(row.get("partition_point_index_dims", 0) for row in items),
             "partition_point_index_entries_median": median(row.get("partition_point_index_entries", 0) for row in items),
             "partition_point_index_overflow_cells_median": median(row.get("partition_point_index_overflow_cells", 0) for row in items),
+            "partition_sparse_virtual_cells_median": median(row.get("partition_sparse_virtual_cells", 0) for row in items),
+            "partition_sparse_virtual_exact_index_entries_median": median(
+                row.get("partition_sparse_virtual_exact_index_entries", 0) for row in items
+            ),
+            "partition_sparse_virtual_max_address_depth_median": median(
+                row.get("partition_sparse_virtual_max_address_depth", 0) for row in items
+            ),
+            "partition_sparse_virtual_ancestor_refs_avoided_median": median(
+                row.get("partition_sparse_virtual_ancestor_refs_avoided", 0) for row in items
+            ),
+            "partition_sparse_virtual_index_ms_median": median(
+                row.get("partition_sparse_virtual_index_ms", 0.0) for row in items
+            ),
+            "oracle_certified_free_median": median(row.get("oracle_certified_free", 0) for row in items),
+            "oracle_certified_occupied_median": median(row.get("oracle_certified_occupied", 0) for row in items),
+            "oracle_collision_possible_median": median(row.get("oracle_collision_possible", 0) for row in items),
             "partition_islands_median": median(row.get("partition_islands", 0) for row in items),
             "partition_largest_island_median": median(row.get("partition_largest_island", 0) for row in items),
             "partition_overlay_edges_median": median(row.get("partition_overlay_edges", 0) for row in items),
@@ -808,6 +833,21 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "path_length_mean": mean(row["path_length_mean"] for row in items),
             "raw_segment_fraction_median": median(row["raw_segment_fraction"] for row in items),
             "offline_query_agnostic_build": all(bool(row.get("offline_query_agnostic_build", False)) for row in items),
+            "portal_membership_policy_median": median(row.get("portal_membership_policy", 0) for row in items),
+            "portal_membership_global_forest_only_median": median(
+                row.get("portal_membership_global_forest_only", 0) for row in items
+            ),
+            "portal_membership_global_forest_lookup_median": median(
+                row.get("portal_membership_global_forest_lookup", 0) for row in items
+            ),
+            "portal_membership_global_forest_only_fallback_max": max(
+                (int(row.get("portal_membership_global_forest_only_fallback", 0)) for row in items),
+                default=0,
+            ),
+            "portal_membership_portal_interior_index_unavailable_max": max(
+                (int(row.get("portal_membership_portal_interior_index_unavailable", 0)) for row in items),
+                default=0,
+            ),
             "qroot_pairs_total_max": max((int(row.get("qroot_pairs_total", -1)) for row in items), default=-1),
             "qroot_uncovered_endpoints_max": max((int(row.get("qroot_uncovered_endpoints", -1)) for row in items), default=-1),
             "offline_anchor_candidates_median": median(row.get("offline_anchor_candidates", 0) for row in items),
@@ -840,6 +880,14 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "segment_edges_median": median(row["segment_edges"] for row in items),
             "adjacency_islands_median": median(row["adjacency_islands"] for row in items),
             "external_hits_median": median(row["external_hits"] for row in items),
+            "external_reused_hits_median": median(row.get("external_reused_hits", row["external_hits"]) for row in items),
+            "external_exact_hits_median": median(row.get("external_exact_hits", 0.0) for row in items),
+            "external_exact_misses_median": median(row.get("external_exact_misses", 0.0) for row in items),
+            "interval_replay_compatibility_checks_median": median(row.get("interval_replay_compatibility_checks", 0.0) for row in items),
+            "interval_replay_compatible_median": median(row.get("interval_replay_compatible", 0.0) for row in items),
+            "interval_replay_incompatible_median": median(row.get("interval_replay_incompatible", 0.0) for row in items),
+            "interval_replay_direct_exact_hits_median": median(row.get("interval_replay_direct_exact_hits", 0.0) for row in items),
+            "interval_replay_key_only_blocked_median": median(row.get("interval_replay_key_only_blocked", 0.0) for row in items),
             "unsafe_sampling_validation": any(bool(row.get("unsafe_sampling_validation")) for row in items),
         })
     return out
@@ -989,6 +1037,14 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "partition_point_index_dims_median",
         "partition_point_index_entries_median",
         "partition_point_index_overflow_cells_median",
+        "partition_sparse_virtual_cells_median",
+        "partition_sparse_virtual_exact_index_entries_median",
+        "partition_sparse_virtual_max_address_depth_median",
+        "partition_sparse_virtual_ancestor_refs_avoided_median",
+        "partition_sparse_virtual_index_ms_median",
+        "oracle_certified_free_median",
+        "oracle_certified_occupied_median",
+        "oracle_collision_possible_median",
         "partition_islands_median",
         "partition_largest_island_median",
         "partition_overlay_edges_median",
@@ -1007,6 +1063,11 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "path_length_mean",
         "raw_segment_fraction_median",
         "offline_query_agnostic_build",
+        "portal_membership_policy_median",
+        "portal_membership_global_forest_only_median",
+        "portal_membership_global_forest_lookup_median",
+        "portal_membership_global_forest_only_fallback_max",
+        "portal_membership_portal_interior_index_unavailable_max",
         "qroot_pairs_total_max",
         "qroot_uncovered_endpoints_max",
         "offline_anchor_candidates_median",
@@ -1039,6 +1100,14 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "segment_edges_median",
         "adjacency_islands_median",
         "external_hits_median",
+        "external_reused_hits_median",
+        "external_exact_hits_median",
+        "external_exact_misses_median",
+        "interval_replay_compatibility_checks_median",
+        "interval_replay_compatible_median",
+        "interval_replay_incompatible_median",
+        "interval_replay_direct_exact_hits_median",
+        "interval_replay_key_only_blocked_median",
         "unsafe_sampling_validation",
     ]
     with path.open("w", newline="", encoding="utf-8") as handle:
@@ -1097,7 +1166,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
     parser.add_argument("--adaptive-target-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
     parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
-    parser.add_argument("--adaptive-node-budget", type=int, default=0)
+    parser.add_argument("--adaptive-node-budget", type=int, default=50000)
+    parser.add_argument("--adaptive-fast-virtual-checkpoint-mode",
+                        action=argparse.BooleanOptionalAction,
+                        default=False)
     parser.add_argument("--adaptive-defer-min-depth", type=int, default=16)
     parser.add_argument("--adaptive-overlap-depth-threshold", type=float, default=0.05)
     parser.add_argument("--adaptive-overlap-depth-min-threshold", type=float, default=0.01)

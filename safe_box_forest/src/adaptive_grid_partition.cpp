@@ -318,8 +318,24 @@ bool interval_boxes_connected(const std::vector<Interval>& lhs,
 	return shared_dims >= 1 || overlap_dims == nd;
 }
 
+bool interval_box_subset(const std::vector<Interval>& inner,
+						 const std::vector<Interval>& outer,
+						 double tolerance) {
+	if (inner.size() != outer.size()) {
+		return false;
+	}
+	for (std::size_t dim = 0; dim < inner.size(); ++dim) {
+		if (inner[dim].lo < outer[dim].lo - tolerance ||
+			inner[dim].hi > outer[dim].hi + tolerance) {
+			return false;
+		}
+	}
+	return true;
+}
+
 bool partition_counts_as_segment_edge(SegmentEdgeType type) {
-	return type != SegmentEdgeType::BoxCorridor;
+	return type != SegmentEdgeType::BoxCorridor &&
+	       type != SegmentEdgeType::PortalCorridor;
 }
 
 Eigen::VectorXd transition_waypoint_toward_goal(const std::vector<Interval>& lhs,
@@ -562,6 +578,23 @@ std::size_t AdaptiveGridPartition::PointBinKeyHash::operator()(const PointBinKey
 	return static_cast<std::size_t>(hash);
 }
 
+std::size_t AdaptiveGridPartition::SparseCellKeyHash::operator()(const SparseCellKey& key) const noexcept {
+	std::uint64_t hash = 1469598103934665603ull;
+	auto mix = [&](std::uint64_t value) {
+		hash ^= value;
+		hash *= 1099511628211ull;
+	};
+	mix(static_cast<std::uint64_t>(key.root_index + 1));
+	for (std::uint64_t value : key.lo) {
+		mix(value + 0x9e3779b97f4a7c15ull);
+	}
+	mix(0x517cc1b727220a95ull);
+	for (std::uint64_t value : key.hi) {
+		mix(value + 0xc2b2ae3d27d4eb4full);
+	}
+	return static_cast<std::size_t>(hash);
+}
+
 void AdaptiveGridPartition::clear() {
 	root_intervals_.clear();
 	root_interval_copies_.clear();
@@ -580,6 +613,7 @@ void AdaptiveGridPartition::clear_runtime_indices() {
 	overlay_parent_.clear();
 	point_bins_.clear();
 	point_overflow_cells_.clear();
+	sparse_virtual_index_.clear();
 	point_index_dims_.clear();
 	point_bin_widths_ = {1.0, 1.0, 1.0};
 	point_bin_origins_ = {0.0, 0.0, 0.0};
@@ -841,6 +875,10 @@ void AdaptiveGridPartition::rebuild_indices() {
 	rebuild_point_index();
 	stats_.point_index_ms +=
 		std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - point_t0).count();
+	const auto sparse_t0 = std::chrono::steady_clock::now();
+	rebuild_sparse_virtual_index();
+	stats_.sparse_virtual_index_ms +=
+		std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - sparse_t0).count();
 	const auto neighbor_t0 = std::chrono::steady_clock::now();
 	rebuild_neighbor_cache();
 	stats_.neighbor_cache_ms +=
@@ -862,6 +900,7 @@ void AdaptiveGridPartition::append_cell_to_indices(int cell_index) {
 	cell.cell_id = cell_index;
 	cell_by_box_id_[cell.box_id] = cell_index;
 	stats_.cells = static_cast<int>(cells_.size());
+	append_sparse_virtual_cell(cell_index);
 	if (cell.grid_aligned) {
 		stats_.grid_cells += 1;
 		for (int dim = 0; dim < static_cast<int>(cell.grid.lo.size()); ++dim) {
@@ -1573,6 +1612,114 @@ void AdaptiveGridPartition::rebuild_point_index() {
 	}
 	stats_.point_index_entries = static_cast<int>(point_bins_.size());
 	stats_.point_index_overflow_cells = static_cast<int>(point_overflow_cells_.size());
+}
+
+AdaptiveGridPartition::SparseCellKey AdaptiveGridPartition::sparse_key_for_grid_range(
+	const GridRange& range) const {
+	SparseCellKey key;
+	key.root_index = range.root_index;
+	key.lo = range.lo;
+	key.hi = range.hi;
+	return key;
+}
+
+int AdaptiveGridPartition::sparse_address_depth(const GridRange& range) const {
+	if (!range.valid() || range.lo.size() != split_counts_.size()) {
+		return 0;
+	}
+	int depth = 0;
+	for (std::size_t dim = 0; dim < range.lo.size(); ++dim) {
+		const int split_count = split_counts_[dim];
+		const std::uint64_t span = range.hi[dim] > range.lo[dim]
+			? range.hi[dim] - range.lo[dim]
+			: 0u;
+		if (split_count <= 0 || span == 0u) {
+			continue;
+		}
+		if ((span & (span - 1u)) == 0u && (range.lo[dim] % span) == 0u) {
+			int span_log2 = 0;
+			std::uint64_t value = span;
+			while (value > 1u) {
+				value >>= 1u;
+				++span_log2;
+			}
+			depth += std::max(0, split_count - span_log2);
+		} else {
+			depth += split_count;
+		}
+	}
+	return depth;
+}
+
+AdaptiveGridPartitionSparseCellRecord make_sparse_virtual_record(
+	const PartitionCell& cell,
+	const std::vector<int>& split_counts,
+	const lect_database::SplitPolicyDescriptor& split_policy,
+	int address_depth) {
+	AdaptiveGridPartitionSparseCellRecord record;
+	record.cell_id = cell.cell_id;
+	record.box_id = cell.box_id;
+	record.root_index = cell.grid.root_index;
+	record.lo = cell.grid.lo;
+	record.hi = cell.grid.hi;
+	record.split_counts = split_counts;
+	record.intervals = cell.intervals;
+	record.state = cell.state;
+	record.grid_aligned = cell.grid_aligned;
+	record.exact_interval_lookup_eligible = cell.grid_aligned && cell.grid.valid();
+	record.address_depth = address_depth;
+	record.ancestor_refs_avoided =
+		static_cast<std::uint64_t>(std::max(0, address_depth));
+	record.interval_fingerprint = lect_database::fingerprint_intervals(cell.intervals);
+	record.split_policy_hash = lect_database::split_policy_hash(split_policy);
+	return record;
+}
+
+void AdaptiveGridPartition::rebuild_sparse_virtual_index() {
+	sparse_virtual_index_.clear();
+	stats_.sparse_virtual_cells = static_cast<int>(cells_.size());
+	stats_.sparse_virtual_grid_cells = 0;
+	stats_.sparse_virtual_non_grid_cells = 0;
+	stats_.sparse_virtual_exact_index_entries = 0;
+	stats_.sparse_virtual_max_address_depth = 0;
+	stats_.sparse_virtual_ancestor_refs_avoided = 0;
+	sparse_virtual_index_.reserve(cells_.size());
+	for (const auto& cell : cells_) {
+		if (!cell.grid_aligned) {
+			stats_.sparse_virtual_non_grid_cells += 1;
+			continue;
+		}
+		stats_.sparse_virtual_grid_cells += 1;
+		const int address_depth = sparse_address_depth(cell.grid);
+		stats_.sparse_virtual_max_address_depth =
+			std::max(stats_.sparse_virtual_max_address_depth, address_depth);
+		stats_.sparse_virtual_ancestor_refs_avoided +=
+			static_cast<std::uint64_t>(std::max(0, address_depth));
+		sparse_virtual_index_[sparse_key_for_grid_range(cell.grid)] = cell.cell_id;
+	}
+	stats_.sparse_virtual_exact_index_entries =
+		static_cast<int>(sparse_virtual_index_.size());
+}
+
+void AdaptiveGridPartition::append_sparse_virtual_cell(int cell_index) {
+	if (cell_index < 0 || cell_index >= static_cast<int>(cells_.size())) {
+		return;
+	}
+	const auto& cell = cells_[static_cast<std::size_t>(cell_index)];
+	stats_.sparse_virtual_cells = static_cast<int>(cells_.size());
+	if (!cell.grid_aligned) {
+		stats_.sparse_virtual_non_grid_cells += 1;
+		return;
+	}
+	stats_.sparse_virtual_grid_cells += 1;
+	const int address_depth = sparse_address_depth(cell.grid);
+	stats_.sparse_virtual_max_address_depth =
+		std::max(stats_.sparse_virtual_max_address_depth, address_depth);
+	stats_.sparse_virtual_ancestor_refs_avoided +=
+		static_cast<std::uint64_t>(std::max(0, address_depth));
+	sparse_virtual_index_[sparse_key_for_grid_range(cell.grid)] = cell.cell_id;
+	stats_.sparse_virtual_exact_index_entries =
+		static_cast<int>(sparse_virtual_index_.size());
 }
 
 std::vector<int> AdaptiveGridPartition::point_candidate_cells(
@@ -2455,6 +2602,56 @@ bool AdaptiveGridPartition::box_adjacent_to_box(int box_id,
 	return interval_boxes_connected(box.joint_intervals, cell.intervals, tolerance);
 }
 
+int AdaptiveGridPartition::sparse_virtual_cell_for_intervals(
+	const std::vector<Interval>& intervals,
+	double tolerance) const {
+	GridRange range;
+	if (!make_grid_range(intervals, range, tolerance)) {
+		return -1;
+	}
+	const auto it = sparse_virtual_index_.find(sparse_key_for_grid_range(range));
+	return it == sparse_virtual_index_.end() ? -1 : it->second;
+}
+
+std::optional<AdaptiveGridPartitionSparseCellRecord>
+AdaptiveGridPartition::sparse_virtual_record_for_intervals(
+	const std::vector<Interval>& intervals,
+	double tolerance) const {
+	GridRange range;
+	if (!make_grid_range(intervals, range, tolerance)) {
+		return std::nullopt;
+	}
+	const auto it = sparse_virtual_index_.find(sparse_key_for_grid_range(range));
+	if (it == sparse_virtual_index_.end()) {
+		return std::nullopt;
+	}
+	const int cell_id = it->second;
+	if (cell_id < 0 || cell_id >= static_cast<int>(cells_.size())) {
+		return std::nullopt;
+	}
+	const auto& cell = cells_[static_cast<std::size_t>(cell_id)];
+	return make_sparse_virtual_record(
+		cell,
+		split_counts_,
+		split_policy_,
+		sparse_address_depth(cell.grid));
+}
+
+std::vector<AdaptiveGridPartitionSparseCellRecord>
+AdaptiveGridPartition::sparse_virtual_records() const {
+	std::vector<AdaptiveGridPartitionSparseCellRecord> records;
+	records.reserve(cells_.size());
+	for (const auto& cell : cells_) {
+		const int address_depth = cell.grid_aligned ? sparse_address_depth(cell.grid) : 0;
+		records.push_back(make_sparse_virtual_record(
+			cell,
+			split_counts_,
+			split_policy_,
+			address_depth));
+	}
+	return records;
+}
+
 bool AdaptiveGridPartition::boxes_are_neighbors(int lhs_box_id, int rhs_box_id) const {
 	if (lhs_box_id == rhs_box_id) {
 		return false;
@@ -2889,6 +3086,64 @@ std::vector<int> AdaptiveGridPartition::adjacent_box_ids(const BoxNode& box,
 		}
 	}
 	return result;
+}
+
+AdaptiveGridPartitionConnectivityDominance
+AdaptiveGridPartition::classify_connectivity_dominance(const BoxNode& box,
+													   double tolerance) const {
+	AdaptiveGridPartitionConnectivityDominance out;
+	if (box.joint_intervals.size() != root_intervals_.size()) {
+		return out;
+	}
+	for (const auto& cell : cells_) {
+		if (interval_box_subset(box.joint_intervals, cell.intervals, tolerance)) {
+			out.covered_by_existing = true;
+			out.isolated = false;
+			out.priority_delta = -100.0;
+			return out;
+		}
+	}
+
+	const auto components = component_cell_indices_with_overlay();
+	std::unordered_map<int, int> component_by_box_id;
+	component_by_box_id.reserve(cells_.size());
+	for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
+		for (int cell_index : components[component_index]) {
+			if (cell_index >= 0 && cell_index < static_cast<int>(cells_.size())) {
+				component_by_box_id[cells_[static_cast<std::size_t>(cell_index)].box_id] =
+					static_cast<int>(component_index);
+			}
+		}
+	}
+
+	const auto adjacent_ids = adjacent_box_ids(box, tolerance);
+	std::unordered_set<int> adjacent_components;
+	adjacent_components.reserve(adjacent_ids.size());
+	for (int adjacent_id : adjacent_ids) {
+		const auto comp_it = component_by_box_id.find(adjacent_id);
+		if (comp_it == component_by_box_id.end()) {
+			continue;
+		}
+		adjacent_components.insert(comp_it->second);
+	}
+
+	out.adjacent_box_count = static_cast<int>(adjacent_ids.size());
+	out.adjacent_component_count = static_cast<int>(adjacent_components.size());
+	out.adjacent_to_largest_component = adjacent_components.find(0) != adjacent_components.end();
+	out.connector_candidate = out.adjacent_component_count >= 2;
+	out.single_component = out.adjacent_component_count == 1;
+	out.isolated = out.adjacent_component_count == 0;
+
+	if (out.connector_candidate) {
+		out.priority_delta = 60.0 + (out.adjacent_to_largest_component ? 20.0 : 0.0);
+	} else if (out.adjacent_to_largest_component) {
+		out.priority_delta = 18.0;
+	} else if (out.single_component) {
+		out.priority_delta = -4.0;
+	} else {
+		out.priority_delta = -12.0;
+	}
+	return out;
 }
 
 bool AdaptiveGridPartition::append_segment_edge(const SegmentEdge& edge) {

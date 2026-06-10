@@ -76,7 +76,13 @@ RANDOM_WORKSPACE_Z_MIN = 0.05
 RANDOM_WORKSPACE_Z_MAX = 0.90
 CANONICAL_SYMMETRY_DESCRIPTOR = "joint_symmetry_native_v1"
 CATALOG_SCHEMA = "tro2026_random_scene_catalog_v7"
-READABLE_CATALOG_SCHEMAS = {CATALOG_SCHEMA, "tro2026_random_scene_catalog_v6", "tro2026_random_scene_catalog_v5"}
+PREFIX_DISTRIBUTION_CATALOG_SCHEMA = "exp06_distribution_prefix_catalog_v1"
+READABLE_CATALOG_SCHEMAS = {
+    CATALOG_SCHEMA,
+    PREFIX_DISTRIBUTION_CATALOG_SCHEMA,
+    "tro2026_random_scene_catalog_v6",
+    "tro2026_random_scene_catalog_v5",
+}
 LECT_SAMPLE_DOMAIN = "full_robot_joint_limits"
 
 
@@ -566,6 +572,29 @@ def scene_profile_uses_nested_prefixes(scene_profile: str) -> bool:
         "narrow_passage",
         "narrow",
     }
+
+
+def catalog_payload_uses_nested_prefixes(payload: dict[str, Any], scene_profile: str) -> bool:
+    payload_profile = str(payload.get("scene_profile", "")).lower()
+    if "prefix" in payload_profile and "independent" not in payload_profile:
+        return True
+    for record in payload.get("records", []):
+        record_profile = str(record.get("scene_profile", "")).lower()
+        mapping = record.get("workspace_mapping", {})
+        incremental = record.get("incremental_scene", {})
+        if (
+            ("prefix" in record_profile and "independent" not in record_profile)
+            or "obstacle_prefix_count" in mapping
+            or "ordered_obstacles" in mapping
+            or bool(incremental.get("shared_query_set", False))
+        ):
+            return True
+    profile = str(scene_profile).lower()
+    if "independent" in profile:
+        return False
+    if scene_profile_uses_nested_prefixes(profile) or "prefix" in profile:
+        return True
+    return False
 
 
 def scene_profile_requires_balanced_probe(scene_profile: str) -> bool:
@@ -2036,11 +2065,68 @@ def record_satisfies_lect_root(record: dict[str, Any]) -> bool:
 
 def record_has_shared_query_median_gate(record: dict[str, Any]) -> bool:
     probe = record.get("difficulty_probe", {})
+    policy = str(probe.get("policy", ""))
     return (
         isinstance(probe, dict)
-        and str(probe.get("policy", "")) == "shared_query_median_first_solution_time_windows"
+        and policy in {"shared_query_median_first_solution_time_windows", "distribution_separation_v1"}
         and bool(probe.get("ok"))
     )
+
+
+def records_have_strict_nested_prefixes(
+    records: dict[str, dict[str, Any]],
+    robot: str,
+    difficulties: Iterable[str],
+    scene_seed: int,
+) -> tuple[bool, str]:
+    previous_obstacles: list[list[float]] | None = None
+    previous_count = -1
+    for difficulty in difficulties:
+        key = scene_cache_key(robot, difficulty, scene_seed)
+        record = records.get(key)
+        if record is None:
+            return False, f"missing {key}"
+        obstacles = [[float(value) for value in item] for item in record.get("obstacles", [])]
+        count = len(obstacles)
+        if count <= previous_count:
+            return False, f"{key} prefix count {count} is not greater than previous {previous_count}"
+        if previous_obstacles is not None and obstacles[: len(previous_obstacles)] != previous_obstacles:
+            return False, f"{key} is not an extension of the previous difficulty prefix"
+        previous_obstacles = obstacles
+        previous_count = count
+    return True, ""
+
+
+def records_have_shared_queries(
+    records: dict[str, dict[str, Any]],
+    robot: str,
+    difficulties: Iterable[str],
+    scene_seed: int,
+) -> tuple[bool, str]:
+    reference_queries: list[dict[str, Any]] | None = None
+    reference_key = ""
+    for difficulty in difficulties:
+        key = scene_cache_key(robot, difficulty, scene_seed)
+        record = records.get(key)
+        if record is None:
+            return False, f"missing {key}"
+        queries = query_records_from_record(record)
+        comparable = [
+            {
+                "start": [float(value) for value in query["start"]],
+                "goal": [float(value) for value in query["goal"]],
+                "canonical_start": [float(value) for value in query.get("canonical_start", query["start"])],
+                "canonical_goal": [float(value) for value in query.get("canonical_goal", query["goal"])],
+            }
+            for query in queries
+        ]
+        if reference_queries is None:
+            reference_queries = comparable
+            reference_key = key
+            continue
+        if comparable != reference_queries:
+            return False, f"{key} queries differ from {reference_key}"
+    return True, ""
 
 
 def expected_keys(robots: Iterable[str], difficulties: Iterable[str], scene_seeds: int) -> list[str]:
@@ -2150,9 +2236,11 @@ def generate_catalog(
     mode = str(mode)
     keys = expected_keys(robots, difficulties, int(scene_seeds))
     existing: dict[str, dict[str, Any]] = {}
+    loaded_payload: dict[str, Any] | None = None
     if path.exists() and mode in {"auto", "reuse", "verify"}:
         try:
-            existing = catalog_record_map(load_catalog(path))
+            loaded_payload = load_catalog(path)
+            existing = catalog_record_map(loaded_payload)
         except ValueError:
             if mode in {"reuse", "verify"}:
                 raise
@@ -2173,14 +2261,34 @@ def generate_catalog(
                 f"scene catalog {path} has {len(too_few_queries)} records with too few queries; "
                 f"first={too_few_queries[0]}"
             )
-        if scene_profile_uses_nested_prefixes(scene_profile) and "independent" not in str(scene_profile).lower():
+        if catalog_payload_uses_nested_prefixes(loaded_payload or {}, scene_profile):
             missing_probe = [key for key in keys if not record_has_shared_query_median_gate(existing[key])]
             if missing_probe:
                 raise RuntimeError(
                     f"scene catalog {path} has {len(missing_probe)} records without the shared-query median difficulty gate; "
                     f"first={missing_probe[0]}"
                 )
-        return load_catalog(path)
+            nested_errors: list[str] = []
+            query_errors: list[str] = []
+            for robot_name in robots:
+                for scene_seed in range(max(1, int(scene_seeds))):
+                    ok, reason = records_have_strict_nested_prefixes(existing, robot_name, difficulties, scene_seed)
+                    if not ok:
+                        nested_errors.append(reason)
+                    ok, reason = records_have_shared_queries(existing, robot_name, difficulties, scene_seed)
+                    if not ok:
+                        query_errors.append(reason)
+            if nested_errors:
+                raise RuntimeError(
+                    f"scene catalog {path} has {len(nested_errors)} non-prefix-nested scene groups; "
+                    f"first={nested_errors[0]}"
+                )
+            if query_errors:
+                raise RuntimeError(
+                    f"scene catalog {path} has {len(query_errors)} scene groups without shared difficulty queries; "
+                    f"first={query_errors[0]}"
+                )
+        return loaded_payload if loaded_payload is not None else load_catalog(path)
     records = dict(existing) if mode == "auto" else {}
     total = len(keys)
     if scene_profile_uses_nested_prefixes(scene_profile) and "independent" not in str(scene_profile).lower():

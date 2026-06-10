@@ -121,6 +121,86 @@ def _diagnostic_number(diagnostics: dict[str, float], key: str, default: float =
         return float(default)
 
 
+def _diagnostic_max(diagnostics: dict[str, float], keys: list[str]) -> float:
+    value = 0.0
+    for key in keys:
+        value = max(value, _diagnostic_number(diagnostics, key, 0.0))
+    return value
+
+
+def _external_evidence_diagnostic_fields(diagnostics: dict[str, float]) -> dict[str, float]:
+    reused_keys = [
+        "oracle.materialization_reused_external_evidence",
+        "adaptive.oracle.materialization_reused_external_evidence",
+        "adaptive.external_reused_hits_normalized",
+        "leaf_sweep.worker_oracle.materialization_reused_external_evidence",
+        "grower.worker_oracle.materialization_reused_external_evidence",
+    ]
+    exact_hit_keys = [
+        "oracle.materialization_external_exact_hits",
+        "adaptive.oracle.materialization_external_exact_hits",
+        "adaptive.external_exact_hits_normalized",
+        "leaf_sweep.worker_oracle.materialization_external_exact_hits",
+        "grower.worker_oracle.materialization_external_exact_hits",
+    ]
+    exact_miss_keys = [
+        "oracle.materialization_external_exact_misses",
+        "adaptive.oracle.materialization_external_exact_misses",
+        "adaptive.external_exact_misses_normalized",
+        "leaf_sweep.worker_oracle.materialization_external_exact_misses",
+        "grower.worker_oracle.materialization_external_exact_misses",
+    ]
+    replay_check_keys = [
+        "oracle.interval_replay_compatibility_checks",
+        "adaptive.oracle.interval_replay_compatibility_checks",
+        "adaptive.interval_replay_compatibility_checks_normalized",
+        "leaf_sweep.worker_oracle.interval_replay_compatibility_checks",
+        "grower.worker_oracle.interval_replay_compatibility_checks",
+    ]
+    replay_compatible_keys = [
+        "oracle.interval_replay_compatible",
+        "adaptive.oracle.interval_replay_compatible",
+        "adaptive.interval_replay_compatible_normalized",
+        "leaf_sweep.worker_oracle.interval_replay_compatible",
+        "grower.worker_oracle.interval_replay_compatible",
+    ]
+    replay_incompatible_keys = [
+        "oracle.interval_replay_incompatible",
+        "adaptive.oracle.interval_replay_incompatible",
+        "adaptive.interval_replay_incompatible_normalized",
+        "leaf_sweep.worker_oracle.interval_replay_incompatible",
+        "grower.worker_oracle.interval_replay_incompatible",
+    ]
+    replay_direct_hit_keys = [
+        "oracle.interval_replay_direct_exact_hits",
+        "adaptive.oracle.interval_replay_direct_exact_hits",
+        "adaptive.interval_replay_direct_exact_hits_normalized",
+        "leaf_sweep.worker_oracle.interval_replay_direct_exact_hits",
+        "grower.worker_oracle.interval_replay_direct_exact_hits",
+    ]
+    replay_key_only_blocked_keys = [
+        "oracle.interval_replay_key_only_blocked",
+        "adaptive.oracle.interval_replay_key_only_blocked",
+        "adaptive.interval_replay_key_only_blocked_normalized",
+        "leaf_sweep.worker_oracle.interval_replay_key_only_blocked",
+        "grower.worker_oracle.interval_replay_key_only_blocked",
+    ]
+    reused_hits = _diagnostic_max(diagnostics, reused_keys)
+    exact_hits = _diagnostic_max(diagnostics, exact_hit_keys)
+    exact_misses = _diagnostic_max(diagnostics, exact_miss_keys)
+    return {
+        "external_hits": reused_hits,
+        "external_reused_hits": reused_hits,
+        "external_exact_hits": exact_hits,
+        "external_exact_misses": exact_misses,
+        "interval_replay_compatibility_checks": _diagnostic_max(diagnostics, replay_check_keys),
+        "interval_replay_compatible": _diagnostic_max(diagnostics, replay_compatible_keys),
+        "interval_replay_incompatible": _diagnostic_max(diagnostics, replay_incompatible_keys),
+        "interval_replay_direct_exact_hits": _diagnostic_max(diagnostics, replay_direct_hit_keys),
+        "interval_replay_key_only_blocked": _diagnostic_max(diagnostics, replay_key_only_blocked_keys),
+    }
+
+
 def _query_bridge_diagnostic_fields(
     diagnostics: dict[str, float],
     query_count: int,
@@ -150,6 +230,11 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.oracle_materializations",
         "query_bridge.oracle_external_exact_hits",
         "query_bridge.oracle_external_exact_misses",
+        "query_bridge.oracle_interval_replay_compatibility_checks",
+        "query_bridge.oracle_interval_replay_compatible",
+        "query_bridge.oracle_interval_replay_incompatible",
+        "query_bridge.oracle_interval_replay_direct_exact_hits",
+        "query_bridge.oracle_interval_replay_key_only_blocked",
         "query_bridge.oracle_shared_endpoint_cache_hits",
         "query_bridge.oracle_endpoint_path_ms",
         "query_bridge.oracle_classify_ms",
@@ -357,7 +442,8 @@ class RBFLeafRRTOptions:
     collision_overlap_prune_ratio_threshold: float = 0.0
     adaptive_target_depth: int = DEFAULT_RBF_LEAF_MAX_DEPTH
     adaptive_time_budget_ms: float = 60000.0
-    adaptive_node_budget: int = 0
+    adaptive_node_budget: int = 50000
+    adaptive_fast_virtual_checkpoint_mode: bool = False
     adaptive_defer_min_depth: int = 16
     adaptive_overlap_depth_threshold: float = 0.05
     adaptive_overlap_depth_min_threshold: float = 0.01
@@ -405,6 +491,7 @@ class RBFLeafRRTOptions:
     support_hull_skip_aabb_broadphase: bool = False
     support_hull_direct_collision: bool = False
     endpoint_source: str = "ifk"
+    hifk_max_depth: int = 9
     unsafe_sampling_validation: bool = False
     use_external_evidence: bool = False
     external_evidence_live_retry_on_maybe: bool = False
@@ -885,6 +972,9 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     endpoint_key = str(options.endpoint_source).strip().lower().replace("-", "_")
     if endpoint_key in {"crit", "critsample", "crit_sample"}:
         cfg.endpoint_source.source = sbf.EndpointSource.CritSample
+    elif endpoint_key in {"hifk", "hifk_aa"}:
+        cfg.endpoint_source.source = sbf.EndpointSource.HIFK
+        cfg.endpoint_source.hifk_max_depth = int(options.hifk_max_depth)
     else:
         cfg.endpoint_source.source = sbf.EndpointSource.IFK
     cfg.envelope_type.type = sbf.EnvelopeType.LinkIAABB if options.envelope == "link_aabb" else sbf.EnvelopeType.SupportHull
@@ -1114,6 +1204,8 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
     cfg.target_max_depth = int(options.adaptive_target_depth)
     cfg.time_budget_ms = float(options.adaptive_time_budget_ms)
     cfg.node_budget = int(options.adaptive_node_budget)
+    if hasattr(cfg, "fast_virtual_checkpoint_mode"):
+        cfg.fast_virtual_checkpoint_mode = bool(options.adaptive_fast_virtual_checkpoint_mode)
     cfg.threads = max(1, int(options.leaf_threads))
     cfg.validation_batch_size = int(options.validation_batch_size)
     cfg.obstacle_cluster_gap = 1000.0
@@ -1522,7 +1614,6 @@ def bridge_all_queries(
         selected.append((label, start, goal, global_query_index))
         if force_selected:
             force_selected_indices.add(selected_index)
-
     if (
         selected and
         hasattr(forest, "bridge_queries") and
@@ -1821,11 +1912,7 @@ def run_leaf_rrt(
         f"amortized_s_k{k}": offline_build_s / float(k) + online_per_query_s
         for k in (1, 5, 10, 20, 50)
     }
-    external_hits = max(
-        diagnostics.get("oracle.materialization_reused_external_evidence", 0.0),
-        diagnostics.get("leaf_sweep.worker_oracle.materialization_reused_external_evidence", 0.0),
-        diagnostics.get("grower.worker_oracle.materialization_reused_external_evidence", 0.0),
-    )
+    external_evidence_fields = _external_evidence_diagnostic_fields(diagnostics)
     query_bridge_diagnostic_fields = _query_bridge_diagnostic_fields(diagnostics, query_count)
     return {
         "case": options.case_label,
@@ -1874,6 +1961,12 @@ def run_leaf_rrt(
         "offline_query_agnostic_build": bool(options.offline_query_agnostic_build),
         "offline_backend": "adaptive_grid_partition" if str(options.offline_grower) == "adaptive_deep_leaf" else str(options.offline_grower),
         "online_backend": "partition_native" if partition_native_requested else "box_graph",
+        "portal_membership_policy": int(diagnostics.get("portal_membership.policy", 0.0)),
+        "portal_membership_global_forest_only": int(diagnostics.get("portal_membership.global_forest_only", 0.0)),
+        "portal_membership_portal_interior_index": int(diagnostics.get("portal_membership.portal_interior_index", 0.0)),
+        "portal_membership_global_forest_lookup": int(diagnostics.get("portal_membership.global_forest_lookup", 0.0)),
+        "portal_membership_global_forest_only_fallback": int(diagnostics.get("portal_membership.global_forest_only_fallback", 0.0)),
+        "portal_membership_portal_interior_index_unavailable": int(diagnostics.get("portal_membership.portal_interior_index_unavailable", 0.0)),
         "qroot_pairs_total": qroot_pairs_total,
         "qroot_uncovered_endpoints": qroot_uncovered_endpoints,
         "offline_anchor_candidates": int(offline_anchor_select_metrics.get("offline_anchor_candidates", 0)),
@@ -1922,6 +2015,27 @@ def run_leaf_rrt(
         "partition_point_index_dims": int(diagnostics.get("adaptive.partition_point_index_dims", 0)),
         "partition_point_index_entries": int(diagnostics.get("adaptive.partition_point_index_entries", 0)),
         "partition_point_index_overflow_cells": int(diagnostics.get("adaptive.partition_point_index_overflow_cells", 0)),
+        "partition_sparse_virtual_cells": int(diagnostics.get("adaptive.partition_sparse_virtual_cells", 0)),
+        "partition_sparse_virtual_grid_cells": int(diagnostics.get("adaptive.partition_sparse_virtual_grid_cells", 0)),
+        "partition_sparse_virtual_non_grid_cells": int(diagnostics.get("adaptive.partition_sparse_virtual_non_grid_cells", 0)),
+        "partition_sparse_virtual_exact_index_entries": int(diagnostics.get("adaptive.partition_sparse_virtual_exact_index_entries", 0)),
+        "partition_sparse_virtual_max_address_depth": int(diagnostics.get("adaptive.partition_sparse_virtual_max_address_depth", 0)),
+        "partition_sparse_virtual_ancestor_refs_avoided": int(diagnostics.get("adaptive.partition_sparse_virtual_ancestor_refs_avoided", 0)),
+        "partition_sparse_virtual_index_ms": float(diagnostics.get("adaptive.partition_sparse_virtual_index_ms", 0.0)),
+        "oracle_certified_free": int(_diagnostic_max(diagnostics, [
+            "oracle.certified_free",
+            "adaptive.oracle.certified_free",
+            "grower.worker_oracle.certified_free",
+        ])),
+        "oracle_certified_occupied": int(_diagnostic_max(diagnostics, [
+            "oracle.certified_occupied",
+            "adaptive.oracle.certified_occupied",
+            "grower.worker_oracle.certified_occupied",
+        ])),
+        "oracle_collision_possible": int(_diagnostic_max(diagnostics, [
+            "oracle.collision_possible",
+            "adaptive.oracle.collision_possible",
+        ])),
         "partition_islands": int(diagnostics.get("adaptive.partition_islands", getattr(build, "partition_islands", 0))),
         "partition_largest_island": int(diagnostics.get("adaptive.partition_largest_island", getattr(build, "partition_largest_island", 0))),
         "partition_build_ms": float(diagnostics.get("adaptive.partition_build_ms", 0.0)),
@@ -2014,7 +2128,7 @@ def run_leaf_rrt(
         "legacy_graph_final_adjacency_islands": int(final_adjacency_islands),
         "segment_edges": int(final_segment_edges),
         "adjacency_islands": int(build.profile.adjacency_islands),
-        "external_hits": external_hits,
+        **external_evidence_fields,
         "database_root_intervals": interval_pairs(forest.database_root_intervals()),
         "database_coverage_intervals": interval_pairs(forest.database_coverage_intervals()),
         "queries": qrows,

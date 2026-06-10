@@ -101,6 +101,11 @@ struct LectDatabaseRuntimeConfig {
 	int max_tree_depth = 64;
 };
 
+enum class PortalMembershipPolicy : std::uint8_t {
+	GlobalForestOnly = 0,
+	PortalInteriorIndex = 1,
+};
+
 struct RBFPlanningConfig {
 	RBFPlanningConfig();
 
@@ -121,6 +126,11 @@ struct RBFPlanningConfig {
 	/// Optional shallow-to-deep query bridge FFB schedule. Empty reuses
 	/// connector.pave.adaptive_ffb_depths.
 	std::vector<int> query_bridge_adaptive_ffb_depths;
+	/// Endpoint membership policy for compressed corridor/portal internals.
+	/// The production default is low-risk GlobalForestOnly: start/goal lookup
+	/// ignores hidden portal/corridor internals and falls back to local repair.
+	/// PortalInteriorIndex is reserved for a future explicit interior index.
+	PortalMembershipPolicy portal_membership_policy = PortalMembershipPolicy::GlobalForestOnly;
 
 	/// RSS threshold for session-level evidence spill during online cache updates.
 	/// 0 = disabled.
@@ -254,13 +264,14 @@ struct AdaptiveLeafSweepConfig {
 	int shallow_max_depth = 14;
 	int target_max_depth = 50;
 	double time_budget_ms = 60000.0;
-	int node_budget = 0;
+	int node_budget = 50000;
 	int threads = 8;
 	int validation_batch_size = 512;
 	double obstacle_cluster_gap = 1000.0;
 	bool use_virtual_topology = true;
 	bool parallel_virtual_validation = true;
 	bool store_group_results = false;
+	bool fast_virtual_checkpoint_mode = false;
 	int defer_min_depth = 16;
 	double overlap_depth_threshold = 0.05;
 	double overlap_depth_min_threshold = 0.01;

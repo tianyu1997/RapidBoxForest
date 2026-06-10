@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <span>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -23,6 +24,9 @@ namespace rbf {
 
 using OracleNodeId = std::int64_t;
 inline constexpr OracleNodeId kInvalidOracleNodeId = -1;
+// Oracle evidence replay compatibility is tied to the LECT split policy
+// descriptor as well as root intervals and robot/envelope identity.
+using OracleSplitPolicyDescriptor = lect_database::SplitPolicyDescriptor;
 
 enum class BoxValidation : std::uint8_t {
     Free = 0,
@@ -77,6 +81,36 @@ struct OracleSplitOptions {
     BestTightenOptions best_tighten;
 };
 
+struct OccupiedCertificateConfig {
+    bool enabled = false;
+    double numerical_epsilon = 1e-9;
+    double min_penetration_margin = 0.0;
+};
+
+struct MaterialPointOccupiedWitness {
+    int link_id = -1;
+    int obstacle_id = -1;
+    Eigen::Vector3d link_point = Eigen::Vector3d::Zero();
+    double center_signed_distance = 0.0;
+    double motion_bound = 0.0;
+    double epsilon_num = 1e-9;
+
+    bool certifies_occupied() const {
+        return center_signed_distance + motion_bound + epsilon_num < 0.0;
+    }
+};
+
+struct OracleValidationBlocker {
+    int active_link_index = -1;
+    int link_id = -1;
+    int obstacle_id = -1;
+    int stage = 0;
+    double margin = 0.0;
+    double overlap_depth = 0.0;
+    double overlap_volume_ratio = 0.0;
+    std::vector<int> affected_joints;
+};
+
 struct SplitNodeResult {
     bool split = false;
     OracleNodeId node = kInvalidOracleNodeId;
@@ -122,6 +156,10 @@ struct OracleValidationConfig {
     // envelope-level overlap ratio. Default validation keeps the early-exit
     // collision path.
     bool collect_full_overlap_stats = false;
+    // Optional occupied pruning must be backed by a material-point signed
+    // distance witness. Disabled by default; AABB/support-hull overlap is never
+    // used as an occupied proof.
+    OccupiedCertificateConfig occupied_certificate;
 };
 
 struct OracleValidationDetail {
@@ -149,12 +187,29 @@ struct OracleValidationDetail {
     bool aabb_overlap = false;
     double aabb_overlap_depth = 0.0;
     double aabb_overlap_volume_ratio = 0.0;
+    int blocker_active_link_index = -1;
+    int blocker_link_id = -1;
+    int blocker_obstacle_id = -1;
+    int blocker_stage = 0;
+    double blocker_margin = 0.0;
+    double blocker_overlap_depth = 0.0;
+    double blocker_overlap_volume_ratio = 0.0;
+    std::vector<int> blocker_affected_joints;
+    std::vector<OracleValidationBlocker> blockers;
+    std::uint64_t blocker_signature_hash = 0;
+    bool occupied_certificate_checked = false;
+    bool occupied_certificate_found = false;
+    int occupied_witness_link_id = -1;
+    int occupied_witness_obstacle_id = -1;
+    double occupied_witness_center_signed_distance = 0.0;
+    double occupied_witness_motion_bound = 0.0;
 };
 
 struct OracleCounters {
     int node_validations = 0;
     int interval_validations = 0;
     int certified_free = 0;
+    int certified_occupied = 0;
     int provisional_free = 0;
     int collision_possible = 0;
     int unsafe_free_rejected = 0;
@@ -188,6 +243,11 @@ struct OracleCounters {
     int materialization_external_live_fallbacks = 0;
     int materialization_external_maybe_live_retries = 0;
     int materialization_external_maybe_live_retry_free = 0;
+    int interval_replay_compatibility_checks = 0;
+    int interval_replay_compatible = 0;
+    int interval_replay_incompatible = 0;
+    int interval_replay_direct_exact_hits = 0;
+    int interval_replay_key_only_blocked = 0;
     int materialization_reused_shared_endpoint_cache = 0;
     int materialization_stored_shared_endpoint_cache = 0;
     int materialization_reused_cached_envelope = 0;
@@ -224,6 +284,16 @@ struct OracleCounters {
     double envelope_collision_overlap_depth_sum = 0.0;
     double envelope_collision_overlap_depth_max = 0.0;
     double envelope_collision_overlap_volume_ratio_max = 0.0;
+};
+
+struct IntervalEvidenceCompatibility {
+    bool canonical_frame_valid = false;
+    bool semantic_identity_match = false;
+    bool exact_interval_lookup_required = true;
+    bool compatible = false;
+    bool direct_database = false;
+    std::uint64_t lookup_interval_fingerprint = 0;
+    std::string reason;
 };
 
 class BoxOracle;

@@ -1,6 +1,7 @@
 #include <LECTDatabase/sbf/oracle.h>
 
 #include <sbf/core/joint_symmetry.h>
+#include <sbf/core/fk_state.h>
 #include <sbf/envelope/crit_source.h>
 #include <sbf/envelope/endpoint_source.h>
 #include <sbf/envelope/ifk_aa_source.h>
@@ -8,6 +9,7 @@
 #include <link_interval_envelope/incremental_context.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -106,6 +108,76 @@ double interval_volume(const std::vector<Interval>& intervals) {
     return volume;
 }
 
+int active_link_index_to_link_id(const Robot& robot, int active_link_index) {
+    if (active_link_index < 0 || active_link_index >= robot.n_active_links()) {
+        return -1;
+    }
+    const int* active_map = robot.active_link_map();
+    if (active_map == nullptr) {
+        return active_link_index;
+    }
+    return active_map[active_link_index];
+}
+
+std::vector<int> affected_joints_for_link(const Robot& robot, int link_id) {
+    std::vector<int> joints;
+    if (link_id < 0 || robot.n_joints() <= 0) {
+        return joints;
+    }
+    const int last_joint = std::clamp(link_id, 0, robot.n_joints() - 1);
+    joints.reserve(static_cast<std::size_t>(last_joint + 1));
+    for (int joint = 0; joint <= last_joint; ++joint) {
+        joints.push_back(joint);
+    }
+    return joints;
+}
+
+std::vector<OracleValidationBlocker> make_oracle_blockers(
+    const Robot& robot,
+    const EnvelopeCollisionStats& collision_stats) {
+    std::vector<OracleValidationBlocker> blockers;
+    blockers.reserve(collision_stats.blockers.size());
+    for (const auto& source : collision_stats.blockers) {
+        OracleValidationBlocker blocker;
+        blocker.active_link_index = source.active_link_index;
+        blocker.link_id = active_link_index_to_link_id(robot, source.active_link_index);
+        blocker.obstacle_id = source.obstacle_index;
+        blocker.stage = source.stage;
+        blocker.margin = source.margin;
+        blocker.overlap_depth = source.overlap_depth;
+        blocker.overlap_volume_ratio = source.overlap_volume_ratio;
+        blocker.affected_joints = affected_joints_for_link(robot, blocker.link_id);
+        blockers.push_back(std::move(blocker));
+    }
+    std::sort(blockers.begin(), blockers.end(), [](const auto& lhs, const auto& rhs) {
+        if (lhs.overlap_depth != rhs.overlap_depth) {
+            return lhs.overlap_depth > rhs.overlap_depth;
+        }
+        if (lhs.link_id != rhs.link_id) {
+            return lhs.link_id < rhs.link_id;
+        }
+        if (lhs.obstacle_id != rhs.obstacle_id) {
+            return lhs.obstacle_id < rhs.obstacle_id;
+        }
+        return lhs.stage < rhs.stage;
+    });
+    return blockers;
+}
+
+std::uint64_t blocker_signature_hash(const std::vector<OracleValidationBlocker>& blockers,
+                                     std::size_t top_k = 3) {
+    std::uint64_t seed = 0x4f2a7c15c0ffee21ull;
+    const std::size_t count = std::min(top_k, blockers.size());
+    seed = hash_mix(seed, static_cast<std::uint64_t>(count));
+    for (std::size_t index = 0; index < count; ++index) {
+        const auto& blocker = blockers[index];
+        seed = hash_mix(seed, static_cast<std::uint64_t>(blocker.link_id + 4096));
+        seed = hash_mix(seed, static_cast<std::uint64_t>(blocker.obstacle_id + 4096));
+        seed = hash_mix(seed, static_cast<std::uint64_t>(blocker.stage + 4096));
+    }
+    return count == 0 ? 0 : seed;
+}
+
 std::uint64_t make_envelope_cache_key(lect_database::NodeId node_id, int sector) {
     std::uint64_t key = static_cast<std::uint64_t>(node_id);
     const std::uint64_t sector_bits = static_cast<std::uint64_t>(static_cast<std::uint32_t>(sector));
@@ -158,6 +230,161 @@ void record_envelope_collision(OracleCounters& counters, const EnvelopeCollision
     counters.envelope_collision_overlap_volume_ratio_max =
         std::max(counters.envelope_collision_overlap_volume_ratio_max,
                  stats.maybe_pair_overlap_volume_ratio_max);
+}
+
+bool certifies_occupied(const MaterialPointOccupiedWitness& witness) {
+    return witness.center_signed_distance + witness.motion_bound + witness.epsilon_num < 0.0;
+}
+
+double signed_distance_to_aabb(const Eigen::Vector3d& point, const Obstacle& obstacle) {
+    double outside_sq = 0.0;
+    double inside_margin = std::numeric_limits<double>::infinity();
+    bool inside = true;
+    for (int axis = 0; axis < 3; ++axis) {
+        const double lo = static_cast<double>(obstacle.bounds[axis]);
+        const double hi = static_cast<double>(obstacle.bounds[axis + 3]);
+        if (point[axis] < lo) {
+            const double delta = lo - point[axis];
+            outside_sq += delta * delta;
+            inside = false;
+        } else if (point[axis] > hi) {
+            const double delta = point[axis] - hi;
+            outside_sq += delta * delta;
+            inside = false;
+        } else {
+            inside_margin = std::min(inside_margin, point[axis] - lo);
+            inside_margin = std::min(inside_margin, hi - point[axis]);
+        }
+    }
+    if (!inside) {
+        return std::sqrt(outside_sq);
+    }
+    return -std::max(0.0, inside_margin);
+}
+
+Eigen::Vector3d fk_translation(const FKState& state, int frame) {
+    return {state.prefix_lo[frame][3], state.prefix_lo[frame][7], state.prefix_lo[frame][11]};
+}
+
+Eigen::Vector3d fk_z_axis(const FKState& state, int frame) {
+    Eigen::Vector3d axis(state.prefix_lo[frame][2],
+                         state.prefix_lo[frame][6],
+                         state.prefix_lo[frame][10]);
+    const double norm = axis.norm();
+    if (norm > 0.0) {
+        axis /= norm;
+    }
+    return axis;
+}
+
+bool robot_all_revolute(const Robot& robot) {
+    for (const auto& dh : robot.dh_params()) {
+        if (dh.joint_type != 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+double revolute_material_point_motion_bound(const Robot& robot,
+                                            const std::vector<Interval>& intervals,
+                                            const FKState& center_fk,
+                                            const Eigen::Vector3d& world_point,
+                                            int frame_limit) {
+    const int n = std::min({robot.n_joints(), frame_limit, static_cast<int>(intervals.size())});
+    double bound = 0.0;
+    for (int joint = 0; joint < n; ++joint) {
+        const double delta = std::max(std::abs(intervals[static_cast<std::size_t>(joint)].center() -
+                                               intervals[static_cast<std::size_t>(joint)].lo),
+                                      std::abs(intervals[static_cast<std::size_t>(joint)].hi -
+                                               intervals[static_cast<std::size_t>(joint)].center()));
+        if (delta <= 0.0) {
+            continue;
+        }
+        const Eigen::Vector3d origin = fk_translation(center_fk, joint);
+        const Eigen::Vector3d axis = fk_z_axis(center_fk, joint);
+        if (axis.squaredNorm() <= 0.0) {
+            continue;
+        }
+        const double lever = (world_point - origin).cross(axis).norm();
+        const double capped_delta = std::min(delta, PI);
+        bound += 2.0 * lever * std::sin(0.5 * capped_delta);
+    }
+    return bound;
+}
+
+std::optional<MaterialPointOccupiedWitness> try_material_point_occupied_witness(
+    const Robot& robot,
+    const std::vector<Interval>& intervals,
+    const LinkEnvelope& envelope,
+    const Scene& scene,
+    const OccupiedCertificateConfig& config) {
+    (void)envelope;
+    if (scene.empty() || static_cast<int>(intervals.size()) != robot.n_joints()) {
+        return std::nullopt;
+    }
+    // The current production checker models AABB obstacles. Their signed
+    // distance is exact and 1-Lipschitz, so they can serve as the SDF source.
+    // The material points below are fixed points on active revolute-link
+    // centerlines. Prismatic links are intentionally excluded until the checker
+    // exposes a material-coordinate witness for variable-length links.
+    if (!robot_all_revolute(robot)) {
+        return std::nullopt;
+    }
+
+    std::vector<Interval> center_intervals = intervals;
+    for (auto& interval : center_intervals) {
+        const double c = interval.center();
+        interval.lo = c;
+        interval.hi = c;
+    }
+    const FKState center_fk = compute_fk_full(robot, center_intervals);
+    if (!center_fk.valid) {
+        return std::nullopt;
+    }
+
+    std::optional<MaterialPointOccupiedWitness> best;
+    constexpr std::array<double, 5> sample_ts = {0.0, 0.25, 0.5, 0.75, 1.0};
+    const int n_active = robot.n_active_links();
+    const int* active_map = robot.active_link_map();
+    for (int active = 0; active < n_active; ++active) {
+        const int link = active_map[active];
+        if (link < 0 || link + 1 >= center_fk.n_tf) {
+            continue;
+        }
+        const Eigen::Vector3d origin = fk_translation(center_fk, link);
+        const Eigen::Vector3d target = fk_translation(center_fk, link + 1);
+        for (double t : sample_ts) {
+            const Eigen::Vector3d world_point = origin + t * (target - origin);
+            const double motion_bound =
+                revolute_material_point_motion_bound(robot, intervals, center_fk, world_point, link + 1);
+            for (int obs = 0; obs < scene.n_obstacles(); ++obs) {
+                const double signed_distance =
+                    signed_distance_to_aabb(world_point,
+                                            scene.obstacles()[static_cast<std::size_t>(obs)]);
+                MaterialPointOccupiedWitness witness;
+                witness.link_id = link;
+                witness.obstacle_id = obs;
+                witness.link_point = world_point;
+                witness.center_signed_distance = signed_distance;
+                witness.motion_bound = motion_bound;
+                witness.epsilon_num = config.numerical_epsilon +
+                    std::max(0.0, config.min_penetration_margin);
+                if (!certifies_occupied(witness)) {
+                    continue;
+                }
+                if (!best ||
+                    signed_distance + motion_bound <
+                        best->center_signed_distance + best->motion_bound) {
+                    best = witness;
+                }
+            }
+        }
+    }
+    if (best) {
+        return best;
+    }
+    return std::nullopt;
 }
 
 lect_database::EvidenceChannel database_channel_for_endpoint(EndpointSource source) {
@@ -936,6 +1163,45 @@ bool intervals_straddle_sector_boundary(const JointSymmetry& symmetry,
     return !interval_sector_for_interval(symmetry, intervals[joint_index]).has_value();
 }
 
+IntervalEvidenceCompatibility interval_evidence_compatibility(
+    const lect_database::LectDatabase& active_database,
+    const lect_database::LectDatabase* external_database,
+    const CanonicalEvidenceFrame& evidence_frame) {
+    IntervalEvidenceCompatibility compatibility;
+    compatibility.canonical_frame_valid = evidence_frame.valid;
+    compatibility.direct_database = external_database != nullptr;
+    compatibility.lookup_interval_fingerprint =
+        lect_database::fingerprint_intervals(evidence_frame.lookup_intervals);
+    compatibility.exact_interval_lookup_required = true;
+    if (!evidence_frame.valid) {
+        compatibility.reason = "canonical evidence frame invalid";
+        return compatibility;
+    }
+    if (external_database == nullptr) {
+        compatibility.reason = "no direct external database";
+        return compatibility;
+    }
+    const auto& active = active_database.identity();
+    const auto& external = external_database->identity();
+    compatibility.semantic_identity_match =
+        active.robot_fingerprint == external.robot_fingerprint &&
+        active.root_domain_fingerprint == external.root_domain_fingerprint &&
+        active.split_policy_hash == external.split_policy_hash &&
+        active.canonical_mode == external.canonical_mode &&
+        active.symmetry_hash == external.symmetry_hash &&
+        active.symmetry_descriptor == external.symmetry_descriptor &&
+        active.endpoint_descriptor == external.endpoint_descriptor &&
+        active.envelope_descriptor == external.envelope_descriptor &&
+        active.payload_layout == external.payload_layout;
+    if (!compatibility.semantic_identity_match) {
+        compatibility.reason = "database evidence identity mismatch";
+        return compatibility;
+    }
+    compatibility.compatible = true;
+    compatibility.reason = "compatible";
+    return compatibility;
+}
+
 }  // namespace
 
 struct DatabaseBoxOracle::Impl {
@@ -1424,20 +1690,33 @@ std::optional<DatabaseBoxOracle::EndpointPayload> DatabaseBoxOracle::endpoint_pa
         }
         const auto external_lookup_start = Clock::now();
         std::optional<lect_database::EvidenceRecordView> cached;
-        const bool direct_external_keys_match =
-            direct_external_evidence_database_ != nullptr &&
-            database_.identity().root_domain_fingerprint == direct_external_evidence_database_->identity().root_domain_fingerprint &&
-            database_.identity().split_policy_hash == direct_external_evidence_database_->identity().split_policy_hash &&
-            database_.identity().canonical_mode == direct_external_evidence_database_->identity().canonical_mode &&
-            database_.identity().symmetry_descriptor == direct_external_evidence_database_->identity().symmetry_descriptor &&
-            database_.identity().endpoint_descriptor == direct_external_evidence_database_->identity().endpoint_descriptor &&
-            database_.identity().envelope_descriptor == direct_external_evidence_database_->identity().envelope_descriptor &&
-            database_.identity().payload_layout == direct_external_evidence_database_->identity().payload_layout;
-        if (direct_external_keys_match) {
-            std::lock_guard<std::mutex> lock(external_direct_lookup_mutex());
-            cached = direct_external_evidence_database_->evidence(key);
+        bool direct_external_checked = false;
+        bool direct_external_compatible = false;
+        if (direct_external_evidence_database_ != nullptr) {
+            direct_external_checked = true;
+            counters_.interval_replay_compatibility_checks += 1;
+            const auto compatibility =
+                interval_evidence_compatibility(database_, direct_external_evidence_database_, evidence_frame);
+            direct_external_compatible = compatibility.compatible;
+            if (direct_external_compatible) {
+                counters_.interval_replay_compatible += 1;
+            } else {
+                counters_.interval_replay_incompatible += 1;
+                counters_.interval_replay_key_only_blocked += 1;
+            }
         }
-        if (!cached) {
+        if (direct_external_compatible) {
+            std::lock_guard<std::mutex> lock(external_direct_lookup_mutex());
+            cached = direct_external_evidence_database_->endpoint_for_box_exact(
+                direct_external_evidence_database_->make_box_key(evidence_frame.lookup_intervals),
+                key);
+            if (cached) {
+                counters_.interval_replay_direct_exact_hits += 1;
+            }
+        }
+        const bool allow_source_lookup =
+            !direct_external_checked || direct_external_compatible;
+        if (!cached && allow_source_lookup) {
             cached = external_evidence_source_->endpoint_for_box_exact(evidence_frame.lookup_intervals, key);
         }
         counters_.materialization_external_lookup_time_us += elapsed_us(external_lookup_start);
@@ -1736,6 +2015,26 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     last_validation_detail_.aabb_overlap = collision != CollisionResultKind::DefinitelyFree;
     last_validation_detail_.aabb_overlap_depth = collision_stats.maybe_pair_overlap_depth_max;
     last_validation_detail_.aabb_overlap_volume_ratio = collision_stats.maybe_pair_overlap_volume_ratio_max;
+    last_validation_detail_.blocker_active_link_index =
+        collision_stats.dominant_blocker_active_link_index;
+    last_validation_detail_.blocker_link_id =
+        active_link_index_to_link_id(robot_, collision_stats.dominant_blocker_active_link_index);
+    last_validation_detail_.blocker_obstacle_id =
+        collision_stats.dominant_blocker_obstacle_index;
+    last_validation_detail_.blocker_stage =
+        collision_stats.dominant_blocker_stage;
+    last_validation_detail_.blocker_margin =
+        collision_stats.dominant_blocker_margin;
+    last_validation_detail_.blocker_overlap_depth =
+        collision_stats.dominant_blocker_overlap_depth;
+    last_validation_detail_.blocker_overlap_volume_ratio =
+        collision_stats.dominant_blocker_overlap_volume_ratio;
+    last_validation_detail_.blocker_affected_joints =
+        affected_joints_for_link(robot_, last_validation_detail_.blocker_link_id);
+    last_validation_detail_.blockers =
+        make_oracle_blockers(robot_, collision_stats);
+    last_validation_detail_.blocker_signature_hash =
+        blocker_signature_hash(last_validation_detail_.blockers);
     if (collision == CollisionResultKind::DefinitelyFree) {
         counters_.envelope_collision_free += 1;
         counters_.certified_free += 1;
@@ -1744,6 +2043,30 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
         last_validation_detail_.strict_audit_required = false;
         last_validation_detail_.collision_possible = false;
         return BoxValidation::Free;
+    }
+    last_validation_detail_.occupied_certificate_checked =
+        validation_config_.occupied_certificate.enabled;
+    if (validation_config_.occupied_certificate.enabled) {
+        auto witness = try_material_point_occupied_witness(robot_,
+                                                           intervals,
+                                                           *envelope,
+                                                           scene_,
+                                                           validation_config_.occupied_certificate);
+        if (witness && certifies_occupied(*witness)) {
+            counters_.envelope_collision_maybe += 1;
+            counters_.certified_occupied += 1;
+            last_validation_detail_.validation = BoxValidation::Occupied;
+            last_validation_detail_.safety_status = BoxSafetyStatus::Unknown;
+            last_validation_detail_.strict_audit_required = false;
+            last_validation_detail_.collision_possible = true;
+            last_validation_detail_.occupied_certificate_found = true;
+            last_validation_detail_.occupied_witness_link_id = witness->link_id;
+            last_validation_detail_.occupied_witness_obstacle_id = witness->obstacle_id;
+            last_validation_detail_.occupied_witness_center_signed_distance =
+                witness->center_signed_distance;
+            last_validation_detail_.occupied_witness_motion_bound = witness->motion_bound;
+            return BoxValidation::Occupied;
+        }
     }
     counters_.collision_possible += 1;
     counters_.envelope_collision_maybe += 1;

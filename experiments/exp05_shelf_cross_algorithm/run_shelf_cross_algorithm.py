@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import math
 import multiprocessing as mp
 import os
@@ -83,6 +84,100 @@ def csv_bools(raw: str) -> list[bool]:
         else:
             raise ValueError(f"invalid boolean grid value: {item!r}")
     return values
+
+
+def read_csv_rows(path: Path) -> list[dict[str, Any]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def exp04_registered_dir(args: argparse.Namespace) -> Path:
+    explicit = getattr(args, "exp04_registered_dir", None)
+    if explicit is not None:
+        return Path(explicit)
+    return Path(args.out_dir).parent / "exp04"
+
+
+def exp04_registered_rbf_rows(
+    args: argparse.Namespace,
+    requested_budgets: list[int],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    """Load Exp.5 RBF rows directly from the registered Exp.4 RBF profile.
+
+    Exp.5 compares cross-algorithm online behavior and should not independently
+    rerun RBF.  RBF is the reusable planner profile selected by Exp.4, so the
+    Exp.5 RBF row is an import of Exp.4's registered baseline case.
+    """
+    source_dir = exp04_registered_dir(args)
+    summary_path = source_dir / "shelf_leaf_rrt_summary.csv"
+    manifest_path = source_dir / "shelf_leaf_rrt_manifest.json"
+    if not summary_path.exists() or not manifest_path.exists():
+        raise RuntimeError(
+            "Exp.5 RBF requires the registered Exp.4 outputs. "
+            f"Expected {summary_path} and {manifest_path}; run Exp.4 first "
+            "or pass --exp04-registered-dir."
+        )
+    manifest = load_json_file(manifest_path)
+    summary_rows = read_csv_rows(summary_path)
+    budget_set = {int(budget) for budget in requested_budgets}
+    imported_summary: list[dict[str, Any]] = []
+    for row in summary_rows:
+        if str(row.get("case")) != "baseline_d23_aafk_support_hull_8t":
+            continue
+        try:
+            budget = int(float(row.get("deep_max_boxes", -1)))
+        except (TypeError, ValueError):
+            continue
+        if budget not in budget_set:
+            continue
+        imported = dict(row)
+        imported.update({
+            "method": "sbf_leaf_rrt",
+            "method_label": "RBF",
+            "stage_id": f"b{budget}",
+            "deep_max_boxes": str(budget),
+            "source": "current_exp04_registered_profile",
+            "status": "exp04_registered_profile",
+            "build_s": row.get("offline_build_s_median", row.get("build_s_median", row.get("planning_s_median"))),
+        })
+        imported_summary.append(imported)
+    if len(imported_summary) != len(budget_set):
+        found = sorted(int(float(row.get("deep_max_boxes", -1))) for row in imported_summary)
+        raise RuntimeError(
+            "Exp.4 registered summary does not contain all requested RBF budgets: "
+            f"requested={sorted(budget_set)} found={found}"
+        )
+    imported_rows: list[dict[str, Any]] = []
+    for row in manifest.get("rows", []):
+        if str(row.get("case")) != "baseline_d23_aafk_support_hull_8t":
+            continue
+        try:
+            budget = int(float(row.get("deep_max_boxes", -1)))
+        except (TypeError, ValueError):
+            continue
+        if budget not in budget_set:
+            continue
+        imported = dict(row)
+        imported.update({
+            "method": "sbf_leaf_rrt",
+            "method_label": "RBF",
+            "stage_id": f"b{budget}",
+            "source": "current_exp04_registered_profile",
+            "status": row.get("status", "ok"),
+        })
+        imported_rows.append(imported)
+    return imported_rows, imported_summary, {
+        "source": "current_exp04_registered_profile",
+        "summary": str(summary_path),
+        "manifest": str(manifest_path),
+        "requested_budgets": sorted(budget_set),
+        "imported_runs": len(imported_rows),
+        "imported_summary_rows": len(imported_summary),
+    }
 
 
 def bitstar_checkpoint_grid_from_args(args: argparse.Namespace, timeout_s: float) -> list[float]:
@@ -521,107 +616,24 @@ def run_bitstar_trace(
     samples_per_batch = int(args.bitstar_samples_per_batch if samples_per_batch is None else samples_per_batch)
     rewire_factor = float(args.bitstar_rewire_factor if rewire_factor is None else rewire_factor)
     stage_prefix = stage_prefix or f"batch{samples_per_batch}_rw{fmt_float(rewire_factor)}_trace{timeout_s:g}s"
-    if interval_s >= timeout_s - 1e-9:
-        qrows: list[dict[str, Any]] = []
-        planning_s = 0.0
-        audit_s = 0.0
-        for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
-            row = run_bitstar_pre_audited_query(seed, index, args, timeout_s, samples_per_batch, rewire_factor)
-            query_planning_s = float(row.get("planning_s", 0.0) or 0.0)
-            query_simplify_s = float(row.get("simplify_s", math.nan))
-            if not math.isfinite(query_simplify_s):
-                query_simplify_s = float(row.get("simplify_ms", math.nan)) / 1000.0
-            if not math.isfinite(query_simplify_s):
-                query_simplify_s = float(args.ompl_simplify_time_s) if query_planning_s > 0.0 else 0.0
-            query_solve_s = max(0.0, float(row.get("solve_s", query_planning_s - query_simplify_s)))
-            query_audit_s = float(row.get("audit_s", 0.0) or 0.0)
-            planning_s += query_planning_s
-            audit_s += query_audit_s
-            ok = bool(row.get("audit_passed"))
-            qrows.append({
-                "label": query["label"],
-                "success": ok,
-                "audit_passed": ok,
-                "audit_status": str(row.get("audit_status", "")),
-                "query_ms": query_planning_s * 1000.0,
-                "solve_ms": query_solve_s * 1000.0,
-                "simplify_ms": query_simplify_s * 1000.0,
-                "audit_ms": query_audit_s * 1000.0,
-                "path_length": float(row.get("path_length", math.nan)) if ok else math.nan,
-                "segment_edge_length": 0.0,
-                "segment_fraction": 0.0 if ok else math.nan,
-                "waypoint_count": int(row.get("waypoint_count", 0) or 0),
-                "planner_status": str(row.get("planner_status", "")),
-                "iterations": int(row.get("iterations", 0) or 0),
-                "batches": int(row.get("batches", 0) or 0),
-                "checkpoint_s": timeout_s,
-                "simplify_ms": query_simplify_s * 1000.0,
-                "simplify_status": "child_process",
-            })
-        return [
-            summarize_method_run(
-                "bitstar",
-                seed,
-                planning_s,
-                audit_s,
-                qrows,
-                {
-                    "planner": "OMPL_BITstar_per_query_watchdog",
-                    "timeout_s": timeout_s,
-                    "checkpoint_interval_s": interval_s,
-                    "checkpoint_grid_s": checkpoint_grid_s,
-                    "checkpoint_s": timeout_s,
-                    "wall_timeout_factor": float(args.bitstar_wall_timeout_factor),
-                    "samples_per_batch": samples_per_batch,
-                    "rewire_factor": rewire_factor,
-                    "simplify_time_s": float(args.ompl_simplify_time_s),
-                    **bitstar_extra_metadata(args),
-                },
-                stage_id=f"{stage_prefix}_t{timeout_s:g}s",
-                budget_s=timeout_s,
-            )
-        ]
     query_traces: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
     for index, query in enumerate(progress(queries, desc=f"exp05 bitstar seed={seed}", total=len(queries))):
         rng_seed = int(seed) * 2003 + index
-        if interval_s >= timeout_s - 1e-9:
-            result = run_bitstar_path_watchdog(
-                robot,
-                obstacles,
-                query,
-                timeout_s,
-                args,
-                rng_seed,
-                samples_per_batch,
-                rewire_factor,
-            )
-            checkpoint = {
-                "checkpoint_s": timeout_s,
-                "elapsed_s": float(result.get("t_s", 0.0)),
-                "ok": bool(result.get("ok")),
-                "path": result.get("path", []),
-                "status": str(result.get("status", result.get("reason", ""))),
-                "reason": str(result.get("reason", result.get("status", ""))),
-                "iterations": int(result.get("iterations", 0) or 0),
-                "batches": int(result.get("batches", 0) or 0),
-            }
-            query_traces.append((query, [checkpoint]))
-        else:
-            result = sbf.ompl_bitstar_trace(
-                robot,
-                obstacles,
-                list(query["start"]),
-                list(query["goal"]),
-                timeout_s * 1000.0,
-                interval_s * 1000.0,
-                float(args.audit_segment_step),
-                rng_seed,
-                samples_per_batch,
-                rewire_factor,
-                bool(args.bitstar_stop_on_solution_improvement),
-                *bitstar_extra_args(args),
-            )
-            query_traces.append((query, [dict(item) for item in result.get("checkpoints", [])]))
+        result = sbf.ompl_bitstar_trace(
+            robot,
+            obstacles,
+            list(query["start"]),
+            list(query["goal"]),
+            timeout_s * 1000.0,
+            interval_s * 1000.0,
+            float(args.audit_segment_step),
+            rng_seed,
+            samples_per_batch,
+            rewire_factor,
+            bool(args.bitstar_stop_on_solution_improvement),
+            *bitstar_extra_args(args),
+        )
+        query_traces.append((query, [dict(item) for item in result.get("checkpoints", [])]))
     rows: list[dict[str, Any]] = []
     best_by_query: dict[str, dict[str, Any]] = {}
     for target_checkpoint_s in checkpoint_grid_s:
@@ -699,6 +711,7 @@ def run_bitstar_trace(
             qrows,
             {
                 "planner": "OMPL_BITstar_trace",
+                "cumulative_bitstar": True,
                 "timeout_s": timeout_s,
                 "checkpoint_interval_s": interval_s,
                 "checkpoint_grid_s": checkpoint_grid_s,
@@ -863,6 +876,158 @@ def run_prm(
     )
     row["build_s"] = float(result.get("build_s", build_s))
     return row
+
+
+def run_prm_cumulative(
+    seed: int,
+    args: argparse.Namespace,
+    robot: Any,
+    obstacles: list[Any],
+    queries: list[dict[str, Any]],
+    build_checkpoints_s: list[float],
+    *,
+    query_budget_s: float | None = None,
+    max_nearest_neighbors: int | None = None,
+    planner_kind: str | None = None,
+    preload_query_endpoints: bool | None = None,
+) -> list[dict[str, Any]]:
+    checkpoints = sorted({float(value) for value in build_checkpoints_s if float(value) > 0.0})
+    if not checkpoints:
+        raise ValueError("PRM cumulative mode requires at least one positive build checkpoint")
+    query_budget_s = float(args.prm_query_s if query_budget_s is None else query_budget_s)
+    max_nearest_neighbors = int(args.prm_max_nearest_neighbors if max_nearest_neighbors is None else max_nearest_neighbors)
+    planner_kind = str(args.prm_planner_kind if planner_kind is None else planner_kind)
+    preload_query_endpoints = bool(args.prm_preload_query_endpoints if preload_query_endpoints is None else preload_query_endpoints)
+    starts = [list(query["start"]) for query in queries]
+    goals = [list(query["goal"]) for query in queries]
+    t0 = time.perf_counter()
+    result = sbf.ompl_prm_multiquery_cumulative(
+        robot,
+        obstacles,
+        starts,
+        goals,
+        checkpoints,
+        query_budget_s,
+        float(args.audit_segment_step),
+        float(args.ompl_simplify_time_s),
+        int(seed),
+        max_nearest_neighbors,
+        planner_kind,
+        preload_query_endpoints,
+    )
+    _wall_s = time.perf_counter() - t0
+    incumbents: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    for stage in result.get("stages", []):
+        checkpoint_s = float(stage.get("checkpoint_s", 0.0))
+        build_s = float(stage.get("build_s", checkpoint_s))
+        qrows: list[dict[str, Any]] = []
+        audit_s = 0.0
+        qresult_items = list(stage.get("queries", []))
+        for query, qresult in zip(
+            progress(queries, desc=f"exp05 prm cumulative audit seed={seed} build={checkpoint_s:g}s", total=len(queries)),
+            qresult_items,
+        ):
+            label = str(query["label"])
+            path = [[float(value) for value in point] for point in qresult.get("path", [])]
+            raw_audit_passed = False
+            audit_time_s = 0.0
+            audit_status = "not_attempted"
+            raw_length = math.nan
+            if bool(qresult.get("ok")) and len(path) >= 2:
+                raw_audit_passed, audit_time_s, audit_status = audit_path(
+                    robot,
+                    obstacles,
+                    path,
+                    float(args.audit_segment_step),
+                    start=list(query["start"]),
+                    goal=list(query["goal"]),
+                    collision_tolerance=float(args.audit_collision_tolerance),
+                )
+                audit_s += audit_time_s
+                if raw_audit_passed:
+                    raw_length = path_length(path)
+                    current = incumbents.get(label)
+                    if current is None or raw_length <= float(current["path_length"]) + 1e-12:
+                        incumbents[label] = {
+                            "path": path,
+                            "path_length": raw_length,
+                            "waypoint_count": len(path),
+                            "checkpoint_s": checkpoint_s,
+                            "planner_status": str(qresult.get("status", qresult.get("reason", ""))),
+                        }
+            incumbent = incumbents.get(label)
+            total_s = float(qresult.get("t_s", 0.0))
+            solve_s = float(qresult.get("solve_s", max(0.0, total_s - float(qresult.get("simplify_s", 0.0)))))
+            simplify_s = float(qresult.get("simplify_s", max(0.0, total_s - solve_s)))
+            if incumbent is not None:
+                qrows.append({
+                    "label": label,
+                    "success": True,
+                    "audit_passed": True,
+                    "audit_status": (
+                        "current_audit_passed"
+                        if math.isfinite(raw_length) and abs(raw_length - float(incumbent["path_length"])) <= 1e-12
+                        else f"incumbent_from_{float(incumbent['checkpoint_s']):g}s"
+                    ),
+                    "query_ms": total_s * 1000.0,
+                    "solve_ms": solve_s * 1000.0,
+                    "simplify_ms": simplify_s * 1000.0,
+                    "audit_ms": audit_time_s * 1000.0,
+                    "path_length": float(incumbent["path_length"]),
+                    "segment_edge_length": 0.0,
+                    "segment_fraction": 0.0,
+                    "waypoint_count": int(incumbent["waypoint_count"]),
+                    "planner_status": (
+                        f"{str(qresult.get('status', qresult.get('reason', '')))}; "
+                        f"incumbent_checkpoint={float(incumbent['checkpoint_s']):g}s"
+                    ),
+                })
+            else:
+                qrows.append({
+                    "label": label,
+                    "success": False,
+                    "audit_passed": False,
+                    "audit_status": audit_status,
+                    "query_ms": total_s * 1000.0,
+                    "solve_ms": solve_s * 1000.0,
+                    "simplify_ms": simplify_s * 1000.0,
+                    "audit_ms": audit_time_s * 1000.0,
+                    "path_length": math.nan,
+                    "segment_edge_length": 0.0,
+                    "segment_fraction": math.nan,
+                    "waypoint_count": len(path),
+                    "planner_status": str(qresult.get("status", qresult.get("reason", ""))),
+                })
+        row = summarize_method_run(
+            "prm",
+            seed,
+            build_s + sum(float(query.get("query_ms", 0.0)) for query in qrows) / 1000.0,
+            audit_s,
+            qrows,
+            {
+                "planner": "OMPL_PRM_cumulative",
+                "cumulative_prm": True,
+                "checkpoint_s": checkpoint_s,
+                "build_checkpoints_s": checkpoints,
+                "build_s": build_s,
+                "nodes": int(stage.get("nodes", result.get("nodes", 0))),
+                "query_budget_s": query_budget_s,
+                "max_nearest_neighbors": max_nearest_neighbors,
+                "planner_kind": planner_kind,
+                "preload_query_endpoints": preload_query_endpoints,
+                "simplify_time_s": float(args.ompl_simplify_time_s),
+            },
+            stage_id=(
+                f"{planner_kind}_cumulative_build{checkpoint_s:g}s"
+                f"_k{max_nearest_neighbors}_q{fmt_float(query_budget_s)}s"
+                f"_preload{int(preload_query_endpoints)}"
+            ),
+            budget_s=checkpoint_s,
+        )
+        row["build_s"] = build_s
+        rows.append(row)
+    return rows
 
 
 def summarize_method_run(
@@ -1180,14 +1345,14 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                 return value
         return math.nan
 
-    def selected_rows() -> list[dict[str, Any]]:
-        def finite_value(value: Any, fallback: float = 1e9) -> float:
-            try:
-                out = float(value)
-            except (TypeError, ValueError):
-                return fallback
-            return out if math.isfinite(out) else fallback
+    def finite_value(value: Any, fallback: float = 1e9) -> float:
+        try:
+            out = float(value)
+        except (TypeError, ValueError):
+            return fallback
+        return out if math.isfinite(out) else fallback
 
+    def selected_rows() -> list[dict[str, Any]]:
         rbf_rows = [
             row for row in rows
             if str(row.get("method")) == "sbf_leaf_rrt"
@@ -1287,6 +1452,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
     parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_SHELF_BOX_BUDGET)
     parser.add_argument("--sbf-box-budgets", default=str(DEFAULT_RBF_SHELF_BOX_BUDGET))
+    parser.add_argument(
+        "--exp04-registered-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Directory containing Exp.4 registered RBF outputs. Defaults to "
+            "the sibling 'exp04' directory next to --out-dir. Exp.5 imports "
+            "RBF from this source instead of rerunning it."
+        ),
+    )
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS)
     parser.add_argument("--offline-anchor-count", type=int, default=16)
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
@@ -1319,8 +1494,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--bitstar-inflation-scaling-parameter", type=float, default=-1.0)
     parser.add_argument("--bitstar-truncation-scaling-parameter", type=float, default=-1.0)
     parser.add_argument("--bitstar-allowed-failed-sampling-attempts", type=int, default=-1)
-    parser.add_argument("--prm-build-s", type=float, default=40.0)
-    parser.add_argument("--prm-build-grid-s", default="2,5,10,20,40,80")
+    parser.add_argument("--prm-build-s", type=float, default=20.0)
+    parser.add_argument(
+        "--prm-build-grid-s",
+        default="5,10,15,20",
+        help=(
+            "Reusable shared-roadmap PRM build budgets. The paper profile keeps "
+            "intermediate cumulative checkpoints and the 20 s registered point; "
+            "each seed still builds one roadmap and answers all five shelf queries."
+        ),
+    )
     parser.add_argument("--prm-query-s", type=float, default=1.0)
     parser.add_argument("--prm-query-grid-s", default="")
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
@@ -1329,7 +1512,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prm-planner-kind-grid", default="")
     parser.add_argument("--prm-range", type=float, default=0.0)
     parser.add_argument("--prm-range-grid", default="")
-    parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--prm-cumulative",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Grow one PRM roadmap cumulatively across build checkpoints and report audited best-so-far incumbents.",
+    )
+    parser.add_argument(
+        "--prm-preload-query-endpoints",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Insert the registered shelf query endpoints as roadmap milestones "
+            "before construction; the cost is charged to PRM build time."
+        ),
+    )
     parser.add_argument("--prm-preload-query-endpoints-grid", default="")
     parser.add_argument("--iris-python", type=Path, default=default_iris_python())
     parser.add_argument("--iris-gcs-repo", type=Path, default=default_gcs_repo())
@@ -1387,15 +1584,34 @@ def main() -> int:
         if method == "sbf_leaf_rrt":
             budgets: list[Any] = sbf_budgets
         elif method == "prm" and args.rerun_baselines:
-            budgets = [
-                {"build_s": build_s, "query_s": query_s, "k": k, "kind": kind, "range": prm_range, "preload": preload}
-                for build_s in prm_build_grid_s
-                for query_s in prm_query_grid_s
-                for k in prm_k_grid
-                for kind in prm_kind_grid
-                for prm_range in prm_range_grid
-                for preload in prm_preload_grid
-            ]
+            if args.prm_cumulative:
+                budgets = [
+                    {
+                        "cumulative": True,
+                        "checkpoints": list(prm_build_grid_s),
+                        "build_s": max(prm_build_grid_s),
+                        "query_s": query_s,
+                        "k": k,
+                        "kind": kind,
+                        "range": prm_range,
+                        "preload": preload,
+                    }
+                    for query_s in prm_query_grid_s
+                    for k in prm_k_grid
+                    for kind in prm_kind_grid
+                    for prm_range in prm_range_grid
+                    for preload in prm_preload_grid
+                ]
+            else:
+                budgets = [
+                    {"build_s": build_s, "query_s": query_s, "k": k, "kind": kind, "range": prm_range, "preload": preload}
+                    for build_s in prm_build_grid_s
+                    for query_s in prm_query_grid_s
+                    for k in prm_k_grid
+                    for kind in prm_kind_grid
+                    for prm_range in prm_range_grid
+                    for preload in prm_preload_grid
+                ]
         elif method == "bitstar":
             budgets = [
                 {"timeout_s": bitstar_trace_timeout_s, "batch": batch, "rewire": rewire}
@@ -1410,6 +1626,7 @@ def main() -> int:
             for budget in budgets:
                 stage_id = (
                     f"b{int(budget)}" if method == "sbf_leaf_rrt"
+                    else f"{str(budget.get('kind', 'prm'))}_cumulative_trace{float(budget['build_s']):g}s_k{int(budget['k'])}_q{fmt_float(float(budget['query_s']))}s_r{fmt_float(float(budget.get('range', 0.0)))}_preload{int(bool(budget.get('preload', False)))}" if method == "prm" and isinstance(budget, dict) and bool(budget.get("cumulative", False))
                     else f"{str(budget.get('kind', 'prm'))}_build{float(budget['build_s']):g}s_k{int(budget['k'])}_q{fmt_float(float(budget['query_s']))}s_r{fmt_float(float(budget.get('range', 0.0)))}_preload{int(bool(budget.get('preload', False)))}" if method == "prm" and isinstance(budget, dict)
                     else f"batch{int(budget['batch'])}_rw{fmt_float(float(budget['rewire']))}_trace{float(budget['timeout_s']):g}s" if method == "bitstar" and isinstance(budget, dict)
                     else f"timeout{float(args.rrt_timeout_s):g}s" if method == "rrtconnect" and args.rerun_baselines
@@ -1446,7 +1663,14 @@ def main() -> int:
                 "rewire_factor": float(args.bitstar_rewire_factor),
                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
             } if method == "bitstar" else None,
-            "execution_policy": "import_old_audited_artifact" if method in IMPORTED_BASELINE_METHODS and not args.rerun_baselines else "current_execution",
+            "execution_policy": (
+                "current_exp04_registered_profile"
+                if method == "sbf_leaf_rrt"
+                else "import_old_audited_artifact"
+                if method in IMPORTED_BASELINE_METHODS and not args.rerun_baselines
+                else "current_execution"
+            ),
+            "exp04_registered_dir": str(exp04_registered_dir(args)) if method == "sbf_leaf_rrt" else None,
             "rbf_default_profile": rbf_profile if method == "sbf_leaf_rrt" else None,
             "offline_query_agnostic_build": True if method == "sbf_leaf_rrt" else None,
             "offline_anchor_count": int(args.offline_anchor_count) if method == "sbf_leaf_rrt" else None,
@@ -1456,7 +1680,15 @@ def main() -> int:
                 )
     rows: list[dict[str, Any]] = []
     import_payload: dict[str, Any] | None = None
+    imported_rbf_summary: list[dict[str, Any]] = []
+    imported_rbf_audit: dict[str, Any] | None = None
     if not args.dry_run:
+        if "sbf_leaf_rrt" in methods:
+            imported_rbf_rows, imported_rbf_summary, imported_rbf_audit = exp04_registered_rbf_rows(
+                args,
+                sbf_budgets,
+            )
+            rows.extend(imported_rbf_rows)
         if any(method in IMPORTED_BASELINE_METHODS for method in methods):
             import_payload = import_old_baselines(args.out_dir, args.old_paper_root, args.old_output_root)
             if import_payload["audit"]["status"] != "reusable":
@@ -1483,7 +1715,9 @@ def main() -> int:
         executable_rows = [
             planned
             for planned in planned_rows
-            if str(planned["method"]) not in IMPORTED_BASELINE_METHODS and str(planned["method"]) != "iris_np_gcs"
+            if str(planned["method"]) not in IMPORTED_BASELINE_METHODS
+            and str(planned["method"]) != "iris_np_gcs"
+            and str(planned["method"]) != "sbf_leaf_rrt"
         ]
         for planned in progress(executable_rows, desc="exp05 runs", total=len(executable_rows)):
             if (
@@ -1512,20 +1746,34 @@ def main() -> int:
                 ))
             elif str(planned["method"]) == "prm":
                 params = dict(planned.get("planner_params") or {})
-                rows.append(run_prm(
-                    int(planned["seed"]),
-                    args,
-                    robot,
-                    obstacles,
-                    queries,
-                    float(params.get("build_s", planned["budget_s"])),
-                    query_budget_s=float(params.get("query_s", args.prm_query_s)),
-                    max_nearest_neighbors=int(params.get("k", args.prm_max_nearest_neighbors)),
-                    planner_kind=str(params.get("kind", args.prm_planner_kind)),
-                    prm_range=float(params.get("range", args.prm_range)),
-                    preload_query_endpoints=bool(params.get("preload", args.prm_preload_query_endpoints)),
-                    stage_id=str(planned.get("stage_id")),
-                ))
+                if bool(params.get("cumulative", False)):
+                    rows.extend(run_prm_cumulative(
+                        int(planned["seed"]),
+                        args,
+                        robot,
+                        obstacles,
+                        queries,
+                        [float(value) for value in params.get("checkpoints", [params.get("build_s", planned["budget_s"])])],
+                        query_budget_s=float(params.get("query_s", args.prm_query_s)),
+                        max_nearest_neighbors=int(params.get("k", args.prm_max_nearest_neighbors)),
+                        planner_kind=str(params.get("kind", args.prm_planner_kind)),
+                        preload_query_endpoints=bool(params.get("preload", args.prm_preload_query_endpoints)),
+                    ))
+                else:
+                    rows.append(run_prm(
+                        int(planned["seed"]),
+                        args,
+                        robot,
+                        obstacles,
+                        queries,
+                        float(params.get("build_s", planned["budget_s"])),
+                        query_budget_s=float(params.get("query_s", args.prm_query_s)),
+                        max_nearest_neighbors=int(params.get("k", args.prm_max_nearest_neighbors)),
+                        planner_kind=str(params.get("kind", args.prm_planner_kind)),
+                        prm_range=float(params.get("range", args.prm_range)),
+                        preload_query_endpoints=bool(params.get("preload", args.prm_preload_query_endpoints)),
+                        stage_id=str(planned.get("stage_id")),
+                    ))
             else:
                 rows.append(run_method(
                     str(planned["method"]),
@@ -1537,6 +1785,12 @@ def main() -> int:
                     float(planned["budget_s"]) if planned.get("budget_s") is not None else None,
                 ))
     summary = aggregate(rows) if rows else []
+    if imported_rbf_summary:
+        summary = [
+            row for row in summary
+            if str(row.get("method")) != "sbf_leaf_rrt"
+        ]
+        summary.extend(imported_rbf_summary)
     if rows:
         summary = [row for row in summary if str(row.get("method")) != "iris_np_gcs"]
         summary.extend(shelf_iris_summary_rows([row for row in rows if str(row.get("method")) == "iris_np_gcs"]))
@@ -1569,6 +1823,7 @@ def main() -> int:
             },
         },
         "baseline_reuse_audit": import_payload["audit"] if import_payload is not None else None,
+        "rbf_registered_profile_import": imported_rbf_audit,
         "planned_rows": planned_rows,
         "rows": rows,
         "summary": summary,

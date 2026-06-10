@@ -716,6 +716,32 @@ def find_exp05_current_baseline_manifest(out_dir: Path) -> Path | None:
     return None
 
 
+def find_exp05_prm_optimized_summary(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "current_prm_optimized" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "exp05" / "prm_confirm_build_quality" / "shelf_cross_algorithm_summary.csv",
+        out_dir / "prm_confirm_build_quality" / "shelf_cross_algorithm_summary.csv",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_exp05_prm_optimized_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "current_prm_optimized" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "exp05" / "prm_confirm_build_quality" / "shelf_cross_algorithm_manifest.json",
+        out_dir / "prm_confirm_build_quality" / "shelf_cross_algorithm_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def find_exp05_current_iris_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp05" / "current_iris_gcs" / "shelf_cross_algorithm_summary.csv",
@@ -1048,6 +1074,84 @@ def query_stats_from_runs(
     return out
 
 
+def rbf_registered_batch_query_stats(
+    run_rows: list[dict[str, Any]],
+    predicate: Any,
+) -> dict[str, dict[str, float]]:
+    """Per-query path stats with the registered RBF batch online/q timing.
+
+    Exp.4/5 RBF is a reusable two-stage planner.  The per-query objects record
+    the final graph lookup time in ``query_ms``, which is intentionally tiny
+    after the batch online bridge stage has updated the forest.  Table III
+    should report the registered online solve time excluding simplification,
+    i.e. the batch online time divided by query count.
+    """
+    buckets: dict[str, dict[str, list[float]]] = {
+        label: {"query_s": [], "path": [], "segment": []}
+        for label in QUERY_ORDER
+    }
+    for row in run_rows:
+        if not predicate(row):
+            continue
+        online_q = online_query_time(row)
+        if not math.isfinite(online_q):
+            query_count = max(1.0, as_float(row.get("query_count"), 1.0))
+            online_q = as_float(row.get("online_solve_s", row.get("query_s"))) / query_count
+        for query in row.get("queries", []):
+            label = str(query.get("label", ""))
+            if label not in buckets or not bool(query.get("success", query.get("audit_passed", False))):
+                continue
+            buckets[label]["query_s"].append(online_q)
+            buckets[label]["path"].append(as_float(query.get("path_length")))
+            buckets[label]["segment"].append(as_float(query.get("segment_fraction")))
+    out: dict[str, dict[str, float]] = {}
+    for label, values in buckets.items():
+        out[label] = {
+            "query_s": median(values["query_s"]),
+            "path": mean(values["path"]),
+            "segment": median(values["segment"]),
+        }
+    return out
+
+
+def rbf_registered_per_query_online_stats(
+    run_rows: list[dict[str, Any]],
+    predicate: Any,
+) -> dict[str, dict[str, float]]:
+    """Per-query RBF stats with query-specific online bridge timing.
+
+    The RBF query entries contain the final partition lookup in ``query_ms``.
+    For Table III we instead report each query's online solve cost, which is
+    recorded by the query-bridge task diagnostics in query order.
+    """
+    buckets: dict[str, dict[str, list[float]]] = {
+        label: {"query_s": [], "path": [], "segment": []}
+        for label in QUERY_ORDER
+    }
+    for row in run_rows:
+        if not predicate(row):
+            continue
+        batch_online_q = online_query_time(row)
+        for query in row.get("queries", []):
+            label = str(query.get("label", ""))
+            if label not in buckets or not bool(query.get("success", query.get("audit_passed", False))):
+                continue
+            query_index = int(as_float(query.get("query_index"), QUERY_ORDER.index(label)))
+            task_ms = as_float(row.get(f"diag_query_bridge_task{query_index}_total_ms"))
+            query_s = task_ms / 1000.0 if math.isfinite(task_ms) else batch_online_q
+            buckets[label]["query_s"].append(query_s)
+            buckets[label]["path"].append(as_float(query.get("path_length")))
+            buckets[label]["segment"].append(as_float(query.get("segment_fraction")))
+    out: dict[str, dict[str, float]] = {}
+    for label, values in buckets.items():
+        out[label] = {
+            "query_s": median(values["query_s"]),
+            "path": mean(values["path"]),
+            "segment": median(values["segment"]),
+        }
+    return out
+
+
 def bitstar_first_full_success_query_stats(
     run_rows: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, float]], int, int]:
@@ -1258,7 +1362,7 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
         "no_cache_full_root_ts": "No-cache full-root",
         "critsample_support_hull": "CritSample endpoints",
         "critsample_support_hull_unsafe": "CritSample",
-        "no_external_lect": "No LECT replay, live d17",
+        "no_external_lect": "No external LECT, HIFK-5",
         "support_hull_no_aabb": "SH w/o broadphase",
         "link_aabb": "Link AABB",
         "single_thread": "No LECT, 1 thread",
@@ -1304,7 +1408,7 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
         "critsample_support_hull": "CritSample",
         "critsample_support_hull_unsafe": "CritSample",
         "link_aabb": "Link AABB",
-        "no_external_lect": "No LECT replay, live d17",
+        "no_external_lect": "No external LECT, HIFK-5",
         "single_thread": "1 thread",
     }
     order = [
@@ -1367,6 +1471,14 @@ def generate_exp05_table(
 
     def selected_method_row(method: str) -> dict[str, Any] | None:
         items = [row for row in rows if str(row.get("method")) == method]
+        if method == "prm":
+            registered = [
+                row for row in items
+                if str(row.get("stage_id")) == "prm_cumulative_build20s_k128_q1s_preload1"
+                and is_full_success(row)
+            ]
+            if registered:
+                return sorted(registered, key=measured_time_key)[0]
         full = [
             row for row in items
             if int(float(row.get("success_runs", 0) or 0)) == int(float(row.get("runs", 0) or 0))
@@ -1430,7 +1542,7 @@ def generate_exp05_table(
             if single_query_rows:
                 query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_summary(single_query_rows)
             else:
-                query_stats = query_stats_from_runs(
+                query_stats = rbf_registered_per_query_online_stats(
                     rbf_runs,
                     lambda run, deep_boxes=deep_boxes: (
                         (
@@ -1484,7 +1596,7 @@ def generate_exp05_table(
     grouped_query_table(
         path,
         caption=(
-            r"Shelf+IIWA per-query cross-algorithm comparison. $T_{50}$ is median online solve time in seconds; $L_\mu$ is success-only mean path length. RBF uses independent single-query runs and the selected Exp.~4 profile. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
+            r"Shelf+IIWA per-query cross-algorithm comparison. $T_{50}$ is median online solve time in seconds; $L_\mu$ is success-only mean path length. RBF uses the registered Exp.~4 profile, with $T_{50}$ measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
         ),
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
@@ -1614,7 +1726,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
         ("critsample_support_hull", "Crit.", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
-        ("no_external_lect", "No LECT live d17", "#ff7f0e", "D"),
+        ("no_external_lect", "No LECT HIFK-5", "#ff7f0e", "D"),
         ("single_thread", "1T", "#9467bd", "^"),
     ]
     selected_rows: dict[str, dict[str, Any]] = {}
@@ -1711,6 +1823,8 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rbf_manifest = load_json_file(rbf_query_manifest_path)
     current_baseline_summary = find_exp05_current_baseline_summary(out_dir)
     current_baseline_manifest = find_exp05_current_baseline_manifest(out_dir)
+    prm_optimized_summary = find_exp05_prm_optimized_summary(out_dir)
+    prm_optimized_manifest = find_exp05_prm_optimized_manifest(out_dir)
     current_iris_summary = find_exp05_current_iris_summary(out_dir)
     current_iris_manifest = find_exp05_current_iris_manifest(out_dir)
     bitstar_trace_summary = find_exp05_bitstar_trace_summary(out_dir)
@@ -1729,6 +1843,15 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         if current_baseline_rows:
             rows = [row for row in rows if str(row.get("method")) not in baseline_methods]
             rows.extend(current_baseline_rows)
+    prm_optimized_manifest_payload = load_json_file(prm_optimized_manifest)
+    if prm_optimized_summary is not None:
+        prm_rows = [
+            row for row in read_csv_rows(prm_optimized_summary)
+            if str(row.get("method")) == "prm"
+        ]
+        if prm_rows:
+            rows = [row for row in rows if str(row.get("method")) != "prm"]
+            rows.extend(prm_rows)
     current_iris_manifest_payload = load_json_file(current_iris_manifest)
     if current_iris_summary is not None:
         current_iris_rows = [
@@ -1768,6 +1891,17 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
                     if str(row.get("method")) != "iris_np_gcs"
                 ]
                 manifest_rows.extend(iris_manifest_rows)
+        if prm_optimized_manifest is not None:
+            prm_manifest_rows = [
+                row for row in prm_optimized_manifest_payload.get("rows", [])
+                if str(row.get("method")) == "prm"
+            ] if isinstance(prm_optimized_manifest_payload, dict) else []
+            if prm_manifest_rows:
+                manifest_rows[:] = [
+                    row for row in manifest_rows
+                    if str(row.get("method")) != "prm"
+                ]
+                manifest_rows.extend(prm_manifest_rows)
         if (
             bitstar_trace_manifest is not None
         ):
@@ -1848,6 +1982,10 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "summary_sha256": file_sha256(summary),
         "current_baseline_summary": str(current_baseline_summary) if current_baseline_summary is not None else None,
         "current_baseline_manifest": str(current_baseline_manifest) if current_baseline_manifest is not None else None,
+        "prm_optimized_summary": str(prm_optimized_summary) if prm_optimized_summary is not None else None,
+        "prm_optimized_summary_sha256": file_sha256(prm_optimized_summary) if prm_optimized_summary is not None else None,
+        "prm_optimized_manifest": str(prm_optimized_manifest) if prm_optimized_manifest is not None else None,
+        "prm_optimized_manifest_sha256": file_sha256(prm_optimized_manifest) if prm_optimized_manifest is not None else None,
         "current_iris_summary": str(current_iris_summary) if current_iris_summary is not None else None,
         "current_iris_summary_sha256": file_sha256(current_iris_summary) if current_iris_summary is not None else None,
         "current_iris_manifest": str(current_iris_manifest) if current_iris_manifest is not None else None,
@@ -1976,9 +2114,9 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\begingroup",
         r"\centering",
             (
-            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. PRM grows one cumulative shared roadmap per scene; BIT* reports best audited incumbents from single cumulative checkpoint traces. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
             if has_current_baselines else
-            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. PRM grows one cumulative shared roadmap per scene; BIT* reports best audited incumbents from single cumulative checkpoint traces. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
         ),
         r"\label{tab:tro-random-summary}",
         r"\scriptsize",

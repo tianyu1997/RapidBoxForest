@@ -655,8 +655,12 @@ def _distribution_triple_score(
     ):
         return False, -math.inf, {"reason": "composite_quantile_overlap"}
     for planner_key in ("rrtconnect", "bitstar"):
+        e_planner = float(e[planner_key]["median_s"])
         m_planner = float(m[planner_key]["median_s"])
         h_planner = float(h[planner_key]["median_s"])
+        if math.isfinite(e_planner) and math.isfinite(m_planner):
+            if m_planner < float(hard_not_faster_factor) * e_planner:
+                return False, -math.inf, {"reason": f"{planner_key}_medium_faster_than_easy"}
         if math.isfinite(m_planner) and math.isfinite(h_planner):
             if h_planner < float(hard_not_faster_factor) * m_planner:
                 return False, -math.inf, {"reason": f"{planner_key}_hard_faster_than_medium"}
@@ -694,7 +698,7 @@ def select_distribution_prefixes_from_scan(
     *,
     medium_ratio: float = 5.0,
     hard_ratio: float = 2.0,
-    hard_not_faster_factor: float = 0.8,
+    hard_not_faster_factor: float = 1.0,
     require_strong_planner: bool = True,
 ) -> dict[str, Any]:
     rows = [row for row in scan_rows if bool(row.get("metrics", {}).get("selectable"))]
@@ -706,6 +710,15 @@ def select_distribution_prefixes_from_scan(
         for medium_index in range(easy_index + 1, len(rows)):
             medium = rows[medium_index]
             for hard in rows[medium_index + 1:]:
+                if not (int(easy["count"]) < int(medium["count"]) < int(hard["count"])):
+                    if best_reject is None:
+                        best_reject = {
+                            "easy_count": int(easy["count"]),
+                            "medium_count": int(medium["count"]),
+                            "hard_count": int(hard["count"]),
+                            "reason": "prefix_counts_not_strictly_nested",
+                        }
+                    continue
                 ok, score, details = _distribution_triple_score(
                     easy,
                     medium,
@@ -744,6 +757,7 @@ def select_distribution_prefixes_from_scan(
             "medium_over_easy_min": float(medium_ratio),
             "hard_over_medium_min": float(hard_ratio),
             "hard_not_faster_factor": float(hard_not_faster_factor),
+            "strict_prefix_nesting": True,
             "require_strong_reference_planner": bool(require_strong_planner),
         },
     }
@@ -797,11 +811,16 @@ def ordered_obstacle_bounds(
     max_obstacles: int,
     seed: int,
 ) -> list[list[float]]:
+    key = str(strategy).strip().lower()
+    if key in {"source_order", "source", "as_generated"}:
+        ordered = [[float(value) for value in item] for item in bounds]
+        if int(max_obstacles) > 0:
+            ordered = ordered[: int(max_obstacles)]
+        return ordered
     scored = [
         (obstacle_score(robot, item, queries, int(samples)), item)
         for item in bounds
     ]
-    key = str(strategy).strip().lower()
     if key == "random":
         rng = random.Random(int(seed) + 37_156_667)
         shuffled = [item for _score, item in scored]
@@ -1902,12 +1921,14 @@ def find_prefixes(
     raise RuntimeError(f"no strict easy<medium<hard prefix triple; candidates={details}; observed={observed}")
 
 
-def find_distribution_prefixes(
+def distribution_prefix_scan_rows(
     *,
     robot_name: str,
     robot: Any,
     bounds_ordered: list[list[float]],
     queries: list[dict[str, Any]],
+    counts: Sequence[int],
+    desc_suffix: str,
     seed: int,
     planner_seeds: int,
     direct_obstruction_samples: int,
@@ -1919,25 +1940,10 @@ def find_distribution_prefixes(
     bitstar_probe_mode: str,
     bitstar_samples_per_batch: int,
     bitstar_rewire_factor: float,
-    prefix_fine_until: int,
-    prefix_mid_step: int,
-    prefix_coarse_step: int,
-    distribution_medium_ratio: float,
-    distribution_hard_ratio: float,
-    distribution_hard_not_faster_factor: float,
-    distribution_require_strong_planner: bool,
-) -> dict[str, tuple[int, dict[str, Any], float]]:
+) -> list[dict[str, Any]]:
     scan_rows: list[dict[str, Any]] = []
-    for count in progress(
-        prefix_counts(
-            len(bounds_ordered),
-            fine_until=int(prefix_fine_until),
-            mid_step=int(prefix_mid_step),
-            coarse_step=int(prefix_coarse_step),
-        ),
-        desc=f"{robot_name} distribution-prefix-count",
-    ):
-        obstacles = [obstacle_from_bounds(bounds) for bounds in bounds_ordered[:count]]
+    for count in progress(counts, desc=f"{robot_name} {desc_suffix}"):
+        obstacles = [obstacle_from_bounds(bounds) for bounds in bounds_ordered[: int(count)]]
         if any(
             sbf.check_config_collision(robot, obstacles, query["start"])
             or sbf.check_config_collision(robot, obstacles, query["goal"])
@@ -1972,13 +1978,10 @@ def find_distribution_prefixes(
                 "direct_mean": float(direct_mean),
             }
         )
-    selection = select_distribution_prefixes_from_scan(
-        scan_rows,
-        medium_ratio=float(distribution_medium_ratio),
-        hard_ratio=float(distribution_hard_ratio),
-        hard_not_faster_factor=float(distribution_hard_not_faster_factor),
-        require_strong_planner=bool(distribution_require_strong_planner),
-    )
+    return scan_rows
+
+
+def distribution_prefix_output_from_selection(selection: dict[str, Any]) -> dict[str, tuple[int, dict[str, Any], float]]:
     compact_scan = [compact_prefix_scan_row(row) for row in selection["scan_rows"]]
     out: dict[str, tuple[int, dict[str, Any], float]] = {}
     for difficulty in DIFFICULTY_ORDER:
@@ -1996,6 +1999,302 @@ def find_distribution_prefixes(
         }
         probe["distribution_prefix_scan"] = compact_scan
         out[difficulty] = (int(row["count"]), probe, float(row.get("direct_mean", math.nan)))
+    return out
+
+
+def prefix_count_neighbors(all_counts: Sequence[int], selected_counts: Sequence[int], radius: int) -> list[int]:
+    ordered = [int(value) for value in all_counts]
+    selected = {int(value) for value in selected_counts}
+    out: set[int] = set()
+    for index, count in enumerate(ordered):
+        if count not in selected:
+            continue
+        lo = max(0, index - max(0, int(radius)))
+        hi = min(len(ordered), index + max(0, int(radius)) + 1)
+        out.update(ordered[lo:hi])
+    return sorted(out)
+
+
+def find_distribution_prefixes(
+    *,
+    robot_name: str,
+    robot: Any,
+    bounds_ordered: list[list[float]],
+    queries: list[dict[str, Any]],
+    seed: int,
+    planner_seeds: int,
+    direct_obstruction_samples: int,
+    rrt_probe_timeout_s: float,
+    bitstar_timeout_s: float,
+    bitstar_checkpoint_interval_s: float,
+    audit_step: float,
+    min_success_fraction: float,
+    bitstar_probe_mode: str,
+    bitstar_samples_per_batch: int,
+    bitstar_rewire_factor: float,
+    prefix_fine_until: int,
+    prefix_mid_step: int,
+    prefix_coarse_step: int,
+    distribution_medium_ratio: float,
+    distribution_hard_ratio: float,
+    distribution_hard_not_faster_factor: float,
+    distribution_require_strong_planner: bool,
+) -> dict[str, tuple[int, dict[str, Any], float]]:
+    counts = prefix_counts(
+        len(bounds_ordered),
+        fine_until=int(prefix_fine_until),
+        mid_step=int(prefix_mid_step),
+        coarse_step=int(prefix_coarse_step),
+    )
+    scan_rows = distribution_prefix_scan_rows(
+        robot_name=robot_name,
+        robot=robot,
+        bounds_ordered=bounds_ordered,
+        queries=queries,
+        counts=counts,
+        desc_suffix="distribution-prefix-count",
+        seed=int(seed),
+        planner_seeds=int(planner_seeds),
+        direct_obstruction_samples=int(direct_obstruction_samples),
+        rrt_probe_timeout_s=float(rrt_probe_timeout_s),
+        bitstar_timeout_s=float(bitstar_timeout_s),
+        bitstar_checkpoint_interval_s=float(bitstar_checkpoint_interval_s),
+        audit_step=float(audit_step),
+        min_success_fraction=float(min_success_fraction),
+        bitstar_probe_mode=str(bitstar_probe_mode),
+        bitstar_samples_per_batch=int(bitstar_samples_per_batch),
+        bitstar_rewire_factor=float(bitstar_rewire_factor),
+    )
+    selection = select_distribution_prefixes_from_scan(
+        scan_rows,
+        medium_ratio=float(distribution_medium_ratio),
+        hard_ratio=float(distribution_hard_ratio),
+        hard_not_faster_factor=float(distribution_hard_not_faster_factor),
+        require_strong_planner=bool(distribution_require_strong_planner),
+    )
+    return distribution_prefix_output_from_selection(selection)
+
+
+def find_distribution_prefixes_two_stage(
+    *,
+    robot_name: str,
+    robot: Any,
+    bounds_ordered: list[list[float]],
+    queries: list[dict[str, Any]],
+    seed: int,
+    stage_a_planner_seeds: int,
+    stage_b_planner_seeds: int,
+    direct_obstruction_samples: int,
+    rrt_probe_timeout_s: float,
+    bitstar_timeout_s: float,
+    bitstar_checkpoint_interval_s: float,
+    audit_step: float,
+    min_success_fraction: float,
+    bitstar_probe_mode: str,
+    bitstar_samples_per_batch: int,
+    bitstar_rewire_factor: float,
+    prefix_fine_until: int,
+    prefix_mid_step: int,
+    prefix_coarse_step: int,
+    stage_b_neighbor_radius: int,
+    distribution_medium_ratio: float,
+    distribution_hard_ratio: float,
+    distribution_hard_not_faster_factor: float,
+    distribution_require_strong_planner: bool,
+) -> dict[str, tuple[int, dict[str, Any], float]]:
+    all_counts = prefix_counts(
+        len(bounds_ordered),
+        fine_until=int(prefix_fine_until),
+        mid_step=int(prefix_mid_step),
+        coarse_step=int(prefix_coarse_step),
+    )
+    stage_a_rows = distribution_prefix_scan_rows(
+        robot_name=robot_name,
+        robot=robot,
+        bounds_ordered=bounds_ordered,
+        queries=queries,
+        counts=all_counts,
+        desc_suffix="stage-a-prefix-count",
+        seed=int(seed),
+        planner_seeds=max(1, int(stage_a_planner_seeds)),
+        direct_obstruction_samples=int(direct_obstruction_samples),
+        rrt_probe_timeout_s=float(rrt_probe_timeout_s),
+        bitstar_timeout_s=float(bitstar_timeout_s),
+        bitstar_checkpoint_interval_s=float(bitstar_checkpoint_interval_s),
+        audit_step=float(audit_step),
+        min_success_fraction=float(min_success_fraction),
+        bitstar_probe_mode=str(bitstar_probe_mode),
+        bitstar_samples_per_batch=int(bitstar_samples_per_batch),
+        bitstar_rewire_factor=float(bitstar_rewire_factor),
+    )
+    stage_a_selection = select_distribution_prefixes_from_scan(
+        stage_a_rows,
+        medium_ratio=float(distribution_medium_ratio),
+        hard_ratio=float(distribution_hard_ratio),
+        hard_not_faster_factor=float(distribution_hard_not_faster_factor),
+        require_strong_planner=bool(distribution_require_strong_planner),
+    )
+    selected_counts = [
+        int(stage_a_selection["prefix_counts"][difficulty])
+        for difficulty in DIFFICULTY_ORDER
+    ]
+    stage_b_counts = prefix_count_neighbors(
+        all_counts,
+        selected_counts,
+        radius=int(stage_b_neighbor_radius),
+    )
+    stage_b_rows = distribution_prefix_scan_rows(
+        robot_name=robot_name,
+        robot=robot,
+        bounds_ordered=bounds_ordered,
+        queries=queries,
+        counts=stage_b_counts,
+        desc_suffix="stage-b-prefix-count",
+        seed=int(seed) + 7_340_039,
+        planner_seeds=max(1, int(stage_b_planner_seeds)),
+        direct_obstruction_samples=int(direct_obstruction_samples),
+        rrt_probe_timeout_s=float(rrt_probe_timeout_s),
+        bitstar_timeout_s=float(bitstar_timeout_s),
+        bitstar_checkpoint_interval_s=float(bitstar_checkpoint_interval_s),
+        audit_step=float(audit_step),
+        min_success_fraction=float(min_success_fraction),
+        bitstar_probe_mode=str(bitstar_probe_mode),
+        bitstar_samples_per_batch=int(bitstar_samples_per_batch),
+        bitstar_rewire_factor=float(bitstar_rewire_factor),
+    )
+    stage_b_selection = select_distribution_prefixes_from_scan(
+        stage_b_rows,
+        medium_ratio=float(distribution_medium_ratio),
+        hard_ratio=float(distribution_hard_ratio),
+        hard_not_faster_factor=float(distribution_hard_not_faster_factor),
+        require_strong_planner=bool(distribution_require_strong_planner),
+    )
+    stage_b_selection["two_stage_prefix_confirmation"] = {
+        "stage_a_planner_seeds": int(stage_a_planner_seeds),
+        "stage_b_planner_seeds": int(stage_b_planner_seeds),
+        "stage_a_prefix_counts": copy.deepcopy(stage_a_selection["prefix_counts"]),
+        "stage_b_counts_scanned": [int(value) for value in stage_b_counts],
+        "stage_b_neighbor_radius": int(stage_b_neighbor_radius),
+        "stage_a_scan": [compact_prefix_scan_row(row) for row in stage_a_rows],
+    }
+    out = distribution_prefix_output_from_selection(stage_b_selection)
+    for _difficulty, (_count, probe, _direct_mean) in out.items():
+        probe["distribution_selection"]["two_stage_prefix_confirmation"] = copy.deepcopy(
+            stage_b_selection["two_stage_prefix_confirmation"]
+        )
+    return out
+
+
+def _nearest_count(counts: Sequence[int], target: int) -> int:
+    if not counts:
+        return 0
+    return int(min(counts, key=lambda value: (abs(int(value) - int(target)), int(value))))
+
+
+def candidate_prefix_probe(
+    *,
+    difficulty: str,
+    count: int,
+    prefix_counts_by_difficulty: dict[str, int],
+    query_count: int,
+) -> dict[str, Any]:
+    return {
+        "planner": "candidate_prefix_generator",
+        "policy": "candidate_unvalidated_prefixes",
+        "aggregation": "no planner probes; run augment_prefix_catalog_queries.py for strict confirmation",
+        "ok": False,
+        "difficulty": str(difficulty),
+        "query_count": int(query_count),
+        "planner_seed_count": 0,
+        "candidate_prefix_counts": {
+            key: int(value) for key, value in prefix_counts_by_difficulty.items()
+        },
+        "rrtconnect": {
+            "planner": "OMPL_RRTConnect",
+            "ok": False,
+            "success_count": 0,
+            "query_count": 0,
+            "success_fraction": 0.0,
+            "median_first_success_s": math.nan,
+            "mean_first_success_s": math.nan,
+            "min_first_success_s": math.nan,
+            "max_first_success_s": math.nan,
+            "censored_timeout_s": math.nan,
+            "window_s": [math.nan, math.nan],
+            "timeout_s": math.nan,
+            "probes": [],
+        },
+        "bitstar": {
+            "planner": "OMPL_BITstar_trace",
+            "ok": False,
+            "success_count": 0,
+            "query_count": 0,
+            "success_fraction": 0.0,
+            "median_first_success_s": math.nan,
+            "median_first_success_checkpoint_s": math.nan,
+            "success_checkpoint_count": 0,
+            "mean_first_success_s": math.nan,
+            "min_first_success_s": math.nan,
+            "max_first_success_s": math.nan,
+            "mean_first_success_checkpoint_s": math.nan,
+            "censored_timeout_s": math.nan,
+            "window_s": [math.nan, math.nan],
+            "timeout_s": math.nan,
+            "checkpoint_interval_s": math.nan,
+            "probe_mode": "none",
+            "samples_per_batch": 0,
+            "rewire_factor": math.nan,
+            "probes": [],
+        },
+        "candidate_note": (
+            "This record is a cheap ordered-obstacle/query candidate. "
+            "It is not a paper scene until distribution selection succeeds."
+        ),
+        "candidate_prefix_count": int(count),
+    }
+
+
+def find_candidate_prefixes(
+    *,
+    bounds_ordered: list[list[float]],
+    queries: list[dict[str, Any]],
+    prefix_fine_until: int,
+    prefix_mid_step: int,
+    prefix_coarse_step: int,
+) -> dict[str, tuple[int, dict[str, Any], float]]:
+    counts = prefix_counts(
+        len(bounds_ordered),
+        fine_until=int(prefix_fine_until),
+        mid_step=int(prefix_mid_step),
+        coarse_step=int(prefix_coarse_step),
+    )
+    if not counts:
+        counts = [0]
+    max_count = int(max(counts))
+    prefix_by_difficulty = {
+        "easy": 0,
+        "medium": _nearest_count(counts, max(1, int(round(0.5 * max_count)))),
+        "hard": max_count,
+    }
+    if prefix_by_difficulty["medium"] in {prefix_by_difficulty["easy"], prefix_by_difficulty["hard"]}:
+        positives = [int(value) for value in counts if int(value) > 0]
+        if len(positives) >= 2:
+            prefix_by_difficulty["medium"] = positives[len(positives) // 2]
+        elif positives:
+            prefix_by_difficulty["medium"] = positives[0]
+    out: dict[str, tuple[int, dict[str, Any], float]] = {}
+    for difficulty in DIFFICULTY_ORDER:
+        count = int(prefix_by_difficulty[difficulty])
+        out[difficulty] = (
+            count,
+            candidate_prefix_probe(
+                difficulty=difficulty,
+                count=count,
+                prefix_counts_by_difficulty=prefix_by_difficulty,
+                query_count=len(queries),
+            ),
+            math.nan,
+        )
     return out
 
 
@@ -2026,8 +2325,48 @@ def find_prefixes_by_mode(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    prefix_confirm_mode: str = "single_stage",
+    prefix_stage_a_planner_seeds: int = 1,
+    prefix_stage_b_planner_seeds: int = 3,
+    prefix_stage_b_neighbor_radius: int = 1,
 ) -> dict[str, tuple[int, dict[str, Any], float]]:
-    if str(selection_mode).strip().lower() == "distribution":
+    mode = str(selection_mode).strip().lower()
+    if mode == "candidate":
+        return find_candidate_prefixes(
+            bounds_ordered=bounds_ordered,
+            queries=queries,
+            prefix_fine_until=int(prefix_fine_until),
+            prefix_mid_step=int(prefix_mid_step),
+            prefix_coarse_step=int(prefix_coarse_step),
+        )
+    if mode == "distribution" and str(prefix_confirm_mode).strip().lower() == "two_stage":
+        return find_distribution_prefixes_two_stage(
+            robot_name=robot_name,
+            robot=robot,
+            bounds_ordered=bounds_ordered,
+            queries=queries,
+            seed=int(seed),
+            stage_a_planner_seeds=int(prefix_stage_a_planner_seeds),
+            stage_b_planner_seeds=int(prefix_stage_b_planner_seeds),
+            direct_obstruction_samples=int(direct_obstruction_samples),
+            rrt_probe_timeout_s=float(rrt_probe_timeout_s),
+            bitstar_timeout_s=float(bitstar_timeout_s),
+            bitstar_checkpoint_interval_s=float(bitstar_checkpoint_interval_s),
+            audit_step=float(audit_step),
+            min_success_fraction=float(min_success_fraction),
+            bitstar_probe_mode=str(bitstar_probe_mode),
+            bitstar_samples_per_batch=int(bitstar_samples_per_batch),
+            bitstar_rewire_factor=float(bitstar_rewire_factor),
+            prefix_fine_until=int(prefix_fine_until),
+            prefix_mid_step=int(prefix_mid_step),
+            prefix_coarse_step=int(prefix_coarse_step),
+            stage_b_neighbor_radius=int(prefix_stage_b_neighbor_radius),
+            distribution_medium_ratio=float(distribution_medium_ratio),
+            distribution_hard_ratio=float(distribution_hard_ratio),
+            distribution_hard_not_faster_factor=float(distribution_hard_not_faster_factor),
+            distribution_require_strong_planner=bool(distribution_require_strong_planner),
+        )
+    if mode == "distribution":
         return find_distribution_prefixes(
             robot_name=robot_name,
             robot=robot,
@@ -2360,6 +2699,10 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                 distribution_hard_ratio=float(args.distribution_hard_ratio),
                 distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                 distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                prefix_confirm_mode=str(args.prefix_confirm_mode),
+                prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
+                prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
+                prefix_stage_b_neighbor_radius=int(args.prefix_stage_b_neighbor_radius),
             )
             post_query_rejections: dict[str, int] = {}
             if bool(args.post_sample_matching_queries) and len(queries) < int(args.queries_per_scene):
@@ -2425,6 +2768,10 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     distribution_hard_ratio=float(args.distribution_hard_ratio),
                     distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                     distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                    prefix_confirm_mode=str(args.prefix_confirm_mode),
+                    prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
+                    prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
+                    prefix_stage_b_neighbor_radius=int(args.prefix_stage_b_neighbor_radius),
                 )
             source_cspace = {
                 "generator": "local_hyper_gate_hard_then_workspace_prefix",
@@ -2454,6 +2801,10 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                 "ordered_obstacle_count": int(len(ordered)),
                 "ordered_obstacles": [[float(value) for value in item] for item in ordered],
                 "prefix_selection_mode": str(args.prefix_selection_mode),
+                "prefix_confirm_mode": str(args.prefix_confirm_mode),
+                "prefix_stage_a_planner_seeds": int(args.prefix_stage_a_planner_seeds),
+                "prefix_stage_b_planner_seeds": int(args.prefix_stage_b_planner_seeds),
+                "prefix_stage_b_neighbor_radius": int(args.prefix_stage_b_neighbor_radius),
                 "distribution_separation": {
                     "medium_over_easy_min": float(args.distribution_medium_ratio),
                     "hard_over_medium_min": float(args.distribution_hard_ratio),
@@ -2521,6 +2872,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--robots", default="iiwa,ur5,panda")
     parser.add_argument("--scene-seeds", type=int, default=1)
+    parser.add_argument("--scene-seed-start", type=int, default=0)
     parser.add_argument("--queries-per-scene", type=int, default=10)
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--max-scene-tries", type=int, default=24)
@@ -2538,10 +2890,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix-fine-until", type=int, default=80)
     parser.add_argument("--prefix-mid-step", type=int, default=5)
     parser.add_argument("--prefix-coarse-step", type=int, default=25)
-    parser.add_argument("--prefix-selection-mode", choices=("distribution", "window"), default="distribution")
+    parser.add_argument("--prefix-selection-mode", choices=("distribution", "window", "candidate"), default="distribution")
+    parser.add_argument("--prefix-confirm-mode", choices=("single_stage", "two_stage"), default="single_stage")
+    parser.add_argument("--prefix-stage-a-planner-seeds", type=int, default=1)
+    parser.add_argument("--prefix-stage-b-planner-seeds", type=int, default=3)
+    parser.add_argument("--prefix-stage-b-neighbor-radius", type=int, default=1)
     parser.add_argument("--distribution-medium-ratio", type=float, default=5.0)
     parser.add_argument("--distribution-hard-ratio", type=float, default=2.0)
-    parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=0.8)
+    parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=1.0)
     parser.add_argument("--distribution-require-strong-planner", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-min-l2", type=float, default=0.8)
     parser.add_argument("--query-max-l2", type=float, default=math.inf, help="Maximum start-goal L2 distance; <=0 or inf disables the upper bound.")
@@ -2576,7 +2932,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cspace-subdivide-width", type=float, default=0.22)
     parser.add_argument("--max-subboxes-per-cspace-box", type=int, default=-1)
     parser.add_argument("--max-workspace-obstacles", type=int, default=450)
-    parser.add_argument("--obstacle-order", choices=("direct_desc", "direct_asc", "volume_asc", "volume_desc", "random", "mixed", "probe_greedy", "path_blocking"), default="direct_desc")
+    parser.add_argument(
+        "--obstacle-order",
+        choices=(
+            "direct_desc",
+            "direct_asc",
+            "volume_asc",
+            "volume_desc",
+            "random",
+            "mixed",
+            "source_order",
+            "probe_greedy",
+            "path_blocking",
+        ),
+        default="direct_desc",
+    )
     parser.add_argument("--probe-greedy-candidate-pool", type=int, default=8)
     parser.add_argument("--probe-greedy-max-prefix", type=int, default=40)
     parser.add_argument("--path-blocking-candidate-pool", type=int, default=8)
@@ -2615,7 +2985,13 @@ def main() -> int:
     rrt_windows = parse_window_map(str(args.rrt_median_windows))
     bitstar_windows = parse_window_map(str(args.bitstar_median_windows))
     records: list[dict[str, Any]] = []
-    keys = [(robot, seed) for robot in robots for seed in range(max(1, int(args.scene_seeds)))]
+    scene_seed_start = int(args.scene_seed_start)
+    scene_seed_count = max(1, int(args.scene_seeds))
+    keys = [
+        (robot, seed)
+        for robot in robots
+        for seed in range(scene_seed_start, scene_seed_start + scene_seed_count)
+    ]
     for robot_name, scene_seed in progress(keys, total=len(keys), desc="prefix-mapped-catalog"):
         group = build_robot_scene_group(args, robot_name, int(scene_seed))
         records.extend(group)
@@ -2637,7 +3013,8 @@ def main() -> int:
         "scene_profile": "prefix_cspace_mapped_workspace_median_gated",
         "robots": robots,
         "difficulties": list(DIFFICULTY_ORDER),
-        "scene_seeds": int(args.scene_seeds),
+        "scene_seeds": int(scene_seed_count),
+        "scene_seed_start": int(scene_seed_start),
         "queries_per_scene": int(args.queries_per_scene),
         "seed_base": int(args.seed_base),
         "records": records,
@@ -2649,10 +3026,18 @@ def main() -> int:
             "difficulty_gate": (
                 "distribution-separated RRTConnect/BIT* observed first strict solution times"
                 if str(args.prefix_selection_mode) == "distribution"
-                else "RRTConnect and BIT* observed-elapsed median first strict solution over shared queries and planner seeds"
+                else (
+                    "unvalidated candidate prefixes; strict confirmation must be run with augment_prefix_catalog_queries.py"
+                    if str(args.prefix_selection_mode) == "candidate"
+                    else "RRTConnect and BIT* observed-elapsed median first strict solution over shared queries and planner seeds"
+                )
             ),
             "planner_seed_count": int(args.planner_seeds),
             "prefix_selection_mode": str(args.prefix_selection_mode),
+            "prefix_confirm_mode": str(args.prefix_confirm_mode),
+            "prefix_stage_a_planner_seeds": int(args.prefix_stage_a_planner_seeds),
+            "prefix_stage_b_planner_seeds": int(args.prefix_stage_b_planner_seeds),
+            "prefix_stage_b_neighbor_radius": int(args.prefix_stage_b_neighbor_radius),
             "distribution_separation": {
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),
@@ -2682,7 +3067,11 @@ def main() -> int:
             "obstacle_count_policy": (
                 "searched prefix counts; accept easy/medium/hard only when first-solution time distributions are separated"
                 if str(args.prefix_selection_mode) == "distribution"
-                else "searched prefix count; no fixed count target; accept only if RRTConnect and BIT* median first-solution windows pass"
+                else (
+                    "cheap candidate counts only; final counts selected by later strict distribution confirmation"
+                    if str(args.prefix_selection_mode) == "candidate"
+                    else "searched prefix count; no fixed count target; accept only if RRTConnect and BIT* median first-solution windows pass"
+                )
             ),
             "prefix_search": {
                 "fine_until": int(args.prefix_fine_until),
@@ -2700,6 +3089,7 @@ def main() -> int:
         "records": len(records),
         "robots": robots,
         "scene_seeds": int(args.scene_seeds),
+        "scene_seed_start": int(scene_seed_start),
         "queries_per_scene": int(args.queries_per_scene),
         "generation_s": payload["generation_s"],
     }

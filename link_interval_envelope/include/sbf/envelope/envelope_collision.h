@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <vector>
 
 namespace rbf {
 
@@ -26,6 +27,23 @@ enum class EnvelopeCollisionMode : uint8_t {
     KDOP = 2,
     GJK = 3,
     KDOPThenGJK = 4,
+};
+
+enum class EnvelopeCollisionBlockerStage : uint8_t {
+    None = 0,
+    InvalidEnvelope = 1,
+    LinkAABB = 2,
+    KDOP = 3,
+    GJK = 4,
+};
+
+struct EnvelopeCollisionBlocker {
+    int active_link_index = -1;
+    int obstacle_index = -1;
+    int stage = static_cast<int>(EnvelopeCollisionBlockerStage::None);
+    double margin = 0.0;
+    double overlap_depth = 0.0;
+    double overlap_volume_ratio = 0.0;
 };
 
 struct EnvelopeCollisionOptions {
@@ -58,6 +76,13 @@ struct EnvelopeCollisionStats {
     double maybe_pair_overlap_volume_sum = 0.0;
     double envelope_volume_sum = 0.0;
     double maybe_pair_overlap_volume_ratio_max = 0.0;
+    int dominant_blocker_active_link_index = -1;
+    int dominant_blocker_obstacle_index = -1;
+    int dominant_blocker_stage = static_cast<int>(EnvelopeCollisionBlockerStage::None);
+    double dominant_blocker_overlap_depth = 0.0;
+    double dominant_blocker_overlap_volume_ratio = 0.0;
+    double dominant_blocker_margin = 0.0;
+    std::vector<EnvelopeCollisionBlocker> blockers;
 };
 
 namespace detail {
@@ -643,6 +668,7 @@ inline CollisionResultKind collide_envelope_aabbs(
     const int n_boxes = envelope.n_active_links * n_sub;
     if (n_boxes <= 0 || static_cast<int>(envelope.link_iaabbs.size()) < n_boxes * 6) {
         s.maybe_pairs += static_cast<int64_t>(std::max(0, n_obstacles));
+        s.dominant_blocker_stage = static_cast<int>(EnvelopeCollisionBlockerStage::InvalidEnvelope);
         return CollisionResultKind::MaybeColliding;
     }
     EnvelopeCollisionMode resolved_mode = detail::resolve_collision_mode(
@@ -660,6 +686,20 @@ inline CollisionResultKind collide_envelope_aabbs(
     if (direct_support_hull) {
         resolved_mode = EnvelopeCollisionMode::GJK;
     }
+
+    auto stage_for_maybe_pair = [&]() {
+        switch (resolved_mode) {
+            case EnvelopeCollisionMode::KDOP:
+                return EnvelopeCollisionBlockerStage::KDOP;
+            case EnvelopeCollisionMode::GJK:
+            case EnvelopeCollisionMode::KDOPThenGJK:
+                return EnvelopeCollisionBlockerStage::GJK;
+            case EnvelopeCollisionMode::Auto:
+            case EnvelopeCollisionMode::LinkAABB:
+            default:
+                return EnvelopeCollisionBlockerStage::LinkAABB;
+        }
+    };
 
     s.envelope_volume_sum = 0.0;
     for (int box = 0; box < n_boxes; ++box) {
@@ -734,9 +774,31 @@ inline CollisionResultKind collide_envelope_aabbs(
             const double overlap_ratio = s.envelope_volume_sum > 0.0
                 ? s.maybe_pair_overlap_volume_sum / s.envelope_volume_sum
                 : 0.0;
+            const double pair_overlap_ratio = s.envelope_volume_sum > 0.0
+                ? overlap_volume / s.envelope_volume_sum
+                : 0.0;
             s.maybe_pair_overlap_volume_ratio_max =
                 std::max(s.maybe_pair_overlap_volume_ratio_max,
                          std::max(0.0, std::min(1.0, overlap_ratio)));
+            if (overlap_depth > s.dominant_blocker_overlap_depth) {
+                const int active_link_index = n_sub > 0 ? box / n_sub : box;
+                s.dominant_blocker_active_link_index = active_link_index;
+                s.dominant_blocker_obstacle_index = obs;
+                s.dominant_blocker_stage = static_cast<int>(stage_for_maybe_pair());
+                s.dominant_blocker_overlap_depth = overlap_depth;
+                s.dominant_blocker_overlap_volume_ratio =
+                    std::max(0.0, std::min(1.0, pair_overlap_ratio));
+                s.dominant_blocker_margin = -overlap_depth;
+            }
+            const int active_link_index = n_sub > 0 ? box / n_sub : box;
+            s.blockers.push_back(EnvelopeCollisionBlocker{
+                active_link_index,
+                obs,
+                static_cast<int>(stage_for_maybe_pair()),
+                -overlap_depth,
+                overlap_depth,
+                std::max(0.0, std::min(1.0, pair_overlap_ratio)),
+            });
             obstacle_maybe = true;
             if (!options.count_all_pairs) {
                 return CollisionResultKind::MaybeColliding;

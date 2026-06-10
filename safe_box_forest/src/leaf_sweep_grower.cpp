@@ -915,13 +915,33 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 						context,
 						"leaf_sweep.worker_oracle.materialization_external_maybe_live_retries",
 						static_cast<double>(counters.materialization_external_maybe_live_retries));
-			add_counter(result,
-						context,
-						"leaf_sweep.worker_oracle.materialization_external_maybe_live_retry_free",
-						static_cast<double>(counters.materialization_external_maybe_live_retry_free));
-			add_counter(result,
-						context,
-						"leaf_sweep.worker_oracle.canonical_frame_invalid",
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.materialization_external_maybe_live_retry_free",
+							static_cast<double>(counters.materialization_external_maybe_live_retry_free));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.interval_replay_compatibility_checks",
+							static_cast<double>(counters.interval_replay_compatibility_checks));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.interval_replay_compatible",
+							static_cast<double>(counters.interval_replay_compatible));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.interval_replay_incompatible",
+							static_cast<double>(counters.interval_replay_incompatible));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.interval_replay_direct_exact_hits",
+							static_cast<double>(counters.interval_replay_direct_exact_hits));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.interval_replay_key_only_blocked",
+							static_cast<double>(counters.interval_replay_key_only_blocked));
+				add_counter(result,
+							context,
+							"leaf_sweep.worker_oracle.canonical_frame_invalid",
 						static_cast<double>(counters.canonical_frame_invalid));
 			add_counter(result,
 						context,

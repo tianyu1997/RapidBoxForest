@@ -37,6 +37,241 @@ double boundary_max_depth_failure_count_local(const StageContext& context) {
            diagnostics.value("connector.chain_pave_boundary_fail_reserved_depth_cap", 0.0);
 }
 
+double diagnostic_map_value(const std::unordered_map<std::string, double>& diagnostics,
+                            const std::string& key) {
+    const auto it = diagnostics.find(key);
+    return it == diagnostics.end() ? 0.0 : it->second;
+}
+
+void set_diagnostic_max(std::unordered_map<std::string, double>& diagnostics,
+                        const std::string& key,
+                        double value) {
+    auto it = diagnostics.find(key);
+    if (it == diagnostics.end() || value > it->second) {
+        diagnostics[key] = value;
+    }
+}
+
+double portal_membership_policy_code(PortalMembershipPolicy policy) {
+    switch (policy) {
+    case PortalMembershipPolicy::GlobalForestOnly:
+        return 0.0;
+    case PortalMembershipPolicy::PortalInteriorIndex:
+        return 1.0;
+    }
+    return -1.0;
+}
+
+void record_portal_membership_policy(std::unordered_map<std::string, double>& diagnostics,
+                                     PortalMembershipPolicy policy,
+                                     const std::string& prefix = "portal_membership.") {
+    diagnostics[prefix + "policy"] = portal_membership_policy_code(policy);
+    diagnostics[prefix + "global_forest_only"] =
+        policy == PortalMembershipPolicy::GlobalForestOnly ? 1.0 : 0.0;
+    diagnostics[prefix + "portal_interior_index"] =
+        policy == PortalMembershipPolicy::PortalInteriorIndex ? 1.0 : 0.0;
+    if (policy == PortalMembershipPolicy::PortalInteriorIndex) {
+        diagnostics[prefix + "portal_interior_index_requested"] += 1.0;
+        diagnostics[prefix + "portal_interior_index_unavailable"] += 1.0;
+        diagnostics[prefix + "global_forest_only_fallback"] += 1.0;
+    }
+}
+
+void record_portal_membership_policy(StageDiagnostics& diagnostics,
+                                     PortalMembershipPolicy policy,
+                                     const std::string& prefix = "portal_membership.") {
+    diagnostics.set_value(prefix + "policy", portal_membership_policy_code(policy));
+    diagnostics.set_value(prefix + "global_forest_only",
+                          policy == PortalMembershipPolicy::GlobalForestOnly ? 1.0 : 0.0);
+    diagnostics.set_value(prefix + "portal_interior_index",
+                          policy == PortalMembershipPolicy::PortalInteriorIndex ? 1.0 : 0.0);
+    if (policy == PortalMembershipPolicy::PortalInteriorIndex) {
+        diagnostics.add_counter(prefix + "portal_interior_index_requested");
+        diagnostics.add_counter(prefix + "portal_interior_index_unavailable");
+        diagnostics.add_counter(prefix + "global_forest_only_fallback");
+    }
+}
+
+bool is_latched_diagnostic_key(const std::string& key) {
+    return key == "portal_membership.policy" ||
+           key == "portal_membership.global_forest_only" ||
+           key == "portal_membership.portal_interior_index";
+}
+
+void merge_diagnostic_snapshot(std::unordered_map<std::string, double>& diagnostics,
+                               const std::unordered_map<std::string, double>& snapshot) {
+    for (const auto& [key, value] : snapshot) {
+        if (is_latched_diagnostic_key(key)) {
+            set_diagnostic_max(diagnostics, key, value);
+        } else {
+            diagnostics[key] += value;
+        }
+    }
+}
+
+void merge_diagnostic_snapshot(StageDiagnostics& diagnostics,
+                               const std::unordered_map<std::string, double>& snapshot) {
+    for (const auto& [key, value] : snapshot) {
+        if (is_latched_diagnostic_key(key)) {
+            diagnostics.set_value(key, std::max(diagnostics.value(key), value));
+        } else {
+            diagnostics.add_counter(key, value);
+        }
+    }
+}
+
+void record_oracle_cache_counter_snapshot(std::unordered_map<std::string, double>& diagnostics,
+                                          const OracleCounters& counters,
+                                          const std::string& prefix) {
+    diagnostics[prefix + "node_validations"] =
+        static_cast<double>(counters.node_validations);
+    diagnostics[prefix + "interval_validations"] =
+        static_cast<double>(counters.interval_validations);
+    diagnostics[prefix + "certified_free"] =
+        static_cast<double>(counters.certified_free);
+    diagnostics[prefix + "certified_occupied"] =
+        static_cast<double>(counters.certified_occupied);
+    diagnostics[prefix + "materializations"] =
+        static_cast<double>(counters.materializations);
+    diagnostics[prefix + "materialization_reused_external_evidence"] =
+        static_cast<double>(counters.materialization_reused_external_evidence);
+    diagnostics[prefix + "materialization_external_exact_hits"] =
+        static_cast<double>(counters.materialization_external_exact_hits);
+    diagnostics[prefix + "materialization_external_exact_misses"] =
+        static_cast<double>(counters.materialization_external_exact_misses);
+    diagnostics[prefix + "materialization_external_live_fallbacks"] =
+        static_cast<double>(counters.materialization_external_live_fallbacks);
+    diagnostics[prefix + "materialization_external_maybe_live_retries"] =
+        static_cast<double>(counters.materialization_external_maybe_live_retries);
+    diagnostics[prefix + "materialization_external_maybe_live_retry_free"] =
+        static_cast<double>(counters.materialization_external_maybe_live_retry_free);
+    diagnostics[prefix + "interval_replay_compatibility_checks"] =
+        static_cast<double>(counters.interval_replay_compatibility_checks);
+    diagnostics[prefix + "interval_replay_compatible"] =
+        static_cast<double>(counters.interval_replay_compatible);
+    diagnostics[prefix + "interval_replay_incompatible"] =
+        static_cast<double>(counters.interval_replay_incompatible);
+    diagnostics[prefix + "interval_replay_direct_exact_hits"] =
+        static_cast<double>(counters.interval_replay_direct_exact_hits);
+    diagnostics[prefix + "interval_replay_key_only_blocked"] =
+        static_cast<double>(counters.interval_replay_key_only_blocked);
+    diagnostics[prefix + "canonical_frame_invalid"] =
+        static_cast<double>(counters.canonical_frame_invalid);
+    diagnostics[prefix + "canonical_reflected_seed_misses"] =
+        static_cast<double>(counters.canonical_reflected_seed_misses);
+    diagnostics[prefix + "scoring_reused_external_evidence"] =
+        static_cast<double>(counters.scoring_reused_external_evidence);
+}
+
+void record_depth_semantics_diagnostics(std::unordered_map<std::string, double>& diagnostics,
+                                        const std::string& prefix,
+                                        int sweep_start_depth,
+                                        int sweep_max_depth,
+                                        int target_max_depth,
+                                        const FindFreeBoxOptions& seed_ffb_options,
+                                        int deep_ffb_depth) {
+    diagnostics[prefix + "sweep_start_depth"] =
+        static_cast<double>(sweep_start_depth);
+    diagnostics[prefix + "sweep_max_depth"] =
+        static_cast<double>(sweep_max_depth);
+    diagnostics[prefix + "target_max_depth"] =
+        static_cast<double>(target_max_depth);
+    diagnostics[prefix + "seed_ffb_start_depth"] =
+        static_cast<double>(seed_ffb_options.start_depth);
+    diagnostics[prefix + "seed_ffb_skip_to_depth"] =
+        static_cast<double>(seed_ffb_options.skip_to_depth);
+    diagnostics[prefix + "seed_ffb_max_depth"] =
+        static_cast<double>(seed_ffb_options.max_depth);
+    diagnostics[prefix + "deep_ffb_depth"] =
+        static_cast<double>(deep_ffb_depth);
+    diagnostics[prefix + "sweep_seed_ffb_depths_independent"] = 1.0;
+}
+
+void normalize_external_evidence_diagnostics(
+    std::unordered_map<std::string, double>& diagnostics,
+    const OracleCounters* active_oracle_counters = nullptr) {
+    if (active_oracle_counters != nullptr) {
+        record_oracle_cache_counter_snapshot(diagnostics,
+                                             *active_oracle_counters,
+                                             "adaptive.oracle.");
+    }
+
+    auto max_of = [&](std::initializer_list<const char*> keys) {
+        double value = 0.0;
+        for (const char* key : keys) {
+            value = std::max(value, diagnostic_map_value(diagnostics, key));
+        }
+        return value;
+    };
+
+    const double reused_hits = max_of({
+        "oracle.materialization_reused_external_evidence",
+        "adaptive.oracle.materialization_reused_external_evidence",
+        "leaf_sweep.worker_oracle.materialization_reused_external_evidence",
+        "grower.worker_oracle.materialization_reused_external_evidence",
+    });
+    const double exact_hits = max_of({
+        "oracle.materialization_external_exact_hits",
+        "adaptive.oracle.materialization_external_exact_hits",
+        "leaf_sweep.worker_oracle.materialization_external_exact_hits",
+        "grower.worker_oracle.materialization_external_exact_hits",
+    });
+    const double exact_misses = max_of({
+        "oracle.materialization_external_exact_misses",
+        "adaptive.oracle.materialization_external_exact_misses",
+        "leaf_sweep.worker_oracle.materialization_external_exact_misses",
+        "grower.worker_oracle.materialization_external_exact_misses",
+    });
+    const double replay_checks = max_of({
+        "oracle.interval_replay_compatibility_checks",
+        "adaptive.oracle.interval_replay_compatibility_checks",
+        "leaf_sweep.worker_oracle.interval_replay_compatibility_checks",
+        "grower.worker_oracle.interval_replay_compatibility_checks",
+    });
+    const double replay_compatible = max_of({
+        "oracle.interval_replay_compatible",
+        "adaptive.oracle.interval_replay_compatible",
+        "leaf_sweep.worker_oracle.interval_replay_compatible",
+        "grower.worker_oracle.interval_replay_compatible",
+    });
+    const double replay_incompatible = max_of({
+        "oracle.interval_replay_incompatible",
+        "adaptive.oracle.interval_replay_incompatible",
+        "leaf_sweep.worker_oracle.interval_replay_incompatible",
+        "grower.worker_oracle.interval_replay_incompatible",
+    });
+    const double replay_direct_hits = max_of({
+        "oracle.interval_replay_direct_exact_hits",
+        "adaptive.oracle.interval_replay_direct_exact_hits",
+        "leaf_sweep.worker_oracle.interval_replay_direct_exact_hits",
+        "grower.worker_oracle.interval_replay_direct_exact_hits",
+    });
+    const double replay_key_only_blocked = max_of({
+        "oracle.interval_replay_key_only_blocked",
+        "adaptive.oracle.interval_replay_key_only_blocked",
+        "leaf_sweep.worker_oracle.interval_replay_key_only_blocked",
+        "grower.worker_oracle.interval_replay_key_only_blocked",
+    });
+
+    set_diagnostic_max(diagnostics,
+                       "oracle.materialization_reused_external_evidence",
+                       reused_hits);
+    set_diagnostic_max(diagnostics,
+                       "oracle.materialization_external_exact_hits",
+                       exact_hits);
+    set_diagnostic_max(diagnostics,
+                       "oracle.materialization_external_exact_misses",
+                       exact_misses);
+    diagnostics["adaptive.external_reused_hits_normalized"] = reused_hits;
+    diagnostics["adaptive.external_exact_hits_normalized"] = exact_hits;
+    diagnostics["adaptive.external_exact_misses_normalized"] = exact_misses;
+    diagnostics["adaptive.interval_replay_compatibility_checks_normalized"] = replay_checks;
+    diagnostics["adaptive.interval_replay_compatible_normalized"] = replay_compatible;
+    diagnostics["adaptive.interval_replay_incompatible_normalized"] = replay_incompatible;
+    diagnostics["adaptive.interval_replay_direct_exact_hits_normalized"] = replay_direct_hits;
+    diagnostics["adaptive.interval_replay_key_only_blocked_normalized"] = replay_key_only_blocked;
+}
+
 std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::VectorXd>& path,
                                                      const CollisionChecker& checker,
                                                      int segment_resolution) {
@@ -1683,25 +1918,56 @@ bool adaptive_has_adjacency_to_any(const std::vector<BoxNode>& boxes,
     return false;
 }
 
-int adaptive_count_adjacent_free(const std::vector<BoxNode>& boxes,
-                                 const AdaptiveFrontierItem& item,
-                                 double tolerance,
-                                 const std::unordered_set<int>* allowed_ids = nullptr) {
+struct AdaptiveConnectivityDominance {
+    int adjacent_free = 0;
+    int adjacent_main = 0;
+    int adjacent_other = 0;
+    bool has_free_context = false;
+    bool connector_candidate = false;
+    bool single_component = false;
+    bool isolated = true;
+    double priority_delta = 0.0;
+};
+
+AdaptiveConnectivityDominance adaptive_connectivity_dominance(
+    const std::vector<BoxNode>& boxes,
+    const AdaptiveFrontierItem& item,
+    const std::unordered_set<int>& main_ids,
+    double tolerance) {
+    AdaptiveConnectivityDominance out;
+    out.has_free_context = !boxes.empty();
+    if (!out.has_free_context) {
+        return out;
+    }
     const BoxNode candidate = adaptive_make_box_from_intervals(item.intervals,
                                                               item.node,
                                                               -1,
                                                               BoxSafetyStatus::Unknown,
                                                               false);
-    int count = 0;
     for (const auto& box : boxes) {
-        if (allowed_ids != nullptr && allowed_ids->find(box.id) == allowed_ids->end()) {
+        if (!boxes_connected(box, candidate, tolerance)) {
             continue;
         }
-        if (boxes_connected(box, candidate, tolerance)) {
-            ++count;
+        out.adjacent_free += 1;
+        if (main_ids.find(box.id) != main_ids.end()) {
+            out.adjacent_main += 1;
+        } else {
+            out.adjacent_other += 1;
         }
     }
-    return count;
+    out.connector_candidate = out.adjacent_main > 0 && out.adjacent_other > 0;
+    out.single_component = out.adjacent_free > 0 && !out.connector_candidate;
+    out.isolated = out.adjacent_free == 0;
+    if (out.connector_candidate) {
+        out.priority_delta = 60.0;
+    } else if (out.adjacent_main > 0) {
+        out.priority_delta = 18.0;
+    } else if (out.single_component) {
+        out.priority_delta = -4.0;
+    } else {
+        out.priority_delta = -12.0;
+    }
+    return out;
 }
 
 double adaptive_frontier_score(const std::vector<BoxNode>& boxes,
@@ -1709,16 +1975,17 @@ double adaptive_frontier_score(const std::vector<BoxNode>& boxes,
                                const std::unordered_set<int>& main_ids,
                                double overlap_depth_threshold,
                                double tolerance) {
-    (void)boxes;
-    (void)main_ids;
-    (void)tolerance;
     const double volume = std::max(adaptive_interval_volume(item.intervals), 1e-300);
+    const AdaptiveConnectivityDominance dominance =
+        adaptive_connectivity_dominance(boxes, item, main_ids, tolerance);
     const double normalized_overlap_depth =
         overlap_depth_threshold > 1e-12
             ? std::max(0.0, item.overlap_depth / overlap_depth_threshold)
             : 0.0;
     return std::log(volume) +
            75.0 * static_cast<double>(item.free_seed_hits) -
+           (item.free_seed_hits > 0 ? 0.0 : (dominance.has_free_context ? 0.0 : 6.0)) +
+           dominance.priority_delta -
            3.0 * std::max(0.0, item.overlap_ratio) -
            1.5 * normalized_overlap_depth -
            0.10 * static_cast<double>(adaptive_virtual_depth(item.node));
@@ -3922,6 +4189,11 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().set_value("oracle.materialization_external_live_fallbacks", static_cast<double>(oracle_counters.materialization_external_live_fallbacks));
     context.diagnostics().set_value("oracle.materialization_external_maybe_live_retries", static_cast<double>(oracle_counters.materialization_external_maybe_live_retries));
     context.diagnostics().set_value("oracle.materialization_external_maybe_live_retry_free", static_cast<double>(oracle_counters.materialization_external_maybe_live_retry_free));
+    context.diagnostics().set_value("oracle.interval_replay_compatibility_checks", static_cast<double>(oracle_counters.interval_replay_compatibility_checks));
+    context.diagnostics().set_value("oracle.interval_replay_compatible", static_cast<double>(oracle_counters.interval_replay_compatible));
+    context.diagnostics().set_value("oracle.interval_replay_incompatible", static_cast<double>(oracle_counters.interval_replay_incompatible));
+    context.diagnostics().set_value("oracle.interval_replay_direct_exact_hits", static_cast<double>(oracle_counters.interval_replay_direct_exact_hits));
+    context.diagnostics().set_value("oracle.interval_replay_key_only_blocked", static_cast<double>(oracle_counters.interval_replay_key_only_blocked));
     context.diagnostics().set_value("oracle.canonical_frame_invalid", static_cast<double>(oracle_counters.canonical_frame_invalid));
     context.diagnostics().set_value("oracle.canonical_reflected_seed_misses", static_cast<double>(oracle_counters.canonical_reflected_seed_misses));
     context.diagnostics().set_value("oracle.materialization_reused_shared_endpoint_cache", static_cast<double>(oracle_counters.materialization_reused_shared_endpoint_cache));
@@ -3960,6 +4232,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().set_value("oracle.scoring_candidate_dirty_count", static_cast<double>(oracle_counters.scoring_candidate_dirty_count));
     context.diagnostics().set_value("oracle.scoring_predh_rebuild_count", static_cast<double>(oracle_counters.scoring_predh_rebuild_count));
     context.diagnostics().set_value("oracle.certified_free", static_cast<double>(oracle_counters.certified_free));
+    context.diagnostics().set_value("oracle.certified_occupied", static_cast<double>(oracle_counters.certified_occupied));
     context.diagnostics().set_value("oracle.provisional_free", static_cast<double>(oracle_counters.provisional_free));
     context.diagnostics().set_value("oracle.collision_possible", static_cast<double>(oracle_counters.collision_possible));
     context.diagnostics().set_value("oracle.validation_cache_hits", static_cast<double>(oracle_counters.validation_cache_hits));
@@ -3980,6 +4253,7 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     context.diagnostics().set_value("oracle.envelope_collision_gjk_tests", static_cast<double>(oracle_counters.envelope_collision_gjk_tests));
     context.diagnostics().set_value("oracle.envelope_collision_gjk_rejects", static_cast<double>(oracle_counters.envelope_collision_gjk_rejects));
     context.diagnostics().set_value("oracle.envelope_collision_gjk_iterations", static_cast<double>(oracle_counters.envelope_collision_gjk_iterations));
+    record_portal_membership_policy(context.diagnostics(), config_.portal_membership_policy);
     last_build_.diagnostics = context.diagnostics().snapshot();
     last_build_.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
@@ -4073,6 +4347,10 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     out.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
     out.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
     out.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
+    out.diagnostics["adaptive.fast_virtual_checkpoint_mode"] =
+        adaptive_config.fast_virtual_checkpoint_mode ? 1.0 : 0.0;
+    out.diagnostics["adaptive.terminal_controller_enabled"] =
+        adaptive_config.fast_virtual_checkpoint_mode ? 0.0 : 1.0;
 
     const bool adaptive_depth_enabled = adaptive_config.adaptive_depth_enabled;
     const int adaptive_depth_min = std::max(
@@ -4177,7 +4455,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         snapshot.readiness_met = snapshot_readiness_met(snapshot);
         return snapshot;
     };
-    if (adaptive_depth_enabled && adaptive_config.node_budget <= 0) {
+    if (adaptive_depth_enabled && adaptive_config.fast_virtual_checkpoint_mode) {
         std::vector<AdaptiveDepthSnapshot> depth_snapshots;
         AdaptiveLeafSweepResult selected;
         bool have_selected = false;
@@ -4381,6 +4659,8 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 candidate.profile.diagnostics[key] = value;
             }
             candidate.profile.diagnostics["adaptive.fast_checkpoint_mode"] = 1.0;
+            candidate.profile.diagnostics["adaptive.fast_virtual_checkpoint_mode"] = 1.0;
+            candidate.profile.diagnostics["adaptive.terminal_controller_enabled"] = 0.0;
             candidate.profile.diagnostics["adaptive.in_sweep_checkpoint_mode"] = 1.0;
             candidate.profile.diagnostics["adaptive.in_sweep_checkpoints"] =
                 static_cast<double>(sweep_count);
@@ -4499,6 +4779,13 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             have_selected = true;
         }
         if (have_selected) {
+            for (const auto& [key, value] : out.leaf_sweep.diagnostics) {
+                if (key.find("worker_oracle.") != std::string::npos ||
+                    key.find("external") != std::string::npos ||
+                    key.find("canonical_frame") != std::string::npos) {
+                    set_diagnostic_max(selected.profile.diagnostics, key, value);
+                }
+            }
             const auto& final_snapshot = depth_snapshots.back();
             selected.selected_leaf_depth = final_snapshot.depth;
             selected.adaptive_depth_readiness_met = final_snapshot.readiness_met;
@@ -4520,6 +4807,8 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             selected.profile.diagnostics["adaptive.in_sweep_checkpoints"] =
                 static_cast<double>(sweep_count);
             selected.profile.diagnostics["adaptive.fast_checkpoint_mode"] = 1.0;
+            selected.profile.diagnostics["adaptive.fast_virtual_checkpoint_mode"] = 1.0;
+            selected.profile.diagnostics["adaptive.terminal_controller_enabled"] = 0.0;
             selected.profile.diagnostics["adaptive.in_sweep_checkpoint_mode"] = 1.0;
             selected.profile.diagnostics["adaptive.selected_leaf_depth"] =
                 static_cast<double>(selected.selected_leaf_depth);
@@ -4528,6 +4817,20 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             selected.profile.diagnostics["adaptive.depth_enabled"] = 1.0;
             selected.profile.diagnostics["adaptive.depth_min"] = static_cast<double>(adaptive_depth_min);
             selected.profile.diagnostics["adaptive.depth_max"] = static_cast<double>(target_leaf_depth);
+            record_depth_semantics_diagnostics(selected.profile.diagnostics,
+                                               "adaptive.",
+                                               adaptive_config.shallow_start_depth,
+                                               initial_leaf_depth,
+                                               target_leaf_depth,
+                                               config_.grower.find_free_box,
+                                               target_leaf_depth);
+            if (oracle_) {
+                const OracleCounters counters = oracle_->counters();
+                normalize_external_evidence_diagnostics(selected.profile.diagnostics, &counters);
+            } else {
+                normalize_external_evidence_diagnostics(selected.profile.diagnostics);
+            }
+            record_portal_membership_policy(selected.profile.diagnostics, config_.portal_membership_policy);
             selected.diagnostics = selected.profile.diagnostics;
             last_build_ = selected.profile;
             if (config_.database.checkpoint_after_build && database_) {
@@ -4538,6 +4841,8 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     }
 
     if (adaptive_config.node_budget <= 0 && !adaptive_depth_enabled) {
+        out.diagnostics["adaptive.fixed_virtual_layer_mode"] = 1.0;
+        out.diagnostics["adaptive.terminal_controller_enabled"] = 0.0;
         leaf_config.collision_overlap_prune_min_depth = adaptive_config.defer_min_depth;
         leaf_config.collision_overlap_prune_threshold = adaptive_config.overlap_depth_threshold;
         leaf_config.collision_overlap_prune_min_threshold = adaptive_config.overlap_depth_min_threshold;
@@ -4741,6 +5046,13 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         out.profile.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
         out.profile.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
         out.profile.diagnostics["adaptive.leaf_sweep_ms"] = out.leaf_sweep_ms;
+        record_depth_semantics_diagnostics(out.profile.diagnostics,
+                                           "adaptive.",
+                                           adaptive_config.shallow_start_depth,
+                                           initial_leaf_depth,
+                                           target_leaf_depth,
+                                           config_.grower.find_free_box,
+                                           target_leaf_depth);
         out.profile.diagnostics["adaptive.overlap_depth_threshold"] = adaptive_config.overlap_depth_threshold;
         out.profile.diagnostics["adaptive.overlap_depth_min_threshold"] = adaptive_config.overlap_depth_min_threshold;
         out.profile.diagnostics["adaptive.overlap_depth_decay_per_depth"] = adaptive_config.overlap_depth_decay_per_depth;
@@ -4851,6 +5163,13 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             out.partition_islands = partition_stats.islands;
             out.partition_largest_island = partition_stats.largest_island;
         }
+        if (oracle_) {
+            const OracleCounters counters = oracle_->counters();
+            normalize_external_evidence_diagnostics(out.profile.diagnostics, &counters);
+        } else {
+            normalize_external_evidence_diagnostics(out.profile.diagnostics);
+        }
+        record_portal_membership_policy(out.profile.diagnostics, config_.portal_membership_policy);
         out.diagnostics = out.profile.diagnostics;
         last_build_ = out.profile;
         if (config_.database.checkpoint_after_build && database_) {
@@ -4958,7 +5277,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 	    } else if (main_ids.empty()) {
 	        out.diagnostics["adaptive.partition_missing_no_graph_fallback"] = 1.0;
 	    }
-    const std::vector<BoxNode> scoring_boxes = boxes_;
+    std::vector<BoxNode> scoring_boxes = boxes_;
     std::vector<AdaptiveFrontierItem> deferred;
     deferred.reserve(out.leaf_sweep.collision_boxes.size());
     const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
@@ -5328,6 +5647,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 (void)new_index;
                 boxes_.push_back(candidate);
                 raw_boxes_.push_back(candidate);
+                scoring_boxes.push_back(candidate);
 	                oracle_->reserve_node(candidate.tree_id, candidate.id);
 	                out.adaptive_free_added += 1;
 	                pending_adjacency_boxes += 1;
@@ -5381,9 +5701,11 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                  (adaptive_config.overlap_ratio_threshold > 0.0 &&
                   item.overlap_ratio >= adaptive_config.overlap_ratio_threshold));
             const bool protected_by_seed = item_has_seed_hit;
+            const AdaptiveConnectivityDominance connectivity =
+                adaptive_connectivity_dominance(scoring_boxes, item, main_ids, adjacency_tolerance);
             const bool protected_by_adjacency =
                 high_overlap && !protected_by_seed &&
-                adaptive_count_adjacent_free(scoring_boxes, item, adjacency_tolerance) > 0;
+                (connectivity.connector_candidate || connectivity.adjacent_main > 0);
             if (depth >= target_leaf_depth) {
                 deferred.push_back(std::move(item));
                 out.adaptive_deferred += 1;
@@ -5398,6 +5720,27 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 deferred.push_back(std::move(item));
                 out.adaptive_deferred += 1;
                 out.diagnostics["adaptive.deferred_high_overlap"] += 1.0;
+                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
+                continue;
+            }
+            if (depth >= adaptive_config.defer_min_depth &&
+                !protected_by_seed &&
+                connectivity.has_free_context &&
+                connectivity.isolated) {
+                deferred.push_back(std::move(item));
+                out.adaptive_deferred += 1;
+                out.diagnostics["adaptive.deferred_connectivity_isolated"] += 1.0;
+                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
+                continue;
+            }
+            if (depth >= adaptive_config.defer_min_depth &&
+                !protected_by_seed &&
+                connectivity.has_free_context &&
+                connectivity.single_component &&
+                connectivity.adjacent_main == 0) {
+                deferred.push_back(std::move(item));
+                out.adaptive_deferred += 1;
+                out.diagnostics["adaptive.deferred_connectivity_single_component"] += 1.0;
                 adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
                 continue;
             }
@@ -5510,10 +5853,15 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
 	    }
     out.profile.connector_ms = 0.0;
     out.profile.diagnostics = out.leaf_sweep.diagnostics;
-    for (const auto& [key, value] : out.diagnostics) {
-        out.profile.diagnostics[key] += value;
-    }
+    merge_diagnostic_snapshot(out.profile.diagnostics, out.diagnostics);
     out.profile.diagnostics["adaptive.leaf_sweep_ms"] = out.leaf_sweep_ms;
+    record_depth_semantics_diagnostics(out.profile.diagnostics,
+                                       "adaptive.",
+                                       adaptive_config.shallow_start_depth,
+                                       initial_leaf_depth,
+                                       target_leaf_depth,
+                                       config_.grower.find_free_box,
+                                       target_leaf_depth);
     out.profile.diagnostics["adaptive.overlap_depth_threshold"] = adaptive_config.overlap_depth_threshold;
     out.profile.diagnostics["adaptive.overlap_depth_min_threshold"] = adaptive_config.overlap_depth_min_threshold;
     out.profile.diagnostics["adaptive.overlap_depth_decay_per_depth"] = adaptive_config.overlap_depth_decay_per_depth;
@@ -5636,6 +5984,13 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         out.partition_islands = partition_stats.islands;
         out.partition_largest_island = partition_stats.largest_island;
     }
+    if (oracle_) {
+        const OracleCounters counters = oracle_->counters();
+        normalize_external_evidence_diagnostics(out.profile.diagnostics, &counters);
+    } else {
+        normalize_external_evidence_diagnostics(out.profile.diagnostics);
+    }
+    record_portal_membership_policy(out.profile.diagnostics, config_.portal_membership_policy);
     out.diagnostics = out.profile.diagnostics;
     last_build_ = out.profile;
     if (config_.database.checkpoint_after_build && database_) {
@@ -5830,6 +6185,13 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.total_ms = out.total_ms;
     out.profile.diagnostics = out.leaf_sweep.diagnostics;
     out.profile.diagnostics["leaf_refine.leaf_sweep_ms"] = out.leaf_sweep_ms;
+    record_depth_semantics_diagnostics(out.profile.diagnostics,
+                                       "leaf_refine.",
+                                       refine_config.leaf_start_depth,
+                                       refine_config.leaf_max_depth,
+                                       refine_config.deep_ffb_depth,
+                                       config_.grower.find_free_box,
+                                       refine_config.deep_ffb_depth);
     out.profile.diagnostics["leaf_refine.leaf_free_count"] = static_cast<double>(out.leaf_free_count);
     out.profile.diagnostics["leaf_refine.leaf_collision_count"] = static_cast<double>(out.leaf_collision_count);
     out.profile.diagnostics["leaf_refine.priority_prune_radius"] = refine_config.priority_prune_radius;
@@ -5939,6 +6301,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
         out.profile.diagnostics[std::string("leaf_refine.") + key] = value;
     }
     out.profile.diagnostics["leaf_refine.total_ms"] = out.total_ms;
+    record_portal_membership_policy(out.profile.diagnostics, config_.portal_membership_policy);
     out.diagnostics = out.profile.diagnostics;
     last_build_ = out.profile;
     invalidate_query_cache();
@@ -6783,6 +7146,7 @@ BuildProfile RBFPlanningForest::build_subtractive(
     profile.segment_edges = static_cast<int>(segment_edges_.size());
     profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    record_portal_membership_policy(profile.diagnostics, config_.portal_membership_policy);
     last_build_ = profile;
     invalidate_query_cache();
 
@@ -7098,6 +7462,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
 int RBFPlanningForest::anchor_query_endpoint(const Eigen::Ref<const Eigen::VectorXd>& point) {
     StageContext context = StageContext::from_runtime(config_.runtime);
     const int box_id = anchor_query_endpoint_box(point, context);
+    merge_diagnostic_snapshot(last_build_.diagnostics, context.diagnostics().snapshot());
     return box_id;
 }
 
@@ -7107,6 +7472,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     if (boxes_.empty() || !oracle_) {
         return 0;
     }
+    record_portal_membership_policy(last_build_.diagnostics, config_.portal_membership_policy);
     const std::size_t boxes_before_endpoint_main = boxes_.size();
     std::vector<int> pre_anchor_main_island_storage;
     if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
@@ -7184,9 +7550,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     if (source_box_id < 0) {
         StageContext context = StageContext::from_runtime(config_.runtime);
         source_box_id = anchor_query_endpoint_box(point, context);
-        for (const auto& [key, value] : context.diagnostics().snapshot()) {
-            last_build_.diagnostics[key] += value;
-        }
+        merge_diagnostic_snapshot(last_build_.diagnostics, context.diagnostics().snapshot());
         if (partition_native_mode() &&
             adaptive_partition_query_enabled_ &&
             adaptive_partition_ &&
@@ -7243,6 +7607,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     auto set_diag = [&](const std::string& key, double value) {
         last_build_.diagnostics["endpoint_main." + key] = value;
     };
+    record_portal_membership_policy(last_build_.diagnostics, config_.portal_membership_policy);
     struct TimingFlush {
         BuildProfile& profile;
         Clock::time_point start;
@@ -7268,9 +7633,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     int source_box_id = locate_box_partition_first(point, config_.query.nearest_if_outside);
     if (source_box_id < 0) {
         source_box_id = anchor_query_endpoint_box(point, context);
-        for (const auto& [key, value] : context.diagnostics().snapshot()) {
-            last_build_.diagnostics[key] += value;
-        }
+        merge_diagnostic_snapshot(last_build_.diagnostics, context.diagnostics().snapshot());
         if (partition_native_mode() &&
             adaptive_partition_query_enabled_ &&
             adaptive_partition_ &&
@@ -7996,9 +8359,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
 		}
     }
 
-    for (const auto& [key, value] : context.diagnostics().snapshot()) {
-        last_build_.diagnostics[key] += value;
-    }
+    merge_diagnostic_snapshot(last_build_.diagnostics, context.diagnostics().snapshot());
 	set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
 	add_diag("fallback_to_e2e");
 	invalidate_query_cache();
@@ -8317,6 +8678,8 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     if (boxes_.empty() || !oracle_) {
         return -1;
     }
+    record_portal_membership_policy(context.diagnostics(), config_.portal_membership_policy);
+    context.diagnostics().add_counter("portal_membership.global_forest_lookup");
     int existing = -1;
     for (const auto& box : boxes_) {
         if (box.contains(point, config_.query.adjacency_tolerance)) {
@@ -8351,9 +8714,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                               root_domain.joint_intervals,
                                               local_context,
                                               options);
-        for (const auto& [key, value] : local_context.diagnostics().snapshot()) {
-            context.diagnostics().add_counter(key, value);
-        }
+        merge_diagnostic_snapshot(context.diagnostics(), local_context.diagnostics().snapshot());
         context.diagnostics().add_counter("query_bridge.endpoint_anchor_calls");
         if (!result.found ||
             !intervals_contain_point_local(result.intervals,
@@ -10815,6 +11176,21 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             add_counter_delta("query_bridge.oracle_external_exact_misses",
                               after.materialization_external_exact_misses,
                               oracle_counters_before.materialization_external_exact_misses);
+            add_counter_delta("query_bridge.oracle_interval_replay_compatibility_checks",
+                              after.interval_replay_compatibility_checks,
+                              oracle_counters_before.interval_replay_compatibility_checks);
+            add_counter_delta("query_bridge.oracle_interval_replay_compatible",
+                              after.interval_replay_compatible,
+                              oracle_counters_before.interval_replay_compatible);
+            add_counter_delta("query_bridge.oracle_interval_replay_incompatible",
+                              after.interval_replay_incompatible,
+                              oracle_counters_before.interval_replay_incompatible);
+            add_counter_delta("query_bridge.oracle_interval_replay_direct_exact_hits",
+                              after.interval_replay_direct_exact_hits,
+                              oracle_counters_before.interval_replay_direct_exact_hits);
+            add_counter_delta("query_bridge.oracle_interval_replay_key_only_blocked",
+                              after.interval_replay_key_only_blocked,
+                              oracle_counters_before.interval_replay_key_only_blocked);
             add_counter_delta("query_bridge.oracle_shared_endpoint_cache_hits",
                               after.materialization_reused_shared_endpoint_cache,
                               oracle_counters_before.materialization_reused_shared_endpoint_cache);
@@ -10953,9 +11329,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (start_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             start_box_id = anchor_query_endpoint_box(starts[index], anchor_context);
-            for (const auto& [key, value] : anchor_context.diagnostics().snapshot()) {
-                last_build_.diagnostics[key] += value;
-            }
+            merge_diagnostic_snapshot(last_build_.diagnostics, anchor_context.diagnostics().snapshot());
         }
         if (start_box_id < 0) {
             continue;
@@ -10964,9 +11338,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (goal_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             goal_box_id = anchor_query_endpoint_box(goals[index], anchor_context);
-            for (const auto& [key, value] : anchor_context.diagnostics().snapshot()) {
-                last_build_.diagnostics[key] += value;
-            }
+            merge_diagnostic_snapshot(last_build_.diagnostics, anchor_context.diagnostics().snapshot());
         }
         if (goal_box_id < 0 || goal_box_id == start_box_id) {
             continue;
@@ -12985,9 +13357,7 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
 	        } else {
 	            profile.diagnostics["segment_fallback.goal_already_covered"] += 1.0;
 	        }
-	        for (const auto& [key, value] : context.diagnostics().snapshot()) {
-	            profile.diagnostics[key] += value;
-	        }
+	        merge_diagnostic_snapshot(profile.diagnostics, context.diagnostics().snapshot());
 	        if (boxes_.size() > boxes_before_partition) {
 	            append_adaptive_partition_boxes(boxes_before_partition,
 	                                            &last_build_,
@@ -13389,6 +13759,20 @@ void RBFPlanningForest::refresh_adaptive_partition_diagnostics(BuildProfile* pro
             static_cast<double>(stats.point_index_entries);
         profile->diagnostics["adaptive.partition_point_index_overflow_cells"] =
             static_cast<double>(stats.point_index_overflow_cells);
+        profile->diagnostics["adaptive.partition_sparse_virtual_cells"] =
+            static_cast<double>(stats.sparse_virtual_cells);
+        profile->diagnostics["adaptive.partition_sparse_virtual_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_grid_cells);
+        profile->diagnostics["adaptive.partition_sparse_virtual_non_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_non_grid_cells);
+        profile->diagnostics["adaptive.partition_sparse_virtual_exact_index_entries"] =
+            static_cast<double>(stats.sparse_virtual_exact_index_entries);
+        profile->diagnostics["adaptive.partition_sparse_virtual_max_address_depth"] =
+            static_cast<double>(stats.sparse_virtual_max_address_depth);
+        profile->diagnostics["adaptive.partition_sparse_virtual_ancestor_refs_avoided"] =
+            static_cast<double>(stats.sparse_virtual_ancestor_refs_avoided);
+        profile->diagnostics["adaptive.partition_sparse_virtual_index_ms"] =
+            stats.sparse_virtual_index_ms;
         profile->diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
         profile->diagnostics["adaptive.partition_largest_island"] =
             static_cast<double>(stats.largest_island);
@@ -13442,6 +13826,20 @@ void RBFPlanningForest::refresh_dynamic_partition_after_update(RebuildProfile& p
             static_cast<double>(stats.point_index_entries);
         profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
             static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_cells"] =
+            static_cast<double>(stats.sparse_virtual_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_non_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_non_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_exact_index_entries"] =
+            static_cast<double>(stats.sparse_virtual_exact_index_entries);
+        profile.diagnostics["adaptive.partition_sparse_virtual_max_address_depth"] =
+            static_cast<double>(stats.sparse_virtual_max_address_depth);
+        profile.diagnostics["adaptive.partition_sparse_virtual_ancestor_refs_avoided"] =
+            static_cast<double>(stats.sparse_virtual_ancestor_refs_avoided);
+        profile.diagnostics["adaptive.partition_sparse_virtual_index_ms"] =
+            stats.sparse_virtual_index_ms;
         profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
         profile.diagnostics["adaptive.partition_largest_island"] =
             static_cast<double>(stats.largest_island);
@@ -13498,6 +13896,20 @@ void RBFPlanningForest::refresh_dynamic_partition_after_append(RebuildProfile& p
             static_cast<double>(stats.point_index_entries);
         profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
             static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_cells"] =
+            static_cast<double>(stats.sparse_virtual_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_non_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_non_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_exact_index_entries"] =
+            static_cast<double>(stats.sparse_virtual_exact_index_entries);
+        profile.diagnostics["adaptive.partition_sparse_virtual_max_address_depth"] =
+            static_cast<double>(stats.sparse_virtual_max_address_depth);
+        profile.diagnostics["adaptive.partition_sparse_virtual_ancestor_refs_avoided"] =
+            static_cast<double>(stats.sparse_virtual_ancestor_refs_avoided);
+        profile.diagnostics["adaptive.partition_sparse_virtual_index_ms"] =
+            stats.sparse_virtual_index_ms;
         profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
         profile.diagnostics["adaptive.partition_largest_island"] =
             static_cast<double>(stats.largest_island);
@@ -13572,6 +13984,20 @@ void RBFPlanningForest::refresh_dynamic_partition_after_remove_append(
             static_cast<double>(stats.point_index_entries);
         profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
             static_cast<double>(stats.point_index_overflow_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_cells"] =
+            static_cast<double>(stats.sparse_virtual_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_non_grid_cells"] =
+            static_cast<double>(stats.sparse_virtual_non_grid_cells);
+        profile.diagnostics["adaptive.partition_sparse_virtual_exact_index_entries"] =
+            static_cast<double>(stats.sparse_virtual_exact_index_entries);
+        profile.diagnostics["adaptive.partition_sparse_virtual_max_address_depth"] =
+            static_cast<double>(stats.sparse_virtual_max_address_depth);
+        profile.diagnostics["adaptive.partition_sparse_virtual_ancestor_refs_avoided"] =
+            static_cast<double>(stats.sparse_virtual_ancestor_refs_avoided);
+        profile.diagnostics["adaptive.partition_sparse_virtual_index_ms"] =
+            stats.sparse_virtual_index_ms;
         profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
         profile.diagnostics["adaptive.partition_largest_island"] =
             static_cast<double>(stats.largest_island);

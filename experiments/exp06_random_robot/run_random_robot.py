@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import json
 import math
 import os
 import sys
@@ -54,7 +55,40 @@ from experiments.common.sbf_import import import_sbf
 
 
 METHODS = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
+REGISTERED_DISTRIBUTION_CATALOG = (
+    DEFAULT_OUTPUT_ROOT
+    / "tro2026"
+    / "exp06"
+    / "distribution_q10x10_three_robot_strict_catalog.json"
+)
 sbf = import_sbf()
+
+
+def catalog_seed_count_for_selection(path: Path, robots: list[str], difficulties: list[str]) -> int | None:
+    if not Path(path).exists():
+        return None
+    with Path(path).open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    records = payload.get("records", [])
+    selected = {(str(robot), str(difficulty)): set() for robot in robots for difficulty in difficulties}
+    for record in records:
+        key = (str(record.get("robot")), str(record.get("difficulty")))
+        if key in selected:
+            selected[key].add(int(record.get("scene_seed", -1)))
+    if not selected or any(not seeds for seeds in selected.values()):
+        return None
+    counts: list[int] = []
+    for seeds in selected.values():
+        ordered = sorted(seeds)
+        contiguous = 0
+        for value in ordered:
+            if value != contiguous:
+                break
+            contiguous += 1
+        counts.append(contiguous)
+    if not counts or min(counts) <= 0:
+        return None
+    return int(min(counts))
 
 
 def resolved_adaptive_target_depth(args: argparse.Namespace) -> int:
@@ -87,6 +121,7 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
         f"_ffb{int(args.deep_ffb_depth)}"
         f"_bridge{int(args.query_bridge_pave_depth)}"
     )
+    profile["offline_query_agnostic_build"] = True
     profile["inherits_from"] = inherited_profile
     profile["override_reason"] = "Exp.6 controlled depth trade-off scan on saved random-scene catalog."
     profile["leaf_sweep"]["leaf_start_depth"] = int(args.leaf_start_depth)
@@ -141,7 +176,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--robots", default="iiwa,ur5,panda")
     parser.add_argument("--difficulties", default="easy,medium,hard")
-    parser.add_argument("--scene-seeds", type=int, default=50)
+    parser.add_argument("--scene-seeds", type=int, default=10)
+    parser.add_argument("--allow-fewer-catalog-scenes", action="store_true")
     parser.add_argument(
         "--scene-profile",
         choices=[
@@ -154,8 +190,8 @@ def parse_args() -> argparse.Namespace:
         default="timed_probe_independent",
     )
     parser.add_argument("--max-scene-tries", type=int, default=64)
-    parser.add_argument("--scene-catalog", type=Path, default=None)
-    parser.add_argument("--scene-catalog-mode", choices=["auto", "generate", "reuse", "verify"], default="auto")
+    parser.add_argument("--scene-catalog", type=Path, default=REGISTERED_DISTRIBUTION_CATALOG)
+    parser.add_argument("--scene-catalog-mode", choices=["auto", "generate", "reuse", "verify"], default="reuse")
     parser.add_argument("--queries-per-scene", type=int, default=DEFAULT_QUERIES_PER_SCENE)
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--methods", default="sbf_leaf_rrt")
@@ -167,7 +203,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--leaf-max-depth", type=int, default=14)
     parser.add_argument("--adaptive-target-depth", type=int, default=0)
     parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
-    parser.add_argument("--adaptive-node-budget", type=int, default=0)
+    parser.add_argument("--adaptive-node-budget", type=int, default=50000)
+    parser.add_argument("--adaptive-fast-virtual-checkpoint-mode",
+                        action=argparse.BooleanOptionalAction,
+                        default=False)
     parser.add_argument("--adaptive-defer-min-depth", type=int, default=16)
     parser.add_argument("--adaptive-overlap-depth-threshold", type=float, default=0.05)
     parser.add_argument("--adaptive-overlap-depth-min-threshold", type=float, default=0.01)
@@ -253,11 +292,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rrt-timeout-s", type=float, default=1.0)
     parser.add_argument("--rrt-range", type=float, default=0.35)
     parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
-    parser.add_argument("--prm-build-s", type=float, default=2.0)
-    parser.add_argument("--prm-build-grid-s", default="2")
-    parser.add_argument("--prm-query-s", type=float, default=4.0)
+    parser.add_argument("--prm-build-s", type=float, default=20.0)
+    parser.add_argument("--prm-build-grid-s", default="5,10,15,20")
+    parser.add_argument("--prm-query-s", type=float, default=1.0)
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
     parser.add_argument("--prm-planner-kind", default="prm")
+    parser.add_argument("--prm-cumulative", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--bitstar-timeout-s", type=float, default=0.5)
     parser.add_argument("--bitstar-timeout-grid-s", default="")
@@ -307,6 +347,10 @@ def checkpoint_at_or_after(checkpoints: list[dict[str, Any]], target_s: float) -
         if float(checkpoint.get("checkpoint_s", 0.0) or 0.0) >= float(target_s) - 1e-9:
             return checkpoint
     return checkpoints[-1]
+
+
+def fmt_float(value: float) -> str:
+    return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
 def path_length(path: list[list[float]]) -> float:
@@ -433,6 +477,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             adaptive_target_depth=resolved_adaptive_target_depth(args),
             adaptive_time_budget_ms=float(args.adaptive_time_budget_ms),
             adaptive_node_budget=int(args.adaptive_node_budget),
+            adaptive_fast_virtual_checkpoint_mode=bool(args.adaptive_fast_virtual_checkpoint_mode),
             adaptive_defer_min_depth=int(args.adaptive_defer_min_depth),
             adaptive_overlap_depth_threshold=float(args.adaptive_overlap_depth_threshold),
             adaptive_overlap_depth_min_threshold=float(args.adaptive_overlap_depth_min_threshold),
@@ -863,6 +908,148 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     )
 
 
+def run_prm_scene_cumulative(
+    args: argparse.Namespace,
+    catalog: dict[str, Any],
+    robot_name: str,
+    difficulty: str,
+    scene_seed: int,
+    build_checkpoints_s: list[float],
+) -> list[dict[str, Any]]:
+    checkpoints = sorted({float(value) for value in build_checkpoints_s if float(value) > 0.0})
+    if not checkpoints:
+        raise ValueError("PRM cumulative mode requires at least one positive build checkpoint")
+    scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
+    robot = make_robot(robot_name)
+    query_records = queries_for_key(catalog, robot_name, difficulty, scene_seed)
+    starts = [[float(value) for value in query["start"]] for query in query_records]
+    goals = [[float(value) for value in query["goal"]] for query in query_records]
+    result = sbf.ompl_prm_multiquery_cumulative(
+        robot,
+        list(scene.obstacles),
+        starts,
+        goals,
+        checkpoints,
+        float(args.prm_query_s),
+        float(args.audit_segment_step),
+        float(args.ompl_simplify_time_s),
+        int(args.seed_base) + 10007 * int(scene_seed),
+        int(args.prm_max_nearest_neighbors),
+        str(args.prm_planner_kind),
+        bool(args.prm_preload_query_endpoints),
+    )
+    incumbents: dict[str, dict[str, Any]] = {}
+    rows: list[dict[str, Any]] = []
+    for stage in result.get("stages", []):
+        checkpoint_s = float(stage.get("checkpoint_s", 0.0))
+        build_s = float(stage.get("build_s", checkpoint_s))
+        qrows: list[dict[str, Any]] = []
+        audit_total_s = 0.0
+        qresult_items = list(stage.get("queries", []))
+        for index, (query, qresult) in enumerate(zip(query_records, qresult_items, strict=False)):
+            label = f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{index}')}"
+            path = [[float(value) for value in point] for point in qresult.get("path", [])]
+            start = [float(value) for value in query["start"]]
+            goal = [float(value) for value in query["goal"]]
+            audit_passed = False
+            audit_s = 0.0
+            audit_status = "not_attempted"
+            raw_length = math.nan
+            if bool(qresult.get("ok")) and len(path) >= 2:
+                audit_passed, audit_s, audit_status = audit_path(
+                    robot,
+                    list(scene.obstacles),
+                    path,
+                    float(args.audit_segment_step),
+                    start=start,
+                    goal=goal,
+                    collision_tolerance=float(args.audit_collision_tolerance),
+                )
+                audit_total_s += audit_s
+                if audit_passed:
+                    raw_length = path_length(path)
+                    current = incumbents.get(label)
+                    if current is None or raw_length <= float(current["path_length"]) + 1e-12:
+                        incumbents[label] = {
+                            "path_length": raw_length,
+                            "waypoint_count": len(path),
+                            "checkpoint_s": checkpoint_s,
+                            "planner_status": str(qresult.get("status", qresult.get("reason", ""))),
+                        }
+            total_s = float(qresult.get("t_s", 0.0))
+            solve_s = float(qresult.get("solve_s", max(0.0, total_s - float(qresult.get("simplify_s", 0.0)))))
+            simplify_s = float(qresult.get("simplify_s", max(0.0, total_s - solve_s)))
+            incumbent = incumbents.get(label)
+            if incumbent is not None:
+                qrows.append({
+                    "label": label,
+                    "success": True,
+                    "audit_passed": True,
+                    "audit_status": (
+                        "current_audit_passed"
+                        if math.isfinite(raw_length) and abs(raw_length - float(incumbent["path_length"])) <= 1e-12
+                        else f"incumbent_from_{float(incumbent['checkpoint_s']):g}s"
+                    ),
+                    "query_ms": total_s * 1000.0,
+                    "solve_ms": solve_s * 1000.0,
+                    "simplify_ms": simplify_s * 1000.0,
+                    "audit_ms": audit_s * 1000.0,
+                    "path_length": float(incumbent["path_length"]),
+                    "segment_fraction": 0.0,
+                    "waypoint_count": int(incumbent["waypoint_count"]),
+                    "planner_status": (
+                        f"{str(qresult.get('status', qresult.get('reason', '')))}; "
+                        f"incumbent_checkpoint={float(incumbent['checkpoint_s']):g}s"
+                    ),
+                })
+            else:
+                qrows.append({
+                    "label": label,
+                    "success": False,
+                    "audit_passed": False,
+                    "audit_status": audit_status,
+                    "query_ms": total_s * 1000.0,
+                    "solve_ms": solve_s * 1000.0,
+                    "simplify_ms": simplify_s * 1000.0,
+                    "audit_ms": audit_s * 1000.0,
+                    "path_length": math.nan,
+                    "segment_fraction": math.nan,
+                    "waypoint_count": len(path),
+                    "planner_status": str(qresult.get("status", qresult.get("reason", ""))),
+                })
+        rows.append(summarize_query_batch_method(
+            "prm",
+            robot_name,
+            difficulty,
+            scene_seed,
+            scene,
+            qrows,
+            offline_build_s=build_s,
+            audit_s=audit_total_s,
+            diagnostics={
+                "planner": "OMPL_PRM_cumulative",
+                "cumulative_prm": True,
+                "checkpoint_s": checkpoint_s,
+                "build_checkpoints_s": checkpoints,
+                "build_s": build_s,
+                "nodes": int(stage.get("nodes", result.get("nodes", 0)) or 0),
+                "query_budget_s": float(args.prm_query_s),
+                "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
+                "planner_kind": str(args.prm_planner_kind),
+                "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+                "simplify_time_s": float(args.ompl_simplify_time_s),
+            },
+            stage_id=(
+                f"{str(args.prm_planner_kind)}_cumulative_build{checkpoint_s:g}s"
+                f"_k{int(args.prm_max_nearest_neighbors)}"
+                f"_q{fmt_float(float(args.prm_query_s))}s"
+                f"_preload{int(bool(args.prm_preload_query_endpoints))}"
+            ),
+            budget_s=checkpoint_s,
+        ))
+    return rows
+
+
 def run_bitstar_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int, timeout_s: float) -> dict[str, Any]:
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
@@ -1033,6 +1220,7 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
             audit_s=audit_total_s,
             diagnostics={
                 "planner": "OMPL_BITstar_trace",
+                "cumulative_bitstar": True,
                 "timeout_s": float(timeout_s),
                 "checkpoint_interval_s": float(checkpoint_interval_s),
                 "checkpoint_grid_s": checkpoint_grid_s,
@@ -1563,10 +1751,25 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     args = parse_args()
     configure_thread_environment(int(args.threads))
-    scene_seeds = 1 if args.phase == "smoke" else (8 if args.phase == "paper" else int(args.scene_seeds))
     robots = csv_list(args.robots)
     difficulties = csv_list(args.difficulties)
     methods = csv_list(args.methods)
+    requested_scene_seeds = 1 if args.phase == "smoke" else (10 if args.phase == "paper" else int(args.scene_seeds))
+    scene_seeds = int(requested_scene_seeds)
+    if str(args.scene_catalog_mode) in {"reuse", "verify"}:
+        inferred_scene_seeds = catalog_seed_count_for_selection(Path(args.scene_catalog), robots, difficulties)
+        if inferred_scene_seeds is not None:
+            if (
+                int(inferred_scene_seeds) < int(requested_scene_seeds)
+                and str(args.phase) in {"paper", "full"}
+                and not bool(args.allow_fewer_catalog_scenes)
+            ):
+                raise RuntimeError(
+                    f"scene catalog {args.scene_catalog} only has {int(inferred_scene_seeds)} contiguous scene seeds "
+                    f"for the selected robots/difficulties; Exp.6 {args.phase} requires {int(requested_scene_seeds)}. "
+                    "Use --allow-fewer-catalog-scenes only for diagnostics."
+                )
+            scene_seeds = int(inferred_scene_seeds)
     box_budgets = [int(item) for item in csv_list(args.box_budgets)] if str(args.box_budgets).strip() else rbf_budget_grid(args.phase)
     prm_build_grid_s = [float(item) for item in csv_list(args.prm_build_grid_s)] if str(args.prm_build_grid_s).strip() else [float(args.prm_build_s)]
     bitstar_explicit_grid = [float(item) for item in csv_list(args.bitstar_timeout_grid_s)] if str(args.bitstar_timeout_grid_s).strip() else []
@@ -1626,7 +1829,15 @@ def main() -> int:
         if method == "sbf_leaf_rrt":
             budgets: list[Any] = box_budgets
         elif method == "prm":
-            budgets = prm_build_grid_s
+            budgets = (
+                [{
+                    "cumulative": True,
+                    "checkpoints": prm_build_grid_s,
+                    "build_s": max(prm_build_grid_s) if prm_build_grid_s else float(args.prm_build_s),
+                }]
+                if bool(args.prm_cumulative)
+                else prm_build_grid_s
+            )
         elif method == "bitstar":
             budgets = [bitstar_trace_timeout_s]
         elif method == "rrtconnect":
@@ -1640,9 +1851,17 @@ def main() -> int:
                         stage_id = (
                             f"b{int(budget)}" if method == "sbf_leaf_rrt"
                             else (
-                                f"{str(args.prm_planner_kind)}_build{float(budget):g}s"
+                                (
+                                    f"{str(args.prm_planner_kind)}_cumulative_trace"
+                                    f"{float(budget.get('build_s', max(prm_build_grid_s))):g}s"
+                                    f"_k{int(args.prm_max_nearest_neighbors)}"
+                                    f"_q{fmt_float(float(args.prm_query_s))}s"
+                                    f"_preload{int(bool(args.prm_preload_query_endpoints))}"
+                                )
+                                if isinstance(budget, dict) and bool(budget.get("cumulative"))
+                                else f"{str(args.prm_planner_kind)}_build{float(budget):g}s"
                                 f"_k{int(args.prm_max_nearest_neighbors)}"
-                                f"_q{float(args.prm_query_s):g}s"
+                                f"_q{fmt_float(float(args.prm_query_s))}s"
                                 f"_preload{int(bool(args.prm_preload_query_endpoints))}"
                             ) if method == "prm"
                             else (
@@ -1659,7 +1878,13 @@ def main() -> int:
                             "difficulty": difficulty,
                             "scene_seed": seed,
                             "stage_id": stage_id,
-                            "budget_s": float(budget) if method != "sbf_leaf_rrt" and budget is not None else None,
+                            "budget_s": (
+                                float(budget.get("build_s", max(prm_build_grid_s)))
+                                if method == "prm" and isinstance(budget, dict)
+                                else float(budget)
+                                if method != "sbf_leaf_rrt" and budget is not None
+                                else None
+                            ),
                             "deep_max_boxes": budget if method == "sbf_leaf_rrt" else 0,
                             "scene_catalog": str(catalog_path),
                             "queries_per_scene": int(args.queries_per_scene),
@@ -1668,6 +1893,7 @@ def main() -> int:
                             "active_planning_root": "full_robot_joint_limits",
                             "coverage_root": "full_robot_joint_limits",
                             "canonical_mapping_scope": "LECT_internal_only",
+                            "offline_query_agnostic_build": bool(method == "sbf_leaf_rrt"),
                             "status": "planned" if args.dry_run else "planned_for_execution",
                             "rbf_default_profile": copy.deepcopy(rbf_profile) if method == "sbf_leaf_rrt" else None,
                             "rbf_robot_lectdb": robot_lectdb_profile(robot) if method == "sbf_leaf_rrt" else None,
@@ -1675,7 +1901,17 @@ def main() -> int:
                             "ompl_registered_profile": "exp05_registered" if method in {"prm", "bitstar"} else None,
                             "ompl_simplify_time_s": float(args.ompl_simplify_time_s) if method in {"prm", "bitstar", "rrtconnect"} else None,
                             "prm_config": {
-                                "build_s": float(budget) if method == "prm" else None,
+                                "cumulative": bool(args.prm_cumulative),
+                                "build_s": (
+                                    float(budget.get("build_s", max(prm_build_grid_s)))
+                                    if isinstance(budget, dict)
+                                    else float(budget)
+                                ) if method == "prm" else None,
+                                "build_checkpoints_s": (
+                                    list(budget.get("checkpoints", prm_build_grid_s))
+                                    if isinstance(budget, dict)
+                                    else [float(budget)]
+                                ) if method == "prm" else None,
                                 "query_s": float(args.prm_query_s),
                                 "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
                                 "planner_kind": str(args.prm_planner_kind),
@@ -1711,6 +1947,17 @@ def main() -> int:
                     float(args.bitstar_checkpoint_interval_s),
                     bitstar_stage_s,
                 ))
+            elif row["method"] == "prm" and bool((row.get("prm_config") or {}).get("cumulative")):
+                prm_config = row.get("prm_config") or {}
+                print(f"[exp06] method=prm cumulative stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
+                run_rows.extend(run_prm_scene_cumulative(
+                    args,
+                    catalog,
+                    str(row["robot"]),
+                    str(row["difficulty"]),
+                    int(row["scene_seed"]),
+                    [float(value) for value in prm_config.get("build_checkpoints_s", prm_build_grid_s)],
+                ))
             else:
                 print(f"[exp06] method={row['method']} stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
                 run_rows.append(run_baseline_scene(
@@ -1733,6 +1980,7 @@ def main() -> int:
             "threads": int(args.threads),
             "scope": "RBF, LECT cache prewarm, and process math libraries use --threads=8 by default; OMPL RRTConnect, PRM, and BIT* are algorithmically single-thread in this runner unless OMPL exposes planner-internal parallelism.",
         },
+        "offline_query_agnostic_build": True,
         "rbf_default_profile": rbf_profile,
         "audit": {
             "segment_step": float(args.audit_segment_step),
@@ -1743,13 +1991,16 @@ def main() -> int:
             "inherits_from": "Exp.5 registered Shelf+IIWA OMPL baseline profile",
             "simplify_time_s": float(args.ompl_simplify_time_s),
             "prm": {
+                "cumulative": bool(args.prm_cumulative),
                 "build_grid_s": prm_build_grid_s,
+                "build_checkpoints_s": prm_build_grid_s if bool(args.prm_cumulative) else [],
                 "query_s": float(args.prm_query_s),
                 "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
                 "planner_kind": str(args.prm_planner_kind),
                 "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
             },
             "bitstar": {
+                "cumulative_bitstar": True,
                 "stage_s": bitstar_stage_s,
                 "timeout_s": float(bitstar_trace_timeout_s),
                 "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),

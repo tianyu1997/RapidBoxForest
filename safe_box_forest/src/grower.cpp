@@ -698,6 +698,8 @@ void record_grower_ffb_failure(StageContext& context,
 void record_worker_oracle_counters(StageContext& context,
                                    const OracleCounters& counters) {
     context.diagnostics().add_counter("grower.worker_oracle.node_validations", counters.node_validations);
+    context.diagnostics().add_counter("grower.worker_oracle.certified_free", counters.certified_free);
+    context.diagnostics().add_counter("grower.worker_oracle.certified_occupied", counters.certified_occupied);
     context.diagnostics().add_counter("grower.worker_oracle.materializations", counters.materializations);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_source_incremental_state",
                                       counters.materialization_source_incremental_state);
@@ -705,6 +707,20 @@ void record_worker_oracle_counters(StageContext& context,
                                       counters.materialization_reused_endpoint_cache);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_reused_external_evidence",
                                       counters.materialization_reused_external_evidence);
+    context.diagnostics().add_counter("grower.worker_oracle.materialization_external_exact_hits",
+                                      counters.materialization_external_exact_hits);
+    context.diagnostics().add_counter("grower.worker_oracle.materialization_external_exact_misses",
+                                      counters.materialization_external_exact_misses);
+    context.diagnostics().add_counter("grower.worker_oracle.interval_replay_compatibility_checks",
+                                      counters.interval_replay_compatibility_checks);
+    context.diagnostics().add_counter("grower.worker_oracle.interval_replay_compatible",
+                                      counters.interval_replay_compatible);
+    context.diagnostics().add_counter("grower.worker_oracle.interval_replay_incompatible",
+                                      counters.interval_replay_incompatible);
+    context.diagnostics().add_counter("grower.worker_oracle.interval_replay_direct_exact_hits",
+                                      counters.interval_replay_direct_exact_hits);
+    context.diagnostics().add_counter("grower.worker_oracle.interval_replay_key_only_blocked",
+                                      counters.interval_replay_key_only_blocked);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_reused_shared_endpoint_cache",
                                       counters.materialization_reused_shared_endpoint_cache);
     context.diagnostics().add_counter("grower.worker_oracle.materialization_stored_shared_endpoint_cache",

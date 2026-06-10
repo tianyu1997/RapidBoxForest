@@ -216,6 +216,43 @@ py::dict oracle_validation_detail_to_python(const rbf::OracleValidationDetail& d
     result["aabb_overlap"] = detail.aabb_overlap;
     result["aabb_overlap_depth"] = detail.aabb_overlap_depth;
     result["aabb_overlap_volume_ratio"] = detail.aabb_overlap_volume_ratio;
+    result["blocker_active_link_index"] = detail.blocker_active_link_index;
+    result["blocker_link_id"] = detail.blocker_link_id;
+    result["blocker_obstacle_id"] = detail.blocker_obstacle_id;
+    result["blocker_stage"] = detail.blocker_stage;
+    result["blocker_margin"] = detail.blocker_margin;
+    result["blocker_overlap_depth"] = detail.blocker_overlap_depth;
+    result["blocker_overlap_volume_ratio"] = detail.blocker_overlap_volume_ratio;
+    py::list affected_joints;
+    for (int joint : detail.blocker_affected_joints) {
+        affected_joints.append(joint);
+    }
+    result["blocker_affected_joints"] = std::move(affected_joints);
+    py::list blockers;
+    for (const auto& blocker : detail.blockers) {
+        py::dict item;
+        item["active_link_index"] = blocker.active_link_index;
+        item["link_id"] = blocker.link_id;
+        item["obstacle_id"] = blocker.obstacle_id;
+        item["stage"] = blocker.stage;
+        item["margin"] = blocker.margin;
+        item["overlap_depth"] = blocker.overlap_depth;
+        item["overlap_volume_ratio"] = blocker.overlap_volume_ratio;
+        py::list item_affected_joints;
+        for (int joint : blocker.affected_joints) {
+            item_affected_joints.append(joint);
+        }
+        item["affected_joints"] = std::move(item_affected_joints);
+        blockers.append(std::move(item));
+    }
+    result["blockers"] = std::move(blockers);
+    result["blocker_signature_hash"] = detail.blocker_signature_hash;
+    result["occupied_certificate_checked"] = detail.occupied_certificate_checked;
+    result["occupied_certificate_found"] = detail.occupied_certificate_found;
+    result["occupied_witness_link_id"] = detail.occupied_witness_link_id;
+    result["occupied_witness_obstacle_id"] = detail.occupied_witness_obstacle_id;
+    result["occupied_witness_center_signed_distance"] = detail.occupied_witness_center_signed_distance;
+    result["occupied_witness_motion_bound"] = detail.occupied_witness_motion_bound;
     return result;
 }
 
@@ -224,6 +261,7 @@ py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
     result["node_validations"] = counters.node_validations;
     result["interval_validations"] = counters.interval_validations;
     result["certified_free"] = counters.certified_free;
+    result["certified_occupied"] = counters.certified_occupied;
     result["provisional_free"] = counters.provisional_free;
     result["collision_possible"] = counters.collision_possible;
     result["unsafe_free_rejected"] = counters.unsafe_free_rejected;
@@ -257,6 +295,11 @@ py::dict oracle_counters_to_python(const rbf::OracleCounters& counters) {
     result["materialization_external_live_fallbacks"] = counters.materialization_external_live_fallbacks;
     result["materialization_external_maybe_live_retries"] = counters.materialization_external_maybe_live_retries;
     result["materialization_external_maybe_live_retry_free"] = counters.materialization_external_maybe_live_retry_free;
+    result["interval_replay_compatibility_checks"] = counters.interval_replay_compatibility_checks;
+    result["interval_replay_compatible"] = counters.interval_replay_compatible;
+    result["interval_replay_incompatible"] = counters.interval_replay_incompatible;
+    result["interval_replay_direct_exact_hits"] = counters.interval_replay_direct_exact_hits;
+    result["interval_replay_key_only_blocked"] = counters.interval_replay_key_only_blocked;
     result["materialization_reused_shared_endpoint_cache"] = counters.materialization_reused_shared_endpoint_cache;
     result["materialization_stored_shared_endpoint_cache"] = counters.materialization_stored_shared_endpoint_cache;
     result["materialization_reused_cached_envelope"] = counters.materialization_reused_cached_envelope;
@@ -884,13 +927,17 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .value("AuditBeforeCommit", rbf::BoxCommitPolicy::AuditBeforeCommit);
 
     py::enum_<rbf::SegmentEdgeType>(module, "SegmentEdgeType")
+        .value("Unknown", rbf::SegmentEdgeType::Unknown)
         .value("RRTConnector", rbf::SegmentEdgeType::RRTConnector)
         .value("PointValidatedGap", rbf::SegmentEdgeType::PointValidatedGap)
-        .value("QueryBridge", rbf::SegmentEdgeType::QueryBridge);
+        .value("QueryBridge", rbf::SegmentEdgeType::QueryBridge)
+        .value("BoxCorridor", rbf::SegmentEdgeType::BoxCorridor)
+        .value("PortalCorridor", rbf::SegmentEdgeType::PortalCorridor);
 
     py::enum_<rbf::SegmentEdgeValidation>(module, "SegmentEdgeValidation")
         .value("Unknown", rbf::SegmentEdgeValidation::Unknown)
-        .value("CollisionChecked", rbf::SegmentEdgeValidation::CollisionChecked);
+        .value("CollisionChecked", rbf::SegmentEdgeValidation::CollisionChecked)
+        .value("ConservativeBoxChain", rbf::SegmentEdgeValidation::ConservativeBoxChain);
 
     py::enum_<rbf::PathAuditStatus>(module, "PathAuditStatus")
         .value("NotRun", rbf::PathAuditStatus::NotRun)
@@ -898,6 +945,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .value("Passed", rbf::PathAuditStatus::Passed)
         .value("Failed", rbf::PathAuditStatus::Failed)
         .value("Repaired", rbf::PathAuditStatus::Repaired);
+
+    py::enum_<rbf::PortalMembershipPolicy>(module, "PortalMembershipPolicy")
+        .value("GlobalForestOnly", rbf::PortalMembershipPolicy::GlobalForestOnly)
+        .value("PortalInteriorIndex", rbf::PortalMembershipPolicy::PortalInteriorIndex);
 
     py::class_<rbf::KdopConfig>(module, "KdopConfig")
         .def(py::init<>())
@@ -957,11 +1008,15 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("source_box_id", &rbf::SegmentEdge::source_box_id)
         .def_readwrite("target_box_id", &rbf::SegmentEdge::target_box_id)
         .def_readwrite("waypoints", &rbf::SegmentEdge::waypoints)
+        .def_readwrite("internal_boxes", &rbf::SegmentEdge::internal_boxes)
         .def_readwrite("type", &rbf::SegmentEdge::type)
         .def_readwrite("validation", &rbf::SegmentEdge::validation)
         .def_readwrite("segment_resolution", &rbf::SegmentEdge::segment_resolution)
         .def_readwrite("length", &rbf::SegmentEdge::length)
-        .def_readwrite("strict_audit_required", &rbf::SegmentEdge::strict_audit_required);
+        .def_readwrite("strict_audit_required", &rbf::SegmentEdge::strict_audit_required)
+        .def_readwrite("query_index", &rbf::SegmentEdge::query_index)
+        .def_readwrite("portal_domain_id", &rbf::SegmentEdge::portal_domain_id)
+        .def_readwrite("conservative_certificate", &rbf::SegmentEdge::conservative_certificate);
 
     py::enum_<rbf::GrowerConfig::Mode>(module, "GrowerMode")
         .value("RRT", rbf::GrowerConfig::Mode::RRT)
@@ -1082,6 +1137,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("use_virtual_topology", &rbf::AdaptiveLeafSweepConfig::use_virtual_topology)
         .def_readwrite("parallel_virtual_validation", &rbf::AdaptiveLeafSweepConfig::parallel_virtual_validation)
         .def_readwrite("store_group_results", &rbf::AdaptiveLeafSweepConfig::store_group_results)
+        .def_readwrite("fast_virtual_checkpoint_mode", &rbf::AdaptiveLeafSweepConfig::fast_virtual_checkpoint_mode)
         .def_readwrite("defer_min_depth", &rbf::AdaptiveLeafSweepConfig::defer_min_depth)
         .def_readwrite("overlap_depth_threshold", &rbf::AdaptiveLeafSweepConfig::overlap_depth_threshold)
         .def_readwrite("overlap_depth_min_threshold", &rbf::AdaptiveLeafSweepConfig::overlap_depth_min_threshold)
@@ -1216,6 +1272,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("use_best_tighten", &rbf::OracleSplitOptions::use_best_tighten)
         .def_readwrite("best_tighten", &rbf::OracleSplitOptions::best_tighten);
 
+    py::class_<rbf::OccupiedCertificateConfig>(module, "OccupiedCertificateConfig")
+        .def(py::init<>())
+        .def_readwrite("enabled", &rbf::OccupiedCertificateConfig::enabled)
+        .def_readwrite("numerical_epsilon", &rbf::OccupiedCertificateConfig::numerical_epsilon)
+        .def_readwrite("min_penetration_margin", &rbf::OccupiedCertificateConfig::min_penetration_margin);
+
     py::class_<rbf::OracleValidationConfig>(module, "OracleValidationConfig")
         .def(py::init<>())
         .def_readwrite("mode", &rbf::OracleValidationConfig::mode)
@@ -1232,7 +1294,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("stateless_materialization_context", &rbf::OracleValidationConfig::stateless_materialization_context)
         .def_readwrite("enable_worker_shared_endpoint_cache", &rbf::OracleValidationConfig::enable_worker_shared_endpoint_cache)
         .def_readwrite("shared_endpoint_cache_max_entries", &rbf::OracleValidationConfig::shared_endpoint_cache_max_entries)
-        .def_readwrite("shared_endpoint_cache_max_bytes", &rbf::OracleValidationConfig::shared_endpoint_cache_max_bytes);
+        .def_readwrite("shared_endpoint_cache_max_bytes", &rbf::OracleValidationConfig::shared_endpoint_cache_max_bytes)
+        .def_readwrite("collect_full_overlap_stats", &rbf::OracleValidationConfig::collect_full_overlap_stats)
+        .def_readwrite("occupied_certificate", &rbf::OracleValidationConfig::occupied_certificate);
 
     py::enum_<rbf::FindFreeBoxSearchMode>(module, "FindFreeBoxSearchMode")
         .value("Linear", rbf::FindFreeBoxSearchMode::Linear)
@@ -1513,7 +1577,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("dynamic_update", &rbf::RBFPlanningConfig::dynamic_update)
         .def_readwrite("enable_merger", &rbf::RBFPlanningConfig::enable_merger)
         .def_readwrite("enable_connector", &rbf::RBFPlanningConfig::enable_connector)
-        .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth);
+        .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth)
+        .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
         .def_readonly("total_ms", &rbf::BuildProfile::total_ms)
@@ -3212,6 +3277,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          result_counters_override.node_validations += counters.node_validations;
                          result_counters_override.interval_validations += counters.interval_validations;
                          result_counters_override.certified_free += counters.certified_free;
+                         result_counters_override.certified_occupied += counters.certified_occupied;
                          result_counters_override.provisional_free += counters.provisional_free;
                          result_counters_override.collision_possible += counters.collision_possible;
                          result_counters_override.materializations += counters.materializations;
@@ -3220,6 +3286,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          result_counters_override.validate_node_total_time_us += counters.validate_node_total_time_us;
                          result_counters_override.materialization_external_exact_hits += counters.materialization_external_exact_hits;
                          result_counters_override.materialization_external_exact_misses += counters.materialization_external_exact_misses;
+                         result_counters_override.interval_replay_compatibility_checks += counters.interval_replay_compatibility_checks;
+                         result_counters_override.interval_replay_compatible += counters.interval_replay_compatible;
+                         result_counters_override.interval_replay_incompatible += counters.interval_replay_incompatible;
+                         result_counters_override.interval_replay_direct_exact_hits += counters.interval_replay_direct_exact_hits;
+                         result_counters_override.interval_replay_key_only_blocked += counters.interval_replay_key_only_blocked;
                          result_counters_override.canonical_frame_invalid += counters.canonical_frame_invalid;
                          result_counters_override.canonical_reflected_seed_misses += counters.canonical_reflected_seed_misses;
                      }
@@ -4053,6 +4124,202 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("starts"),
         py::arg("goals"),
         py::arg("build_budget_s") = 10.0,
+        py::arg("query_budget_s") = 2.0,
+        py::arg("segment_step") = 0.05,
+        py::arg("simplify_time_s") = 0.1,
+        py::arg("seed") = 42,
+        py::arg("max_nearest_neighbors") = 32,
+        py::arg("planner_kind") = "prm",
+        py::arg("preload_query_endpoints") = false);
+
+    module.def("ompl_prm_multiquery_cumulative",
+        [](const rbf::Robot& robot,
+           const std::vector<rbf::Obstacle>& obstacles,
+           const std::vector<std::vector<double>>& starts,
+           const std::vector<std::vector<double>>& goals,
+           const std::vector<double>& build_checkpoints_s,
+           double query_budget_s,
+           double segment_step,
+           double simplify_time_s,
+           int seed,
+           int max_nearest_neighbors,
+           const std::string& planner_kind,
+           bool preload_query_endpoints) {
+            namespace ob = ompl::base;
+            namespace og = ompl::geometric;
+            ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
+            const auto base_seed = normalize_seed(seed);
+            py::dict result;
+            const int dimension = robot.n_joints();
+            if (starts.empty() || starts.size() != goals.size()) {
+                throw std::invalid_argument("starts/goals must be non-empty and have the same length");
+            }
+            if (build_checkpoints_s.empty()) {
+                throw std::invalid_argument("build_checkpoints_s must be non-empty");
+            }
+            double previous_checkpoint = 0.0;
+            std::vector<double> checkpoints;
+            checkpoints.reserve(build_checkpoints_s.size());
+            for (double checkpoint : build_checkpoints_s) {
+                if (!std::isfinite(checkpoint) || checkpoint <= 0.0) {
+                    throw std::invalid_argument("build checkpoints must be finite positive seconds");
+                }
+                if (checkpoint < previous_checkpoint) {
+                    throw std::invalid_argument("build checkpoints must be sorted nondecreasing");
+                }
+                checkpoints.push_back(checkpoint);
+                previous_checkpoint = checkpoint;
+            }
+            for (std::size_t index = 0; index < starts.size(); ++index) {
+                if (static_cast<int>(starts[index].size()) != dimension || static_cast<int>(goals[index].size()) != dimension) {
+                    throw std::invalid_argument("all start/goal dimensions must match robot.n_joints()");
+                }
+            }
+            auto checker = std::make_shared<rbf::CollisionChecker>(robot, rbf::Scene(obstacles));
+            auto endpoint_collision = [&](const std::vector<double>& q) {
+                return checker->check_config(eigen_vector_from_list(q));
+            };
+            double checking_resolution = 0.0;
+            auto space = make_ompl_space(robot);
+            configure_deterministic_state_sampler(space, mix_seed(base_seed, 0x50524D54U));
+            auto si = make_ompl_space_information(robot, obstacles, space, segment_step, checking_resolution);
+            auto problem = std::make_shared<ob::ProblemDefinition>(si);
+            set_problem_query(problem, space, si, starts.front(), goals.front(), dimension);
+            std::shared_ptr<og::PRM> planner;
+            std::shared_ptr<SeededPRM> seeded_prm;
+            std::shared_ptr<SeededPRMstar> seeded_prmstar;
+            const bool use_prmstar = planner_kind == "prmstar" || planner_kind == "PRMstar" || planner_kind == "PRM*";
+            if (use_prmstar) {
+                seeded_prmstar = std::make_shared<SeededPRMstar>(si);
+                seeded_prmstar->setLocalSeed(mix_seed(base_seed, 0x50524D51U));
+                planner = seeded_prmstar;
+            } else {
+                seeded_prm = std::make_shared<SeededPRM>(si);
+                seeded_prm->setLocalSeed(mix_seed(base_seed, 0x50524D51U));
+                planner = seeded_prm;
+            }
+            if (!use_prmstar && max_nearest_neighbors > 0) {
+                planner->setMaxNearestNeighbors(static_cast<unsigned int>(max_nearest_neighbors));
+            }
+            planner->setProblemDefinition(problem);
+            planner->setup();
+
+            auto add_query_milestones = [&](std::size_t index) {
+                ob::ScopedState<ob::RealVectorStateSpace> q_start(space), q_goal(space);
+                for (int dim = 0; dim < dimension; ++dim) {
+                    q_start->values[dim] = starts[index][static_cast<std::size_t>(dim)];
+                    q_goal->values[dim] = goals[index][static_cast<std::size_t>(dim)];
+                }
+                if (use_prmstar) {
+                    seeded_prmstar->addMilestoneFromState(q_start.get());
+                    seeded_prmstar->addMilestoneFromState(q_goal.get());
+                } else {
+                    seeded_prm->addMilestoneFromState(q_start.get());
+                    seeded_prm->addMilestoneFromState(q_goal.get());
+                }
+            };
+            std::vector<bool> milestones_inserted(starts.size(), false);
+            if (preload_query_endpoints) {
+                for (std::size_t index = 0; index < starts.size(); ++index) {
+                    add_query_milestones(index);
+                    milestones_inserted[index] = true;
+                }
+            }
+
+            py::list stages;
+            double cumulative_build_only_s = 0.0;
+            double last_target_s = 0.0;
+            double final_build_s = 0.0;
+            int final_nodes = 0;
+            for (std::size_t stage_index = 0; stage_index < checkpoints.size(); ++stage_index) {
+                const double target_s = checkpoints[stage_index];
+                const double delta_s = std::max(0.0, target_s - last_target_s);
+                const auto stage_build_start = std::chrono::steady_clock::now();
+                planner->constructRoadmap(ob::timedPlannerTerminationCondition(delta_s));
+                const double stage_build_delta_s = ompl_elapsed_s(stage_build_start);
+                cumulative_build_only_s += stage_build_delta_s;
+                const double cumulative_build_s = cumulative_build_only_s;
+                last_target_s = target_s;
+
+                ob::PlannerData planner_data(si);
+                planner->getPlannerData(planner_data);
+                final_build_s = cumulative_build_s;
+                final_nodes = static_cast<int>(planner_data.numVertices());
+
+                py::list query_results;
+                for (std::size_t index = 0; index < starts.size(); ++index) {
+                    py::dict row;
+                    row["index"] = static_cast<int>(index);
+                    if (endpoint_collision(starts[index]) || endpoint_collision(goals[index])) {
+                        row["ok"] = false;
+                        row["reason"] = "endpoint_collision";
+                        row["status"] = "endpoint_collision";
+                        row["solve_s"] = 0.0;
+                        row["simplify_s"] = 0.0;
+                        row["t_s"] = 0.0;
+                        row["path"] = std::vector<std::vector<double>>{};
+                        query_results.append(row);
+                        continue;
+                    }
+                    planner->clearQuery();
+                    set_problem_query(problem, space, si, starts[index], goals[index], dimension);
+                    if (!milestones_inserted[index]) {
+                        add_query_milestones(index);
+                        milestones_inserted[index] = true;
+                    }
+                    const auto query_start = std::chrono::steady_clock::now();
+                    ob::PlannerStatus status = planner->solve(ob::timedPlannerTerminationCondition(std::max(0.0, query_budget_s)));
+                    bool ok = status == ob::PlannerStatus::EXACT_SOLUTION || static_cast<bool>(status);
+                    const double solve_s = ompl_elapsed_s(query_start);
+                    double simplify_s = 0.0;
+                    if (ok && simplify_time_s > 0.0) {
+                        auto path_ptr = problem->getSolutionPath();
+                        auto geometric_path = std::dynamic_pointer_cast<og::PathGeometric>(path_ptr);
+                        if (geometric_path) {
+                            const auto simplify_start = std::chrono::steady_clock::now();
+                            og::PathSimplifier simplifier(si);
+                            simplifier.simplify(*geometric_path, std::max(0.0, simplify_time_s));
+                            simplify_s = ompl_elapsed_s(simplify_start);
+                        }
+                    }
+                    auto path = ok ? path_from_problem_solution(problem, dimension) : std::vector<std::vector<double>>{};
+                    if (path.size() < 2) {
+                        ok = false;
+                    }
+                    row["ok"] = ok;
+                    row["reason"] = ok ? "connected" : std::string(status.asString());
+                    row["status"] = std::string(status.asString());
+                    row["solve_s"] = solve_s;
+                    row["simplify_s"] = simplify_s;
+                    row["t_s"] = solve_s + simplify_s;
+                    row["path"] = path;
+                    query_results.append(row);
+                }
+
+                py::dict stage;
+                stage["stage_index"] = static_cast<int>(stage_index);
+                stage["checkpoint_s"] = target_s;
+                stage["stage_build_delta_s"] = stage_build_delta_s;
+                stage["build_s"] = cumulative_build_s;
+                stage["nodes"] = static_cast<int>(planner_data.numVertices());
+                stage["queries"] = query_results;
+                stages.append(stage);
+            }
+            result["ok"] = true;
+            result["planner"] = use_prmstar ? "OMPL_PRMstar" : "OMPL_PRM";
+            result["cumulative"] = true;
+            result["build_s"] = final_build_s;
+            result["nodes"] = final_nodes;
+            result["checking_resolution"] = checking_resolution;
+            result["preload_query_endpoints"] = preload_query_endpoints;
+            result["stages"] = stages;
+            return result;
+        },
+        py::arg("robot"),
+        py::arg("obstacles"),
+        py::arg("starts"),
+        py::arg("goals"),
+        py::arg("build_checkpoints_s"),
         py::arg("query_budget_s") = 2.0,
         py::arg("segment_step") = 0.05,
         py::arg("simplify_time_s") = 0.1,

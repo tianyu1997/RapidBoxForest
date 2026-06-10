@@ -1,5 +1,6 @@
 #include <LECTDatabase/sbf/oracle.h>
 #include <rbf/lect_database/canonicalization.h>
+#include <sbf/envelope/envelope_collision.h>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -360,6 +361,198 @@ void test_canonical_invalid_cross_sector_interval_errors() {
     std::filesystem::remove_all(dir);
 }
 
+void test_occupied_certificate_aabb_witness_certifies_occupied() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_occupied_aabb_witness_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb"), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.occupied_certificate.enabled = true;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config);
+
+    const auto validation = oracle.validate_node(oracle.root_node(), oracle.root_intervals(), -1);
+    require(validation == rbf::BoxValidation::Occupied);
+    require(oracle.counters().certified_occupied == 1);
+    require(oracle.counters().collision_possible == 0);
+    const auto detail = oracle.last_validation_detail();
+    require(detail.occupied_certificate_checked);
+    require(detail.occupied_certificate_found);
+    require(detail.validation == rbf::BoxValidation::Occupied);
+    require(detail.occupied_witness_link_id >= 0);
+    require(detail.occupied_witness_obstacle_id == 0);
+    require(detail.occupied_witness_center_signed_distance +
+            detail.occupied_witness_motion_bound < 0.0);
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_occupied_certificate_motion_bound_rejects_weak_witness() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_occupied_weak_witness_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb"), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.occupied_certificate.enabled = true;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(0.34f, -0.005f, -0.005f, 0.36f, 0.005f, 0.005f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config);
+
+    const auto validation = oracle.validate_node(oracle.root_node(), oracle.root_intervals(), -1);
+    require(validation == rbf::BoxValidation::Unknown);
+    require(oracle.counters().certified_occupied == 0);
+    require(oracle.counters().collision_possible == 1);
+    const auto detail = oracle.last_validation_detail();
+    require(detail.occupied_certificate_checked);
+    require(!detail.occupied_certificate_found);
+    require(detail.validation == rbf::BoxValidation::Unknown);
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_unknown_validation_reports_dominant_blocker() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_dominant_blocker_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb"), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config);
+
+    const auto validation = oracle.validate_node(oracle.root_node(), oracle.root_intervals(), -1);
+    require(validation == rbf::BoxValidation::Unknown);
+    const auto detail = oracle.last_validation_detail();
+    require(detail.collision_possible);
+    require(detail.blocker_obstacle_id == 0);
+    require(detail.blocker_active_link_index >= 0);
+    require(detail.blocker_link_id >= 0);
+    require(detail.blocker_stage == static_cast<int>(rbf::EnvelopeCollisionBlockerStage::LinkAABB));
+    require(detail.blocker_overlap_depth > 0.0);
+    require(detail.blocker_margin < 0.0);
+    require(!detail.blocker_affected_joints.empty());
+    require(detail.blocker_affected_joints.front() == 0);
+    require(detail.blockers.size() == 1);
+    require(detail.blockers.front().obstacle_id == detail.blocker_obstacle_id);
+    require(detail.blocker_signature_hash != 0);
+
+    std::filesystem::remove_all(dir);
+}
+
+void test_full_overlap_stats_reports_blocker_list() {
+    const auto dir = std::filesystem::temp_directory_path() / "lectdb_sbf_blocker_list_test";
+    std::filesystem::remove_all(dir);
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    ld::LectDatabase database;
+    std::string reason;
+    require(database.open(make_test_db_config(
+        dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb"), &reason));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.collect_full_overlap_stats = true;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(-10.0f, -10.0f, -10.0f, 10.0f, 10.0f, 10.0f),
+        rbf::Obstacle(-9.0f, -9.0f, -9.0f, 9.0f, 9.0f, 9.0f)};
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config);
+
+    const auto validation = oracle.validate_node(oracle.root_node(), oracle.root_intervals(), -1);
+    require(validation == rbf::BoxValidation::Unknown);
+    const auto detail = oracle.last_validation_detail();
+    require(detail.blockers.size() >= 2);
+    require(detail.blocker_signature_hash != 0);
+    require(detail.blockers.front().overlap_depth >= detail.blockers.back().overlap_depth);
+    bool saw_obstacle0 = false;
+    bool saw_obstacle1 = false;
+    for (const auto& blocker : detail.blockers) {
+        require(blocker.link_id >= 0);
+        require(blocker.overlap_depth > 0.0);
+        require(!blocker.affected_joints.empty());
+        saw_obstacle0 = saw_obstacle0 || blocker.obstacle_id == 0;
+        saw_obstacle1 = saw_obstacle1 || blocker.obstacle_id == 1;
+    }
+    require(saw_obstacle0);
+    require(saw_obstacle1);
+
+    std::filesystem::remove_all(dir);
+}
+
 void test_canonical_external_cache_matches_live_native_validation() {
     const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_active_cache_test";
     const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_canonical_external_cache_test";
@@ -624,6 +817,80 @@ void test_external_child_hull_reuses_unified_envelope_evidence() {
     std::filesystem::remove_all(external_dir);
 }
 
+void test_direct_external_replay_blocks_key_only_identity_mismatch() {
+    const auto active_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_active_key_only_block_test";
+    const auto external_dir = std::filesystem::temp_directory_path() / "lectdb_sbf_external_key_only_block_test";
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+
+    auto robot = make_toy_robot();
+    const auto root = robot.joint_limits().limits;
+
+    auto active_config = make_test_db_config(
+        active_dir,
+        robot,
+        root,
+        "planning_database_oracle_ifk",
+        "planning_database_oracle_link_iaabb");
+    auto external_config = make_test_db_config(
+        external_dir,
+        robot,
+        root,
+        "different_endpoint_identity",
+        "planning_database_oracle_link_iaabb");
+
+    ld::LectDatabase active_database;
+    ld::LectDatabase external_database;
+    std::string reason;
+    require(active_database.open(active_config, &reason));
+    require(external_database.open(external_config, &reason));
+
+    ld::EvidenceRecord external_record;
+    external_record.key.node_id = external_database.root_node();
+    external_record.key.sector = ld::kPrimarySector;
+    external_record.key.channel = ld::EvidenceChannel::Safe;
+    external_record.key.endpoint_source = rbf::EndpointSource::IFK;
+    external_record.key.payload_kind = ld::EvidencePayloadKind::EndpointEnvelope;
+    external_record.payload.assign(12, 0.0f);
+    require(external_database.put_evidence(std::move(external_record)));
+
+    rbf::EndpointSourceConfig endpoint_config;
+    endpoint_config.source = rbf::EndpointSource::IFK;
+    rbf::EnvelopeTypeConfig envelope_config;
+    envelope_config.type = rbf::EnvelopeType::LinkIAABB;
+    rbf::OracleValidationConfig validation_config;
+    validation_config.external_evidence_materialization = true;
+    validation_config.external_evidence_backfill_active = false;
+    validation_config.enable_endpoint_evidence_cache = false;
+    const std::vector<rbf::Obstacle> obstacles = {
+        rbf::Obstacle(100.0f, 100.0f, 100.0f, 101.0f, 101.0f, 101.0f)};
+    ld::LectDatabaseEvidenceSource external_source(external_database);
+    rbf::DatabaseBoxOracle oracle(
+        robot,
+        active_database,
+        rbf::Scene(obstacles),
+        endpoint_config,
+        envelope_config,
+        validation_config,
+        &external_source,
+        &external_database);
+
+    const auto validation = oracle.validate_node(oracle.root_node(), oracle.root_intervals(), -1);
+    require(validation == rbf::BoxValidation::Free);
+    require(oracle.counters().interval_replay_compatibility_checks == 1);
+    require(oracle.counters().interval_replay_compatible == 0);
+    require(oracle.counters().interval_replay_incompatible == 1);
+    require(oracle.counters().interval_replay_key_only_blocked == 1);
+    require(oracle.counters().interval_replay_direct_exact_hits == 0);
+    require(oracle.counters().materialization_reused_external_evidence == 0);
+    require(oracle.counters().materialization_external_exact_hits == 0);
+    require(oracle.counters().materializations == 1);
+    require(!oracle.last_validation_detail().reused_external_evidence);
+
+    std::filesystem::remove_all(active_dir);
+    std::filesystem::remove_all(external_dir);
+}
+
 }  // namespace
 
 int main() {
@@ -632,8 +899,13 @@ int main() {
     test_database_box_oracle_supports_deep_path_keys();
     test_canonical_native_query_mapping_contains_native_seed();
     test_canonical_invalid_cross_sector_interval_errors();
+    test_occupied_certificate_aabb_witness_certifies_occupied();
+    test_occupied_certificate_motion_bound_rejects_weak_witness();
+    test_unknown_validation_reports_dominant_blocker();
+    test_full_overlap_stats_reports_blocker_list();
     test_canonical_external_cache_matches_live_native_validation();
     test_external_evidence_reuses_when_handles_differ();
     test_external_child_hull_reuses_unified_envelope_evidence();
+    test_direct_external_replay_blocks_key_only_identity_mismatch();
     return 0;
 }

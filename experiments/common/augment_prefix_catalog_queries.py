@@ -63,9 +63,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prefix-mid-step", type=int, default=1)
     parser.add_argument("--prefix-coarse-step", type=int, default=50)
     parser.add_argument("--prefix-selection-mode", choices=("distribution", "window"), default="distribution")
+    parser.add_argument("--prefix-confirm-mode", choices=("single_stage", "two_stage"), default="single_stage")
+    parser.add_argument("--prefix-stage-a-planner-seeds", type=int, default=1)
+    parser.add_argument("--prefix-stage-b-planner-seeds", type=int, default=3)
+    parser.add_argument("--prefix-stage-b-neighbor-radius", type=int, default=1)
     parser.add_argument("--distribution-medium-ratio", type=float, default=5.0)
     parser.add_argument("--distribution-hard-ratio", type=float, default=2.0)
-    parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=0.8)
+    parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=1.0)
     parser.add_argument("--distribution-require-strong-planner", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--seed", type=int, default=20260609)
     parser.add_argument("--extend-path-blocking", action=argparse.BooleanOptionalAction, default=False)
@@ -229,6 +233,10 @@ def main() -> int:
                 distribution_hard_ratio=float(args.distribution_hard_ratio),
                 distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                 distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                prefix_confirm_mode=str(args.prefix_confirm_mode),
+                prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
+                prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
+                prefix_stage_b_neighbor_radius=int(args.prefix_stage_b_neighbor_radius),
             )
 
         final_prefixes: dict[str, tuple[int, dict[str, Any], float]] | None = None
@@ -399,6 +407,10 @@ def main() -> int:
             "query_augmentation_rrt_median_windows": str(args.post_query_rrt_median_windows),
             "query_augmentation_bitstar_median_windows": str(args.post_query_bitstar_median_windows),
             "prefix_selection_mode": str(args.prefix_selection_mode),
+            "prefix_confirm_mode": str(args.prefix_confirm_mode),
+            "prefix_stage_a_planner_seeds": int(args.prefix_stage_a_planner_seeds),
+            "prefix_stage_b_planner_seeds": int(args.prefix_stage_b_planner_seeds),
+            "prefix_stage_b_neighbor_radius": int(args.prefix_stage_b_neighbor_radius),
             "distribution_separation": {
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),

@@ -543,6 +543,89 @@ int add_segment_edge(SegmentEdgeList& edges,
     return next_id;
 }
 
+bool validate_portal_corridor_certificate(const BoxNode& source,
+                                          const BoxNode& target,
+                                          const std::vector<BoxNode>& internal_boxes,
+                                          double tolerance) {
+    if (internal_boxes.empty()) {
+        return false;
+    }
+    const BoxNode* previous = &source;
+    for (const auto& internal : internal_boxes) {
+        if (internal.safety_status != BoxSafetyStatus::CertifiedFree ||
+            internal.strict_audit_required ||
+            !boxes_connected(*previous, internal, tolerance)) {
+            return false;
+        }
+        previous = &internal;
+    }
+    return boxes_connected(*previous, target, tolerance);
+}
+
+std::vector<Eigen::VectorXd> portal_corridor_centerline(const BoxNode& source,
+                                                        const BoxNode& target,
+                                                        const std::vector<BoxNode>& internal_boxes) {
+    std::vector<Eigen::VectorXd> waypoints;
+    waypoints.reserve(internal_boxes.size() + 2U);
+    waypoints.push_back(source.center());
+    for (const auto& internal : internal_boxes) {
+        waypoints.push_back(internal.center());
+    }
+    waypoints.push_back(target.center());
+    return waypoints;
+}
+
+int append_portal_corridor_edge(SegmentEdgeList& edges,
+                                const BoxNode& source,
+                                const BoxNode& target,
+                                std::vector<BoxNode> internal_boxes,
+                                int portal_domain_id,
+                                double tolerance,
+                                int query_index) {
+    if (!validate_portal_corridor_certificate(source, target, internal_boxes, tolerance)) {
+        return -1;
+    }
+    const int next_id = append_segment_edge(edges,
+                                            source.id,
+                                            target.id,
+                                            portal_corridor_centerline(source, target, internal_boxes),
+                                            SegmentEdgeType::PortalCorridor,
+                                            0,
+                                            SegmentEdgeValidation::ConservativeBoxChain,
+                                            false,
+                                            query_index);
+    if (next_id < 0) {
+        return -1;
+    }
+    auto& edge = edges.back();
+    edge.internal_boxes = std::move(internal_boxes);
+    edge.portal_domain_id = portal_domain_id;
+    edge.conservative_certificate = true;
+    return next_id;
+}
+
+int add_portal_corridor_edge(SegmentEdgeList& edges,
+                             AdjacencyGraph& graph,
+                             const BoxNode& source,
+                             const BoxNode& target,
+                             std::vector<BoxNode> internal_boxes,
+                             int portal_domain_id,
+                             double tolerance,
+                             int query_index) {
+    const int next_id = append_portal_corridor_edge(edges,
+                                                    source,
+                                                    target,
+                                                    std::move(internal_boxes),
+                                                    portal_domain_id,
+                                                    tolerance,
+                                                    query_index);
+    if (next_id < 0) {
+        return -1;
+    }
+    append_graph_edge(graph, source.id, target.id);
+    return next_id;
+}
+
 void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges,
                                       AdjacencyGraph& graph) {
     for (const auto& edge : edges) {
@@ -581,7 +664,8 @@ const SegmentEdge* find_segment_edge(const QueryGraphCache& cache,
 }
 
 bool counts_as_segment_edge(SegmentEdgeType type) {
-    return type != SegmentEdgeType::BoxCorridor;
+    return type != SegmentEdgeType::BoxCorridor &&
+           type != SegmentEdgeType::PortalCorridor;
 }
 
 std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph) {
@@ -1039,6 +1123,41 @@ std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_seque
         const BoxNode& lhs = *lhs_ptr;
         const BoxNode& rhs = *rhs_ptr;
         if (const SegmentEdge* edge = find_segment_edge(cache, lhs.id, rhs.id)) {
+            if (edge->type == SegmentEdgeType::PortalCorridor &&
+                edge->conservative_certificate &&
+                !edge->internal_boxes.empty()) {
+                const bool reverse_edge =
+                    edge->source_box_id == rhs.id && edge->target_box_id == lhs.id;
+                std::vector<const BoxNode*> chain;
+                chain.reserve(edge->internal_boxes.size() + 2U);
+                chain.push_back(&lhs);
+                if (reverse_edge) {
+                    for (auto it = edge->internal_boxes.rbegin();
+                         it != edge->internal_boxes.rend();
+                         ++it) {
+                        chain.push_back(&*it);
+                    }
+                } else {
+                    for (const auto& internal : edge->internal_boxes) {
+                        chain.push_back(&internal);
+                    }
+                }
+                chain.push_back(&rhs);
+                for (std::size_t k = 1; k < chain.size(); ++k) {
+                    const BoxNode& prev_box = *chain[k - 1];
+                    const BoxNode& next_box = *chain[k];
+                    if (boxes_connected(prev_box, next_box)) {
+                        append_if_new(transition_waypoint_toward_goal(prev_box,
+                                                                       next_box,
+                                                                       path.back(),
+                                                                       goal));
+                    } else {
+                        append_if_new(prev_box.center());
+                        append_if_new(next_box.center());
+                    }
+                }
+                continue;
+            }
             std::vector<Eigen::VectorXd> edge_path = edge->waypoints;
             if (edge->source_box_id == rhs.id && edge->target_box_id == lhs.id) {
                 std::reverse(edge_path.begin(), edge_path.end());

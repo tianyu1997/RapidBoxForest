@@ -38,11 +38,13 @@ enum class SegmentEdgeType : std::uint8_t {
     RRTConnector = 2,
     QueryBridge = 3,
     BoxCorridor = 4,
+    PortalCorridor = 5,
 };
 
 enum class SegmentEdgeValidation : std::uint8_t {
     Unknown = 0,
     CollisionChecked = 1,
+    ConservativeBoxChain = 2,
 };
 
 struct SegmentEdge {
@@ -50,12 +52,18 @@ struct SegmentEdge {
     int source_box_id = -1;
     int target_box_id = -1;
     std::vector<Eigen::VectorXd> waypoints;
+    // For SegmentEdgeType::PortalCorridor, this is the hidden conservative
+    // internal box-chain certificate. These boxes are not global graph
+    // vertices; path extraction lazily expands them only if the edge is used.
+    std::vector<BoxNode> internal_boxes;
     SegmentEdgeType type = SegmentEdgeType::Unknown;
     SegmentEdgeValidation validation = SegmentEdgeValidation::Unknown;
     int segment_resolution = 0;
     double length = 0.0;
     bool strict_audit_required = false;
     int query_index = -1;
+    int portal_domain_id = -1;
+    bool conservative_certificate = false;
 };
 
 using SegmentEdgeList = std::vector<SegmentEdge>;

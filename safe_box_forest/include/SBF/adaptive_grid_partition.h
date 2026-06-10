@@ -53,6 +53,23 @@ struct PartitionCell {
 	int island_id = -1;
 };
 
+struct AdaptiveGridPartitionSparseCellRecord {
+	int cell_id = -1;
+	int box_id = -1;
+	int root_index = -1;
+	std::vector<std::uint64_t> lo;
+	std::vector<std::uint64_t> hi;
+	std::vector<int> split_counts;
+	std::vector<Interval> intervals;
+	PartitionCellState state = PartitionCellState::Unknown;
+	bool grid_aligned = false;
+	bool exact_interval_lookup_eligible = false;
+	int address_depth = 0;
+	std::uint64_t ancestor_refs_avoided = 0;
+	std::uint64_t interval_fingerprint = 0;
+	std::uint64_t split_policy_hash = 0;
+};
+
 struct AdaptiveGridPartitionStats {
 	int cells = 0;
 	int grid_cells = 0;
@@ -61,6 +78,12 @@ struct AdaptiveGridPartitionStats {
 	int point_index_dims = 0;
 	int point_index_entries = 0;
 	int point_index_overflow_cells = 0;
+	int sparse_virtual_cells = 0;
+	int sparse_virtual_grid_cells = 0;
+	int sparse_virtual_non_grid_cells = 0;
+	int sparse_virtual_exact_index_entries = 0;
+	int sparse_virtual_max_address_depth = 0;
+	std::uint64_t sparse_virtual_ancestor_refs_avoided = 0;
 	int islands = 0;
 	int largest_island = 0;
 	std::uint64_t adjacency_candidates = 0;
@@ -69,6 +92,7 @@ struct AdaptiveGridPartitionStats {
 	int overlay_edges = 0;
 	double build_ms = 0.0;
 	double index_rebuild_ms = 0.0;
+	double sparse_virtual_index_ms = 0.0;
 	double face_index_ms = 0.0;
 	double point_index_ms = 0.0;
 	double neighbor_cache_ms = 0.0;
@@ -146,6 +170,17 @@ struct AdaptiveGridPartitionComponentPair {
 	double distance_sq = 0.0;
 };
 
+struct AdaptiveGridPartitionConnectivityDominance {
+	int adjacent_box_count = 0;
+	int adjacent_component_count = 0;
+	bool covered_by_existing = false;
+	bool adjacent_to_largest_component = false;
+	bool connector_candidate = false;
+	bool single_component = false;
+	bool isolated = true;
+	double priority_delta = 0.0;
+};
+
 struct AdaptiveGridPartitionLandmark {
 	int box_id = -1;
 	int component_index = -1;
@@ -199,6 +234,12 @@ public:
 	bool box_adjacent_to_box(int box_id,
 							 const BoxNode& box,
 							 double tolerance) const;
+	int sparse_virtual_cell_for_intervals(const std::vector<Interval>& intervals,
+										  double tolerance) const;
+	std::optional<AdaptiveGridPartitionSparseCellRecord> sparse_virtual_record_for_intervals(
+		const std::vector<Interval>& intervals,
+		double tolerance) const;
+	std::vector<AdaptiveGridPartitionSparseCellRecord> sparse_virtual_records() const;
 	bool boxes_are_neighbors(int lhs_box_id, int rhs_box_id) const;
 	int island_id_for_box(int box_id) const;
 		bool same_island(int lhs_box_id, int rhs_box_id) const;
@@ -213,6 +254,9 @@ public:
 								 double tolerance) const;
 		std::vector<int> adjacent_box_ids(const BoxNode& box,
 										  double tolerance) const;
+		AdaptiveGridPartitionConnectivityDominance classify_connectivity_dominance(
+			const BoxNode& box,
+			double tolerance) const;
 		int sync_segment_edges(const SegmentEdgeList& edges);
 		bool append_segment_edge(const SegmentEdge& edge);
 
@@ -262,6 +306,17 @@ private:
 	struct PointBinKeyHash {
 		std::size_t operator()(const PointBinKey& key) const noexcept;
 	};
+	struct SparseCellKey {
+		int root_index = -1;
+		std::vector<std::uint64_t> lo;
+		std::vector<std::uint64_t> hi;
+		bool operator==(const SparseCellKey& other) const noexcept {
+			return root_index == other.root_index && lo == other.lo && hi == other.hi;
+		}
+	};
+	struct SparseCellKeyHash {
+		std::size_t operator()(const SparseCellKey& key) const noexcept;
+	};
 	struct OverlayEdge {
 		int edge_id = -1;
 		int source_cell = -1;
@@ -299,6 +354,10 @@ private:
 									   const std::unordered_map<int, int>& cell_by_box_id) const;
 	void clear_runtime_indices();
 	void rebuild_point_index();
+	SparseCellKey sparse_key_for_grid_range(const GridRange& range) const;
+	int sparse_address_depth(const GridRange& range) const;
+	void rebuild_sparse_virtual_index();
+	void append_sparse_virtual_cell(int cell_index);
 	std::vector<int> point_candidate_cells(const Eigen::Ref<const Eigen::VectorXd>& q) const;
 	void rebuild_face_index();
 	void rebuild_neighbor_cache();
@@ -331,6 +390,7 @@ private:
 	std::array<double, 3> point_bin_origins_{0.0, 0.0, 0.0};
 	std::unordered_map<PointBinKey, std::vector<int>, PointBinKeyHash> point_bins_;
 	std::vector<int> point_overflow_cells_;
+	std::unordered_map<SparseCellKey, int, SparseCellKeyHash> sparse_virtual_index_;
 	AdaptiveGridPartitionStats stats_;
 };
 

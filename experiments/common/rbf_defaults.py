@@ -130,6 +130,9 @@ def default_rbf_profile() -> dict[str, Any]:
             "adaptive_target_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
             "adaptive_planning_backend": "partition_native",
             "adaptive_grid_target_depth": DEFAULT_RBF_LEAF_MAX_DEPTH,
+            "adaptive_node_budget": 50000,
+            "fast_virtual_checkpoint_mode": False,
+            "terminal_controller": True,
             "adaptive_depth": {
                 "enabled": True,
                 "min": DEFAULT_RBF_LEAF_MAX_DEPTH,

@@ -76,6 +76,25 @@ int add_segment_edge(SegmentEdgeList& edges,
 						 SegmentEdgeValidation validation,
 						 bool strict_audit_required = false,
 						 int query_index = -1);
+bool validate_portal_corridor_certificate(const BoxNode& source,
+										  const BoxNode& target,
+										  const std::vector<BoxNode>& internal_boxes,
+										  double tolerance = 1e-9);
+int append_portal_corridor_edge(SegmentEdgeList& edges,
+								const BoxNode& source,
+								const BoxNode& target,
+								std::vector<BoxNode> internal_boxes,
+								int portal_domain_id = -1,
+								double tolerance = 1e-9,
+								int query_index = -1);
+int add_portal_corridor_edge(SegmentEdgeList& edges,
+							 AdjacencyGraph& graph,
+							 const BoxNode& source,
+							 const BoxNode& target,
+							 std::vector<BoxNode> internal_boxes,
+							 int portal_domain_id = -1,
+							 double tolerance = 1e-9,
+							 int query_index = -1);
 void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges, AdjacencyGraph& graph);
 const SegmentEdge* find_segment_edge(const SegmentEdgeList& edges, int source_box_id, int target_box_id);
 const SegmentEdge* find_segment_edge(const QueryGraphCache& cache, int source_box_id, int target_box_id);

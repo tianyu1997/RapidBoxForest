@@ -758,6 +758,20 @@ also be filtered by FK reachability, since splitting a joint beyond the last
 active frame that contributes to any link endpoint cannot tighten the endpoint
 envelopes.
 
+\paragraph{Sparse interval staging.}
+The compressed runtime path does not require every intermediate heap node on a
+deep split path to be materialized. A materialized planning cell can instead be
+represented by its root copy, per-dimension target-grid interval
+$[\iota_d^-,\iota_d^+)$, split-count vector, and exact joint interval. This is a
+Patricia-style overlay on the depth-synchronous split policy: branching and
+terminal cells are indexed, while unvisited ancestors remain virtual. The
+staging record also carries the interval fingerprint and split-policy hash used
+by LECT's exact interval replay path. Thus evidence replay remains keyed by the
+robot-compatible joint interval through \texttt{endpoint\_for\_box\_exact}; if
+no exact record is available, the same interval is live-materialized and then
+validated against the scene. Scene labels are still stored only in the forest or
+partition layer, not in LECT.
+
 \subsection{Runtime Use and Validation Boundary}
 
 LECT is queried by \textsc{FindFreeBox}, not by the graph search itself. Given a
@@ -976,31 +990,48 @@ against $\calO$; in performance-oriented modes, the returned interval is a
 validated planning region that remains subject to the common query-validation
 path.
 
-\subsection{Leaf Sweep and Restricted Refinement}
+\subsection{Adaptive Leaf Sweep and Restricted Refinement}
 \label{sec:leaf_sweep_method}
 
-The fast construction path uses \textsc{FindFreeBox} inside a two-stage
-leaf-sweep routine. Rather than relying only on stochastic frontier proposals to
-discover query-relevant coarse regions, \rbf{} first enumerates a fixed-depth set of
-LECT leaves and classifies them with the current obstacle set.
-Let $\mathcal{L}_{d_0:d_1}$ denote the virtual leaf layer obtained by expanding
-the tree from start depth $d_0$ to maximum sweep depth $d_1$. Each leaf
-$C\in\mathcal{L}_{d_0:d_1}$ is tested by the same link-envelope scene oracle
-used by \textsc{FindFreeBox}. A leaf that is certified free is inserted into
-the initial forest. A leaf that cannot be certified free is retained as a
-conservative \emph{collision domain}. Such a domain denotes an inconclusive
-bounded region rather than a proof of occupancy; deeper refinement may still
-expose valid boxes inside it.
+The fast construction path uses \textsc{FindFreeBox} inside an adaptive terminal
+cell routine. Rather than relying only on stochastic frontier proposals to
+discover query-relevant coarse regions, \rbf{} starts from a shallow
+depth-synchronous cell set and recursively classifies only cells that remain
+useful under the build budget. A terminal cell is one of five types:
+certified-free, certified-occupied, inconclusive-domain, deferred, or covered by
+an already accepted box. A certified-free cell is inserted into the initial
+forest and its descendants are pruned. An inconclusive cell is split only when
+its depth, blocker report, adjacency to accepted boxes, and seed evidence
+suggest that further refinement can improve the reusable cover. The fixed
+virtual leaf sweep is recovered as a special case that forces every
+inconclusive cell to split until the terminal depth.
 
-During this sweep, \rbf{} also records a blocker set
+During adaptive classification, \rbf{} also records a blocker set
 \[
   \beta(C) \subseteq \{1,\ldots,|\calO|\}
 \]
-for each non-free collision domain. This set is conservative update metadata:
+for each non-free or deferred collision domain. This set is conservative update metadata:
 it contains obstacle groups that were observed as blockers or were not proven
 free by the grouped shallow sweep. The blocker set is an over-approximate update
 explanation; certification of boxes entering the forest remains governed by the
 standard envelope validation rule.
+
+An optional occupied predicate is used only when it can prove the whole cell is
+inside an obstacle. Otherwise the cell remains inconclusive or deferred.
+\begin{lemma}[Signed-distance occupied pruning]
+\label{lem:occupied_pruning}
+Let $x_0$ be a material point on link $\ell$, let $q_c$ be the center of cell
+$I$, and let $\phi_O$ be the signed distance to obstacle $O$ in workspace. If
+the workspace motion of this material point over $I$ is bounded by
+$\rho_{\ell,x_0}(I)$ and
+\[
+  \phi_O(T_\ell(q_c)x_0)+\rho_{\ell,x_0}(I)+\epsilon_{\rm num}<0,
+\]
+then every configuration in $I$ places that material point inside $O$, so $I$
+can be recorded as a certified occupied domain for pruning.
+\end{lemma}
+When such a witness is unavailable, \rbf{} does not infer occupancy; it keeps
+the cell as an inconclusive or deferred refinement domain.
 
 After the shallow sweep, restricted refinement is performed only inside selected
 collision domains. Domains are ranked by their adjacency to already certified
@@ -1019,20 +1050,30 @@ collision-checked segment witnesses between remaining islands, but these
 witnesses are recorded separately from box-overlap edges.
 
 \begin{algorithm}[t]
-\caption{LeafSweepRefine: shallow coverage with restricted deep refinement.}
+\caption{AdaptiveLeafSweepRefine: terminal-cell coverage with restricted refinement.}
 \label{alg:leaf_sweep_refine}
 \footnotesize
 \begin{algorithmic}[1]
 \REQUIRE LECT $T$, obstacle set $\calO$, sweep depths $d_0,d_1$, refinement budget $N_r$
 \ENSURE Validated forest $\mathcal{F}$ and collision-domain cache $\mathcal{C}$
 \STATE $\mathcal{F}\gets\emptyset$; $\mathcal{C}\gets\emptyset$
-\FORALL{virtual leaves $C\in\mathcal{L}_{d_0:d_1}$}
-  \IF{$C$ is certified free by the link-envelope scene oracle}
-    \STATE insert $C$ into $\mathcal{F}$
-  \ELSE
-    \STATE record $C$ and its blocker set $\beta(C)$ in $\mathcal{C}$
+\STATE initialize a priority frontier with start cells at depth $d_0$
+\WHILE{frontier nonempty and build budget remains}
+  \STATE pop the highest-priority cell $C$
+  \IF{$C$ is covered by an accepted box}
+    \STATE mark $C$ covered and continue
   \ENDIF
-\ENDFOR
+  \STATE materialize or replay LECT evidence for $C$ and run scene validation
+  \IF{$C$ is certified free}
+    \STATE insert $C$ into $\mathcal{F}$ and prune descendants
+  \ELSIF{\cref{lem:occupied_pruning} certifies $C$ occupied}
+    \STATE record $C$ as a certified occupied terminal domain
+  \ELSIF{$\operatorname{depth}(C)=d_1$ or $C$ is low-priority under no-good/connectivity rules}
+    \STATE record $C$ and its blocker set $\beta(C)$ in $\mathcal{C}$
+  \ELSE
+    \STATE split $C$ by the configured split policy and push selected children
+  \ENDIF
+\ENDWHILE
 \STATE build adjacency among boxes in $\mathcal{F}$
 \FORALL{collision domains $C\in\mathcal{C}$ in priority order}
   \STATE generate interface, center, and boundary seeds inside $C$
@@ -1046,6 +1087,15 @@ witnesses are recorded separately from box-overlap edges.
 \RETURN $\mathcal{F},\mathcal{C}$
 \end{algorithmic}
 \end{algorithm}
+
+If $N_{\rm mat}$ cells are materialized or replayed and $N_{\rm term}$ terminal
+cells are retained, the sweep work is
+$O(N_{\rm mat}(C_{\rm env}+C_{\rm obs})+C_{\rm adj})$ and the terminal storage is
+$O(N_{\rm term})$, where $C_{\rm env}$ is the envelope materialization or replay
+cost, $C_{\rm obs}$ is scene validation cost, and $C_{\rm adj}$ is the indexed
+adjacency update cost. The important distinction from a fixed virtual layer is
+that $N_{\rm mat}$ is driven by accepted and frontier cells, not by the full
+cardinality of $\mathcal{L}_{d_0:d_1}$.
 
 \subsection{Forest Growth}\label{sec:forest_growth}
 
@@ -1192,14 +1242,19 @@ connectivity semantics used by query search.
 \label{sec:forest_graph}
 
 After growth and consolidation, the forest is exported as a typed graph
-$G=(V,E_{\cap}\cup E_{\varepsilon}\cup E_s)$ with one vertex per validated box.
+$G=(V,E_{\cap}\cup E_{\varepsilon}\cup E_s\cup E_{\pi})$ with one vertex per
+validated box.
 Edges in $E_{\cap}$ connect boxes that overlap or touch in all dimensions; these
 edges directly preserve a contained box corridor. Edges in $E_{\varepsilon}$
 come only from tolerance-scale connected-box gaps and are treated as query
 candidates rather than as corridor certificates. Edges in $E_s$ are explicit
-collision-checked segment witnesses. Because typed connectivity is maintained
-during growth and consolidation, online querying reduces to membership lookup
-and typed graph search rather than post-hoc graph reconstruction.
+collision-checked segment witnesses. Edges in $E_{\pi}$ are conservative portal
+edges: each stores a compressed edge between two global boxes together with a
+finite hidden chain of conservatively validated internal boxes. The chain is not
+materialized as global graph vertices, but it is expanded when the edge is used
+by query path extraction. Because typed connectivity is maintained during
+growth and consolidation, online querying reduces to membership lookup and typed
+graph search rather than post-hoc graph reconstruction.
 
 If disconnected adjacency islands remain after growth, an optional connector
 stage attempts targeted bidirectional sampling bridges between nearest frontier boxes
@@ -1225,7 +1280,9 @@ Paths that use $E_{\varepsilon}$ or $E_s$ edges, performance-mode boxes,
 or post-processing steps that leave the conservative box union are treated through
 the configured query-validation path, and the query interface records these cases
 through the \texttt{QueryResult} counters. The box-corridor statement below
-applies to paths contained in that union.
+applies to paths contained in that union. Portal edges in $E_{\pi}$ are
+nonsegment edges: they inherit the conservative box-corridor certificate only
+through their stored internal box chain.
 
 For an $E_{\cap}$-only graph path, this containment condition has a direct
 constructive interpretation. Each vertex box is convex, and each $E_{\cap}$ edge
@@ -1242,6 +1299,16 @@ test.
 This construction does not apply to $E_{\varepsilon}$ or $E_s$ edges, whose
 semantics are candidate gap closure and explicit segment witnessing,
 respectively.
+
+\begin{corollary}[Conservative portal expansion]
+\label{cor:portal_expansion}
+Let $(B_u,B_v)\in E_{\pi}$ store an internal chain
+$B_u,B_1,\ldots,B_m,B_v$ such that every internal box is conservatively
+validated and every consecutive pair overlaps or touches. Replacing the portal
+edge by this chain recovers an $E_{\cap}$-only box-corridor segment. Therefore
+any query path using such portal edges is covered by
+\cref{thm:corridor_certificate} after all portals are expanded.
+\end{corollary}
 
 \begin{theorem}[Conditional conservative box-corridor path]
 \label{thm:corridor_certificate}
@@ -1290,11 +1357,12 @@ previously accepted.
 The update invariant is local but explicit: every box retained or inserted after
 an edit must pass the edited-scene validation policy, every $E_{\cap}$ edge must
 still correspond to overlap or contact of its endpoint boxes, every
-$E_{\varepsilon}$ edge remains only a tolerance-gap query candidate, and every
-$E_s$ edge must keep a valid segment witness in the edited scene. The update
-procedure is therefore a maintenance rule for the represented forest and its
-typed graph, not a claim of complete rediscovery of all newly available
-free-space regions after an edit.
+$E_{\varepsilon}$ edge remains only a tolerance-gap query candidate, every
+$E_s$ edge must keep a valid segment witness in the edited scene, and every
+$E_{\pi}$ edge must retain a conservatively validated internal box chain or be
+removed. The update procedure is therefore a maintenance rule for the
+represented forest and its typed graph, not a claim of complete rediscovery of
+all newly available free-space regions after an edit.
 
 For obstacle deletion, the blocker sets $\beta(C)$ recorded during the
 leaf-sweep stage provide a conservative candidate-selection rule for the

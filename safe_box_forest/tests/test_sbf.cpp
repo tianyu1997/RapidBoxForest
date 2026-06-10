@@ -1,4 +1,5 @@
 #include <SBF/sbf.h>
+#include <rbf/lect_database/evidence_source.h>
 
 #ifdef NDEBUG
 #undef NDEBUG
@@ -30,6 +31,21 @@ std::filesystem::path temp_database_path(const std::string& name) {
     auto path = std::filesystem::temp_directory_path() / name;
     std::filesystem::remove_all(path);
     return path;
+}
+
+double diagnostic_value(const std::unordered_map<std::string, double>& diagnostics,
+                        const std::string& key) {
+    const auto it = diagnostics.find(key);
+    if (it == diagnostics.end()) {
+        std::cerr << "missing diagnostic key: " << key << "\n";
+        std::cerr << "available diagnostics:\n";
+        for (const auto& [name, value] : diagnostics) {
+            std::cerr << "  " << name << "=" << value << "\n";
+        }
+        assert(false);
+        return 0.0;
+    }
+    return it->second;
 }
 
 rbf::RBFPlanningConfig base_config(const std::string& name) {
@@ -130,6 +146,70 @@ void test_graph() {
     assert(rbf::find_islands(graph).size() == 1);
     auto dijkstra = rbf::dijkstra_search(graph, {a, b}, 0, 1);
     assert(dijkstra.found);
+}
+
+void test_portal_corridor_edge_expands_hidden_chain() {
+    rbf::BoxNode source = make_test_box(0, 0.0, 1.0);
+    rbf::BoxNode internal = make_test_box(10, 1.0, 2.0);
+    rbf::BoxNode target = make_test_box(2, 2.0, 3.0);
+    internal.safety_status = rbf::BoxSafetyStatus::CertifiedFree;
+    internal.strict_audit_required = false;
+
+    std::vector<rbf::SegmentEdge> edges;
+    rbf::AdjacencyGraph graph;
+    const int edge_id = rbf::add_portal_corridor_edge(
+        edges,
+        graph,
+        source,
+        target,
+        std::vector<rbf::BoxNode>{internal},
+        7);
+    assert(edge_id >= 0);
+    assert(edges.size() == 1);
+    assert(edges.front().type == rbf::SegmentEdgeType::PortalCorridor);
+    assert(edges.front().validation == rbf::SegmentEdgeValidation::ConservativeBoxChain);
+    assert(edges.front().conservative_certificate);
+    assert(edges.front().portal_domain_id == 7);
+    assert(edges.front().internal_boxes.size() == 1);
+    assert(!rbf::counts_as_segment_edge(edges.front().type));
+    assert(edge_set(graph).count({0, 2}) == 1);
+
+    const std::vector<rbf::BoxNode> global_boxes = {source, target};
+    const auto cache = rbf::build_query_graph_cache(global_boxes, graph, edges);
+    const auto search = rbf::dijkstra_search(cache, 0, 2);
+    assert(search.found);
+    assert(search.box_sequence.size() == 2);
+    assert(search.segment_edge_sequence.size() == 1);
+    assert(search.segment_edge_sequence.front() == edge_id);
+
+    Eigen::VectorXd start(2), goal(2);
+    start << 0.25, 0.5;
+    goal << 2.75, 0.5;
+    const auto waypoints = rbf::extract_waypoints(search.box_sequence, cache, start, goal);
+    assert(waypoints.size() >= 4);
+    bool saw_source_internal_face = false;
+    bool saw_internal_target_face = false;
+    for (const auto& waypoint : waypoints) {
+        saw_source_internal_face = saw_source_internal_face ||
+            std::abs(waypoint[0] - 1.0) < 1e-9;
+        saw_internal_target_face = saw_internal_target_face ||
+            std::abs(waypoint[0] - 2.0) < 1e-9;
+    }
+    assert(saw_source_internal_face);
+    assert(saw_internal_target_face);
+
+    rbf::BoxNode unsafe_internal = internal;
+    unsafe_internal.safety_status = rbf::BoxSafetyStatus::Unknown;
+    assert(!rbf::validate_portal_corridor_certificate(
+        source,
+        target,
+        std::vector<rbf::BoxNode>{unsafe_internal}));
+    rbf::BoxNode gapped_internal = make_test_box(11, 1.2, 2.0);
+    gapped_internal.safety_status = rbf::BoxSafetyStatus::CertifiedFree;
+    assert(!rbf::validate_portal_corridor_certificate(
+        source,
+        target,
+        std::vector<rbf::BoxNode>{gapped_internal}));
 }
 
 void test_extract_waypoints_uses_overlap_transitions() {
@@ -262,6 +342,13 @@ void test_adaptive_grid_partition_append_and_merge() {
 	                             append_boxes,
 	                             1e-9));
 	    assert(partition.stats().islands == 2);
+	    assert(partition.stats().sparse_virtual_cells == 2);
+	    assert(partition.stats().sparse_virtual_grid_cells == 2);
+	    assert(partition.stats().sparse_virtual_exact_index_entries == 2);
+	    assert(partition.stats().sparse_virtual_max_address_depth == 2);
+	    assert(partition.stats().sparse_virtual_ancestor_refs_avoided == 4);
+	    assert(partition.sparse_virtual_cell_for_intervals(append_boxes.front().joint_intervals, 1e-9) == 0);
+	    assert(partition.sparse_virtual_cell_for_intervals({{0.25, 0.75}, {0.0, 1.0}}, 1e-9) < 0);
 	    assert(partition.component_count_with_overlay() == 2);
 	    Eigen::VectorXd center;
 	    assert(partition.center_for_box(0, center));
@@ -296,6 +383,20 @@ void test_adaptive_grid_partition_append_and_merge() {
 	    assert((std::set<int>{component_pairs.front().source_box_id,
 	                          component_pairs.front().target_box_id} == std::set<int>{0, 1}));
 	    assert(std::abs(component_pairs.front().distance_sq - 1.0) < 1e-12);
+	    const auto bridge_dominance =
+	        partition.classify_connectivity_dominance(bridge_candidate, 1e-9);
+	    assert(bridge_dominance.adjacent_component_count == 2);
+	    assert(bridge_dominance.connector_candidate);
+	    assert(!bridge_dominance.isolated);
+	    assert(bridge_dominance.priority_delta > 0.0);
+	    const auto covered_dominance =
+	        partition.classify_connectivity_dominance(make_box2(102, 0.2, 0.8, 0.2, 0.8), 1e-9);
+	    assert(covered_dominance.covered_by_existing);
+	    assert(covered_dominance.priority_delta < 0.0);
+	    const auto isolated_dominance =
+	        partition.classify_connectivity_dominance(make_box2(103, 3.2, 3.8, 0.0, 1.0), 1e-9);
+	    assert(isolated_dominance.isolated);
+	    assert(isolated_dominance.priority_delta < 0.0);
 	    const auto largest_landmarks = partition.landmarks(true, 8);
 	    assert(largest_landmarks.size() == 1);
 	    assert(largest_landmarks.front().box_id == 0 || largest_landmarks.front().box_id == 1);
@@ -332,6 +433,9 @@ void test_adaptive_grid_partition_append_and_merge() {
     assert((overlay_query.path.back() - goal).norm() < 1e-12);
 	    append_boxes.push_back(make_box2(2, 1.0, 2.0, 0.0, 1.0));
 	    assert(partition.append_boxes(append_boxes, 2, 1e-9) == 1);
+	    assert(partition.stats().sparse_virtual_cells == 3);
+	    assert(partition.stats().sparse_virtual_exact_index_entries == 3);
+	    assert(partition.sparse_virtual_cell_for_intervals(append_boxes.back().joint_intervals, 1e-9) == 2);
     assert(partition.same_island(0, 1));
     const auto query = partition.query(start, goal, options);
     assert(query.found);
@@ -415,6 +519,69 @@ void test_adaptive_grid_partition_append_and_merge() {
     const auto merge_query = merge_partition.query(merge_start, merge_goal, options);
     assert(merge_query.found);
     assert(merge_query.path.size() >= 2);
+}
+
+void test_adaptive_grid_partition_sparse_staging_records() {
+    auto make_box2 = [](int id, double x0, double x1, double y0, double y1) {
+        rbf::BoxNode box;
+        box.id = id;
+        box.joint_intervals = {{x0, x1}, {y0, y1}};
+        box.safety_status = rbf::BoxSafetyStatus::CertifiedFree;
+        box.compute_volume();
+        return box;
+    };
+
+    rbf::lect_database::SplitPolicyDescriptor split;
+    split.strategy = rbf::lect_database::SplitStrategy::AAFKVolumeMin;
+    split.depth_dimensions = {0, 0};
+
+    const std::vector<rbf::BoxNode> boxes = {
+        make_box2(0, 0.0, 1.0, 0.0, 1.0),
+        make_box2(1, 2.0, 3.0, 0.0, 1.0),
+    };
+    rbf::AdaptiveGridPartition partition;
+    assert(partition.rebuild({{0.0, 4.0}, {0.0, 1.0}},
+                             split,
+                             0,
+                             2,
+                             boxes,
+                             1e-9));
+
+    const auto records = partition.sparse_virtual_records();
+    assert(records.size() == 2);
+    const auto first = partition.sparse_virtual_record_for_intervals(
+        boxes.front().joint_intervals,
+        1e-9);
+    assert(first.has_value());
+    assert(first->cell_id == 0);
+    assert(first->box_id == 0);
+    assert(first->root_index == 0);
+    assert(first->grid_aligned);
+    assert(first->exact_interval_lookup_eligible);
+    assert(first->address_depth == 2);
+    assert(first->ancestor_refs_avoided == 2);
+    assert(first->lo == std::vector<std::uint64_t>({0, 0}));
+    assert(first->hi == std::vector<std::uint64_t>({1, 1}));
+    assert(first->interval_fingerprint ==
+           rbf::lect_database::fingerprint_intervals(boxes.front().joint_intervals));
+    assert(first->split_policy_hash == rbf::lect_database::split_policy_hash(split));
+
+    rbf::lect_database::EvidenceKey key;
+    key.channel = rbf::lect_database::EvidenceChannel::Safe;
+    key.endpoint_source = rbf::EndpointSource::IFK;
+    key.payload_kind = rbf::lect_database::EvidencePayloadKind::EndpointEnvelope;
+
+    rbf::lect_database::SharedEndpointEvidenceCache cache;
+    cache.put(first->intervals, key, {1.0f, 2.0f, 3.0f}, false, false);
+    const auto exact_hit = cache.endpoint_for_box_exact(first->intervals, key);
+    assert(exact_hit.has_value());
+    assert(exact_hit->payload.size() == 3);
+
+    auto shifted = first->intervals;
+    shifted.front().lo += 1e-4;
+    const auto shifted_miss = cache.endpoint_for_box_exact(shifted, key);
+    assert(!shifted_miss.has_value());
+    assert(!partition.sparse_virtual_record_for_intervals({{0.25, 0.75}, {0.0, 1.0}}, 1e-9).has_value());
 }
 
 void test_birrt_connect_api() {
@@ -665,6 +832,9 @@ void test_leaf_sweep_refined_empty_scene() {
     config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
     config.enable_connector = false;
     config.query.nearest_if_outside = false;
+    config.grower.find_free_box.start_depth = 5;
+    config.grower.find_free_box.skip_to_depth = 5;
+    config.grower.find_free_box.max_depth = 6;
     rbf::RBFPlanningForest forest(robot, config);
     rbf::LeafSweepRefineConfig refine_config;
     refine_config.leaf_start_depth = 1;
@@ -678,6 +848,11 @@ void test_leaf_sweep_refined_empty_scene() {
     assert(result.profile.final_boxes == 4);
     assert(forest.boxes().size() == 4);
     assert(result.diagnostics.at("leaf_refine.leaf_free_count") == 4.0);
+    assert(result.diagnostics.at("leaf_refine.sweep_start_depth") == 1.0);
+    assert(result.diagnostics.at("leaf_refine.sweep_max_depth") == 1.0);
+    assert(result.diagnostics.at("leaf_refine.seed_ffb_start_depth") == 5.0);
+    assert(result.diagnostics.at("leaf_refine.seed_ffb_skip_to_depth") == 5.0);
+    assert(result.diagnostics.at("leaf_refine.sweep_seed_ffb_depths_independent") == 1.0);
 }
 
 void test_adaptive_leaf_sweep_empty_scene() {
@@ -686,6 +861,9 @@ void test_adaptive_leaf_sweep_empty_scene() {
     config.endpoint_source.source = rbf::EndpointSource::IFK;
     config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
     config.enable_connector = false;
+    config.grower.find_free_box.start_depth = 5;
+    config.grower.find_free_box.skip_to_depth = 5;
+    config.grower.find_free_box.max_depth = 6;
     rbf::RBFPlanningForest forest(robot, config);
     rbf::AdaptiveLeafSweepConfig adaptive_config;
     adaptive_config.shallow_start_depth = 1;
@@ -719,7 +897,16 @@ void test_adaptive_leaf_sweep_empty_scene() {
     assert(result.adaptive_depth_readiness_met);
     assert(result.adaptive_depth_stop_reason == "coverage_ready");
     assert(!result.adaptive_depth_snapshots_json.empty());
-    assert(result.diagnostics.at("adaptive.qroot_pairs_total") == 0.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.qroot_pairs_total") == 0.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.sweep_start_depth") == 1.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.sweep_max_depth") == 1.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.target_max_depth") == 4.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.seed_ffb_start_depth") == 5.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.seed_ffb_skip_to_depth") == 5.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.sweep_seed_ffb_depths_independent") == 1.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.terminal_controller_enabled") == 1.0);
+    assert(diagnostic_value(result.diagnostics, "adaptive.fast_virtual_checkpoint_mode") == 0.0);
+    assert(result.diagnostics.find("adaptive.fast_checkpoint_mode") == result.diagnostics.end());
     assert(result.diagnostics.find("adaptive.merge_input_boxes") != result.diagnostics.end());
     assert(result.diagnostics.find("adaptive.adjacency_exact_tests") != result.diagnostics.end());
     assert(result.partition_cell_count == 4);
@@ -738,6 +925,13 @@ void test_adaptive_leaf_sweep_empty_scene() {
 	    const auto outside_query = forest.query(outside_start, outside_goal);
 	    assert(!outside_query.success);
 	    assert(outside_query.partition_search_ms >= 0.0);
+	    auto fast_config = adaptive_config;
+	    fast_config.fast_virtual_checkpoint_mode = true;
+	    rbf::RBFPlanningForest fast_forest(robot, config);
+	    auto fast_result = fast_forest.build_adaptive_deep_leaf_sweep_cover({}, fast_config);
+	    assert(diagnostic_value(fast_result.diagnostics, "adaptive.fast_virtual_checkpoint_mode") == 1.0);
+	    assert(diagnostic_value(fast_result.diagnostics, "adaptive.terminal_controller_enabled") == 0.0);
+	    assert(diagnostic_value(fast_result.diagnostics, "adaptive.fast_checkpoint_mode") == 1.0);
 	    const std::size_t edges_before = forest.segment_edges().size();
 	    const int shortcut_added = forest.add_offline_shortcut_edges(1, 4, 1.0, 10.0);
 	    assert(shortcut_added >= 0);
@@ -849,6 +1043,39 @@ void test_endpoint_main_corridor_already_main_noop() {
     assert(it->second >= 1.0);
 }
 
+void test_portal_membership_global_only_policy() {
+    auto robot = make_toy_robot();
+    auto config = base_config("sbf_portal_membership_policy");
+    config.endpoint_source.source = rbf::EndpointSource::IFK;
+    config.envelope_type.type = rbf::EnvelopeType::LinkIAABB;
+    config.database.canonical_mode = false;
+    config.enable_connector = false;
+    assert(config.portal_membership_policy == rbf::PortalMembershipPolicy::GlobalForestOnly);
+    config.portal_membership_policy = rbf::PortalMembershipPolicy::PortalInteriorIndex;
+
+    rbf::RBFPlanningForest forest(robot, config);
+    rbf::LeafSweepRefineConfig refine_config;
+    refine_config.leaf_start_depth = 1;
+    refine_config.leaf_max_depth = 1;
+    refine_config.deep_max_boxes = 0;
+    refine_config.use_virtual_topology = false;
+    auto result = forest.build_leaf_sweep_refined({}, refine_config);
+    assert(result.leaf_free_count > 0);
+    assert(!forest.boxes().empty());
+
+    Eigen::VectorXd point = forest.boxes().front().center();
+    const int box_id = forest.anchor_query_endpoint(point);
+    assert(box_id >= 0);
+    const auto& diagnostics = forest.last_build_profile().diagnostics;
+    assert(diagnostic_value(diagnostics, "portal_membership.policy") == 1.0);
+    assert(diagnostic_value(diagnostics, "portal_membership.portal_interior_index") == 1.0);
+    assert(diagnostic_value(diagnostics, "portal_membership.global_forest_only") == 0.0);
+    assert(diagnostic_value(diagnostics, "portal_membership.portal_interior_index_unavailable") >= 1.0);
+    assert(diagnostic_value(diagnostics, "portal_membership.global_forest_only_fallback") >= 1.0);
+    assert(diagnostic_value(diagnostics, "portal_membership.global_forest_lookup") >= 1.0);
+    assert(diagnostic_value(diagnostics, "query_bridge.endpoint_anchor_already_covered") >= 1.0);
+}
+
 void test_obstacle_rebuild() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_obstacle_rebuild");
@@ -889,10 +1116,12 @@ void test_query_audit_gated_repair_without_graph() {
 int main() {
     test_runtime_context();
     test_graph();
+    test_portal_corridor_edge_expands_hidden_chain();
     test_extract_waypoints_uses_overlap_transitions();
     test_indexed_graph_equivalence();
     test_adaptive_grid_partition_query_matches_graph();
     test_adaptive_grid_partition_append_and_merge();
+    test_adaptive_grid_partition_sparse_staging_records();
     test_birrt_connect_api();
     test_parallel_merger_candidates();
     test_database_oracle_session_commit();
@@ -908,6 +1137,7 @@ int main() {
     test_adaptive_leaf_sweep_empty_scene();
     test_leaf_sweep_refined_domain_invariant();
     test_endpoint_main_corridor_already_main_noop();
+    test_portal_membership_global_only_policy();
     test_obstacle_rebuild();
     test_query_audit_gated_repair_without_graph();
     std::cout << "SBF C++ tests passed.\n";
