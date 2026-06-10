@@ -70,6 +70,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distribution-medium-ratio", type=float, default=5.0)
     parser.add_argument("--distribution-hard-ratio", type=float, default=2.0)
     parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=1.0)
+    parser.add_argument("--distribution-min-medium-count", type=int, default=0)
+    parser.add_argument("--distribution-min-hard-count", type=int, default=0)
     parser.add_argument("--distribution-require-strong-planner", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--seed", type=int, default=20260609)
     parser.add_argument("--extend-path-blocking", action=argparse.BooleanOptionalAction, default=False)
@@ -233,6 +235,8 @@ def main() -> int:
                 distribution_hard_ratio=float(args.distribution_hard_ratio),
                 distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                 distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                distribution_min_medium_count=int(args.distribution_min_medium_count),
+                distribution_min_hard_count=int(args.distribution_min_hard_count),
                 prefix_confirm_mode=str(args.prefix_confirm_mode),
                 prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
                 prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
@@ -294,6 +298,7 @@ def main() -> int:
                     endpoint_threads=int(args.endpoint_threads),
                     n_subdivisions=int(args.envelope_subdivisions),
                     workspace_aabb_shrink=float(args.workspace_aabb_shrink),
+                    path_blocking_workspace_aabb_shrink=None,
                     min_active_link_idx=int(args.min_active_link_idx),
                     max_active_link_idx=int(args.max_active_link_idx),
                     allowed_link_idxs=allowed_link_idxs,
@@ -370,6 +375,8 @@ def main() -> int:
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),
                 "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
+                "min_medium_count": int(args.distribution_min_medium_count),
+                "min_hard_count": int(args.distribution_min_hard_count),
                 "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
             }
             source.setdefault("workspace_mapping", {})["ordered_obstacles"] = [
@@ -415,6 +422,8 @@ def main() -> int:
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),
                 "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
+                "min_medium_count": int(args.distribution_min_medium_count),
+                "min_hard_count": int(args.distribution_min_hard_count),
                 "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
             },
             "query_max_l2": None if math.isinf(query_max_l2_limit(float(args.query_max_l2))) else float(args.query_max_l2),

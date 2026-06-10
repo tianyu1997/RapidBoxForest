@@ -38,6 +38,7 @@ def main() -> int:
         [sys.executable, "improve_workspace/tools/run_clect_experiment_suite.py"],
         [sys.executable, "improve_workspace/tools/run_clect_scaling_experiment.py"],
         [sys.executable, "improve_workspace/tools/plot_clect_experiments.py"],
+        [sys.executable, "improve_workspace/tools/run_hipac_validation.py"],
         [sys.executable, "improve_workspace/tools/run_production_experiment_bridge.py"],
         [
             sys.executable,

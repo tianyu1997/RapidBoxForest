@@ -305,6 +305,33 @@ struct AdaptiveLeafSweepConfig {
 	int grid_target_depth = 0;
 	bool grid_face_index_enabled = true;
 	int grid_planning_max_expansions = 0;
+	bool hipac_portal_connectivity = false;
+	bool hipac_portal_cell_native_validate = true;
+	int hipac_portal_max_internal_boxes = 64;
+	int hipac_portal_max_recursion_depth = 8;
+	int hipac_portal_ffb_depth = 0;
+	double hipac_portal_ffb_deadline_ms = 5.0;
+	bool hipac_online_connectivity = false;
+	bool hipac_online_before_query_bridge = true;
+	bool hipac_promote_query_repairs = false;
+	bool hipac_online_ffb_portal_fallback = false;
+	double hipac_online_candidate_max_length = 3.0;
+	int hipac_online_max_resolves_per_query = 1;
+	int hipac_online_max_hidden_boxes_per_portal = 32;
+	int hipac_online_max_ffb_calls_per_portal = 64;
+	bool hipac_online_prebridge_portal = false;
+	int hipac_online_prebridge_candidate_limit = 32;
+	double hipac_online_prebridge_max_pair_distance = 1.25;
+	double hipac_online_prebridge_route_distance_weight = 1.0;
+	double hipac_online_prebridge_pair_distance_weight = 0.25;
+	bool hipac_online_transition_portal = false;
+	std::string hipac_transition_target_query_indices = "2,3";
+	int hipac_transition_max_attempts_per_query = 1;
+	int hipac_transition_candidate_limit = 16;
+	int hipac_transition_window_stride = 2;
+	int hipac_transition_min_predicted_bridge_edges = 16;
+	double hipac_transition_max_pair_distance = 1.50;
+	bool hipac_transition_allow_same_component = true;
 };
 
 struct AdaptiveLeafSweepResult {
@@ -506,6 +533,14 @@ private:
 										   bool skip_if_connected,
 										   int query_index = -1,
 										   BuildProfile* profile = nullptr);
+	int add_partition_portal_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
+											  const Eigen::Ref<const Eigen::VectorXd>& goal,
+											  const std::vector<Eigen::VectorXd>& waypoint_path,
+											  const char* diagnostic_prefix,
+											  bool anchor_endpoints,
+											  bool skip_if_connected,
+											  int query_index = -1,
+											  BuildProfile* profile = nullptr);
 	void reset_oracle(Scene scene);
 	void reserve_existing_boxes();
 	void rebuild_adjacency();

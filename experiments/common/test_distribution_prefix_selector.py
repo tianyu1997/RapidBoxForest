@@ -68,14 +68,20 @@ class DistributionPrefixSelectorTest(unittest.TestCase):
         self.assertLess(counts["medium"], counts["hard"])
         self.assertTrue(selected["criteria"]["strict_prefix_nesting"])
 
-    def test_rejects_overlapping_distributions(self) -> None:
+    def test_accepts_overlapping_distributions_in_relaxed_mode(self) -> None:
         scan = [
             row(0, (0.005, 0.020, 0.060), (0.005, 0.020, 0.060), (0.005, 0.020, 0.060)),
             row(1, (0.020, 0.030, 0.070), (0.020, 0.030, 0.070), (0.020, 0.030, 0.070)),
             row(2, (0.050, 0.070, 0.090), (0.050, 0.070, 0.090), (0.050, 0.070, 0.090)),
         ]
-        with self.assertRaises(RuntimeError):
-            select_distribution_prefixes_from_scan(scan, medium_ratio=1.1, hard_ratio=1.1, require_strong_planner=False)
+        selected = select_distribution_prefixes_from_scan(
+            scan,
+            medium_ratio=1.1,
+            hard_ratio=1.1,
+            require_strong_planner=False,
+        )
+        self.assertEqual(selected["prefix_counts"], {"easy": 0, "medium": 1, "hard": 2})
+        self.assertFalse(selected["selection_metrics"]["composite_quantile_separated"])
 
     def test_rejects_hard_that_is_faster_for_a_reference_planner(self) -> None:
         scan = [

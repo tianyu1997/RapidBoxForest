@@ -24,7 +24,7 @@ for candidate in (REPO_ROOT.parent, REPO_ROOT):
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_list, environment_metadata, run_id, write_json
 from experiments.common.metrics import mean, median
 from experiments.common.progress import progress
-from experiments.common.random_scene_catalog import generate_catalog, make_robot, scene_for_key
+from experiments.common.random_scene_catalog import generate_catalog, make_robot, queries_for_key, scene_for_key
 from experiments.common.rbf_defaults import DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE, DEFAULT_RBF_AUDIT_SEGMENT_STEP
 from experiments.common.sbf_import import import_sbf
 
@@ -155,15 +155,30 @@ def make_iris_args(args: argparse.Namespace) -> SimpleNamespace:
     )
 
 
-def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
-    scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
-    robot = make_robot(robot_name)
+def run_query(
+    args: argparse.Namespace,
+    scene: Any,
+    robot: Any,
+    robot_name: str,
+    difficulty: str,
+    scene_seed: int,
+    query: dict[str, Any],
+    query_index: int,
+) -> dict[str, Any]:
     iris_args = make_iris_args(args)
-    planner_seed = int(args.seed_base) + 73856093 * int(scene_seed) + 19349663 * (1 + len(robot_name) + len(difficulty))
-    print(f"[exp06-iris] robot={robot_name} difficulty={difficulty} seed={scene_seed}", flush=True)
-    guide, guide_s, guide_result = guide_path(iris_args, robot, list(scene.obstacles), list(scene.start), list(scene.goal), planner_seed)
+    start = [float(value) for value in query["start"]]
+    goal = [float(value) for value in query["goal"]]
+    planner_seed = (
+        int(args.seed_base)
+        + 73856093 * int(scene_seed)
+        + 19349663 * (1 + len(robot_name) + len(difficulty))
+        + 83492791 * int(query_index)
+    )
+    label = f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{query_index}')}"
+    print(f"[exp06-iris] robot={robot_name} difficulty={difficulty} seed={scene_seed} query={query_index}", flush=True)
+    guide, guide_s, guide_result = guide_path(iris_args, robot, list(scene.obstacles), start, goal, planner_seed)
     robot_diagram, plant, model_instance, checker = build_drake_random_scene(robot_name, list(scene.obstacles))
-    raw_seed_points = [np.asarray(scene.start, dtype=float), np.asarray(scene.goal, dtype=float)]
+    raw_seed_points = [np.asarray(start, dtype=float), np.asarray(goal, dtype=float)]
     raw_seed_points.extend(region_seed_points(guide, int(args.max_region_seeds)))
     seed_points = []
     seen_seed_keys: set[tuple[float, ...]] = set()
@@ -175,7 +190,7 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
         if checker.CheckConfigCollisionFree(point):
             seed_points.append(np.asarray(point, dtype=float))
     if not seed_points:
-        seed_points = [np.asarray(scene.start, dtype=float), np.asarray(scene.goal, dtype=float)]
+        seed_points = [np.asarray(start, dtype=float), np.asarray(goal, dtype=float)]
     regions, timings, failures = build_regions(
         iris_args,
         robot_diagram,
@@ -187,8 +202,8 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
         float(args.budget_s),
     )
     result = solve_regions_gcs(
-        np.asarray(scene.start, dtype=float),
-        np.asarray(scene.goal, dtype=float),
+        np.asarray(start, dtype=float),
+        np.asarray(goal, dtype=float),
         regions,
         seed=planner_seed,
         checker=checker,
@@ -208,8 +223,8 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
         list(scene.obstacles),
         path,
         segment_step=float(args.audit_segment_step),
-        start=list(scene.start),
-        goal=list(scene.goal),
+        start=start,
+        goal=goal,
         collision_tolerance=float(args.audit_collision_tolerance),
     ) if drake_success else (False, str(result.get("note", "gcs_failed")))
     if drake_success and not audit_ok:
@@ -221,8 +236,8 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
                 list(scene.obstacles),
                 path,
                 segment_step=float(args.audit_segment_step),
-                start=list(scene.start),
-                goal=list(scene.goal),
+                start=start,
+                goal=goal,
                 collision_tolerance=float(args.audit_collision_tolerance),
             )
     if drake_success and audit_ok and float(args.final_ompl_simplify_time_s) > 0.0:
@@ -247,8 +262,8 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
             list(scene.obstacles),
             path,
             segment_step=float(args.audit_segment_step),
-            start=list(scene.start),
-            goal=list(scene.goal),
+            start=start,
+            goal=goal,
             collision_tolerance=float(args.audit_collision_tolerance),
         )
     success = bool(drake_success and audit_ok)
@@ -257,39 +272,20 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
     length = list_path_length(path) if success else math.nan
     print(
         f"[exp06-iris] done robot={robot_name} difficulty={difficulty} seed={scene_seed} "
-        f"regions={len(regions)} success={success} build_s={build_s:.3f} query_s={query_s:.3f}",
+        f"query={query_index} regions={len(regions)} success={success} build_s={build_s:.3f} query_s={query_s:.3f}",
         flush=True,
     )
     return {
-        "method": "iris_np_gcs",
-        "robot": robot_name,
-        "difficulty": difficulty,
-        "scene_seed": int(scene_seed),
-        "stage_id": f"budget{float(args.budget_s):g}_r{int(args.max_region_seeds)}_it{int(args.iteration_limit)}",
-        "budget_s": float(args.budget_s),
-        "deep_max_boxes": 0,
-        "obstacle_count": len(scene.obstacles),
-        "status": "ok" if success else "failed_audit" if drake_success else "failed_planning",
-        "success_count": 1 if success else 0,
-        "query_count": 1,
-        "planning_s": build_s + query_s,
-        "build_s": build_s,
-        "query_s": query_s,
-        "audit_s": 0.0,
-        "path_length_mean": length,
-        "raw_segment_fraction": 0.0 if success else math.nan,
-        "final_boxes": math.nan,
-        "queries": [{
-            "label": f"{robot_name}_{difficulty}_{scene_seed}",
-            "success": success,
-            "audit_passed": audit_ok,
-            "audit_status": audit_status,
-            "query_ms": query_s * 1000.0,
-            "audit_ms": 0.0,
-            "path_length": length,
-            "segment_fraction": 0.0 if success else math.nan,
-            "waypoint_count": len(path),
-        }],
+        "label": label,
+        "success": success,
+        "audit_passed": audit_ok,
+        "audit_status": audit_status,
+        "query_ms": query_s * 1000.0,
+        "build_ms": build_s * 1000.0,
+        "audit_ms": 0.0,
+        "path_length": length,
+        "segment_fraction": 0.0 if success else math.nan,
+        "waypoint_count": len(path),
         "diagnostics": {
             "guide_s": guide_s,
             "guide_ok": bool(guide_result.get("ok")),
@@ -300,7 +296,46 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
             "sbf_repair": repair,
             "final_ompl_simplify_time_s": float(args.final_ompl_simplify_time_s),
             "final_ompl_simplify_reason": simplify_reason,
+        },
+    }
+
+
+def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
+    scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
+    robot = make_robot(robot_name)
+    query_records = list(queries_for_key(catalog, robot_name, difficulty, scene_seed))
+    qrows = [
+        run_query(args, scene, robot, robot_name, difficulty, scene_seed, dict(query), index)
+        for index, query in enumerate(query_records)
+    ]
+    successes = [row for row in qrows if bool(row.get("success")) and bool(row.get("audit_passed"))]
+    build_s = sum(float(row.get("build_ms", 0.0)) for row in qrows) / 1000.0
+    query_s = sum(float(row.get("query_ms", 0.0)) for row in qrows) / 1000.0
+    success = len(successes) == len(qrows)
+    return {
+        "method": "iris_np_gcs",
+        "robot": robot_name,
+        "difficulty": difficulty,
+        "scene_seed": int(scene_seed),
+        "stage_id": f"budget{float(args.budget_s):g}_r{int(args.max_region_seeds)}_it{int(args.iteration_limit)}",
+        "budget_s": float(args.budget_s),
+        "deep_max_boxes": 0,
+        "obstacle_count": len(scene.obstacles),
+        "status": "ok" if success else "partial",
+        "success_count": len(successes),
+        "query_count": len(qrows),
+        "planning_s": build_s + query_s,
+        "build_s": build_s,
+        "query_s": query_s,
+        "audit_s": 0.0,
+        "path_length_mean": mean(row.get("path_length", math.nan) for row in successes),
+        "raw_segment_fraction": median(row.get("segment_fraction", math.nan) for row in successes),
+        "final_boxes": math.nan,
+        "queries": qrows,
+        "diagnostics": {
+            "final_ompl_simplify_time_s": float(args.final_ompl_simplify_time_s),
             "scene_catalog": str(args.scene_catalog),
+            "q10_batch": True,
         },
     }
 
@@ -311,6 +346,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for robot, difficulty, stage_id in keys:
         items = [row for row in rows if row["robot"] == robot and row["difficulty"] == difficulty and row["stage_id"] == stage_id]
         success_items = [row for row in items if int(row.get("success_count", 0)) == int(row.get("query_count", 1))]
+        success_queries = sum(int(row.get("success_count", 0)) for row in items)
+        total_queries = sum(int(row.get("query_count", 0)) for row in items)
         out.append({
             "method": "iris_np_gcs",
             "robot": robot,
@@ -320,8 +357,14 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "deep_max_boxes": 0,
             "scenes": len(items),
             "success_scenes": len(success_items),
+            "queries_per_scene": median(row.get("query_count", 0) for row in items),
+            "success_queries": success_queries,
+            "total_queries": total_queries,
             "obstacles_median": median(row.get("obstacle_count", math.nan) for row in items),
             "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
+            "offline_build_s_median": median(row.get("build_s", math.nan) for row in items),
+            "online_batch_s_median": median(row.get("query_s", math.nan) for row in items),
+            "online_per_query_s_median": median(row.get("query_s", math.nan) / max(1, int(row.get("query_count", 1))) for row in items),
             "audit_s_median": median(row.get("audit_s", math.nan) for row in items),
             "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success_items),
             "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success_items),
@@ -334,7 +377,9 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def write_summary_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fields = [
         "method", "robot", "difficulty", "stage_id", "budget_s", "deep_max_boxes", "scenes",
-        "success_scenes", "obstacles_median", "planning_s_median", "audit_s_median",
+        "success_scenes", "queries_per_scene", "success_queries", "total_queries",
+        "obstacles_median", "planning_s_median", "offline_build_s_median",
+        "online_batch_s_median", "online_per_query_s_median", "audit_s_median",
         "path_length_mean", "raw_segment_fraction_median", "final_boxes_median", "status",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)

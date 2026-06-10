@@ -1,9 +1,9 @@
 # Improve Workspace
 
-This workspace contains the sidecar implementation and validation artifacts for
-the improvement plan in `docs/improve.md`.
+This workspace contains sidecar implementations and validation artifacts for
+RBF improvement plans.
 
-Current source plan:
+Primary C-LECT source plan:
 
 - Path: `docs/improve.md`
 - Size: `36292` bytes
@@ -63,6 +63,44 @@ Current source plan:
 - `patch_proposals/interval_key_replay_integration.md`: concrete production
   patch plan for interval-key evidence replay compatibility.
 
+## Hierarchical Partition Connectivity / HiPaC
+
+`docs/分级partition连通.md` is implemented as an independent sidecar in
+`clect_sidecar/hipac.py`.  It models the complete strategy in that document:
+
+- `HiPaCCellState`: `FREE`, `CERT_OCCUPIED`, `MIXED`, `DEFERRED`, and
+  `REFINED` cell states.
+- `HierarchicalPartitionConnectivity.build()`: coarse partition
+  classification, certified graph `G+`, optimistic graph `G~`,
+  disconnected-component pair selection, optimistic path search, mixed-cell
+  selection, and connectivity-driven refinement.
+- `refine_mixed_cell()`: bounded domain-local refinement between entry/exit
+  portals, anisotropic blocker-aware splitting, local certified free child
+  graph search, and compressed conservative `PortalCorridor` insertion.
+- `HiPaCCellSummary`: parent-cell boundary ports, certified portal pairs,
+  unresolved portal pairs, blocker signatures, and sparse child provenance.
+- `query()`: lazy hierarchical online query with endpoint attach/refine,
+  certified path extraction, optimistic unresolved-cell repair, lifelong
+  write-back accounting, and lazy portal expansion.
+- `HiPaCMetrics`: connectivity-oriented metrics from the plan:
+  certified component count, resolved/unresolved portal pairs, connected
+  anchor pairs, `P_attach`, `P_samecomp`, online mixed-cell refinement count,
+  and online repair time.
+
+Validation entry point:
+
+```bash
+python3 improve_workspace/tools/run_hipac_validation.py
+```
+
+This writes:
+
+- `improve_workspace/hipac_validation.json`
+- `improve_workspace/hipac_validation.md`
+- `improve_workspace/hipac_experiment_suite.json`
+- `improve_workspace/hipac_experiment_suite.csv`
+- `improve_workspace/hipac_experiment_suite.md`
+
 ## Validation
 
 Run the complete sidecar validation:
@@ -86,6 +124,11 @@ This writes:
 - `improve_workspace/clect_scaling_experiment.md`
 - `improve_workspace/clect_figures_manifest.json`
 - `improve_workspace/clect_figures.md`
+- `improve_workspace/hipac_validation.json`
+- `improve_workspace/hipac_validation.md`
+- `improve_workspace/hipac_experiment_suite.json`
+- `improve_workspace/hipac_experiment_suite.csv`
+- `improve_workspace/hipac_experiment_suite.md`
 - `improve_workspace/production_experiment_bridge.json`
 - `improve_workspace/production_experiment_bridge.md`
 - `improve_workspace/production_experiment_bridge_executed.json`

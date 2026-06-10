@@ -42,6 +42,7 @@ class Q10x10CatalogValidationTest(unittest.TestCase):
             difficulties=["easy", "medium", "hard"],
             scene_seeds=1,
             queries_per_scene=10,
+            min_probe_success_fraction=1.0,
             allow_extra_records=False,
         )
         self.assertTrue(report["ok"], report["errors"])
@@ -58,6 +59,7 @@ class Q10x10CatalogValidationTest(unittest.TestCase):
             difficulties=["easy", "medium", "hard"],
             scene_seeds=1,
             queries_per_scene=10,
+            min_probe_success_fraction=1.0,
             allow_extra_records=False,
         )
         self.assertFalse(report["ok"])
@@ -75,6 +77,7 @@ class Q10x10CatalogValidationTest(unittest.TestCase):
             difficulties=["easy", "medium", "hard"],
             scene_seeds=1,
             queries_per_scene=10,
+            min_probe_success_fraction=1.0,
             allow_extra_records=False,
         )
         self.assertFalse(report["ok"])

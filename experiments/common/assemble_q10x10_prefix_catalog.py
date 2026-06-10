@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--difficulties", default="easy,medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=10)
     parser.add_argument("--queries-per-scene", type=int, default=10)
+    parser.add_argument("--min-probe-success-fraction", type=float, default=1.0)
     parser.add_argument("--allow-extra-records", action="store_true")
     return parser.parse_args()
 
@@ -67,6 +68,31 @@ def load_part_records(parts_dir: Path) -> tuple[list[dict[str, Any]], list[dict[
     return records, inputs
 
 
+def filter_expected_records(
+    records: list[dict[str, Any]],
+    *,
+    robots: list[str],
+    difficulties: list[str],
+    scene_seeds: int,
+) -> list[dict[str, Any]]:
+    robot_set = {str(robot) for robot in robots}
+    difficulty_set = {str(difficulty) for difficulty in difficulties}
+    scene_seed_set = set(range(int(scene_seeds)))
+    out: list[dict[str, Any]] = []
+    for record in records:
+        try:
+            scene_seed = int(record.get("scene_seed", -1))
+        except Exception:
+            scene_seed = -1
+        if (
+            str(record.get("robot")) in robot_set
+            and str(record.get("difficulty")) in difficulty_set
+            and scene_seed in scene_seed_set
+        ):
+            out.append(record)
+    return out
+
+
 def comparable_queries(record: dict[str, Any]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for query in query_records_from_record(record):
@@ -88,6 +114,7 @@ def validate_records(
     difficulties: list[str],
     scene_seeds: int,
     queries_per_scene: int,
+    min_probe_success_fraction: float,
     allow_extra_records: bool,
 ) -> dict[str, Any]:
     errors: list[str] = []
@@ -134,8 +161,12 @@ def validate_records(
                 if not record_has_shared_query_median_gate(record):
                     errors.append(f"{key} does not have a strict confirmed difficulty probe")
                 for planner_key in ("rrtconnect", "bitstar"):
-                    if probe_success_fraction(record, planner_key) < 1.0 - 1e-12:
-                        errors.append(f"{key} {planner_key} success_fraction is not 1.0")
+                    success_fraction = probe_success_fraction(record, planner_key)
+                    if success_fraction < float(min_probe_success_fraction) - 1e-12:
+                        errors.append(
+                            f"{key} {planner_key} success_fraction {success_fraction:.6g} "
+                            f"is below {float(min_probe_success_fraction):.6g}"
+                        )
             group_rows.append(
                 {
                     "robot": robot,
@@ -186,6 +217,7 @@ def validate_records(
         "difficulties": difficulties,
         "scene_seeds": int(scene_seeds),
         "queries_per_scene": int(queries_per_scene),
+        "min_probe_success_fraction": float(min_probe_success_fraction),
         "groups": group_rows,
         "summary": summary_rows,
     }
@@ -199,6 +231,9 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- records: `{report['records']}/{report['expected_records']}`",
         f"- scene seeds per robot/difficulty: `{report['scene_seeds']}`",
         f"- queries per scene: `{report['queries_per_scene']}`",
+        f"- minimum reference-probe success fraction: `{report['min_probe_success_fraction']}`",
+        "- probe policy: successful reference-planner paths are strict-audited at 0.01; "
+        "the success-fraction threshold is a relaxed scene-generation filter.",
         "",
         "## Summary",
         "",
@@ -232,12 +267,19 @@ def main() -> int:
         payload = load_catalog(args.catalog)
         records = [dict(row) for row in payload.get("records", [])]
         inputs = [{"path": str(args.catalog), "records": len(records)}]
+    records = filter_expected_records(
+        records,
+        robots=robots,
+        difficulties=difficulties,
+        scene_seeds=int(args.scene_seeds),
+    )
     report = validate_records(
         records,
         robots=robots,
         difficulties=difficulties,
         scene_seeds=int(args.scene_seeds),
         queries_per_scene=int(args.queries_per_scene),
+        min_probe_success_fraction=float(args.min_probe_success_fraction),
         allow_extra_records=bool(args.allow_extra_records),
     )
     report["inputs"] = inputs
@@ -270,6 +312,12 @@ def main() -> int:
                 "shared_queries_across_difficulties": True,
                 "queries_per_scene": int(args.queries_per_scene),
                 "scene_seeds_per_robot_difficulty": int(args.scene_seeds),
+                "minimum_reference_probe_success_fraction": float(args.min_probe_success_fraction),
+                "reference_probe_policy": (
+                    "relaxed generator-side filter; successful reference-planner paths "
+                    "are strict-audited at 0.01, and Exp.6 planner runs re-evaluate "
+                    "methods from this saved catalog"
+                ),
             },
             "validation_report": {
                 "ok": bool(report["ok"]),

@@ -477,6 +477,33 @@ class RBFLeafRRTOptions:
     adaptive_grid_target_depth: int = 0
     adaptive_grid_face_index_enabled: bool = True
     adaptive_grid_planning_max_expansions: int = 0
+    hipac_portal_connectivity: bool = False
+    hipac_portal_cell_native_validate: bool = True
+    hipac_portal_max_internal_boxes: int = 64
+    hipac_portal_max_recursion_depth: int = 8
+    hipac_portal_ffb_depth: int = 0
+    hipac_portal_ffb_deadline_ms: float = 5.0
+    hipac_online_connectivity: bool = False
+    hipac_online_before_query_bridge: bool = True
+    hipac_promote_query_repairs: bool = False
+    hipac_online_ffb_portal_fallback: bool = False
+    hipac_online_candidate_max_length: float = 3.0
+    hipac_online_max_resolves_per_query: int = 1
+    hipac_online_max_hidden_boxes_per_portal: int = 32
+    hipac_online_max_ffb_calls_per_portal: int = 64
+    hipac_online_prebridge_portal: bool = False
+    hipac_online_prebridge_candidate_limit: int = 32
+    hipac_online_prebridge_max_pair_distance: float = 1.25
+    hipac_online_prebridge_route_distance_weight: float = 1.0
+    hipac_online_prebridge_pair_distance_weight: float = 0.25
+    hipac_online_transition_portal: bool = False
+    hipac_transition_target_query_indices: str = "2,3"
+    hipac_transition_max_attempts_per_query: int = 1
+    hipac_transition_candidate_limit: int = 16
+    hipac_transition_window_stride: int = 2
+    hipac_transition_min_predicted_bridge_edges: int = 16
+    hipac_transition_max_pair_distance: float = 1.50
+    hipac_transition_allow_same_component: bool = True
     validation_batch_size: int = DEFAULT_RBF_VALIDATION_BATCH_SIZE
     ffb_start_depth: int = DEFAULT_RBF_FFB_START_DEPTH
     ffb_search_mode: str = DEFAULT_RBF_FFB_SEARCH_MODE
@@ -1270,6 +1297,60 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.grid_face_index_enabled = bool(options.adaptive_grid_face_index_enabled)
     if hasattr(cfg, "grid_planning_max_expansions"):
         cfg.grid_planning_max_expansions = int(options.adaptive_grid_planning_max_expansions)
+    if hasattr(cfg, "hipac_portal_connectivity"):
+        cfg.hipac_portal_connectivity = bool(options.hipac_portal_connectivity)
+    if hasattr(cfg, "hipac_portal_cell_native_validate"):
+        cfg.hipac_portal_cell_native_validate = bool(options.hipac_portal_cell_native_validate)
+    if hasattr(cfg, "hipac_portal_max_internal_boxes"):
+        cfg.hipac_portal_max_internal_boxes = int(options.hipac_portal_max_internal_boxes)
+    if hasattr(cfg, "hipac_portal_max_recursion_depth"):
+        cfg.hipac_portal_max_recursion_depth = int(options.hipac_portal_max_recursion_depth)
+    if hasattr(cfg, "hipac_portal_ffb_depth"):
+        cfg.hipac_portal_ffb_depth = int(options.hipac_portal_ffb_depth)
+    if hasattr(cfg, "hipac_portal_ffb_deadline_ms"):
+        cfg.hipac_portal_ffb_deadline_ms = float(options.hipac_portal_ffb_deadline_ms)
+    if hasattr(cfg, "hipac_online_connectivity"):
+        cfg.hipac_online_connectivity = bool(options.hipac_online_connectivity)
+    if hasattr(cfg, "hipac_online_before_query_bridge"):
+        cfg.hipac_online_before_query_bridge = bool(options.hipac_online_before_query_bridge)
+    if hasattr(cfg, "hipac_promote_query_repairs"):
+        cfg.hipac_promote_query_repairs = bool(options.hipac_promote_query_repairs)
+    if hasattr(cfg, "hipac_online_ffb_portal_fallback"):
+        cfg.hipac_online_ffb_portal_fallback = bool(options.hipac_online_ffb_portal_fallback)
+    if hasattr(cfg, "hipac_online_candidate_max_length"):
+        cfg.hipac_online_candidate_max_length = float(options.hipac_online_candidate_max_length)
+    if hasattr(cfg, "hipac_online_max_resolves_per_query"):
+        cfg.hipac_online_max_resolves_per_query = int(options.hipac_online_max_resolves_per_query)
+    if hasattr(cfg, "hipac_online_max_hidden_boxes_per_portal"):
+        cfg.hipac_online_max_hidden_boxes_per_portal = int(options.hipac_online_max_hidden_boxes_per_portal)
+    if hasattr(cfg, "hipac_online_max_ffb_calls_per_portal"):
+        cfg.hipac_online_max_ffb_calls_per_portal = int(options.hipac_online_max_ffb_calls_per_portal)
+    if hasattr(cfg, "hipac_online_prebridge_portal"):
+        cfg.hipac_online_prebridge_portal = bool(options.hipac_online_prebridge_portal)
+    if hasattr(cfg, "hipac_online_prebridge_candidate_limit"):
+        cfg.hipac_online_prebridge_candidate_limit = int(options.hipac_online_prebridge_candidate_limit)
+    if hasattr(cfg, "hipac_online_prebridge_max_pair_distance"):
+        cfg.hipac_online_prebridge_max_pair_distance = float(options.hipac_online_prebridge_max_pair_distance)
+    if hasattr(cfg, "hipac_online_prebridge_route_distance_weight"):
+        cfg.hipac_online_prebridge_route_distance_weight = float(options.hipac_online_prebridge_route_distance_weight)
+    if hasattr(cfg, "hipac_online_prebridge_pair_distance_weight"):
+        cfg.hipac_online_prebridge_pair_distance_weight = float(options.hipac_online_prebridge_pair_distance_weight)
+    if hasattr(cfg, "hipac_online_transition_portal"):
+        cfg.hipac_online_transition_portal = bool(options.hipac_online_transition_portal)
+    if hasattr(cfg, "hipac_transition_target_query_indices"):
+        cfg.hipac_transition_target_query_indices = str(options.hipac_transition_target_query_indices)
+    if hasattr(cfg, "hipac_transition_max_attempts_per_query"):
+        cfg.hipac_transition_max_attempts_per_query = int(options.hipac_transition_max_attempts_per_query)
+    if hasattr(cfg, "hipac_transition_candidate_limit"):
+        cfg.hipac_transition_candidate_limit = int(options.hipac_transition_candidate_limit)
+    if hasattr(cfg, "hipac_transition_window_stride"):
+        cfg.hipac_transition_window_stride = int(options.hipac_transition_window_stride)
+    if hasattr(cfg, "hipac_transition_min_predicted_bridge_edges"):
+        cfg.hipac_transition_min_predicted_bridge_edges = int(options.hipac_transition_min_predicted_bridge_edges)
+    if hasattr(cfg, "hipac_transition_max_pair_distance"):
+        cfg.hipac_transition_max_pair_distance = float(options.hipac_transition_max_pair_distance)
+    if hasattr(cfg, "hipac_transition_allow_same_component"):
+        cfg.hipac_transition_allow_same_component = bool(options.hipac_transition_allow_same_component)
     return cfg
 
 
@@ -1987,6 +2068,14 @@ def run_leaf_rrt(
         "offline_shortcut_edges_added": int(offline_shortcut_edges_added),
         "offline_shortcut_candidates": int(diagnostics.get("offline_shortcut.candidates", 0.0)),
         "offline_shortcut_tested_pairs": int(diagnostics.get("offline_shortcut.tested_pairs", 0.0)),
+        "offline_shortcut_portal_corridor_edges_added": int(diagnostics.get("offline_shortcut.portal_corridor_edges_added", 0.0)),
+        "offline_shortcut_portal_corridor_fail": int(diagnostics.get("offline_shortcut.portal_corridor_fail", 0.0)),
+        "offline_shortcut_portal_corridor_attempts": int(diagnostics.get("offline_shortcut.portal_corridor_attempts", 0.0)),
+        "offline_shortcut_portal_corridor_added": int(diagnostics.get("offline_shortcut.portal_corridor_added", 0.0)),
+        "offline_shortcut_portal_corridor_internal_boxes": int(diagnostics.get("offline_shortcut.portal_corridor_internal_boxes", 0.0)),
+        "offline_shortcut_portal_corridor_ffb_calls": int(diagnostics.get("offline_shortcut.portal_corridor_ffb_calls", 0.0)),
+        "offline_shortcut_portal_corridor_cell_native_validations": int(diagnostics.get("offline_shortcut.portal_corridor_cell_native_validations", 0.0)),
+        "offline_shortcut_portal_corridor_cell_native_free": int(diagnostics.get("offline_shortcut.portal_corridor_cell_native_free", 0.0)),
         "offline_shortcut_box_corridor_edges_added": int(diagnostics.get("offline_shortcut.box_corridor_edges_added", 0.0)),
         "offline_shortcut_segment_edges_added": int(diagnostics.get("offline_shortcut.segment_edges_added", 0.0)),
         "offline_shortcut_pave_boxes_added": int(diagnostics.get("offline_shortcut.pave_boxes_added", 0.0)),
@@ -2108,6 +2197,54 @@ def run_leaf_rrt(
             str(label): int(value)
             for label, value in query_bridge_added_by_label.items()
         },
+        "query_bridge_hipac_online_attempts": int(diagnostics.get("query_bridge.hipac_online_attempts", 0.0)),
+        "query_bridge_hipac_online_added": int(diagnostics.get("query_bridge.hipac_online_added", 0.0)),
+        "query_bridge_hipac_online_satisfied": int(diagnostics.get("query_bridge.hipac_online_satisfied", 0.0)),
+        "query_bridge_hipac_online_failures": int(diagnostics.get("query_bridge.hipac_online_failures", 0.0)),
+        "query_bridge_hipac_online_not_sufficient": int(diagnostics.get("query_bridge.hipac_online_not_sufficient", 0.0)),
+        "query_bridge_hipac_online_ms": float(diagnostics.get("query_bridge.hipac_online_ms_total", 0.0)),
+        "query_bridge_hipac_online_box_edges": int(diagnostics.get("query_bridge.hipac_online.partition_box_corridor_overlay_added", 0.0)),
+        "query_bridge_hipac_online_portal_edges": int(diagnostics.get("query_bridge.hipac_online.portal_corridor_added", 0.0)),
+        "query_bridge_hipac_online_internal_boxes": int(diagnostics.get("query_bridge.hipac_online.portal_corridor_internal_boxes", 0.0)),
+        "query_bridge_hipac_online_ffb_calls": int(diagnostics.get("query_bridge.hipac_online.portal_corridor_ffb_calls", 0.0)),
+        "query_bridge_hipac_online_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online.portal_corridor_cell_native_validations", 0.0)),
+        "query_bridge_hipac_online_cell_native_free": int(diagnostics.get("query_bridge.hipac_online.portal_corridor_cell_native_free", 0.0)),
+        "query_bridge_hipac_prebridge_attempts": int(diagnostics.get("query_bridge.hipac_prebridge_attempts", 0.0)),
+        "query_bridge_hipac_prebridge_candidates": int(diagnostics.get("query_bridge.hipac_prebridge_candidates", 0.0)),
+        "query_bridge_hipac_prebridge_portal_attempts": int(diagnostics.get("query_bridge.hipac_prebridge_portal_attempts", 0.0)),
+        "query_bridge_hipac_prebridge_added": int(diagnostics.get("query_bridge.hipac_prebridge_added", 0.0)),
+        "query_bridge_hipac_prebridge_satisfied": int(diagnostics.get("query_bridge.hipac_prebridge_satisfied", 0.0)),
+        "query_bridge_hipac_prebridge_failures": int(diagnostics.get("query_bridge.hipac_prebridge_failures", 0.0)),
+        "query_bridge_hipac_prebridge_not_sufficient": int(diagnostics.get("query_bridge.hipac_prebridge_not_sufficient", 0.0)),
+        "query_bridge_hipac_prebridge_ms": float(diagnostics.get("query_bridge.hipac_prebridge_ms_total", 0.0)),
+        "query_bridge_hipac_prebridge_portal_edges": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_added", 0.0)),
+        "query_bridge_hipac_prebridge_internal_boxes": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_internal_boxes", 0.0)),
+        "query_bridge_hipac_prebridge_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_ffb_calls", 0.0)),
+        "query_bridge_hipac_prebridge_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_cell_native_validations", 0.0)),
+        "query_bridge_hipac_prebridge_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_cell_native_free", 0.0)),
+        "query_bridge_hipac_transition_attempts": int(diagnostics.get("query_bridge.hipac_transition_attempts", 0.0)),
+        "query_bridge_hipac_transition_candidates": int(diagnostics.get("query_bridge.hipac_transition_candidates", 0.0)),
+        "query_bridge_hipac_transition_gated": int(diagnostics.get("query_bridge.hipac_transition_gated", 0.0)),
+        "query_bridge_hipac_transition_portal_attempts": int(diagnostics.get("query_bridge.hipac_transition_portal_attempts", 0.0)),
+        "query_bridge_hipac_transition_added": int(diagnostics.get("query_bridge.hipac_transition_added", 0.0)),
+        "query_bridge_hipac_transition_satisfied": int(diagnostics.get("query_bridge.hipac_transition_satisfied", 0.0)),
+        "query_bridge_hipac_transition_not_sufficient": int(diagnostics.get("query_bridge.hipac_transition_not_sufficient", 0.0)),
+        "query_bridge_hipac_transition_failures": int(diagnostics.get("query_bridge.hipac_transition_failures", 0.0)),
+        "query_bridge_hipac_transition_ms": float(diagnostics.get("query_bridge.hipac_transition_ms_total", 0.0)),
+        "query_bridge_hipac_transition_portal_edges": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_added", 0.0)),
+        "query_bridge_hipac_transition_internal_boxes": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_internal_boxes", 0.0)),
+        "query_bridge_hipac_transition_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_ffb_calls", 0.0)),
+        "query_bridge_hipac_transition_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_validations", 0.0)),
+        "query_bridge_hipac_transition_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_free", 0.0)),
+        "query_bridge_hipac_promote_attempts": int(diagnostics.get("query_bridge.hipac_promote_attempts", 0.0)),
+        "query_bridge_hipac_promote_added": int(diagnostics.get("query_bridge.hipac_promote_added", 0.0)),
+        "query_bridge_hipac_promote_failures": int(diagnostics.get("query_bridge.hipac_promote_failures", 0.0)),
+        "query_bridge_hipac_promote_ms": float(diagnostics.get("query_bridge.hipac_promote_ms_total", 0.0)),
+        "query_bridge_hipac_promote_portal_edges": int(diagnostics.get("query_bridge.hipac_promote.portal_corridor_added", 0.0)),
+        "query_bridge_hipac_promote_internal_boxes": int(diagnostics.get("query_bridge.hipac_promote.portal_corridor_internal_boxes", 0.0)),
+        "query_bridge_hipac_promote_ffb_calls": int(diagnostics.get("query_bridge.hipac_promote.portal_corridor_ffb_calls", 0.0)),
+        "query_bridge_hipac_promote_cell_native_validations": int(diagnostics.get("query_bridge.hipac_promote.portal_corridor_cell_native_validations", 0.0)),
+        "query_bridge_hipac_promote_cell_native_free": int(diagnostics.get("query_bridge.hipac_promote.portal_corridor_cell_native_free", 0.0)),
         **query_bridge_diagnostic_fields,
         "audit_s": sum(float(row["audit_ms"]) for row in qrows) / 1000.0,
         "path_length_mean": mean(row["path_length"] for row in successes),

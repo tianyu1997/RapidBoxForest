@@ -641,7 +641,10 @@ def _distribution_triple_score(
     h_med = float(h["composite"]["median_s"])
     if not (math.isfinite(e_med) and math.isfinite(m_med) and math.isfinite(h_med)):
         return False, -math.inf, {"reason": "nonfinite_composite"}
-    if not (e_med < m_med < h_med):
+    order_eps = 1e-12
+    strictly_ordered = e_med < m_med < h_med
+    nondecreasing_order = e_med <= m_med + order_eps and m_med <= h_med + order_eps
+    if not nondecreasing_order:
         return False, -math.inf, {"reason": "composite_median_not_ordered"}
     m_ratio = m_med / max(e_med, TIME_FLOOR_S)
     h_ratio = h_med / max(m_med, TIME_FLOOR_S)
@@ -649,11 +652,10 @@ def _distribution_triple_score(
         return False, -math.inf, {"reason": "medium_ratio_too_low", "medium_over_easy": float(m_ratio)}
     if h_ratio < float(hard_ratio) - 1e-12:
         return False, -math.inf, {"reason": "hard_ratio_too_low", "hard_over_medium": float(h_ratio)}
-    if not (
+    quantile_separated = (
         float(e["composite"]["q75_s"]) < float(m["composite"]["median_s"])
         and float(m["composite"]["q75_s"]) < float(h["composite"]["median_s"])
-    ):
-        return False, -math.inf, {"reason": "composite_quantile_overlap"}
+    )
     for planner_key in ("rrtconnect", "bitstar"):
         e_planner = float(e[planner_key]["median_s"])
         m_planner = float(m[planner_key]["median_s"])
@@ -683,11 +685,20 @@ def _distribution_triple_score(
         + math.log(max(h_ratio, 1e-12))
         + 0.5 * float(norm_gap)
         + 0.25 * float(len(strong_planners))
+        + (0.15 if quantile_separated else -0.15)
+        + (0.1 if strictly_ordered else -0.1)
+        + 0.25
+        * max(
+            0.0,
+            float(hard.get("direct_mean", 0.0)) - float(easy.get("direct_mean", 0.0)),
+        )
     )
     details = {
         "medium_over_easy": float(m_ratio),
         "hard_over_medium": float(h_ratio),
         "strong_reference_planners": strong_planners,
+        "composite_median_strictly_ordered": bool(strictly_ordered),
+        "composite_quantile_separated": bool(quantile_separated),
         "score": float(score),
     }
     return True, float(score), details
@@ -700,6 +711,8 @@ def select_distribution_prefixes_from_scan(
     hard_ratio: float = 2.0,
     hard_not_faster_factor: float = 1.0,
     require_strong_planner: bool = True,
+    min_medium_count: int = 0,
+    min_hard_count: int = 0,
 ) -> dict[str, Any]:
     rows = [row for row in scan_rows if bool(row.get("metrics", {}).get("selectable"))]
     rows.sort(key=lambda row: int(row["count"]))
@@ -710,6 +723,17 @@ def select_distribution_prefixes_from_scan(
         for medium_index in range(easy_index + 1, len(rows)):
             medium = rows[medium_index]
             for hard in rows[medium_index + 1:]:
+                if int(medium["count"]) < int(min_medium_count) or int(hard["count"]) < int(min_hard_count):
+                    if best_reject is None:
+                        best_reject = {
+                            "easy_count": int(easy["count"]),
+                            "medium_count": int(medium["count"]),
+                            "hard_count": int(hard["count"]),
+                            "reason": "prefix_count_below_minimum",
+                            "min_medium_count": int(min_medium_count),
+                            "min_hard_count": int(min_hard_count),
+                        }
+                    continue
                 if not (int(easy["count"]) < int(medium["count"]) < int(hard["count"])):
                     if best_reject is None:
                         best_reject = {
@@ -757,6 +781,8 @@ def select_distribution_prefixes_from_scan(
             "medium_over_easy_min": float(medium_ratio),
             "hard_over_medium_min": float(hard_ratio),
             "hard_not_faster_factor": float(hard_not_faster_factor),
+            "min_medium_count": int(min_medium_count),
+            "min_hard_count": int(min_hard_count),
             "strict_prefix_nesting": True,
             "require_strong_reference_planner": bool(require_strong_planner),
         },
@@ -1025,6 +1051,7 @@ def path_blocking_obstacle_bounds(
     endpoint_threads: int,
     n_subdivisions: int,
     workspace_aabb_shrink: float,
+    path_blocking_workspace_aabb_shrink: float | None,
     min_active_link_idx: int,
     max_active_link_idx: int,
     allowed_link_idxs: Sequence[int],
@@ -1092,7 +1119,7 @@ def path_blocking_obstacle_bounds(
             if not bool(probe.get("ok")):
                 continue
             path = [[float(value) for value in point] for point in probe.get("path", [])]
-            if len(path) < 3:
+            if len(path) < 2:
                 continue
             sample_count = max(1, int(samples_per_path))
             for sample_index in range(1, sample_count + 1):
@@ -1116,7 +1143,11 @@ def path_blocking_obstacle_bounds(
             n_samples_crit=int(n_samples_crit),
             endpoint_threads=int(endpoint_threads),
             n_subdivisions=int(n_subdivisions),
-            workspace_aabb_shrink=float(workspace_aabb_shrink),
+            workspace_aabb_shrink=(
+                float(workspace_aabb_shrink)
+                if path_blocking_workspace_aabb_shrink is None
+                else float(path_blocking_workspace_aabb_shrink)
+            ),
             min_active_link_idx=int(min_active_link_idx),
             max_active_link_idx=int(max_active_link_idx),
             allowed_link_idxs=allowed_link_idxs,
@@ -2039,6 +2070,8 @@ def find_distribution_prefixes(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_medium_count: int,
+    distribution_min_hard_count: int,
 ) -> dict[str, tuple[int, dict[str, Any], float]]:
     counts = prefix_counts(
         len(bounds_ordered),
@@ -2071,6 +2104,8 @@ def find_distribution_prefixes(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_medium_count=int(distribution_min_medium_count),
+        min_hard_count=int(distribution_min_hard_count),
     )
     return distribution_prefix_output_from_selection(selection)
 
@@ -2101,6 +2136,8 @@ def find_distribution_prefixes_two_stage(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_medium_count: int,
+    distribution_min_hard_count: int,
 ) -> dict[str, tuple[int, dict[str, Any], float]]:
     all_counts = prefix_counts(
         len(bounds_ordered),
@@ -2133,6 +2170,8 @@ def find_distribution_prefixes_two_stage(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_medium_count=int(distribution_min_medium_count),
+        min_hard_count=int(distribution_min_hard_count),
     )
     selected_counts = [
         int(stage_a_selection["prefix_counts"][difficulty])
@@ -2142,6 +2181,29 @@ def find_distribution_prefixes_two_stage(
         all_counts,
         selected_counts,
         radius=int(stage_b_neighbor_radius),
+    )
+    def nearest_available_count_at_least(value: int) -> int | None:
+        candidates = [int(count) for count in all_counts if int(count) >= int(value)]
+        return min(candidates) if candidates else None
+
+    required_stage_b_counts = {
+        0,
+        len(bounds_ordered),
+    }
+    for anchor in (50, 75, 100, 150, 240, 475, 775):
+        nearest = _nearest_count(all_counts, int(anchor))
+        if 0 <= int(nearest) <= len(bounds_ordered):
+            required_stage_b_counts.add(int(nearest))
+    for threshold in (int(distribution_min_medium_count), int(distribution_min_hard_count)):
+        nearest = nearest_available_count_at_least(threshold)
+        if nearest is not None:
+            required_stage_b_counts.add(int(nearest))
+    stage_b_counts = sorted(
+        set(stage_b_counts).union(
+            count
+            for count in required_stage_b_counts
+            if 0 <= int(count) <= len(bounds_ordered) and int(count) in set(all_counts)
+        )
     )
     stage_b_rows = distribution_prefix_scan_rows(
         robot_name=robot_name,
@@ -2168,6 +2230,8 @@ def find_distribution_prefixes_two_stage(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_medium_count=int(distribution_min_medium_count),
+        min_hard_count=int(distribution_min_hard_count),
     )
     stage_b_selection["two_stage_prefix_confirmation"] = {
         "stage_a_planner_seeds": int(stage_a_planner_seeds),
@@ -2325,6 +2389,8 @@ def find_prefixes_by_mode(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_medium_count: int,
+    distribution_min_hard_count: int,
     prefix_confirm_mode: str = "single_stage",
     prefix_stage_a_planner_seeds: int = 1,
     prefix_stage_b_planner_seeds: int = 3,
@@ -2365,6 +2431,8 @@ def find_prefixes_by_mode(
             distribution_hard_ratio=float(distribution_hard_ratio),
             distribution_hard_not_faster_factor=float(distribution_hard_not_faster_factor),
             distribution_require_strong_planner=bool(distribution_require_strong_planner),
+            distribution_min_medium_count=int(distribution_min_medium_count),
+            distribution_min_hard_count=int(distribution_min_hard_count),
         )
     if mode == "distribution":
         return find_distribution_prefixes(
@@ -2390,6 +2458,8 @@ def find_prefixes_by_mode(
             distribution_hard_ratio=float(distribution_hard_ratio),
             distribution_hard_not_faster_factor=float(distribution_hard_not_faster_factor),
             distribution_require_strong_planner=bool(distribution_require_strong_planner),
+            distribution_min_medium_count=int(distribution_min_medium_count),
+            distribution_min_hard_count=int(distribution_min_hard_count),
         )
     return find_prefixes(
         robot_name=robot_name,
@@ -2636,6 +2706,11 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     endpoint_threads=int(args.endpoint_threads),
                     n_subdivisions=int(args.envelope_subdivisions),
                     workspace_aabb_shrink=float(args.workspace_aabb_shrink),
+                    path_blocking_workspace_aabb_shrink=(
+                        None
+                        if math.isnan(float(args.path_blocking_workspace_aabb_shrink))
+                        else float(args.path_blocking_workspace_aabb_shrink)
+                    ),
                     min_active_link_idx=int(args.min_active_link_idx),
                     max_active_link_idx=int(args.max_active_link_idx),
                     allowed_link_idxs=allowed_link_idxs,
@@ -2699,6 +2774,8 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                 distribution_hard_ratio=float(args.distribution_hard_ratio),
                 distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                 distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                distribution_min_medium_count=int(args.distribution_min_medium_count),
+                distribution_min_hard_count=int(args.distribution_min_hard_count),
                 prefix_confirm_mode=str(args.prefix_confirm_mode),
                 prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
                 prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
@@ -2768,6 +2845,8 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     distribution_hard_ratio=float(args.distribution_hard_ratio),
                     distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                     distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                    distribution_min_medium_count=int(args.distribution_min_medium_count),
+                    distribution_min_hard_count=int(args.distribution_min_hard_count),
                     prefix_confirm_mode=str(args.prefix_confirm_mode),
                     prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
                     prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
@@ -2810,6 +2889,8 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     "hard_over_medium_min": float(args.distribution_hard_ratio),
                     "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
                     "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
+                    "min_medium_count": int(args.distribution_min_medium_count),
+                    "min_hard_count": int(args.distribution_min_hard_count),
                     "time_floor_s": float(TIME_FLOOR_S),
                 },
                 "query_sampling_obstacle_count": int(len(query_bounds)),
@@ -2839,6 +2920,11 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                 "path_blocking_samples_per_path": int(args.path_blocking_samples_per_path),
                 "path_blocking_box_half_width": float(args.path_blocking_box_half_width),
                 "path_blocking_query_count": int(args.path_blocking_query_count),
+                "path_blocking_workspace_aabb_shrink": (
+                    None
+                    if math.isnan(float(args.path_blocking_workspace_aabb_shrink))
+                    else float(args.path_blocking_workspace_aabb_shrink)
+                ),
                 "path_blocking_initial_mapped_obstacles": int(args.path_blocking_initial_mapped_obstacles),
                 "path_blocking_initial_order": str(args.path_blocking_initial_order),
                 "probe_greedy_trace": probe_greedy_trace,
@@ -2898,6 +2984,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distribution-medium-ratio", type=float, default=5.0)
     parser.add_argument("--distribution-hard-ratio", type=float, default=2.0)
     parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=1.0)
+    parser.add_argument("--distribution-min-medium-count", type=int, default=0)
+    parser.add_argument("--distribution-min-hard-count", type=int, default=0)
     parser.add_argument("--distribution-require-strong-planner", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-min-l2", type=float, default=0.8)
     parser.add_argument("--query-max-l2", type=float, default=math.inf, help="Maximum start-goal L2 distance; <=0 or inf disables the upper bound.")
@@ -2954,6 +3042,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--path-blocking-samples-per-path", type=int, default=4)
     parser.add_argument("--path-blocking-box-half-width", type=float, default=0.08)
     parser.add_argument("--path-blocking-query-count", type=int, default=1)
+    parser.add_argument(
+        "--path-blocking-workspace-aabb-shrink",
+        type=float,
+        default=math.nan,
+        help="Workspace AABB shrink used only for appended path blockers; NaN reuses --workspace-aabb-shrink.",
+    )
     parser.add_argument(
         "--path-blocking-initial-mapped-obstacles",
         type=int,
@@ -3042,6 +3136,8 @@ def main() -> int:
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),
                 "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
+                "min_medium_count": int(args.distribution_min_medium_count),
+                "min_hard_count": int(args.distribution_min_hard_count),
                 "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
                 "time_floor_s": float(TIME_FLOOR_S),
             },
