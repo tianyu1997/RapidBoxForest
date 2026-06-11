@@ -4,9 +4,11 @@ from __future__ import annotations
 import argparse
 import copy
 import csv
+import hashlib
 import json
 import math
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -39,7 +41,12 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
+    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
@@ -91,6 +98,100 @@ def catalog_seed_count_for_selection(path: Path, robots: list[str], difficulties
     return int(min(counts))
 
 
+def slugify(value: Any, *, limit: int = 96) -> str:
+    text = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(value)).strip("_")
+    if not text:
+        text = "row"
+    return text[:limit]
+
+
+def planned_row_fingerprint(row: dict[str, Any]) -> str:
+    relevant = {
+        "method": row.get("method"),
+        "robot": row.get("robot"),
+        "difficulty": row.get("difficulty"),
+        "scene_seed": row.get("scene_seed"),
+        "stage_id": row.get("stage_id"),
+        "budget_s": row.get("budget_s"),
+        "deep_max_boxes": row.get("deep_max_boxes"),
+        "queries_per_scene": row.get("queries_per_scene"),
+        "audit_segment_step": row.get("audit_segment_step"),
+        "audit_collision_tolerance": row.get("audit_collision_tolerance"),
+        "ompl_simplify_time_s": row.get("ompl_simplify_time_s"),
+        "prm_config": row.get("prm_config"),
+        "bitstar_config": row.get("bitstar_config"),
+        "rbf_default_profile": row.get("rbf_default_profile"),
+    }
+    encoded = json.dumps(relevant, sort_keys=True, default=str, separators=(",", ":"))
+    return hashlib.sha1(encoded.encode("utf-8")).hexdigest()[:16]
+
+
+def planned_row_part_path(checkpoint_dir: Path, row: dict[str, Any]) -> Path:
+    stem = "_".join([
+        slugify(row.get("method", "method"), limit=24),
+        slugify(row.get("robot", "robot"), limit=16),
+        slugify(row.get("difficulty", "difficulty"), limit=16),
+        f"s{int(row.get('scene_seed', 0))}",
+        slugify(row.get("stage_id", "stage"), limit=72),
+        planned_row_fingerprint(row),
+    ])
+    return checkpoint_dir / f"{stem}.json"
+
+
+def load_result_part(path: Path) -> list[dict[str, Any]] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or payload.get("status") != "complete":
+        return None
+    rows = payload.get("rows")
+    if not isinstance(rows, list):
+        return None
+    return [dict(row) for row in rows if isinstance(row, dict)]
+
+
+def write_result_part(path: Path, planned_row: dict[str, Any], rows: list[dict[str, Any]]) -> None:
+    payload = {
+        "status": "complete",
+        "fingerprint": planned_row_fingerprint(planned_row),
+        "planned_row": planned_row,
+        "row_count": len(rows),
+        "rows": rows,
+        "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+    tmp.replace(path)
+
+
+_BITSTAR_REFERENCE_SUCCESS_LABELS: dict[str, set[str]] = {}
+
+
+def bitstar_reference_success_labels(args: argparse.Namespace) -> set[str]:
+    path_value = getattr(args, "bitstar_supplement_failed_from_manifest", None)
+    if path_value is None:
+        return set()
+    path = Path(path_value)
+    key = str(path)
+    if key in _BITSTAR_REFERENCE_SUCCESS_LABELS:
+        return _BITSTAR_REFERENCE_SUCCESS_LABELS[key]
+    labels: set[str] = set()
+    if path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        for row in payload.get("rows", []):
+            if not isinstance(row, dict) or str(row.get("method")) != "bitstar":
+                continue
+            for query in row.get("queries", []):
+                if isinstance(query, dict) and bool(query.get("success")):
+                    label = str(query.get("label", ""))
+                    if label:
+                        labels.add(label)
+    _BITSTAR_REFERENCE_SUCCESS_LABELS[key] = labels
+    return labels
+
+
 def resolved_adaptive_target_depth(args: argparse.Namespace) -> int:
     value = int(getattr(args, "adaptive_target_depth", 0))
     return value if value > 0 else int(args.leaf_max_depth)
@@ -113,6 +214,63 @@ def configure_thread_environment(threads: int) -> None:
         os.environ[key] = value
 
 
+def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace) -> None:
+    """Apply the validated Exp.6 HiPaC leaf-sweep profile.
+
+    TransitionPortal is intentionally excluded from paper-facing runners until
+    it is separately validated.
+    """
+    if not bool(getattr(args, "hipac_improved_leaf_sweep", False)):
+        return
+    args.leaf_max_depth = max(int(args.leaf_max_depth), 20)
+    args.adaptive_depth_min = max(int(args.adaptive_depth_min), 14)
+    args.adaptive_depth_max = max(int(args.adaptive_depth_max), 20)
+    args.rbf_max_depth = max(int(args.rbf_max_depth), 110)
+    args.deep_ffb_depth = max(int(args.deep_ffb_depth), 110)
+    args.connector_pave_depth = max(int(args.connector_pave_depth), 110)
+    args.query_bridge_pave_depth = max(int(args.query_bridge_pave_depth), 110)
+    args.query_endpoint_anchor_ffb_depth = max(int(getattr(args, "query_endpoint_anchor_ffb_depth", 0)), 110)
+    args.query_bridge_rrt_fixed_iters = max(int(args.query_bridge_rrt_fixed_iters), 10000)
+    args.query_bridge_no_path_retry_attempts = max(int(args.query_bridge_no_path_retry_attempts), 32)
+    args.query_bridge_no_path_retry_stop_on_first_success = True
+    args.query_bridge_direct_max_length = max(float(args.query_bridge_direct_max_length), 15.0)
+    args.hipac_online_transition_portal = False
+    args.hipac_promote_transition_slices = False
+
+
+def _flag_was_supplied(argv: list[str], flag: str) -> bool:
+    return any(item == flag or item.startswith(f"{flag}=") for item in argv)
+
+
+def normalize_adaptive_depth_cap(args: argparse.Namespace, argv: list[str]) -> None:
+    """Keep implicit adaptive-depth scans inside the requested leaf target.
+
+    The Exp.6 fast profiles often set ``--leaf-max-depth`` /
+    ``--adaptive-target-depth`` to a shallow value and leave
+    ``--adaptive-depth-max`` unspecified.  In that case the runner must not
+    silently expand the offline build to the parser default depth cap; doing so
+    changes both build time and coverage while the stage id still looks like a
+    shallow profile.  Users can still request a deeper adaptive scan by passing
+    ``--adaptive-depth-max`` explicitly.
+    """
+    if not bool(getattr(args, "adaptive_depth_enabled", False)):
+        return
+    if _flag_was_supplied(argv, "--adaptive-depth-max"):
+        return
+    requested_cap = max(int(args.leaf_max_depth), int(resolved_adaptive_target_depth(args)))
+    old_max = int(args.adaptive_depth_max)
+    if old_max <= requested_cap:
+        return
+    args.adaptive_depth_max = requested_cap
+    if int(args.adaptive_depth_min) > requested_cap:
+        args.adaptive_depth_min = requested_cap
+    print(
+        "[exp06] capped implicit adaptive-depth-max "
+        f"from {old_max} to {requested_cap}; pass --adaptive-depth-max to override",
+        file=sys.stderr,
+    )
+
+
 def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | None = None) -> dict[str, Any]:
     profile = copy.deepcopy(default_rbf_profile())
     inherited_profile = str(profile.get("profile", "registered_exp4_profile"))
@@ -120,6 +278,7 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
         f"exp06_leaf{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
         f"_bridge{int(args.query_bridge_pave_depth)}"
+        f"_ead{int(args.query_endpoint_anchor_ffb_depth)}"
     )
     profile["offline_query_agnostic_build"] = True
     profile["inherits_from"] = inherited_profile
@@ -144,24 +303,55 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
         "max_online_cells": int(args.adaptive_depth_max_online_cells),
         "max_probe_ms": float(args.adaptive_depth_max_probe_ms),
     }
+    profile["offline_anchors"] = {
+        "enabled": bool(args.offline_random_anchors),
+        "count": int(args.offline_anchor_count),
+        "candidate_count": int(args.offline_anchor_candidate_count),
+        "skip_if_main_accessible": bool(args.offline_anchor_skip_if_main_accessible),
+        "skip_difficulties": str(args.offline_anchor_skip_difficulties),
+        "main_accessible_threshold": float(args.offline_anchor_main_accessible_threshold),
+        "policy": (
+            "for selected difficulties, skip anchors after adaptive build when "
+            "P(main-accessible) reaches threshold; otherwise keep random anchors"
+        ),
+    }
     profile["leaf_sweep"]["leaf_threads"] = int(args.threads)
     profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
     profile["deep_refine"]["ffb_start_depth"] = int(args.ffb_start_depth)
     profile["deep_refine"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["deep_refine"]["split_schedule_kind"] = str(args.lect_split_schedule)
+    profile["robot_overrides"] = {
+        "ur5_ffb_start_depth": int(args.ur5_ffb_start_depth),
+        "policy": "value >= 0 overrides global ffb_start_depth for all UR5 RBF stages",
+    }
     profile["connector"]["pave_depth"] = int(args.connector_pave_depth)
     profile["connector"]["max_pairs_per_gap"] = int(DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP)
     profile["connector"]["per_pair_timeout_ms"] = int(DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS)
     profile["query_bridge"]["pave_depth"] = int(args.query_bridge_pave_depth)
+    profile["query_bridge"]["ffb_start_depth"] = int(args.query_bridge_ffb_start_depth)
+    profile["query_bridge"]["endpoint_anchor_ffb_depth"] = int(args.query_endpoint_anchor_ffb_depth)
     profile["query_bridge"]["all_queries"] = bool(args.query_bridge_all)
     profile["query_bridge"]["adaptive_all"] = bool(args.query_bridge_adaptive_all)
     profile["query_bridge"]["adaptive_max_path_length"] = float(args.query_bridge_adaptive_max_path_length)
     profile["query_bridge"]["direct_sample_step"] = float(args.query_bridge_direct_sample_step)
     profile["query_bridge"]["repair_subdivisions"] = int(args.query_bridge_repair_subdivisions)
     profile["query_bridge"]["direct_max_length"] = float(args.query_bridge_direct_max_length)
+    profile["query_bridge"]["sequential_reuse"] = bool(args.query_bridge_sequential_reuse)
+    profile["query_bridge"]["scene_reusable_edges"] = bool(args.query_bridge_scene_reusable_edges)
+    profile["query_bridge"]["reuse_scope"] = "scene_seed_local"
+    profile["query_bridge"]["partition_neighbor_candidates"] = bool(args.query_bridge_partition_neighbor_candidates)
+    profile["query_bridge"]["direct_append_partition_immediate"] = bool(
+        args.query_bridge_direct_append_partition_immediate
+    )
     profile["query_bridge"]["query_bridge_edge_cost_penalty"] = float(args.query_bridge_edge_cost_penalty)
     profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
     profile["query_bridge"]["rrt_fixed_timeout_ms"] = float(args.query_bridge_rrt_fixed_timeout_ms)
+    profile["query_bridge"]["no_path_retry_attempts"] = int(args.query_bridge_no_path_retry_attempts)
+    profile["query_bridge"]["no_path_retry_stop_on_first_success"] = bool(
+        args.query_bridge_no_path_retry_stop_on_first_success
+    )
+    profile["query_bridge"]["group_residual_gaps"] = bool(args.query_bridge_group_residual_gaps)
     profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
     profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)
     if box_budgets is not None:
@@ -174,8 +364,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp06")
     parser.add_argument("--phase", choices=["smoke", "pilot", "paper", "full", "assets"], default="smoke")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--resume", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--force-rerun", action="store_true")
+    parser.add_argument("--checkpoint-dir", type=Path, default=None)
     parser.add_argument("--robots", default="iiwa,ur5,panda")
-    parser.add_argument("--difficulties", default="easy,medium,hard")
+    parser.add_argument("--difficulties", default="medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=10)
     parser.add_argument("--allow-fewer-catalog-scenes", action="store_true")
     parser.add_argument(
@@ -240,8 +433,22 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--query-endpoint-anchor-ffb-depth", type=int, default=0)
     parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
+    parser.add_argument("--ur5-ffb-start-depth", type=int, default=-1)
+    parser.add_argument("--query-bridge-ffb-start-depth", type=int, default=-1)
     parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE)
+    parser.add_argument(
+        "--lect-split-schedule",
+        default="aafk_volume_min",
+        choices=[
+            "aafk_volume_min",
+            "aafk",
+            "support_hull_volume_min",
+            "support-hull-volume-min",
+            "support_hull",
+        ],
+    )
     parser.add_argument("--connector-segment-resolution", type=int, default=None)
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-adaptive-all", action=argparse.BooleanOptionalAction, default=True)
@@ -250,6 +457,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
+    parser.add_argument("--query-bridge-group-residual-gaps", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS)
+    parser.add_argument(
+        "--query-bridge-partition-neighbor-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
+    )
+    parser.add_argument(
+        "--query-bridge-direct-append-partition-immediate",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+    )
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=1)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
     parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
@@ -261,8 +479,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-sequential-reuse", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-scene-reusable-edges", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
     parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
+    parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
+    parser.add_argument("--query-bridge-no-path-retry-stop-on-first-success",
+                        action=argparse.BooleanOptionalAction,
+                        default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
     parser.add_argument("--endpoint-main-target-k", type=int, default=8)
@@ -281,10 +505,46 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
     parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
     parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-anchor-skip-if-main-accessible", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--offline-anchor-skip-difficulties", default="")
+    parser.add_argument("--offline-anchor-main-accessible-threshold", type=float, default=0.95)
     parser.add_argument("--offline-shortcut-edges", type=int, default=0)
     parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
     parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
     parser.add_argument("--offline-shortcut-max-segment-length", type=float, default=3.0)
+    parser.add_argument("--hipac-improved-leaf-sweep", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-portal-connectivity", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-portal-cell-native-validate", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-portal-max-internal-boxes", type=int, default=64)
+    parser.add_argument("--hipac-portal-max-recursion-depth", type=int, default=8)
+    parser.add_argument("--hipac-portal-ffb-depth", type=int, default=0)
+    parser.add_argument("--hipac-portal-ffb-deadline-ms", type=float, default=5.0)
+    parser.add_argument("--hipac-online-connectivity", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-online-before-query-bridge", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-promote-query-repairs", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-online-ffb-portal-fallback", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-online-candidate-max-length", type=float, default=3.0)
+    parser.add_argument("--hipac-online-max-resolves-per-query", type=int, default=1)
+    parser.add_argument("--hipac-online-max-hidden-boxes-per-portal", type=int, default=32)
+    parser.add_argument("--hipac-online-max-ffb-calls-per-portal", type=int, default=64)
+    parser.add_argument("--hipac-online-prebridge-portal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-online-prebridge-candidate-limit", type=int, default=32)
+    parser.add_argument("--hipac-online-prebridge-max-pair-distance", type=float, default=1.25)
+    parser.add_argument("--hipac-online-prebridge-route-distance-weight", type=float, default=1.0)
+    parser.add_argument("--hipac-online-prebridge-pair-distance-weight", type=float, default=0.25)
+    parser.add_argument("--hipac-online-transition-portal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-transition-target-query-indices", default="")
+    parser.add_argument("--hipac-transition-max-attempts-per-query", type=int, default=1)
+    parser.add_argument("--hipac-transition-candidate-limit", type=int, default=16)
+    parser.add_argument("--hipac-transition-window-stride", type=int, default=2)
+    parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
+    parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
+    parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-promote-transition-target-query-indices", default="")
+    parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
+    parser.add_argument("--hipac-promote-transition-max-boxes", type=int, default=64)
+    parser.add_argument("--hipac-promote-transition-max-attempts-per-query", type=int, default=1)
     parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
     parser.add_argument("--skip-lect-cache-ensure", action="store_true")
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
@@ -293,32 +553,142 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rrt-range", type=float, default=0.35)
     parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
     parser.add_argument("--prm-build-s", type=float, default=20.0)
-    parser.add_argument("--prm-build-grid-s", default="5,10,15,20")
+    parser.add_argument(
+        "--prm-build-grid-s",
+        default="",
+        help=(
+            "Explicit PRM cumulative build checkpoints. Empty uses "
+            "--prm-build-schedule; kept for reproducing old sparse grids."
+        ),
+    )
+    parser.add_argument(
+        "--prm-build-schedule",
+        choices=["progressive", "uniform", "explicit"],
+        default="progressive",
+        help=(
+            "Cumulative PRM build checkpoint schedule. 'progressive' uses dense "
+            "early checkpoints and relaxes to at most --prm-build-max-step-s; "
+            "'uniform' uses --prm-build-interval-s; 'explicit' requires "
+            "--prm-build-grid-s."
+        ),
+    )
+    parser.add_argument("--prm-build-interval-s", type=float, default=0.1)
+    parser.add_argument("--prm-build-max-step-s", type=float, default=0.1)
     parser.add_argument("--prm-query-s", type=float, default=1.0)
     parser.add_argument("--prm-max-nearest-neighbors", type=int, default=128)
     parser.add_argument("--prm-planner-kind", default="prm")
     parser.add_argument("--prm-cumulative", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--prm-preload-query-endpoints", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--prm-early-stop-success-stall-checkpoints", type=int, default=12)
+    parser.add_argument("--prm-early-stop-path-rel-tol", type=float, default=0.005)
+    parser.add_argument("--prm-unresolved-query-retry-interval-s", type=float, default=0.05)
+    parser.add_argument("--prm-solved-query-recheck-interval-s", type=float, default=0.1)
     parser.add_argument("--bitstar-timeout-s", type=float, default=0.5)
     parser.add_argument("--bitstar-timeout-grid-s", default="")
     parser.add_argument("--bitstar-checkpoint-grid-s", default="")
     parser.add_argument("--bitstar-checkpoint-interval-s", type=float, default=0.005)
+    parser.add_argument(
+        "--bitstar-checkpoint-schedule",
+        choices=["progressive", "uniform", "explicit"],
+        default="progressive",
+        help=(
+            "Checkpoint stage schedule for BIT* traces. 'progressive' uses dense early "
+            "checkpoints and gradually relaxes to at most --bitstar-checkpoint-max-step-s; "
+            "'uniform' uses --bitstar-checkpoint-interval-s; 'explicit' requires "
+            "--bitstar-checkpoint-grid-s."
+        ),
+    )
+    parser.add_argument("--bitstar-checkpoint-max-step-s", type=float, default=0.1)
     parser.add_argument("--bitstar-samples-per-batch", type=int, default=100)
     parser.add_argument("--bitstar-rewire-factor", type=float, default=5.0)
     parser.add_argument("--bitstar-stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--bitstar-quality-stall-checkpoints", type=int, default=0)
+    parser.add_argument("--bitstar-quality-stall-rel-tol", type=float, default=0.005)
+    parser.add_argument("--bitstar-supplement-failed-from-manifest", type=Path, default=None)
     return parser.parse_args()
+
+
+def progressive_checkpoint_grid(timeout_s: float, *, max_step_s: float = 0.1) -> list[float]:
+    timeout = max(0.0, float(timeout_s))
+    if timeout <= 0.0:
+        return []
+    # Dense first-solution region, then relaxed checkpoints. The final segment
+    # is capped by max_step_s so per-query trade-off selection is never forced
+    # to wait for a coarse one-second checkpoint.
+    segments = [
+        (0.10, 0.005),
+        (0.50, 0.010),
+        (1.00, 0.020),
+        (2.00, 0.050),
+        (timeout, max(1e-9, min(float(max_step_s), 0.100))),
+    ]
+    values: list[float] = []
+    current = 0.0
+    for end_s, step_s in segments:
+        end = min(timeout, float(end_s))
+        step = max(1e-9, float(step_s))
+        while current + step < end - 1e-9:
+            current += step
+            values.append(round(current, 9))
+        if end > current + 1e-9:
+            current = end
+            values.append(round(current, 9))
+        if current >= timeout - 1e-9:
+            break
+    if not values or abs(values[-1] - timeout) > 1e-9:
+        values.append(round(timeout, 9))
+    return sorted({float(value) for value in values if value > 0.0 and value <= timeout + 1e-9})
+
+
+def progressive_bitstar_checkpoint_grid(timeout_s: float, *, max_step_s: float = 0.1) -> list[float]:
+    return progressive_checkpoint_grid(timeout_s, max_step_s=max_step_s)
+
+
+def prm_build_grid_from_args(args: argparse.Namespace) -> list[float]:
+    build_s = max(0.0, float(getattr(args, "prm_build_s", 0.0)))
+    raw_grid = str(getattr(args, "prm_build_grid_s", "")).strip()
+    schedule = str(getattr(args, "prm_build_schedule", "progressive"))
+    if build_s <= 0.0:
+        return []
+    if not raw_grid and schedule == "explicit":
+        raise ValueError("--prm-build-schedule=explicit requires --prm-build-grid-s")
+    if raw_grid:
+        values = sorted({float(value) for value in csv_list(raw_grid) if float(value) > 0.0})
+        values = [min(build_s, value) for value in values if value <= build_s + 1e-9]
+        if not values or abs(values[-1] - build_s) > 1e-9:
+            values.append(build_s)
+        return values
+    if schedule == "progressive":
+        return progressive_checkpoint_grid(
+            build_s,
+            max_step_s=float(getattr(args, "prm_build_max_step_s", 0.1)),
+        )
+    interval_s = max(float(getattr(args, "prm_build_interval_s", 0.1)), 1e-9)
+    values: list[float] = []
+    target_s = interval_s
+    while target_s < build_s - 1e-9:
+        values.append(float(target_s))
+        target_s += interval_s
+    values.append(build_s)
+    return values
 
 
 def bitstar_checkpoint_grid_from_args(args: argparse.Namespace, timeout_s: float) -> list[float]:
     raw_grid = str(getattr(args, "bitstar_checkpoint_grid_s", "")).strip()
-    if not raw_grid and str(getattr(args, "bitstar_timeout_grid_s", "")).strip():
-        raw_grid = str(args.bitstar_timeout_grid_s)
+    schedule = str(getattr(args, "bitstar_checkpoint_schedule", "progressive"))
+    if not raw_grid and schedule == "explicit":
+        raise ValueError("--bitstar-checkpoint-schedule=explicit requires --bitstar-checkpoint-grid-s")
     if raw_grid:
         values = sorted({float(value) for value in csv_list(raw_grid) if float(value) > 0.0})
         values = [min(float(timeout_s), value) for value in values if value <= float(timeout_s) + 1e-9]
         if not values or abs(values[-1] - float(timeout_s)) > 1e-9:
             values.append(float(timeout_s))
         return values
+    if schedule == "progressive":
+        return progressive_bitstar_checkpoint_grid(
+            float(timeout_s),
+            max_step_s=float(getattr(args, "bitstar_checkpoint_max_step_s", 0.1)),
+        )
     interval_s = max(float(args.bitstar_checkpoint_interval_s), 1e-9)
     values: list[float] = []
     target_s = interval_s
@@ -442,24 +812,59 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     # unset so SBF uses the canonical primary sector when appropriate; the
     # experiment/root sampling space remains the native joint-limit coverage.
     root_override = None
+    anchor_skip_difficulties = {
+        item.strip().lower()
+        for item in str(args.offline_anchor_skip_difficulties).split(",")
+        if item.strip()
+    }
+    scene_anchor_skip_if_main_accessible = (
+        bool(args.offline_anchor_skip_if_main_accessible)
+        and str(difficulty).lower() in anchor_skip_difficulties
+    )
+    hipac_improved = bool(args.hipac_improved_leaf_sweep)
+    hipac_portal_connectivity = bool(args.hipac_portal_connectivity) or hipac_improved
+    hipac_online_connectivity = bool(args.hipac_online_connectivity) or hipac_improved
+    hipac_online_prebridge_portal = bool(args.hipac_online_prebridge_portal) or hipac_improved
+    # TransitionPortal has not passed validation yet.  Keep the CLI flags for
+    # future debug compatibility, but do not enable them in this paper runner.
+    hipac_online_transition_portal = False
+    hipac_promote_transition_slices = False
+    effective_ffb_start_depth = int(args.ffb_start_depth)
+    if robot_name == "ur5" and int(args.ur5_ffb_start_depth) >= 0:
+        effective_ffb_start_depth = int(args.ur5_ffb_start_depth)
+    hipac_profile_tag = (
+        f"_hp{int(hipac_improved)}"
+        f"_hpre{int(hipac_online_prebridge_portal)}"
+        f"_htr{int(hipac_online_transition_portal)}"
+        f"_askip{int(scene_anchor_skip_if_main_accessible)}"
+        f"_ath{fmt_float(float(args.offline_anchor_main_accessible_threshold))}"
+    )
     stage_id = (
         f"l{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
+        f"_fs{int(effective_ffb_start_depth)}"
+        f"_sp{str(args.lect_split_schedule).replace('-', '_')}"
+        f"_ead{int(args.query_endpoint_anchor_ffb_depth)}"
         f"_b{int(args.deep_max_boxes)}"
         f"_a{int(args.offline_anchor_count)}"
         f"_c{int(args.offline_anchor_candidate_count)}"
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
+        f"{hipac_profile_tag}"
     )
     active_cache_name = (
         f"rbf_{robot_name}_{difficulty}_{int(scene_seed)}"
         f"_b{int(args.deep_max_boxes)}"
         f"_l{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
+        f"_fs{int(effective_ffb_start_depth)}"
+        f"_sp{str(args.lect_split_schedule).replace('-', '_')}"
+        f"_ead{int(args.query_endpoint_anchor_ffb_depth)}"
         f"_a{int(args.offline_anchor_count)}"
         f"_c{int(args.offline_anchor_candidate_count)}"
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
+        f"{hipac_profile_tag}"
     )
     row = run_leaf_rrt(
         robot=robot,
@@ -508,8 +913,11 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             deep_ffb_depth=int(args.deep_ffb_depth),
             connector_pave_depth=int(args.connector_pave_depth),
             query_bridge_pave_depth=int(args.query_bridge_pave_depth),
-            ffb_start_depth=int(args.ffb_start_depth),
+            query_bridge_ffb_start_depth=int(args.query_bridge_ffb_start_depth),
+            query_endpoint_anchor_ffb_depth=int(args.query_endpoint_anchor_ffb_depth),
+            ffb_start_depth=int(effective_ffb_start_depth),
             ffb_search_mode=str(args.ffb_search_mode),
+            split_schedule_kind=str(args.lect_split_schedule),
             use_external_evidence=True,
             external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
             external_evidence_verify_identity=False,
@@ -529,10 +937,44 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             offline_anchor_candidate_count=int(args.offline_anchor_candidate_count),
             offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
             offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+            offline_anchor_skip_if_main_accessible=bool(scene_anchor_skip_if_main_accessible),
+            offline_anchor_main_accessible_threshold=float(args.offline_anchor_main_accessible_threshold),
             offline_shortcut_edges=int(args.offline_shortcut_edges),
             offline_shortcut_candidate_limit=int(args.offline_shortcut_candidate_limit),
             offline_shortcut_min_gain_ratio=float(args.offline_shortcut_min_gain_ratio),
             offline_shortcut_max_segment_length=float(args.offline_shortcut_max_segment_length),
+            hipac_portal_connectivity=hipac_portal_connectivity,
+            hipac_portal_cell_native_validate=bool(args.hipac_portal_cell_native_validate),
+            hipac_portal_max_internal_boxes=int(args.hipac_portal_max_internal_boxes),
+            hipac_portal_max_recursion_depth=int(args.hipac_portal_max_recursion_depth),
+            hipac_portal_ffb_depth=int(args.hipac_portal_ffb_depth),
+            hipac_portal_ffb_deadline_ms=float(args.hipac_portal_ffb_deadline_ms),
+            hipac_online_connectivity=hipac_online_connectivity,
+            hipac_online_before_query_bridge=bool(args.hipac_online_before_query_bridge),
+            hipac_promote_query_repairs=bool(args.hipac_promote_query_repairs),
+            hipac_online_ffb_portal_fallback=bool(args.hipac_online_ffb_portal_fallback),
+            hipac_online_candidate_max_length=float(args.hipac_online_candidate_max_length),
+            hipac_online_max_resolves_per_query=int(args.hipac_online_max_resolves_per_query),
+            hipac_online_max_hidden_boxes_per_portal=int(args.hipac_online_max_hidden_boxes_per_portal),
+            hipac_online_max_ffb_calls_per_portal=int(args.hipac_online_max_ffb_calls_per_portal),
+            hipac_online_prebridge_portal=hipac_online_prebridge_portal,
+            hipac_online_prebridge_candidate_limit=int(args.hipac_online_prebridge_candidate_limit),
+            hipac_online_prebridge_max_pair_distance=float(args.hipac_online_prebridge_max_pair_distance),
+            hipac_online_prebridge_route_distance_weight=float(args.hipac_online_prebridge_route_distance_weight),
+            hipac_online_prebridge_pair_distance_weight=float(args.hipac_online_prebridge_pair_distance_weight),
+            hipac_online_transition_portal=hipac_online_transition_portal,
+            hipac_transition_target_query_indices=str(args.hipac_transition_target_query_indices),
+            hipac_transition_max_attempts_per_query=int(args.hipac_transition_max_attempts_per_query),
+            hipac_transition_candidate_limit=int(args.hipac_transition_candidate_limit),
+            hipac_transition_window_stride=int(args.hipac_transition_window_stride),
+            hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
+            hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
+            hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
+            hipac_promote_transition_slices=hipac_promote_transition_slices,
+            hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
+            hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
+            hipac_promote_transition_max_boxes=int(args.hipac_promote_transition_max_boxes),
+            hipac_promote_transition_max_attempts_per_query=int(args.hipac_promote_transition_max_attempts_per_query),
             connector_pair_timeout_ms=DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
             connector_max_pairs_per_gap=DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
             query_bridge_all=bool(args.query_bridge_all),
@@ -542,6 +984,11 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_accept_path_ratio=float(args.query_bridge_accept_path_ratio),
             query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
+            query_bridge_group_residual_gaps=bool(args.query_bridge_group_residual_gaps),
+            query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
+            query_bridge_direct_append_partition_immediate=bool(
+                args.query_bridge_direct_append_partition_immediate
+            ),
             query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
             query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
             query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
@@ -549,9 +996,15 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 args.query_bridge_adaptive_repair_target_segment_fraction
             ),
             query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
+            query_bridge_sequential_reuse=bool(args.query_bridge_sequential_reuse),
+            query_bridge_scene_reusable_edges=bool(args.query_bridge_scene_reusable_edges),
             query_bridge_force_selected=bool(args.query_bridge_force_selected),
             query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
             query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
+            query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
+            query_bridge_no_path_retry_stop_on_first_success=bool(
+                args.query_bridge_no_path_retry_stop_on_first_success
+            ),
             query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
             query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
             query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
@@ -588,18 +1041,49 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "deep_ffb_depth": int(args.deep_ffb_depth),
             "connector_pave_depth": int(args.connector_pave_depth),
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+            "ffb_start_depth": int(effective_ffb_start_depth),
+            "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
+            "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
             "offline_anchor_count": int(args.offline_anchor_count),
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
+            "offline_anchor_skip_if_main_accessible": bool(scene_anchor_skip_if_main_accessible),
+            "offline_anchor_skip_difficulties": str(args.offline_anchor_skip_difficulties),
+            "offline_anchor_main_accessible_threshold": float(args.offline_anchor_main_accessible_threshold),
             "offline_shortcut_edges": int(args.offline_shortcut_edges),
             "offline_shortcut_candidate_limit": int(args.offline_shortcut_candidate_limit),
             "offline_shortcut_min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),
             "offline_shortcut_max_segment_length": float(args.offline_shortcut_max_segment_length),
+            "hipac_improved_leaf_sweep": hipac_improved,
+            "hipac_portal_connectivity": hipac_portal_connectivity,
+            "hipac_portal_cell_native_validate": bool(args.hipac_portal_cell_native_validate),
+            "hipac_online_connectivity": hipac_online_connectivity,
+            "hipac_online_prebridge_portal": hipac_online_prebridge_portal,
+            "hipac_online_transition_portal": hipac_online_transition_portal,
+            "hipac_online_max_resolves_per_query": int(args.hipac_online_max_resolves_per_query),
+            "hipac_online_max_hidden_boxes_per_portal": int(args.hipac_online_max_hidden_boxes_per_portal),
+            "hipac_transition_candidate_limit": int(args.hipac_transition_candidate_limit),
+            "hipac_transition_target_query_indices": str(args.hipac_transition_target_query_indices),
+            "hipac_promote_transition_slices": hipac_promote_transition_slices,
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
+            "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
+            "query_bridge_sequential_reuse": bool(args.query_bridge_sequential_reuse),
+            "query_bridge_scene_reusable_edges": bool(args.query_bridge_scene_reusable_edges),
+            "query_bridge_reuse_scope": "scene_seed_local",
+            "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
+            "query_bridge_group_residual_gaps": bool(args.query_bridge_group_residual_gaps),
+            "query_bridge_partition_neighbor_candidates": bool(args.query_bridge_partition_neighbor_candidates),
+            "query_bridge_direct_append_partition_immediate": bool(
+                args.query_bridge_direct_append_partition_immediate
+            ),
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
             "query_bridge_rrt_fixed_iters": int(args.query_bridge_rrt_fixed_iters),
             "query_bridge_rrt_fixed_timeout_ms": float(args.query_bridge_rrt_fixed_timeout_ms),
-            "ffb_start_depth": int(args.ffb_start_depth),
+            "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
+            "query_bridge_no_path_retry_stop_on_first_success": bool(
+                args.query_bridge_no_path_retry_stop_on_first_success
+            ),
+            "ffb_start_depth": int(effective_ffb_start_depth),
             "rbf_max_depth": int(args.rbf_max_depth),
             "deep_max_boxes": int(args.deep_max_boxes),
             "obstacle_count": len(scene.obstacles),
@@ -844,6 +1328,10 @@ def run_prm_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         int(args.prm_max_nearest_neighbors),
         str(args.prm_planner_kind),
         bool(args.prm_preload_query_endpoints),
+        int(args.prm_early_stop_success_stall_checkpoints),
+        float(args.prm_early_stop_path_rel_tol),
+        float(args.prm_unresolved_query_retry_interval_s),
+        float(args.prm_solved_query_recheck_interval_s),
     )
     qrows: list[dict[str, Any]] = []
     audit_total_s = 0.0
@@ -1037,6 +1525,10 @@ def run_prm_scene_cumulative(
                 "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
                 "planner_kind": str(args.prm_planner_kind),
                 "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+                "early_stop_success_stall_checkpoints": int(args.prm_early_stop_success_stall_checkpoints),
+                "early_stop_path_rel_tol": float(args.prm_early_stop_path_rel_tol),
+                "unresolved_query_retry_interval_s": float(args.prm_unresolved_query_retry_interval_s),
+                "solved_query_recheck_interval_s": float(args.prm_solved_query_recheck_interval_s),
                 "simplify_time_s": float(args.ompl_simplify_time_s),
             },
             stage_id=(
@@ -1134,8 +1626,12 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
                             checkpoint_grid_s: list[float]) -> list[dict[str, Any]]:
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
-    query_traces: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+    query_traces: list[tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any]]] = []
+    reference_success = bitstar_reference_success_labels(args)
     for index, query in enumerate(queries_for_key(catalog, robot_name, difficulty, scene_seed)):
+        label = f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{index}')}"
+        if reference_success and label in reference_success:
+            continue
         result = sbf.ompl_bitstar_trace(
             robot,
             list(scene.obstacles),
@@ -1148,15 +1644,25 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
             int(args.bitstar_samples_per_batch),
             float(args.bitstar_rewire_factor),
             bool(args.bitstar_stop_on_solution_improvement),
+            int(args.bitstar_quality_stall_checkpoints),
+            float(args.bitstar_quality_stall_rel_tol),
         )
-        query_traces.append((dict(query), [dict(item) for item in result.get("checkpoints", [])]))
+        query_traces.append((
+            dict(query),
+            [dict(item) for item in result.get("checkpoints", [])],
+            {
+                "stopped_early": bool(result.get("stopped_early", False)),
+                "early_stop_reason": str(result.get("early_stop_reason", "")),
+                "trace_solve_s": float(result.get("solve_s", math.nan)),
+            },
+        ))
     rows: list[dict[str, Any]] = []
     best_by_query: dict[str, dict[str, Any]] = {}
     for target_checkpoint_s in checkpoint_grid_s:
         qrows: list[dict[str, Any]] = []
         audit_total_s = 0.0
         checkpoint_s = 0.0
-        for index, (query, checkpoints) in enumerate(query_traces):
+        for index, (query, checkpoints, trace_meta) in enumerate(query_traces):
             checkpoint = checkpoint_at_or_after(checkpoints, target_checkpoint_s)
             checkpoint_s = max(checkpoint_s, float(checkpoint.get("checkpoint_s", target_checkpoint_s) or 0.0))
             elapsed_s = float(checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0)) or 0.0)
@@ -1198,6 +1704,9 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
                 "waypoint_count": len(path),
                 "simplify_status": simplify_status,
                 "incumbent_checkpoint_s": float(target_checkpoint_s) if ok else math.nan,
+                "trace_stopped_early": bool(trace_meta.get("stopped_early", False)),
+                "trace_early_stop_reason": str(trace_meta.get("early_stop_reason", "")),
+                "trace_solve_ms": float(trace_meta.get("trace_solve_s", math.nan)) * 1000.0,
             }
             best = best_by_query.get(label)
             if ok and math.isfinite(length) and (best is None or length < float(best.get("path_length", math.inf))):
@@ -1229,6 +1738,8 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
                 "samples_per_batch": int(args.bitstar_samples_per_batch),
                 "rewire_factor": float(args.bitstar_rewire_factor),
                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+                "quality_stall_checkpoints": int(args.bitstar_quality_stall_checkpoints),
+                "quality_stall_rel_tol": float(args.bitstar_quality_stall_rel_tol),
                 "simplify_time_s": float(args.ompl_simplify_time_s),
             },
             stage_id=(
@@ -1320,6 +1831,21 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "deep_ffb_depth": median(row.get("deep_ffb_depth", math.nan) for row in items),
                 "connector_pave_depth": median(row.get("connector_pave_depth", math.nan) for row in items),
                 "query_bridge_pave_depth": median(row.get("query_bridge_pave_depth", math.nan) for row in items),
+                "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
+                "query_bridge_ffb_start_depth": median(
+                    row.get("query_bridge_ffb_start_depth", math.nan) for row in items
+                ),
+                "query_endpoint_anchor_ffb_depth": median(
+                    row.get("query_endpoint_anchor_ffb_depth", math.nan) for row in items
+                ),
+                "query_bridge_sequential_reuse": median(
+                    1.0 if bool(row.get("query_bridge_sequential_reuse", False)) else 0.0
+                    for row in items
+                ),
+                "query_bridge_scene_reusable_edges": median(
+                    1.0 if bool(row.get("query_bridge_scene_reusable_edges", False)) else 0.0
+                    for row in items
+                ),
                 "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
                 "rbf_max_depth": median(row.get("rbf_max_depth", math.nan) for row in items),
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
@@ -1518,6 +2044,9 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "deep_ffb_depth",
         "connector_pave_depth",
         "query_bridge_pave_depth",
+        "query_endpoint_anchor_ffb_depth",
+        "query_bridge_sequential_reuse",
+        "query_bridge_scene_reusable_edges",
         "ffb_start_depth",
         "rbf_max_depth",
         "budget_s",
@@ -1682,7 +2211,17 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         return math.nan
 
     out: list[dict[str, Any]] = []
-    keys = sorted({(str(row.get("robot", "")), str(row.get("difficulty", ""))) for row in rows})
+    robot_order = {"iiwa": 0, "ur5": 1, "panda": 2}
+    difficulty_order = {"easy": 0, "medium": 1, "hard": 2}
+    keys = sorted(
+        {(str(row.get("robot", "")), str(row.get("difficulty", ""))) for row in rows},
+        key=lambda item: (
+            robot_order.get(item[0], 100),
+            difficulty_order.get(item[1], 100),
+            item[0],
+            item[1],
+        ),
+    )
     for robot, difficulty in keys:
         items = [row for row in rows if str(row.get("robot", "")) == robot and str(row.get("difficulty", "")) == difficulty]
         full = [
@@ -1723,9 +2262,9 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     rows = select_best_tradeoff_rows(rows)
     lines = [
-        r"\begin{table*}[t]",
+        r"\begingroup",
         r"\centering",
-        r"\caption{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}",
+        r"\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}",
         r"\label{tab:tro-random-summary}",
         r"\footnotesize",
         r"\begin{tabular}{llrrrrrrrrr}",
@@ -1743,13 +2282,15 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{tex_num(row.get('path_length_mean', row.get('path_length_median')))} & "
             f"{tex_num(row.get('raw_segment_fraction_median'))} \\\\"
         )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
     args = parse_args()
+    apply_hipac_improved_leaf_sweep_profile(args)
+    normalize_adaptive_depth_cap(args, sys.argv[1:])
     configure_thread_environment(int(args.threads))
     robots = csv_list(args.robots)
     difficulties = csv_list(args.difficulties)
@@ -1771,7 +2312,7 @@ def main() -> int:
                 )
             scene_seeds = int(inferred_scene_seeds)
     box_budgets = [int(item) for item in csv_list(args.box_budgets)] if str(args.box_budgets).strip() else rbf_budget_grid(args.phase)
-    prm_build_grid_s = [float(item) for item in csv_list(args.prm_build_grid_s)] if str(args.prm_build_grid_s).strip() else [float(args.prm_build_s)]
+    prm_build_grid_s = prm_build_grid_from_args(args)
     bitstar_explicit_grid = [float(item) for item in csv_list(args.bitstar_timeout_grid_s)] if str(args.bitstar_timeout_grid_s).strip() else []
     bitstar_checkpoint_grid = [float(item) for item in csv_list(args.bitstar_checkpoint_grid_s)] if str(args.bitstar_checkpoint_grid_s).strip() else bitstar_explicit_grid
     bitstar_trace_timeout_s = max(bitstar_checkpoint_grid or bitstar_explicit_grid) if (bitstar_checkpoint_grid or bitstar_explicit_grid) else float(args.bitstar_timeout_s)
@@ -1902,6 +2443,9 @@ def main() -> int:
                             "ompl_simplify_time_s": float(args.ompl_simplify_time_s) if method in {"prm", "bitstar", "rrtconnect"} else None,
                             "prm_config": {
                                 "cumulative": bool(args.prm_cumulative),
+                                "build_schedule": str(args.prm_build_schedule),
+                                "build_interval_s": float(args.prm_build_interval_s),
+                                "build_max_step_s": float(args.prm_build_max_step_s),
                                 "build_s": (
                                     float(budget.get("build_s", max(prm_build_grid_s)))
                                     if isinstance(budget, dict)
@@ -1916,28 +2460,59 @@ def main() -> int:
                                 "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
                                 "planner_kind": str(args.prm_planner_kind),
                                 "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+                                "early_stop_success_stall_checkpoints": int(args.prm_early_stop_success_stall_checkpoints),
+                                "early_stop_path_rel_tol": float(args.prm_early_stop_path_rel_tol),
+                                "unresolved_query_retry_interval_s": float(args.prm_unresolved_query_retry_interval_s),
+                                "solved_query_recheck_interval_s": float(args.prm_solved_query_recheck_interval_s),
                             } if method == "prm" else None,
                             "bitstar_config": {
                                 "timeout_s": float(budget) if method == "bitstar" else None,
+                                "checkpoint_schedule": str(args.bitstar_checkpoint_schedule),
+                                "checkpoint_max_step_s": float(args.bitstar_checkpoint_max_step_s),
                                 "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
                                 "checkpoint_grid_s": bitstar_stage_s,
                                 "checkpoint_stage_s": bitstar_stage_s,
                                 "samples_per_batch": int(args.bitstar_samples_per_batch),
                                 "rewire_factor": float(args.bitstar_rewire_factor),
                                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+                                "quality_stall_checkpoints": int(args.bitstar_quality_stall_checkpoints),
+                                "quality_stall_rel_tol": float(args.bitstar_quality_stall_rel_tol),
+                                "supplement_failed_from_manifest": (
+                                    str(args.bitstar_supplement_failed_from_manifest)
+                                    if args.bitstar_supplement_failed_from_manifest is not None
+                                    else None
+                                ),
                             } if method == "bitstar" else None,
                             "metrics": ["success_rate", "planning_s", "audit_s", "path_length", "raw_segment_fraction"],
                         })
+    checkpoint_dir = Path(args.checkpoint_dir) if args.checkpoint_dir is not None else (Path(args.out_dir) / "run_parts")
+    resume_loaded_parts = 0
+    resume_written_parts = 0
     run_rows: list[dict[str, Any]] = []
     if not args.dry_run and catalog is not None:
         for row in progress(rows, desc="exp06 runs", total=len(rows)):
+            part_path = planned_row_part_path(checkpoint_dir, row)
+            if bool(args.resume) and not bool(args.force_rerun) and part_path.exists():
+                part_rows = load_result_part(part_path)
+                if part_rows is not None:
+                    print(
+                        f"[exp06] resume hit method={row['method']} stage={row.get('stage_id')} "
+                        f"robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']} rows={len(part_rows)}",
+                        flush=True,
+                    )
+                    run_rows.extend(part_rows)
+                    resume_loaded_parts += 1
+                    continue
+                print(f"[exp06] resume part ignored as corrupt/incomplete: {part_path}", flush=True)
+
+            produced_rows: list[dict[str, Any]]
             if row["method"] == "sbf_leaf_rrt":
                 print(f"[exp06] method=sbf_leaf_rrt robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']} budget={row['deep_max_boxes']}", flush=True)
                 args.deep_max_boxes = int(row["deep_max_boxes"])
-                run_rows.append(run_rbf_scene(args, catalog, str(row["robot"]), str(row["difficulty"]), int(row["scene_seed"])))
+                produced_rows = [run_rbf_scene(args, catalog, str(row["robot"]), str(row["difficulty"]), int(row["scene_seed"]))]
             elif row["method"] == "bitstar":
                 print(f"[exp06] method=bitstar stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
-                run_rows.extend(run_bitstar_scene_trace(
+                produced_rows = run_bitstar_scene_trace(
                     args,
                     catalog,
                     str(row["robot"]),
@@ -1946,21 +2521,21 @@ def main() -> int:
                     float(row["budget_s"]) if row.get("budget_s") is not None else float(args.bitstar_timeout_s),
                     float(args.bitstar_checkpoint_interval_s),
                     bitstar_stage_s,
-                ))
+                )
             elif row["method"] == "prm" and bool((row.get("prm_config") or {}).get("cumulative")):
                 prm_config = row.get("prm_config") or {}
                 print(f"[exp06] method=prm cumulative stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
-                run_rows.extend(run_prm_scene_cumulative(
+                produced_rows = run_prm_scene_cumulative(
                     args,
                     catalog,
                     str(row["robot"]),
                     str(row["difficulty"]),
                     int(row["scene_seed"]),
                     [float(value) for value in prm_config.get("build_checkpoints_s", prm_build_grid_s)],
-                ))
+                )
             else:
                 print(f"[exp06] method={row['method']} stage={row.get('stage_id')} robot={row['robot']} difficulty={row['difficulty']} seed={row['scene_seed']}", flush=True)
-                run_rows.append(run_baseline_scene(
+                produced_rows = [run_baseline_scene(
                     args,
                     catalog,
                     str(row["method"]),
@@ -1968,7 +2543,10 @@ def main() -> int:
                     str(row["difficulty"]),
                     int(row["scene_seed"]),
                     float(row["budget_s"]) if row.get("budget_s") is not None else None,
-                ))
+                )]
+            write_result_part(part_path, row, produced_rows)
+            resume_written_parts += 1
+            run_rows.extend(produced_rows)
     summary_rows = aggregate(run_rows) if run_rows else []
     payload: dict[str, Any] = {
         "experiment": "exp06_random_robot",
@@ -1979,6 +2557,15 @@ def main() -> int:
         "thread_policy": {
             "threads": int(args.threads),
             "scope": "RBF, LECT cache prewarm, and process math libraries use --threads=8 by default; OMPL RRTConnect, PRM, and BIT* are algorithmically single-thread in this runner unless OMPL exposes planner-internal parallelism.",
+        },
+        "checkpointing": {
+            "enabled": bool(args.resume),
+            "force_rerun": bool(args.force_rerun),
+            "checkpoint_dir": str(checkpoint_dir),
+            "loaded_parts": int(resume_loaded_parts),
+            "written_parts": int(resume_written_parts),
+            "planned_parts": len(rows),
+            "row_parts_complete": int(resume_loaded_parts + resume_written_parts),
         },
         "offline_query_agnostic_build": True,
         "rbf_default_profile": rbf_profile,
@@ -1992,15 +2579,24 @@ def main() -> int:
             "simplify_time_s": float(args.ompl_simplify_time_s),
             "prm": {
                 "cumulative": bool(args.prm_cumulative),
+                "build_schedule": str(args.prm_build_schedule),
+                "build_interval_s": float(args.prm_build_interval_s),
+                "build_max_step_s": float(args.prm_build_max_step_s),
                 "build_grid_s": prm_build_grid_s,
                 "build_checkpoints_s": prm_build_grid_s if bool(args.prm_cumulative) else [],
                 "query_s": float(args.prm_query_s),
                 "max_nearest_neighbors": int(args.prm_max_nearest_neighbors),
                 "planner_kind": str(args.prm_planner_kind),
                 "preload_query_endpoints": bool(args.prm_preload_query_endpoints),
+                "early_stop_success_stall_checkpoints": int(args.prm_early_stop_success_stall_checkpoints),
+                "early_stop_path_rel_tol": float(args.prm_early_stop_path_rel_tol),
+                "unresolved_query_retry_interval_s": float(args.prm_unresolved_query_retry_interval_s),
+                "solved_query_recheck_interval_s": float(args.prm_solved_query_recheck_interval_s),
             },
             "bitstar": {
                 "cumulative_bitstar": True,
+                "checkpoint_schedule": str(args.bitstar_checkpoint_schedule),
+                "checkpoint_max_step_s": float(args.bitstar_checkpoint_max_step_s),
                 "stage_s": bitstar_stage_s,
                 "timeout_s": float(bitstar_trace_timeout_s),
                 "checkpoint_interval_s": float(args.bitstar_checkpoint_interval_s),
@@ -2008,6 +2604,13 @@ def main() -> int:
                 "samples_per_batch": int(args.bitstar_samples_per_batch),
                 "rewire_factor": float(args.bitstar_rewire_factor),
                 "stop_on_solution_improvement": bool(args.bitstar_stop_on_solution_improvement),
+                "quality_stall_checkpoints": int(args.bitstar_quality_stall_checkpoints),
+                "quality_stall_rel_tol": float(args.bitstar_quality_stall_rel_tol),
+                "supplement_failed_from_manifest": (
+                    str(args.bitstar_supplement_failed_from_manifest)
+                    if args.bitstar_supplement_failed_from_manifest is not None
+                    else None
+                ),
             },
         },
         "lectdb_caches": cache_rows,

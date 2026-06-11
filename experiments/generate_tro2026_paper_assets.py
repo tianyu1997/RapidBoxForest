@@ -32,18 +32,20 @@ REQUIRED_TABLES = {
 }
 
 REQUIRED_FIGURES = {
-    "fig_tro_shelf_tradeoff.pdf": "Shelf+IIWA SBF measured-time quality/segment trade-off curve.",
-    "fig_tro_shelf_tradeoff.png": "Shelf+IIWA SBF measured-time quality/segment trade-off curve preview.",
-    "fig_tro_shelf_cross_tradeoff.pdf": "Shelf+IIWA measured-time trade-off with cross-algorithm context.",
-    "fig_tro_shelf_cross_tradeoff.png": "Shelf+IIWA measured-time trade-off with cross-algorithm context preview.",
-    "fig_tro_random_tradeoff.pdf": "Random-scene measured-time trade-off curve.",
-    "fig_tro_random_tradeoff.png": "Random-scene measured-time trade-off curve preview.",
+    "fig_tro_shelf_tradeoff.pdf": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve.",
+    "fig_tro_shelf_tradeoff.png": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve preview.",
+    "fig_tro_shelf_cross_tradeoff.pdf": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context.",
+    "fig_tro_shelf_cross_tradeoff.png": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
+    "fig_tro_random_tradeoff.pdf": "Random-scene five-query amortized-time trade-off curve.",
+    "fig_tro_random_tradeoff.png": "Random-scene five-query amortized-time trade-off curve preview.",
 }
 
 OLD_TRO_PAPER_ROOT = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026")
 OLD_RANDOM_TABLE = OLD_TRO_PAPER_ROOT / "generated" / "tab_tro_main_random_best_tradeoff.tex"
 REGISTERED_EXP05_RRTCONNECT_SUMMARY = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_summary.csv"
 REGISTERED_EXP05_RRTCONNECT_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_manifest.json"
+REGISTERED_EXP05_PRM_OPTIMIZED_SUMMARY = REPO_ROOT / "outputs" / "tro2026_current_improve" / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_summary.csv"
+REGISTERED_EXP05_PRM_OPTIMIZED_MANIFEST = REPO_ROOT / "outputs" / "tro2026_current_improve" / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_manifest.json"
 REGISTERED_EXP04_QUERY_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp04" / "shelf_leaf_rrt_manifest.json"
 
 METHOD_STYLE = {
@@ -196,9 +198,89 @@ def as_float(value: Any, default: float = math.nan) -> float:
     return x if math.isfinite(x) else default
 
 
+def finite_values(values: Any) -> list[float]:
+    if values is None:
+        return []
+    if isinstance(values, (str, bytes)) or not isinstance(values, (list, tuple)):
+        values = [values]
+    out: list[float] = []
+    for value in values:
+        x = as_float(value)
+        if math.isfinite(x):
+            out.append(x)
+    return out
+
+
+def percentile_value(values: Any, q: float) -> float:
+    vals = sorted(finite_values(values))
+    if not vals:
+        return math.nan
+    if len(vals) == 1:
+        return vals[0]
+    pos = max(0.0, min(1.0, float(q))) * (len(vals) - 1)
+    lo = int(math.floor(pos))
+    hi = int(math.ceil(pos))
+    if lo == hi:
+        return vals[lo]
+    alpha = pos - lo
+    return vals[lo] * (1.0 - alpha) + vals[hi] * alpha
+
+
+def tex_iqr(values: Any, digits: int = 3) -> str:
+    vals = finite_values(values)
+    if not vals:
+        return "--"
+    q1 = percentile_value(vals, 0.25)
+    q3 = percentile_value(vals, 0.75)
+    return rf"[{tex_num(q1, digits)},{tex_num(q3, digits)}]"
+
+
+def tex_time_tail(values: Any, digits: int = 3) -> str:
+    return tex_iqr(values, digits)
+
+
+def normalized_gap_values(values: Any, reference: float) -> list[float]:
+    ref = as_float(reference)
+    if not math.isfinite(ref) or ref <= 0.0:
+        return []
+    return [
+        value / ref
+        for value in finite_values(values)
+        if math.isfinite(value)
+    ]
+
+
+def normalized_gap_from_label_values(path_by_label: dict[str, list[float]], refs: dict[str, float]) -> list[float]:
+    out: list[float] = []
+    for label, values in path_by_label.items():
+        out.extend(normalized_gap_values(values, refs.get(label, math.nan)))
+    return out
+
+
+def query_success(query: dict[str, Any]) -> bool:
+    return bool(query.get("success", query.get("audit_passed", False))) and bool(query.get("audit_passed", True))
+
+
+def query_solve_seconds(query: dict[str, Any]) -> float:
+    solve_ms = as_float(query.get("solve_ms"))
+    if not math.isfinite(solve_ms):
+        query_ms = as_float(query.get("query_ms"))
+        simplify_ms = as_float(query.get("simplify_ms"), 0.0)
+        if math.isfinite(query_ms):
+            solve_ms = max(0.0, query_ms - (simplify_ms if math.isfinite(simplify_ms) else 0.0))
+    return solve_ms / 1000.0 if math.isfinite(solve_ms) else math.nan
+
+
 def online_query_time(row: dict[str, Any]) -> float:
     """Online query time excluding fixed final simplification."""
-    for key in ("online_solve_per_query_s_median", "online_per_query_s_median", "query_s_median"):
+    for key in (
+        "online_solve_per_query_s_median",
+        "online_solve_per_query_s",
+        "online_per_query_s_median",
+        "online_per_query_s",
+        "query_s_median",
+        "query_s",
+    ):
         value = as_float(row.get(key))
         if math.isfinite(value):
             return value
@@ -236,6 +318,16 @@ def measured_time_key(row: dict[str, Any]) -> float:
     """Actual measured planning time used for all paper trade-off axes/selection."""
     value = method_time(row)
     return value if math.isfinite(value) else 1e9
+
+
+def random_display_time(row: dict[str, Any]) -> float:
+    """Exp.6 display time for per-query-selected OMPL rows."""
+    display_values = finite_values(row.get("_display_time_values"))
+    if display_values:
+        display_med = median(display_values)
+        if display_med is not None and math.isfinite(float(display_med)):
+            return float(display_med)
+    return method_time(row)
 
 
 def is_full_success(row: dict[str, Any]) -> bool:
@@ -313,6 +405,19 @@ def set_padded_linear_ylim(ax: Any, values: list[float], *, min_pad: float = 0.0
     ax.set_ylim(low - 0.08 * span, high + 0.10 * span)
 
 
+def finite_min(values: Any) -> float:
+    finite = finite_values(values)
+    return min(finite) if finite else math.nan
+
+
+def ratio_to_ref(value: Any, reference: Any) -> float:
+    x = as_float(value)
+    ref = as_float(reference)
+    if not math.isfinite(x) or not math.isfinite(ref) or ref <= 0.0:
+        return math.nan
+    return x / ref
+
+
 def parse_old_random_context(table_path: Path = OLD_RANDOM_TABLE) -> dict[tuple[str, str], dict[str, dict[str, float]]]:
     """Read old TRO random best-point table as contextual baseline markers.
 
@@ -384,7 +489,7 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
             for row in items:
                 success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
                 total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
-                plan = method_time(row)
+                plan = random_display_time(row)
                 path_len = path_length_stat(row)
                 if total > 0 and success >= total and math.isfinite(plan) and math.isfinite(path_len):
                     full.append(row)
@@ -406,17 +511,275 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
             query_s = online_query_time(chosen)
             if not math.isfinite(query_s):
                 query_s = method_time(chosen)
-            total_s = method_time(chosen)
+            total_s = random_display_time(chosen)
             path_len = path_length_stat(chosen)
             out.setdefault((robot, difficulty), {})[method] = {
                 "build_s": 0.0 if method in {"rrtconnect", "bitstar"} else build_s,
                 "query_s": query_s,
                 "total_s": total_s,
                 "path_length": path_len,
+                "build_values": chosen.get("_build_values") or finite_values(0.0 if method in {"rrtconnect", "bitstar"} else build_s),
+                "query_values": chosen.get("_online_solve_values") or finite_values(query_s),
+                "time_values": chosen.get("_display_time_values") or chosen.get("_online_solve_values") or [],
+                "path_values": chosen.get("_path_values") or [],
+                "path_by_label": chosen.get("_path_by_label") or {},
+                "success": int(as_float(chosen.get("success_queries", chosen.get("success_scenes")), 0.0)),
+                "total": int(as_float(chosen.get("total_queries", chosen.get("scenes")), 0.0)),
                 "source": "current_saved_catalog",
                 "stage_id": str(chosen.get("stage_id", "")),
                 "measured_time_s": total_s,
             }
+    return out
+
+
+def annotate_summary_rows_with_manifest_distributions(
+    summary_rows: list[dict[str, Any]],
+    manifest_payload: dict[str, Any],
+) -> None:
+    if not isinstance(manifest_payload, dict):
+        return
+    manifest_rows = manifest_payload.get("rows", [])
+    if not isinstance(manifest_rows, list) or not manifest_rows:
+        return
+
+    def matches(summary: dict[str, Any], run: dict[str, Any]) -> bool:
+        for field in ("method", "robot", "difficulty", "stage_id"):
+            expected = str(summary.get(field, ""))
+            if expected and str(run.get(field, "")) != expected:
+                return False
+        summary_budget = str(summary.get("deep_max_boxes", ""))
+        if summary_budget and summary_budget not in {"0", "0.0"}:
+            if int(float(run.get("deep_max_boxes", summary_budget) or summary_budget)) != int(float(summary_budget)):
+                return False
+        return True
+
+    for summary in summary_rows:
+        matched = [run for run in manifest_rows if matches(summary, run)]
+        if not matched:
+            continue
+        build_values: list[float] = []
+        online_solve_values: list[float] = []
+        simplify_values: list[float] = []
+        path_values: list[float] = []
+        segment_values: list[float] = []
+        path_by_label: dict[str, list[float]] = {}
+        amortized_k10_values: list[float] = []
+        display_time_values: list[float] = []
+        method = str(summary.get("method", ""))
+        for run in matched:
+            build = as_float(run.get("offline_build_s", run.get("build_s")))
+            if math.isfinite(build):
+                build_values.append(build)
+            amortized = as_float(run.get("amortized_s_k10"))
+            if math.isfinite(amortized):
+                amortized_k10_values.append(amortized)
+            display_time = method_time(run)
+            if math.isfinite(display_time):
+                display_time_values.append(display_time)
+            if method == "sbf_leaf_rrt":
+                online_scene_q = online_query_time(run)
+                if math.isfinite(online_scene_q):
+                    online_solve_values.append(online_scene_q)
+                simplify_scene_q = as_float(run.get("online_simplify_per_query_s"))
+                if math.isfinite(simplify_scene_q):
+                    simplify_values.append(simplify_scene_q)
+            for query in run.get("queries", []):
+                if not query_success(query):
+                    continue
+                if method != "sbf_leaf_rrt":
+                    solve_ms = as_float(query.get("solve_ms"))
+                    if math.isfinite(solve_ms):
+                        online_solve_values.append(solve_ms / 1000.0)
+                    simplify_ms = as_float(query.get("simplify_ms"))
+                    if math.isfinite(simplify_ms):
+                        simplify_values.append(simplify_ms / 1000.0)
+                path_values.append(as_float(query.get("path_length")))
+                segment_values.append(as_float(query.get("segment_fraction")))
+                label = str(query.get("label", ""))
+                if label:
+                    path_by_label.setdefault(label, []).append(as_float(query.get("path_length")))
+        summary["_build_values"] = build_values
+        summary["_online_solve_values"] = online_solve_values
+        summary["_online_simplify_values"] = simplify_values
+        summary["_amortized_k10_values"] = amortized_k10_values
+        summary["_display_time_values"] = display_time_values or online_solve_values
+        summary["_path_values"] = path_values
+        summary["_path_by_label"] = path_by_label
+        summary["_segment_values"] = segment_values
+
+
+def _select_query_tradeoff_candidate(candidates: list[dict[str, Any]], *, path_slack: float = 1.08) -> dict[str, Any] | None:
+    finite_path = [
+        as_float(candidate.get("path"))
+        for candidate in candidates
+        if math.isfinite(as_float(candidate.get("path")))
+    ]
+    if not finite_path:
+        return None
+    best_path = min(finite_path)
+    viable = [
+        candidate for candidate in candidates
+        if math.isfinite(as_float(candidate.get("path")))
+        and as_float(candidate.get("path")) <= path_slack * best_path
+        and math.isfinite(as_float(candidate.get("display_s")))
+    ]
+    if not viable:
+        viable = [
+            candidate for candidate in candidates
+            if math.isfinite(as_float(candidate.get("display_s")))
+        ]
+    if not viable:
+        return None
+    return sorted(
+        viable,
+        key=lambda candidate: (
+            as_float(candidate.get("display_s")),
+            as_float(candidate.get("path")),
+            as_float(candidate.get("budget_s")),
+        ),
+    )[0]
+
+
+def exp06_per_query_tradeoff_rows(
+    manifest_payload: dict[str, Any],
+    *,
+    methods: set[str],
+    path_slack: float = 1.08,
+) -> list[dict[str, Any]]:
+    """Create Exp.6 PRM/BIT* rows by selecting trade-off per query/seed.
+
+    Summary checkpoint rows charge one stage to all queries. For paper Table IV
+    and the random-scene context markers, reusable PRM and anytime BIT* instead
+    use the best strict-audited trade-off candidate independently for each
+    saved query.
+    """
+    if not isinstance(manifest_payload, dict):
+        return []
+    run_rows = manifest_payload.get("rows", [])
+    if not isinstance(run_rows, list):
+        return []
+
+    all_query_keys: dict[tuple[str, str, str], set[tuple[int, str]]] = {}
+    all_scene_labels: dict[tuple[str, str, str, int], set[str]] = {}
+    candidates: dict[tuple[str, str, str, int, str], list[dict[str, Any]]] = {}
+    query_count_by_run: dict[tuple[str, str, str, int, str], int] = {}
+
+    for run in run_rows:
+        method = str(run.get("method", ""))
+        if method not in methods:
+            continue
+        robot = str(run.get("robot", "")).lower()
+        difficulty = str(run.get("difficulty", "")).lower()
+        if not robot or not difficulty:
+            continue
+        scene_seed = int(as_float(run.get("scene_seed"), 0.0))
+        queries = run.get("queries", [])
+        if not isinstance(queries, list):
+            continue
+        query_count = max(1, int(as_float(run.get("query_count"), len(queries) or 1)))
+        build_s = as_float(run.get("offline_build_s", run.get("build_s")), 0.0)
+        stage_id = str(run.get("stage_id", ""))
+        budget_s = as_float(run.get("budget_s", run.get("timeout_cap_s")))
+        for query_index, query in enumerate(queries):
+            label = str(query.get("label", f"q{query_index}"))
+            scenario_key = (method, robot, difficulty)
+            scene_key = (method, robot, difficulty, scene_seed)
+            query_key = (method, robot, difficulty, scene_seed, label)
+            all_query_keys.setdefault(scenario_key, set()).add((scene_seed, label))
+            all_scene_labels.setdefault(scene_key, set()).add(label)
+            query_count_by_run[query_key] = query_count
+            if not query_success(query):
+                continue
+            solve_s = query_solve_seconds(query)
+            path = as_float(query.get("path_length"))
+            if not math.isfinite(solve_s) or not math.isfinite(path):
+                continue
+            display_s = solve_s
+            if method == "prm":
+                display_s = build_s / float(query_count) + solve_s
+            candidates.setdefault(query_key, []).append({
+                "build_s": 0.0 if method in {"bitstar", "rrtconnect"} else build_s,
+                "budget_s": budget_s,
+                "display_s": display_s,
+                "label": label,
+                "path": path,
+                "query_count": query_count,
+                "scene_seed": scene_seed,
+                "segment": as_float(query.get("segment_fraction")),
+                "solve_s": solve_s,
+                "stage_id": stage_id,
+            })
+
+    selected_by_scenario: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    selected_scene_labels: dict[tuple[str, str, str, int], set[str]] = {}
+    for query_key, items in candidates.items():
+        selected = _select_query_tradeoff_candidate(items, path_slack=path_slack)
+        if selected is None:
+            continue
+        method, robot, difficulty, scene_seed, label = query_key
+        selected_by_scenario.setdefault((method, robot, difficulty), []).append(selected)
+        selected_scene_labels.setdefault((method, robot, difficulty, scene_seed), set()).add(label)
+
+    out: list[dict[str, Any]] = []
+    for scenario_key, all_keys in sorted(all_query_keys.items()):
+        method, robot, difficulty = scenario_key
+        selected = selected_by_scenario.get(scenario_key, [])
+        selected_count = len(selected)
+        total_count = len(all_keys)
+        scene_keys = [
+            key for key in all_scene_labels
+            if key[:3] == scenario_key
+        ]
+        success_scenes = sum(
+            1 for key in scene_keys
+            if all_scene_labels.get(key, set())
+            and all_scene_labels.get(key, set()).issubset(selected_scene_labels.get(key, set()))
+        )
+        build_values = [as_float(item.get("build_s")) for item in selected if math.isfinite(as_float(item.get("build_s")))]
+        display_values = [as_float(item.get("display_s")) for item in selected if math.isfinite(as_float(item.get("display_s")))]
+        online_values = [as_float(item.get("solve_s")) for item in selected if math.isfinite(as_float(item.get("solve_s")))]
+        path_values = [as_float(item.get("path")) for item in selected if math.isfinite(as_float(item.get("path")))]
+        segment_values = [as_float(item.get("segment")) for item in selected if math.isfinite(as_float(item.get("segment")))]
+        path_by_label: dict[str, list[float]] = {}
+        stage_counts: dict[str, int] = {}
+        for item in selected:
+            label = str(item.get("label", ""))
+            path = as_float(item.get("path"))
+            if label and math.isfinite(path):
+                path_by_label.setdefault(label, []).append(path)
+            stage = str(item.get("stage_id", ""))
+            if stage:
+                stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        out.append({
+            "method": method,
+            "robot": robot,
+            "difficulty": difficulty,
+            "stage_id": f"{method}_per_query_seed_tradeoff",
+            "budget_s": median(item.get("budget_s") for item in selected) if selected else math.nan,
+            "source": "per_query_seed_tradeoff_from_manifest",
+            "tradeoff_policy": f"per_query_seed_path_slack_{path_slack:g}",
+            "selected_stage_counts": stage_counts,
+            "scenes": len(scene_keys),
+            "success_scenes": success_scenes,
+            "queries_per_scene": median(query_count_by_run.values()) if query_count_by_run else math.nan,
+            "success_queries": selected_count,
+            "total_queries": total_count,
+            "offline_build_s_median": median(build_values),
+            "build_s": median(build_values),
+            "online_solve_per_query_s_median": median(online_values),
+            "online_per_query_s_median": median(online_values),
+            "planning_s_median": median(display_values),
+            "measured_time_s_median": median(display_values),
+            "path_length_mean": mean(path_values),
+            "path_length_median": median(path_values),
+            "raw_segment_fraction_median": median(segment_values),
+            "_build_values": build_values,
+            "_display_time_values": display_values,
+            "_online_solve_values": online_values,
+            "_path_by_label": path_by_label,
+            "_path_values": path_values,
+            "_segment_values": segment_values,
+        })
     return out
 
 
@@ -457,7 +820,7 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             continue
         success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
         total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
-        plan = method_time(row)
+        plan = random_display_time(row)
         path_len = path_length_stat(row)
         if total <= 0 or success < total or not math.isfinite(plan) or not math.isfinite(path_len):
             continue
@@ -722,6 +1085,7 @@ def find_exp05_prm_optimized_summary(out_dir: Path) -> Path | None:
         out_dir / "current_prm_optimized" / "shelf_cross_algorithm_summary.csv",
         out_dir / "exp05" / "prm_confirm_build_quality" / "shelf_cross_algorithm_summary.csv",
         out_dir / "prm_confirm_build_quality" / "shelf_cross_algorithm_summary.csv",
+        REGISTERED_EXP05_PRM_OPTIMIZED_SUMMARY,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -735,6 +1099,7 @@ def find_exp05_prm_optimized_manifest(out_dir: Path) -> Path | None:
         out_dir / "current_prm_optimized" / "shelf_cross_algorithm_manifest.json",
         out_dir / "exp05" / "prm_confirm_build_quality" / "shelf_cross_algorithm_manifest.json",
         out_dir / "prm_confirm_build_quality" / "shelf_cross_algorithm_manifest.json",
+        REGISTERED_EXP05_PRM_OPTIMIZED_MANIFEST,
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -807,12 +1172,25 @@ def find_exp06_summary(out_dir: Path) -> Path | None:
     return matches[0] if matches else None
 
 
+def find_exp06_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "random_robot_manifest.json",
+        out_dir / "exp06" / "random_robot_manifest.json",
+        out_dir / "exp06_random_robot" / "random_robot_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    matches = sorted(out_dir.glob("**/random_robot_manifest.json"))
+    return matches[0] if matches else None
+
+
 def find_exp06_current_baseline_summary(out_dir: Path) -> Path | None:
     candidates = [
-        out_dir / "exp06" / "current_ompl_baselines_001" / "random_robot_summary.csv",
-        out_dir / "current_ompl_baselines_001" / "random_robot_summary.csv",
         out_dir / "exp06" / "current_ompl_baselines" / "random_robot_summary.csv",
         out_dir / "current_ompl_baselines" / "random_robot_summary.csv",
+        out_dir / "exp06" / "current_ompl_baselines_001" / "random_robot_summary.csv",
+        out_dir / "current_ompl_baselines_001" / "random_robot_summary.csv",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -822,10 +1200,10 @@ def find_exp06_current_baseline_summary(out_dir: Path) -> Path | None:
 
 def find_exp06_current_baseline_manifest(out_dir: Path) -> Path | None:
     candidates = [
-        out_dir / "exp06" / "current_ompl_baselines_001" / "random_robot_manifest.json",
-        out_dir / "current_ompl_baselines_001" / "random_robot_manifest.json",
         out_dir / "exp06" / "current_ompl_baselines" / "random_robot_manifest.json",
         out_dir / "current_ompl_baselines" / "random_robot_manifest.json",
+        out_dir / "exp06" / "current_ompl_baselines_001" / "random_robot_manifest.json",
+        out_dir / "current_ompl_baselines_001" / "random_robot_manifest.json",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -842,6 +1220,35 @@ def find_exp06_ompl_curve_summary(out_dir: Path) -> Path | None:
         if candidate.exists():
             return candidate
     return None
+
+
+def find_exp06_ompl_curve_manifest(out_dir: Path) -> Path | None:
+    candidates = [
+        out_dir / "exp06" / "ompl_tradeoff_curves" / "random_robot_manifest.json",
+        out_dir / "ompl_tradeoff_curves" / "random_robot_manifest.json",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def find_exp06_ompl_curve_supplements(out_dir: Path) -> list[tuple[Path, Path | None]]:
+    candidates = [
+        (
+            out_dir / "exp06" / "ompl_tradeoff_curves_prm60_iiwa_hard" / "random_robot_summary.csv",
+            out_dir / "exp06" / "ompl_tradeoff_curves_prm60_iiwa_hard" / "random_robot_manifest.json",
+        ),
+        (
+            out_dir / "ompl_tradeoff_curves_prm60_iiwa_hard" / "random_robot_summary.csv",
+            out_dir / "ompl_tradeoff_curves_prm60_iiwa_hard" / "random_robot_manifest.json",
+        ),
+    ]
+    out: list[tuple[Path, Path | None]] = []
+    for summary, manifest in candidates:
+        if summary.exists():
+            out.append((summary, manifest if manifest.exists() else None))
+    return out
 
 
 def find_exp06_bitstar_trace_summary(out_dir: Path) -> Path | None:
@@ -880,18 +1287,45 @@ def find_exp06_bitstar_trace_manifest(out_dir: Path) -> Path | None:
     return None
 
 
+def find_exp06_bitstar_trace_supplements(out_dir: Path) -> list[tuple[Path, Path | None]]:
+    quality_candidates = [
+        (
+            out_dir / "exp06" / "bitstar_trace60_iiwa_quality" / "random_robot_summary.csv",
+            out_dir / "exp06" / "bitstar_trace60_iiwa_quality" / "random_robot_manifest.json",
+        ),
+        (
+            out_dir / "bitstar_trace60_iiwa_quality" / "random_robot_summary.csv",
+            out_dir / "bitstar_trace60_iiwa_quality" / "random_robot_manifest.json",
+        ),
+    ]
+    quality_out: list[tuple[Path, Path | None]] = []
+    for summary, manifest in quality_candidates:
+        if summary.exists():
+            quality_out.append((summary, manifest if manifest.exists() else None))
+    if quality_out:
+        return quality_out
+
+    candidates = [
+        (
+            out_dir / "exp06" / "bitstar_trace60_iiwa" / "random_robot_summary.csv",
+            out_dir / "exp06" / "bitstar_trace60_iiwa" / "random_robot_manifest.json",
+        ),
+        (
+            out_dir / "bitstar_trace60_iiwa" / "random_robot_summary.csv",
+            out_dir / "bitstar_trace60_iiwa" / "random_robot_manifest.json",
+        ),
+    ]
+    out: list[tuple[Path, Path | None]] = []
+    for summary, manifest in candidates:
+        if summary.exists():
+            out.append((summary, manifest if manifest.exists() else None))
+    return out
+
+
 def find_exp06_iris_summaries(out_dir: Path) -> list[Path]:
     candidates = [
-        out_dir / "exp06" / "current_iris_gcs_adaptive" / "random_robot_iris_gcs_summary.csv",
         out_dir / "exp06" / "current_iris_gcs" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "exp06" / "current_iris_gcs_r16" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "exp06" / "current_iris_gcs_r24_it4" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "exp06" / "current_iris_gcs_nopre" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "current_iris_gcs_adaptive" / "random_robot_iris_gcs_summary.csv",
         out_dir / "current_iris_gcs" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "current_iris_gcs_r16" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "current_iris_gcs_r24_it4" / "random_robot_iris_gcs_summary.csv",
-        out_dir / "current_iris_gcs_nopre" / "random_robot_iris_gcs_summary.csv",
     ]
     out: list[Path] = []
     seen: set[Path] = set()
@@ -1059,17 +1493,24 @@ def query_stats_from_runs(
             continue
         for query in row.get("queries", []):
             label = str(query.get("label", ""))
-            if label not in buckets or not bool(query.get("success", query.get("audit_passed", False))):
+            if label not in buckets or not query_success(query):
                 continue
-            buckets[label]["query_s"].append(as_float(query.get("query_ms")) / 1000.0)
+            solve_ms = as_float(query.get("solve_ms"))
+            if not math.isfinite(solve_ms):
+                solve_ms = as_float(query.get("query_ms")) - as_float(query.get("simplify_ms"), 0.0)
+            buckets[label]["query_s"].append(solve_ms / 1000.0)
             buckets[label]["path"].append(as_float(query.get("path_length")))
             buckets[label]["segment"].append(as_float(query.get("segment_fraction")))
     out: dict[str, dict[str, float]] = {}
     for label, values in buckets.items():
         out[label] = {
             "query_s": median(values["query_s"]),
-            "path": mean(values["path"]),
+            "query_s_values": values["query_s"],
+            "path": median(values["path"]),
+            "path_mean": mean(values["path"]),
+            "path_values": values["path"],
             "segment": median(values["segment"]),
+            "segment_values": values["segment"],
         }
     return out
 
@@ -1099,7 +1540,7 @@ def rbf_registered_batch_query_stats(
             online_q = as_float(row.get("online_solve_s", row.get("query_s"))) / query_count
         for query in row.get("queries", []):
             label = str(query.get("label", ""))
-            if label not in buckets or not bool(query.get("success", query.get("audit_passed", False))):
+            if label not in buckets or not query_success(query):
                 continue
             buckets[label]["query_s"].append(online_q)
             buckets[label]["path"].append(as_float(query.get("path_length")))
@@ -1108,8 +1549,12 @@ def rbf_registered_batch_query_stats(
     for label, values in buckets.items():
         out[label] = {
             "query_s": median(values["query_s"]),
-            "path": mean(values["path"]),
+            "query_s_values": values["query_s"],
+            "path": median(values["path"]),
+            "path_mean": mean(values["path"]),
+            "path_values": values["path"],
             "segment": median(values["segment"]),
+            "segment_values": values["segment"],
         }
     return out
 
@@ -1134,7 +1579,7 @@ def rbf_registered_per_query_online_stats(
         batch_online_q = online_query_time(row)
         for query in row.get("queries", []):
             label = str(query.get("label", ""))
-            if label not in buckets or not bool(query.get("success", query.get("audit_passed", False))):
+            if label not in buckets or not query_success(query):
                 continue
             query_index = int(as_float(query.get("query_index"), QUERY_ORDER.index(label)))
             task_ms = as_float(row.get(f"diag_query_bridge_task{query_index}_total_ms"))
@@ -1146,8 +1591,12 @@ def rbf_registered_per_query_online_stats(
     for label, values in buckets.items():
         out[label] = {
             "query_s": median(values["query_s"]),
-            "path": mean(values["path"]),
+            "query_s_values": values["query_s"],
+            "path": median(values["path"]),
+            "path_mean": mean(values["path"]),
+            "path_values": values["path"],
             "segment": median(values["segment"]),
+            "segment_values": values["segment"],
         }
     return out
 
@@ -1192,14 +1641,21 @@ def bitstar_first_full_success_query_stats(
                     if not (bool(query.get("success")) and bool(query.get("audit_passed", True))):
                         continue
                     ok += 1
-                    query_s.append(as_float(query.get("query_ms")) / 1000.0)
+                    solve_ms = as_float(query.get("solve_ms"))
+                    if not math.isfinite(solve_ms):
+                        solve_ms = as_float(query.get("query_ms")) - as_float(query.get("simplify_ms"), 0.0)
+                    query_s.append(solve_ms / 1000.0)
                     paths.append(as_float(query.get("path_length")))
                     segments.append(as_float(query.get("segment_fraction")))
             if total > 0 and ok == total:
                 selected = {
                     "query_s": median(query_s),
-                    "path": mean(paths),
+                    "query_s_values": query_s,
+                    "path": median(paths),
+                    "path_mean": mean(paths),
+                    "path_values": paths,
                     "segment": median(segments),
+                    "segment_values": segments,
                 }
                 selected_total = total
                 break
@@ -1238,9 +1694,61 @@ def rbf_single_query_stats_from_summary(
                     row.get("online_per_query_s_median", row.get("online_solve_per_query_s_median")),
                 )
             ),
-            "path": as_float(row.get("path_length_mean", row.get("path_length_median"))),
+            "query_s_values": finite_values(row.get(
+                "online_solve_wall_s_median",
+                row.get("online_per_query_s_median", row.get("online_solve_per_query_s_median")),
+            )),
+            "path": as_float(row.get("path_length_median", row.get("path_length_mean"))),
+            "path_values": finite_values(row.get("path_length_median", row.get("path_length_mean"))),
             "segment": as_float(row.get("raw_segment_fraction_median")),
+            "segment_values": finite_values(row.get("raw_segment_fraction_median")),
         }
+    return stats, success, total, median(builds)
+
+
+def rbf_single_query_stats_from_manifest(
+    manifest: dict[str, Any],
+    *,
+    deep_boxes: int,
+) -> tuple[dict[str, dict[str, Any]], int, int, float]:
+    stats: dict[str, dict[str, Any]] = {
+        label: {"query_s": math.nan, "query_s_values": [], "path": math.nan, "path_values": [], "segment": math.nan, "segment_values": []}
+        for label in QUERY_ORDER
+    }
+    rows = manifest.get("rows", []) if isinstance(manifest, dict) else []
+    builds: list[float] = []
+    success = 0
+    total = 0
+    for row in rows:
+        if int(float(row.get("deep_max_boxes", deep_boxes) or deep_boxes)) != deep_boxes:
+            continue
+        build = as_float(row.get("offline_build_s", row.get("build_s")))
+        if math.isfinite(build):
+            builds.append(build)
+        queries = row.get("queries", [])
+        if not queries:
+            continue
+        query = queries[0]
+        label = str(query.get("label", row.get("single_query_label", "")))
+        if label not in stats:
+            continue
+        total += 1
+        if not query_success(query):
+            continue
+        success += 1
+        query_s = as_float(row.get("online_solve_wall_s", row.get("online_solve_s", row.get("online_solve_per_query_s"))))
+        if not math.isfinite(query_s):
+            task_ms = as_float(row.get("diag_query_bridge_task0_total_ms"))
+            graph_solve = as_float(row.get("graph_solve_s"), 0.0)
+            query_s = task_ms / 1000.0 + graph_solve if math.isfinite(task_ms) else as_float(query.get("solve_ms")) / 1000.0
+        stats[label]["query_s_values"].append(query_s)
+        stats[label]["path_values"].append(as_float(query.get("path_length")))
+        stats[label]["segment_values"].append(as_float(query.get("segment_fraction")))
+    for label, item in stats.items():
+        item["query_s"] = median(item["query_s_values"])
+        item["path"] = median(item["path_values"])
+        item["path_mean"] = mean(item["path_values"])
+        item["segment"] = median(item["segment_values"])
     return stats, success, total, median(builds)
 
 
@@ -1265,8 +1773,11 @@ def old_shelf_iris_query_stats() -> dict[str, dict[str, float]]:
             continue
         stats[label] = {
             "query_s": as_float(cells[3]),
+            "query_s_values": finite_values(cells[3]),
             "path": as_float(cells[4]),
+            "path_values": finite_values(cells[4]),
             "segment": math.nan,
+            "segment_values": [],
         }
     return stats
 
@@ -1286,8 +1797,6 @@ def format_method_header(
     simplify = as_float(simplify_s)
     if math.isfinite(simplify):
         details.append(rf"Simp {tex_num(simplify, 3)}\,s")
-    if sr:
-        details.append(rf"SR {sr}")
     if details:
         detail_lines = r"\\[-0.2ex]".join(
             rf"{{\normalfont\fontsize{{6.6}}{{7.1}}\selectfont {detail}}}"
@@ -1305,6 +1814,8 @@ def grouped_query_table(
     methods: list[dict[str, Any]],
     include_segment: bool = False,
     time_unit: str = "s",
+    normalize_path_by_query: bool = False,
+    show_time_tail: bool = False,
 ) -> None:
     time_scale = 1000.0 if time_unit == "ms" else 1.0
     per_method_cols = 3 if include_segment else 2
@@ -1319,11 +1830,12 @@ def grouped_query_table(
         r"\footnotesize",
         r"\setlength{\tabcolsep}{1.55pt}",
         r"\renewcommand{\arraystretch}{0.96}",
+        r"\resizebox{\textwidth}{!}{%",
         rf"\begin{{tabular}}{{{colspec}}}",
         r"\toprule",
         "  & "
         + " & ".join(
-            rf"\multicolumn{{{per_method_cols}}}{{c}}{{{format_method_header(str(method['label']), method.get('build_s'), method.get('sr'), simplify_s=method.get('simplify_s'), time_label=str(method.get('time_label', 'Build')))}}}"
+            rf"\multicolumn{{{per_method_cols}}}{{c}}{{{format_method_header(str(method['label']), method.get('build_s'), None, simplify_s=method.get('simplify_s'), time_label=str(method.get('time_label', 'Build')))}}}"
             for method in methods
         )
         + r" \\",
@@ -1335,27 +1847,98 @@ def grouped_query_table(
         cmid.append(rf"\cmidrule(lr){{{start}-{end}}}")
         start = end + 1
     lines.append("".join(cmid))
-    default_time_metric = rf"$T_{{50}}$ ({time_unit})"
+    default_time_metric = rf"$T$ ({time_unit})"
     metric_cols = []
     for method in methods:
         time_metric = str(method.get("time_metric_label") or default_time_metric)
-        metric_cols.append(f"{time_metric} & $L_\\mu$ & Seg." if include_segment else f"{time_metric} & $L_\\mu$")
+        path_metric = r"$L/L^\star$" if normalize_path_by_query else "$L$"
+        metric_cols.append(f"{time_metric} & {path_metric} & Seg." if include_segment else f"{time_metric} & {path_metric}")
     lines.append("Query & " + " & ".join(metric_cols) + r" \\")
     lines.append(r"\midrule")
+    path_refs: dict[str, float] = {}
+    if normalize_path_by_query:
+        for query_label in QUERY_ORDER:
+            candidates: list[float] = []
+            for method in methods:
+                stats = method.get("queries", {}).get(query_label, {})
+                path_values = finite_values(stats.get("path_values", stats.get("path")))
+                med = median(path_values)
+                if med is not None and math.isfinite(float(med)):
+                    candidates.append(float(med))
+            path_refs[query_label] = min(candidates) if candidates else math.nan
     for query_label in QUERY_ORDER:
         cells = [QUERY_LABELS[query_label]]
         for method in methods:
             stats = method.get("queries", {}).get(query_label, {})
-            cells.append(tex_num(as_float(stats.get("query_s")) * time_scale))
-            cells.append(tex_num(stats.get("path"), 2))
+            time_values = finite_values(stats.get("query_s_values"))
+            if time_values:
+                scaled = [value * time_scale for value in time_values]
+                cells.append(tex_time_tail(scaled, 3) if show_time_tail else tex_iqr(scaled, 3))
+            else:
+                fallback_time = as_float(stats.get("query_s")) * time_scale
+                cells.append(tex_time_tail(fallback_time, 3) if show_time_tail else tex_iqr(fallback_time, 3))
+            path_values = stats.get("path_values", stats.get("path"))
+            if normalize_path_by_query:
+                cells.append(tex_iqr(normalized_gap_values(path_values, path_refs.get(query_label, math.nan)), 2))
+            else:
+                cells.append(tex_iqr(path_values, 2))
             if include_segment:
-                cells.append(tex_num(stats.get("segment"), 2))
+                cells.append(tex_iqr(stats.get("segment_values", stats.get("segment")), 2))
         lines.append(" & ".join(cells) + r" \\")
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
+def exp04_case_distributions(
+    manifest_payload: dict[str, Any],
+    *,
+    case: str,
+    deep_boxes: int,
+) -> dict[str, Any]:
+    rows = manifest_payload.get("rows", []) if isinstance(manifest_payload, dict) else []
+    build_values: list[float] = []
+    online_values: list[float] = []
+    amortized_values: list[float] = []
+    path_values: list[float] = []
+    segment_values: list[float] = []
+    path_by_label: dict[str, list[float]] = {}
+    for run in rows:
+        if str(run.get("case")) != case:
+            continue
+        if int(float(run.get("deep_max_boxes", deep_boxes) or deep_boxes)) != deep_boxes:
+            continue
+        build = as_float(run.get("offline_build_s", run.get("build_s")))
+        if math.isfinite(build):
+            build_values.append(build)
+        online_q = online_query_time(run)
+        if math.isfinite(online_q):
+            online_values.append(online_q)
+        amortized = as_float(run.get("amortized_s_k5"))
+        if math.isfinite(amortized):
+            amortized_values.append(amortized)
+        for query in run.get("queries", []):
+            if not query_success(query):
+                continue
+            path_len = as_float(query.get("path_length"))
+            if math.isfinite(path_len):
+                path_values.append(path_len)
+                label = str(query.get("label", ""))
+                if label:
+                    path_by_label.setdefault(label, []).append(path_len)
+            segment = as_float(query.get("segment_fraction"))
+            if math.isfinite(segment):
+                segment_values.append(segment)
+    return {
+        "build_values": build_values,
+        "online_values": online_values,
+        "amortized_values": amortized_values,
+        "path_values": path_values,
+        "path_by_label": path_by_label,
+        "segment_values": segment_values,
+    }
+
+
+def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payload: dict[str, Any] | None = None) -> None:
     labels = {
         "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
         "critsample_d23_cache": "CritSample d23",
@@ -1374,29 +1957,75 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     if not table_rows:
         table_rows = rows
+    table_rows = [
+        row for row in table_rows
+        if full_success(row)
+    ]
+    distributions: dict[int, dict[str, Any]] = {}
+    for index, row in enumerate(table_rows):
+        case = str(row.get("case", ""))
+        deep_boxes = int(float(row.get("deep_max_boxes", DEFAULT_RBF_SHELF_BOX_BUDGET) or DEFAULT_RBF_SHELF_BOX_BUDGET))
+        distributions[index] = exp04_case_distributions(
+            manifest_payload or {},
+            case=case,
+            deep_boxes=deep_boxes,
+        )
+
+    path_refs: dict[str, float] = {}
+    for query_label in QUERY_ORDER:
+        medians: list[float] = []
+        for dist in distributions.values():
+            values = finite_values(dist.get("path_by_label", {}).get(query_label, []))
+            med = median(values)
+            if med is not None and math.isfinite(float(med)):
+                medians.append(float(med))
+        if medians:
+            path_refs[query_label] = min(medians)
+    scalar_path_ref = min(
+        [
+            path_length_stat(row)
+            for row in table_rows
+            if math.isfinite(path_length_stat(row))
+        ],
+        default=math.nan,
+    )
+
+    def dist_or_scalar(dist: dict[str, Any], key: str, scalar: Any) -> Any:
+        values = finite_values(dist.get(key))
+        return values if values else scalar
+
+    def gap_cell(dist: dict[str, Any], scalar_path: Any) -> str:
+        path_by_label = dist.get("path_by_label", {})
+        if isinstance(path_by_label, dict) and path_by_label:
+            gaps = normalized_gap_from_label_values(path_by_label, path_refs)
+            if gaps:
+                return tex_iqr(gaps, 2)
+        return tex_iqr(normalized_gap_values(dist.get("path_values") or scalar_path, scalar_path_ref), 2)
+
     lines = [
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Times are in seconds; Path is the success-only mean and Seg. is the raw segment fraction.}",
+        r"\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Numeric entries report only the [Q1,Q3] interval and exclude the fixed 0.01\,s final simplification from timing columns. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same shelf query. Seg. is the raw segment fraction.}",
         r"\label{tab:tro-shelf-ablation}",
-        r"\begin{tabular}{lrrrrrrr}",
+        r"\footnotesize",
+        r"\setlength{\tabcolsep}{2.0pt}",
+        r"\renewcommand{\arraystretch}{0.96}",
+        r"\begin{tabular}{lccccc}",
         r"\toprule",
-        r"Case & Build & Batch/q & Amort@5 & Path & Seg. & Boxes & SR \\",
+        r"Case & Build & Online/q & Amort@5 & $L/L^\star$ & Seg. \\",
         r"\midrule",
     ]
-    for row in table_rows:
-        runs = int(float(row.get("total_queries", row.get("runs", 0)) or 0))
-        success = int(float(row.get("success_queries", row.get("success_runs", 0)) or 0))
+    for index, row in enumerate(table_rows):
+        dist = distributions.get(index, {})
         label = labels.get(str(row.get("case", "")), str(row.get("case", ""))).replace("_", r"\_")
-        path_length = path_length_stat(row) if success == runs else None
-        segment_fraction = row.get("raw_segment_fraction_median") if success == runs else None
         lines.append(
-            f"{label} & {tex_num(row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s'))))} & "
-            f"{tex_num(online_query_time(row))} & "
-            f"{tex_num(row.get('amortized_s_k5', amortized_query_time(row, 5)))} & "
-            f"{tex_num(path_length)} & {tex_num(segment_fraction)} & "
-            f"{tex_num(row.get('final_boxes_median'), 1)} & {success}/{runs} \\\\"
+            f"{label} & "
+            f"{tex_time_tail(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
+            f"{tex_time_tail(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
+            f"{tex_time_tail(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
+            f"{gap_cell(dist, path_length_stat(row))} & "
+            f"{tex_iqr(dist_or_scalar(dist, 'segment_values', row.get('raw_segment_fraction_median')), 2)} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
@@ -1447,8 +2076,8 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
         caption=(
             r"Shelf+IIWA RBF ablation rows from Fig.~\ref{fig:tro_shelf_tradeoff}, "
             r"reported by query. Each ablation contributes the selected design point "
-            r"selected from its measured-time trade-off curve; the full curves remain the primary evidence. "
-            r"Query path entries are success-only means over fixed 0.01 joint-space strict-audit paths."
+            r"selected from its five-query amortized-time trade-off curve; the full curves remain the primary evidence. "
+            r"Query path entries report success-only $L/L^\star$ intervals over fixed 0.01 joint-space strict-audit paths."
         ),
         label="tab:tro-shelf-ablation",
         methods=methods,
@@ -1463,6 +2092,7 @@ def generate_exp05_table(
     rbf_manifest: dict[str, Any],
     baseline_manifest: dict[str, Any],
     rbf_single_query_summary_rows: list[dict[str, Any]] | None = None,
+    rbf_single_query_manifest: dict[str, Any] | None = None,
 ) -> None:
     order = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
     def best_rbf_row() -> dict[str, Any] | None:
@@ -1472,13 +2102,7 @@ def generate_exp05_table(
     def selected_method_row(method: str) -> dict[str, Any] | None:
         items = [row for row in rows if str(row.get("method")) == method]
         if method == "prm":
-            registered = [
-                row for row in items
-                if str(row.get("stage_id")) == "prm_cumulative_build20s_k128_q1s_preload1"
-                and is_full_success(row)
-            ]
-            if registered:
-                return sorted(registered, key=measured_time_key)[0]
+            return select_tradeoff_row(items, budget_field="budget_s")
         full = [
             row for row in items
             if int(float(row.get("success_runs", 0) or 0)) == int(float(row.get("runs", 0) or 0))
@@ -1539,7 +2163,12 @@ def generate_exp05_table(
                 item for item in (rbf_single_query_summary_rows or [])
                 if int(float(item.get("deep_max_boxes", deep_boxes) or deep_boxes)) == deep_boxes
             ]
-            if single_query_rows:
+            if isinstance(rbf_single_query_manifest, dict) and rbf_single_query_manifest.get("rows"):
+                query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_manifest(
+                    rbf_single_query_manifest,
+                    deep_boxes=deep_boxes,
+                )
+            elif single_query_rows:
                 query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_summary(single_query_rows)
             else:
                 query_stats = rbf_registered_per_query_online_stats(
@@ -1552,7 +2181,7 @@ def generate_exp05_table(
                         and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
                     ),
                 )
-            time_metric_label = r"$T_{50}$ (s)"
+            time_metric_label = r"$T$ (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         elif method == "iris_np_gcs":
@@ -1596,12 +2225,14 @@ def generate_exp05_table(
     grouped_query_table(
         path,
         caption=(
-            r"Shelf+IIWA per-query cross-algorithm comparison. $T_{50}$ is median online solve time in seconds; $L_\mu$ is success-only mean path length. RBF uses the registered Exp.~4 profile, with $T_{50}$ measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
+            r"Shelf+IIWA per-query cross-algorithm comparison. Rows are stratified by query. Numeric entries report only the [Q1,Q3] interval; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same query. RBF uses the registered Exp.~4 profile, with time measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
         ),
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         include_segment=False,
         time_unit="s",
+        normalize_path_by_query=True,
+        show_time_tail=True,
     )
 
 
@@ -1637,6 +2268,11 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
 
     fig, axes = plt.subplots(1, 2, figsize=(5.25, 2.15))
     ax = axes[0]
+    path_ref = finite_min([
+        path_length_stat(row)
+        for items in method_rows.values()
+        for row in items
+    ])
     path_values: list[float] = []
     for method in method_order:
         items = method_rows.get(method, [])
@@ -1644,7 +2280,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             continue
         style = METHOD_STYLE.get(method, {"label": method, "color": "0.3", "marker": "o"})
         xs = [method_time(row) for row in items]
-        ys = [path_length_stat(row) for row in items]
+        ys = [ratio_to_ref(path_length_stat(row), path_ref) for row in items]
         path_values.extend(ys)
         if len(items) > 1:
             ax.plot(xs, ys, "-", color=style["color"], alpha=0.62, linewidth=LINE_WIDTH)
@@ -1654,7 +2290,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if first is not None:
             ax.scatter(
                 [method_time(first)],
-                [path_length_stat(first)],
+                [ratio_to_ref(path_length_stat(first), path_ref)],
                 facecolors="none",
                 edgecolors="black",
                 linewidths=0.9,
@@ -1664,7 +2300,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if selected is not None:
             ax.scatter(
                 [method_time(selected)],
-                [path_length_stat(selected)],
+                [ratio_to_ref(path_length_stat(selected), path_ref)],
                 facecolors="none",
                 edgecolors="#d4a017",
                 linewidths=SELECTED_LINE_WIDTH,
@@ -1673,8 +2309,8 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             )
     ax.set_xscale("log")
     ax.set_xlabel("amortized time / query @5 (s, log)")
-    ax.set_ylabel("mean audited path length")
-    ax.set_title("(a) time / path", fontsize=PANEL_TITLE_FONTSIZE)
+    ax.set_ylabel(r"path ratio $L/L^\star$")
+    ax.set_title("(a) time / ratio", fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
     ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
@@ -1731,6 +2367,12 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     ]
     selected_rows: dict[str, dict[str, Any]] = {}
     fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.20))
+    allowed_cases = {case for case, _label, _color, _marker in case_order}
+    path_ref = finite_min([
+        path_length_stat(row)
+        for row in rows
+        if str(row.get("case")) in allowed_cases and full_success(row)
+    ])
     path_values: list[float] = []
     for case, label, color, marker in case_order:
         items = sorted(
@@ -1743,7 +2385,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if selected is not None:
             selected_rows[case] = selected
         xs = [method_time(row) for row in items]
-        ys = [path_length_stat(row) for row in items]
+        ys = [ratio_to_ref(path_length_stat(row), path_ref) for row in items]
         path_values.extend(ys)
         ax.plot(xs, ys, "-", color=color, alpha=0.62, linewidth=LINE_WIDTH)
         ax.scatter(xs, ys, marker=marker, color=color, s=POINT_SIZE, alpha=0.78, label=label)
@@ -1751,7 +2393,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if selected is not None and math.isfinite(selected_path):
             ax.scatter(
                 [method_time(selected)],
-                [selected_path],
+                [ratio_to_ref(selected_path, path_ref)],
                 facecolors="none",
                 edgecolors="#d4a017",
                 linewidths=SELECTED_LINE_WIDTH,
@@ -1760,7 +2402,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             )
     ax.set_xscale("log")
     ax.set_xlabel("amortized time / query @5 (s, log)")
-    ax.set_ylabel("mean audited path length")
+    ax.set_ylabel(r"path ratio $L/L^\star$")
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
     ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
@@ -1785,7 +2427,7 @@ def generate_exp04_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     table_path = generated / "tab_tro_shelf_ablation.tex"
     pdf_path = generated / "fig_tro_shelf_tradeoff.pdf"
     png_path = generated / "fig_tro_shelf_tradeoff.png"
-    generate_exp04_table(table_path, rows)
+    generate_exp04_table(table_path, rows, manifest)
     generate_exp04_figure(
         pdf_path,
         png_path,
@@ -1832,6 +2474,7 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     rbf_single_query_summary = find_exp05_rbf_single_query_summary(out_dir)
     rbf_single_query_manifest = find_exp05_rbf_single_query_manifest(out_dir)
     rbf_single_query_rows = read_csv_rows(rbf_single_query_summary) if rbf_single_query_summary is not None else []
+    rbf_single_query_manifest_payload = load_json_file(rbf_single_query_manifest)
     baseline_manifest = load_json_file(current_baseline_manifest)
     baseline_manifest_ok = manifest_uses_required_simplify(baseline_manifest)
     if current_baseline_summary is not None and current_baseline_summary != summary and baseline_manifest_ok:
@@ -1974,6 +2617,7 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rbf_manifest=rbf_manifest,
         baseline_manifest=baseline_manifest,
         rbf_single_query_summary_rows=rbf_single_query_rows,
+        rbf_single_query_manifest=rbf_single_query_manifest_payload,
     )
     generate_exp05_figure(pdf_path, png_path, rows)
     return {
@@ -2070,15 +2714,21 @@ def generate_sbf_budget_figure(pdf_path: Path,
 
     groups = sorted({group_label(row) for row in rows})
     fig, axes = plt.subplots(1, 2, figsize=(6.6, 2.65), constrained_layout=True)
+    path_ref = finite_min([path_length_stat(row) for row in rows])
     metrics = [
         ("raw_segment_fraction_median", "Raw segment fraction"),
-        ("path_length_mean", "Mean audited path length"),
+        ("path_length_mean", r"Path ratio $L/L^\star$"),
     ]
     for group in groups:
         items = sorted([row for row in rows if group_label(row) == group], key=measured_time_key)
         x = [method_time(row) for row in items]
         for axis, (field, ylabel) in zip(axes, metrics):
-            y = [path_length_stat(row) if field == "path_length_mean" else float(row.get(field, "nan")) for row in items]
+            y = [
+                ratio_to_ref(path_length_stat(row), path_ref)
+                if field == "path_length_mean"
+                else float(row.get(field, "nan"))
+                for row in items
+            ]
             axis.plot(x, y, marker="o", linewidth=1.5, label=group)
             for bx, by, row in zip(x, y, items):
                 ok = int(float(row.get("success_scenes", row.get("success_runs", 0)) or 0))
@@ -2087,7 +2737,7 @@ def generate_sbf_budget_figure(pdf_path: Path,
                     axis.plot([bx], [by], marker="x", color="black", markersize=6, mew=1.4)
     for axis, (_, ylabel) in zip(axes, metrics):
         axis.set_xscale("log")
-        axis.set_xlabel("Measured planning time (s)")
+        axis.set_xlabel("amortized time / query @5 (s, log)")
         axis.set_ylabel(ylabel)
         axis.grid(True, alpha=0.25, linewidth=0.6)
     axes[0].axhline(0.4, color="0.35", linestyle="--", linewidth=1.0)
@@ -2100,6 +2750,8 @@ def generate_sbf_budget_figure(pdf_path: Path,
 
 
 def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
+    reusable_context_methods = ["prm"]
+    online_context_methods = ["rrtconnect", "bitstar"]
     rbf_rows = [row for row in rows if str(row.get("method")) == "sbf_leaf_rrt"]
     selected_rows = select_best_budget_rows(rbf_rows, ["robot", "difficulty"])
     context, has_current_baselines = merged_random_context(rows)
@@ -2108,55 +2760,102 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         for row in selected_rows
     }
     robot_order = ["iiwa", "ur5", "panda"]
-    difficulty_order = ["easy", "medium", "hard"]
-    lines = [
-        r"% Auto-generated from current trade-off artifacts.",
-        r"\begingroup",
-        r"\centering",
-            (
-            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. PRM grows one cumulative shared roadmap per scene; BIT* reports best audited incumbents from single cumulative checkpoint traces. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
-            if has_current_baselines else
-            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Time columns are medians in seconds; $L_\mu$ is success-only mean path length. RBF Online/q excludes final simplification. PRM grows one cumulative shared roadmap per scene; BIT* reports best audited incumbents from single cumulative checkpoint traces. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
-        ),
-        r"\label{tab:tro-random-summary}",
-        r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.35pt}",
-        r"\begin{tabular}{lrrrrrrr|rr|rr|rr|rr}",
-        r"\toprule",
-        r"Scenario & \multicolumn{7}{c|}{RBF} & \multicolumn{2}{c|}{IRIS-NP+GCS} & \multicolumn{2}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
-        r"\cmidrule(lr){2-8}\cmidrule(lr){9-10}\cmidrule(lr){11-12}\cmidrule(lr){13-14}\cmidrule(lr){15-16}",
-        r" & Build$_{50}$ & Online/q$_{50}$ & Simplify/q$_{50}$ & Amort@10$_{50}$ & $L_\mu$ & Boxes & SR & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ & $T_{50}$ (s) & $L_\mu$ \\",
-        r"\midrule",
-    ]
+    difficulty_order = ["medium", "hard"]
+    scenario_items: list[tuple[str, dict[str, Any], dict[str, dict[str, Any]]]] = []
     for robot in robot_order:
         for difficulty in difficulty_order:
             row = selected_by_key.get((robot, difficulty))
             if row is None:
                 continue
             scenario = f"{robot.upper()}-{difficulty.capitalize()}"
-            scenario_context = context.get((robot, difficulty), {})
-            cells = []
-            for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
-                item = scenario_context.get(method, {})
-                cells.extend([tex_num(item.get("total_s")), tex_num(item.get("path_length"), 2)])
-            online_q = online_query_time(row)
-            if not math.isfinite(online_q):
-                online_q = as_float(row.get("planning_s_median", row.get("measured_time_s_median")))
-            amortized_k10 = amortized_query_time(row, 10)
-            if not math.isfinite(amortized_k10):
-                amortized_k10 = online_q
-            success = int(float(row.get("success_queries", row.get("success_runs", 0)) or 0))
-            total = int(float(row.get("total_queries", row.get("runs", 0)) or 0))
-            lines.append(
-                f"{scenario} & {tex_num(row.get('offline_build_s_median', row.get('build_s')))} & "
-                f"{tex_num(online_q)} & {tex_num(row.get('online_simplify_per_query_s_median'))} & "
-                f"{tex_num(amortized_k10)} & "
-                f"{tex_num(path_length_stat(row), 2)} & {int(float(row.get('deep_max_boxes', 0) or 0))} & "
-                f"{success}/{total} & "
-                + " & ".join(cells)
-                + r" \\"
-            )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
+            scenario_items.append((scenario, row, context.get((robot, difficulty), {})))
+
+    scenario_refs: dict[str, dict[str, float]] = {}
+    scenario_scalar_refs: dict[str, float] = {}
+    for scenario, row, scenario_context in scenario_items:
+        label_candidates: dict[str, list[float]] = {}
+        scalar_candidates: list[float] = []
+
+        def collect_refs(path_by_label: Any, path_values: Any, scalar_path: Any) -> None:
+            if isinstance(path_by_label, dict) and path_by_label:
+                for label, values in path_by_label.items():
+                    med = median(values)
+                    if med is not None and math.isfinite(float(med)):
+                        label_candidates.setdefault(str(label), []).append(float(med))
+            finite_path_values = finite_values(path_values)
+            path_med = median(finite_path_values) if finite_path_values else None
+            if path_med is not None and math.isfinite(float(path_med)):
+                scalar_candidates.append(float(path_med))
+                return
+            scalar = as_float(scalar_path)
+            if math.isfinite(scalar):
+                scalar_candidates.append(scalar)
+
+        collect_refs(row.get("_path_by_label"), row.get("_path_values"), path_length_stat(row))
+        for method in reusable_context_methods + online_context_methods:
+            item = scenario_context.get(method, {})
+            collect_refs(item.get("path_by_label"), item.get("path_values"), item.get("path_length"))
+        scenario_refs[scenario] = {
+            label: min(values)
+            for label, values in label_candidates.items()
+            if values
+        }
+        scenario_scalar_refs[scenario] = min(scalar_candidates) if scalar_candidates else math.nan
+
+    def gap_cell(path_by_label: Any, path_values: Any, scalar_path: Any, scenario: str) -> str:
+        refs = scenario_refs.get(scenario, {})
+        if isinstance(path_by_label, dict):
+            gaps = normalized_gap_from_label_values(path_by_label, refs)
+            if gaps:
+                return tex_iqr(gaps, 2)
+        values = path_values if finite_values(path_values) else scalar_path
+        return tex_iqr(normalized_gap_values(values, scenario_scalar_refs.get(scenario, math.nan)), 2)
+
+    lines = [
+        r"% Auto-generated from current trade-off artifacts.",
+        r"\begingroup",
+        r"\centering",
+            (
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Numeric entries report only the [Q1,Q3] interval; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same saved query when query-level samples are available; summary-only legacy rows use the scenario-level reference. RBF and PRM are reusable planners and report Build/Online/q/$L/L^\star$; RRTConnect and BIT* are one-shot online baselines. PRM and BIT* entries select the fastest audited checkpoint within 1.08$\times$ of the best path independently for each query/seed, rather than charging one fixed checkpoint to all queries. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
+            if has_current_baselines else
+            r"\captionof{table}{Saved-catalog random-scene best trade-off points. Numeric entries report only the [Q1,Q3] interval; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same saved query when query-level samples are available; summary-only legacy rows use the scenario-level reference. RBF and PRM are reusable planners and report Build/Online/q/$L/L^\star$; RRTConnect and BIT* are one-shot online baselines. PRM and BIT* entries select the fastest audited checkpoint within 1.08$\times$ of the best path independently for each query/seed, rather than charging one fixed checkpoint to all queries. Full curves appear in \Cref{fig:tro_random_tradeoff}.}"
+        ),
+        r"\label{tab:tro-random-summary}",
+        r"\scriptsize",
+        r"\setlength{\tabcolsep}{1.5pt}",
+        r"\resizebox{\textwidth}{!}{%",
+        r"\begin{tabular}{lccc|ccc|cc|cc}",
+        r"\toprule",
+        r"Scenario & \multicolumn{3}{c|}{RBF} & \multicolumn{3}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
+        r"\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}",
+        r" & Build & Online/q & $L/L^\star$ & Build & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ \\",
+        r"\midrule",
+    ]
+    for scenario, row, scenario_context in scenario_items:
+        online_q = online_query_time(row)
+        if not math.isfinite(online_q):
+            online_q = as_float(row.get("planning_s_median", row.get("measured_time_s_median")))
+        cells = [
+            scenario,
+            tex_iqr(row.get("_build_values", row.get("offline_build_s_median", row.get("build_s"))), 3),
+            tex_time_tail(row.get("_online_solve_values", online_q), 3),
+            gap_cell(row.get("_path_by_label"), row.get("_path_values"), path_length_stat(row), scenario),
+        ]
+        for method in reusable_context_methods:
+            item = scenario_context.get(method, {})
+            cells.extend([
+                tex_iqr(item.get("build_values") or item.get("build_s"), 3),
+                tex_time_tail(item.get("query_values") or item.get("query_s"), 3),
+                gap_cell(item.get("path_by_label"), item.get("path_values"), item.get("path_length"), scenario),
+            ])
+        for method in online_context_methods:
+            item = scenario_context.get(method, {})
+            cells.extend([
+                tex_time_tail(item.get("query_values") or item.get("query_s"), 3),
+                gap_cell(item.get("path_by_label"), item.get("path_values"), item.get("path_length"), scenario),
+            ])
+        lines.append(" & ".join(cells) + r" \\")
+    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -2172,7 +2871,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     context, _has_current_baselines = merged_random_context(rows)
     current_curves = current_random_curves_from_rows(rows)
     robot_order = ["iiwa", "ur5", "panda"]
-    difficulty_order = ["easy", "medium", "hard"]
+    difficulty_order = ["medium", "hard"]
     robot_labels = {"iiwa": "IIWA", "ur5": "UR5", "panda": "Panda"}
     rbf_selected = {
         (str(row.get("robot")).lower(), str(row.get("difficulty")).lower()): row
@@ -2185,23 +2884,9 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     fig, axes = plt.subplots(
         len(robot_order),
         len(difficulty_order) + 1,
-        figsize=(11.2, 6.9),
+        figsize=(8.8, 6.9),
     )
     for row_index, robot in enumerate(robot_order):
-        robot_path_values: list[float] = []
-        for difficulty in difficulty_order:
-            robot_path_values.extend([
-                path_length_stat(row)
-                for row in rows
-                if str(row.get("method")) == "sbf_leaf_rrt"
-                and str(row.get("robot")).lower() == robot
-                and str(row.get("difficulty")).lower() == difficulty
-            ])
-            robot_path_values.extend([
-                item["path_length"]
-                for item in context.get((robot, difficulty), {}).values()
-                if math.isfinite(item.get("path_length", math.nan))
-            ])
         for col_index, difficulty in enumerate(difficulty_order):
             axis = axes[row_index][col_index]
             items = sorted(
@@ -2214,9 +2899,26 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 ],
                 key=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
             )
+            scenario_context = context.get((robot, difficulty), {})
+            scenario_curves = current_curves.get((robot, difficulty), {})
+            path_ref = finite_min(
+                [path_length_stat(row) for row in items]
+                + [
+                    point["path_length"]
+                    for method_points in scenario_curves.values()
+                    for point in method_points
+                ]
+                + [
+                    item["path_length"]
+                    for item in scenario_context.values()
+                    if math.isfinite(item.get("path_length", math.nan))
+                ]
+            )
+            panel_path_values: list[float] = []
             if items:
-                xs = [amortized_query_time(row, 10) for row in items]
-                ys = [path_length_stat(row) for row in items]
+                xs = [method_time(row) for row in items]
+                ys = [ratio_to_ref(path_length_stat(row), path_ref) for row in items]
+                panel_path_values.extend(ys)
                 axis.plot(xs, ys, "-", color=METHOD_STYLE["sbf_leaf_rrt"]["color"],
                           alpha=0.60, linewidth=LINE_WIDTH)
                 axis.scatter(xs, ys, marker=METHOD_STYLE["sbf_leaf_rrt"]["marker"],
@@ -2224,8 +2926,8 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 first = first_full_success_row(items)
                 if first is not None:
                     axis.scatter(
-                        [amortized_query_time(first, 10)],
-                        [path_length_stat(first)],
+                        [method_time(first)],
+                        [ratio_to_ref(path_length_stat(first), path_ref)],
                         facecolors="none",
                         edgecolors="black",
                         linewidths=0.9,
@@ -2235,23 +2937,22 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 selected = rbf_selected.get((robot, difficulty))
                 if selected is not None:
                     axis.scatter(
-                        [amortized_query_time(selected, 10)],
-                        [path_length_stat(selected)],
+                        [method_time(selected)],
+                        [ratio_to_ref(path_length_stat(selected), path_ref)],
                         facecolors="none",
                         edgecolors="#d4a017",
                         linewidths=SELECTED_LINE_WIDTH,
                         s=SELECTED_POINT_SIZE,
                         zorder=5,
                     )
-            scenario_context = context.get((robot, difficulty), {})
-            scenario_curves = current_curves.get((robot, difficulty), {})
             for method in ["prm", "bitstar"]:
                 points = scenario_curves.get(method, [])
                 if len(points) < 2:
                     continue
                 style = METHOD_STYLE[method]
                 xs = [point["total_s"] for point in points]
-                ys = [point["path_length"] for point in points]
+                ys = [ratio_to_ref(point["path_length"], path_ref) for point in points]
+                panel_path_values.extend(ys)
                 axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
                 axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
                 axis.scatter(
@@ -2263,27 +2964,29 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     s=24,
                     zorder=4,
                 )
-            for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
+            for method in ["prm", "rrtconnect", "bitstar"]:
                 item = scenario_context.get(method)
                 if not item:
                     continue
                 style = METHOD_STYLE[method]
-                axis.scatter([item["total_s"]], [item["path_length"]],
+                item_ratio = ratio_to_ref(item["path_length"], path_ref)
+                panel_path_values.append(item_ratio)
+                axis.scatter([item["total_s"]], [item_ratio],
                              marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.82)
             axis.set_xscale("log")
-            axis.set_xlabel("amortized/online time per query (s, log)" if row_index == len(robot_order) - 1 else "")
+            axis.set_xlabel("amortized time / query @5 (s, log)" if row_index == len(robot_order) - 1 else "")
             if row_index == 0:
                 axis.set_title(difficulty.capitalize(), fontsize=PANEL_TITLE_FONTSIZE)
             if col_index == 0:
-                axis.set_ylabel(f"{robot_labels[robot]}\nmean audited path length")
+                axis.set_ylabel(f"{robot_labels[robot]}\npath ratio $L/L^\\star$")
             axis.grid(True, which="both", alpha=0.22)
             axis.tick_params(labelsize=TICK_LABEL_FONTSIZE)
             axis.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
             axis.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
-            set_padded_linear_ylim(axis, robot_path_values)
+            set_padded_linear_ylim(axis, panel_path_values, min_pad=0.04)
 
         amort_methods: list[dict[str, Any]] = []
-        for method in ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
+        for method in ["sbf_leaf_rrt", "prm", "rrtconnect", "bitstar"]:
             build_values: list[float] = []
             query_values: list[float] = []
             for difficulty in difficulty_order:
@@ -2318,7 +3021,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
 
     handles = []
     labels = []
-    for method in ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
+    for method in ["sbf_leaf_rrt", "prm", "rrtconnect", "bitstar"]:
         style = METHOD_STYLE[method]
         handles.append(
             plt.Line2D([0], [0], color=style["color"], marker=style["marker"],
@@ -2331,7 +3034,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 1.0),
-        ncol=5,
+        ncol=4,
         frameon=False,
         fontsize=max(LEGEND_FONTSIZE, 7.2),
         handlelength=2.4,
@@ -2350,44 +3053,87 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     if summary is None:
         return {"status": "missing", "summary": None}
     rows = read_csv_rows(summary)
+    summary_manifest = find_exp06_manifest(out_dir)
+    summary_manifest_payload = load_json_file(summary_manifest)
+    annotate_summary_rows_with_manifest_distributions(rows, summary_manifest_payload)
+    if include_current_baselines:
+        rows = [row for row in rows if str(row.get("method")) == "sbf_leaf_rrt"]
     baseline_summary = find_exp06_current_baseline_summary(out_dir) if include_current_baselines else None
     baseline_manifest = find_exp06_current_baseline_manifest(out_dir) if include_current_baselines else None
     curve_summary = find_exp06_ompl_curve_summary(out_dir)
+    curve_manifest = find_exp06_ompl_curve_manifest(out_dir)
+    curve_supplements = find_exp06_ompl_curve_supplements(out_dir)
     bitstar_trace_summary = find_exp06_bitstar_trace_summary(out_dir)
     bitstar_trace_manifest = find_exp06_bitstar_trace_manifest(out_dir)
+    bitstar_trace_supplements = find_exp06_bitstar_trace_supplements(out_dir)
     iris_summaries = find_exp06_iris_summaries(out_dir)
     baseline_rows: list[dict[str, Any]] = []
     baseline_manifest_payload = load_json_file(baseline_manifest)
     if baseline_summary is not None and manifest_uses_required_simplify(baseline_manifest_payload):
         baseline_rows = [
             row for row in read_csv_rows(baseline_summary)
-            if str(row.get("method")) != "sbf_leaf_rrt"
+            if str(row.get("method")) == "rrtconnect"
         ]
+        annotate_summary_rows_with_manifest_distributions(baseline_rows, baseline_manifest_payload)
     iris_rows: list[dict[str, Any]] = []
     accepted_iris_summaries: list[Path] = []
-    for iris_summary in iris_summaries:
-        accepted_iris_summaries.append(iris_summary)
-        iris_rows.extend(
-            row for row in read_csv_rows(iris_summary)
-            if str(row.get("method")) == "iris_np_gcs" and is_full_success(row)
-        )
     curve_rows: list[dict[str, Any]] = []
+    per_query_tradeoff_rows: list[dict[str, Any]] = []
+    curve_manifest_payload = load_json_file(curve_manifest)
     if curve_summary is not None:
         curve_rows = [
             row for row in read_csv_rows(curve_summary)
             if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
         ]
+        annotate_summary_rows_with_manifest_distributions(curve_rows, curve_manifest_payload)
+        per_query_tradeoff_rows.extend(
+            exp06_per_query_tradeoff_rows(curve_manifest_payload, methods={"prm"})
+        )
+    accepted_curve_supplements: list[Path] = []
+    for supplement_summary, supplement_manifest in curve_supplements:
+        supplement_manifest_payload = load_json_file(supplement_manifest)
+        supplement_rows = [
+            row for row in read_csv_rows(supplement_summary)
+            if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
+        ]
+        annotate_summary_rows_with_manifest_distributions(supplement_rows, supplement_manifest_payload)
+        if supplement_rows:
+            accepted_curve_supplements.append(supplement_summary)
+            curve_rows.extend(supplement_rows)
+            per_query_tradeoff_rows.extend(
+                exp06_per_query_tradeoff_rows(supplement_manifest_payload, methods={"prm"})
+            )
     bitstar_trace_manifest_payload = load_json_file(bitstar_trace_manifest)
+    bitstar_rows: list[dict[str, Any]] = []
     if bitstar_trace_summary is not None and manifest_uses_required_simplify(bitstar_trace_manifest_payload):
         bitstar_rows = [
             row for row in read_csv_rows(bitstar_trace_summary)
             if str(row.get("method")) == "bitstar" and is_full_success(row)
         ]
-        if bitstar_rows:
-            curve_rows = [row for row in curve_rows if str(row.get("method")) != "bitstar"]
-            curve_rows.extend(bitstar_rows)
-    table_rows = rows + baseline_rows + curve_rows + iris_rows
-    figure_rows = rows + baseline_rows + curve_rows + iris_rows
+        annotate_summary_rows_with_manifest_distributions(bitstar_rows, bitstar_trace_manifest_payload)
+        per_query_tradeoff_rows.extend(
+            exp06_per_query_tradeoff_rows(bitstar_trace_manifest_payload, methods={"bitstar"})
+        )
+    accepted_bitstar_trace_supplements: list[Path] = []
+    for supplement_summary, supplement_manifest in bitstar_trace_supplements:
+        supplement_manifest_payload = load_json_file(supplement_manifest)
+        if not manifest_uses_required_simplify(supplement_manifest_payload):
+            continue
+        supplement_rows = [
+            row for row in read_csv_rows(supplement_summary)
+            if str(row.get("method")) == "bitstar" and is_full_success(row)
+        ]
+        annotate_summary_rows_with_manifest_distributions(supplement_rows, supplement_manifest_payload)
+        if supplement_rows:
+            accepted_bitstar_trace_supplements.append(supplement_summary)
+            bitstar_rows.extend(supplement_rows)
+            per_query_tradeoff_rows.extend(
+                exp06_per_query_tradeoff_rows(supplement_manifest_payload, methods={"bitstar"})
+            )
+    if not per_query_tradeoff_rows:
+        per_query_tradeoff_rows = curve_rows + bitstar_rows
+    table_rows = rows + baseline_rows + per_query_tradeoff_rows + iris_rows
+    figure_rows = rows + baseline_rows + per_query_tradeoff_rows + iris_rows
     table_path = generated / "tab_tro_random_summary.tex"
     pdf_path = generated / "fig_tro_random_tradeoff.pdf"
     png_path = generated / "fig_tro_random_tradeoff.png"
@@ -2397,6 +3143,8 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "status": "generated",
         "summary": str(summary),
         "summary_sha256": file_sha256(summary),
+        "manifest": str(summary_manifest) if summary_manifest is not None else None,
+        "manifest_sha256": file_sha256(summary_manifest) if summary_manifest is not None else None,
         "include_current_baselines": include_current_baselines,
         "current_baseline_summary": str(baseline_summary) if baseline_summary is not None else None,
         "current_baseline_summary_sha256": file_sha256(baseline_summary) if baseline_summary is not None else None,
@@ -2406,14 +3154,22 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "current_iris_summaries": [str(path) for path in iris_summaries],
         "current_iris_summary_sha256": {str(path): file_sha256(path) for path in iris_summaries},
         "current_iris_accepted_summaries": [str(path) for path in accepted_iris_summaries],
-        "current_iris_context_policy": "legacy_random_context_restored_without_0p01_simplify_manifest_filter",
+        "current_iris_context_policy": "excluded_from_exp06_table_and_figure_due_to_low_strict_saved_catalog_success",
         "current_iris_rows": len(iris_rows),
         "ompl_curve_summary": str(curve_summary) if curve_summary is not None else None,
         "ompl_curve_summary_sha256": file_sha256(curve_summary) if curve_summary is not None else None,
+        "ompl_curve_manifest": str(curve_manifest) if curve_manifest is not None else None,
+        "ompl_curve_manifest_sha256": file_sha256(curve_manifest) if curve_manifest is not None else None,
+        "ompl_curve_supplements": [str(path) for path in accepted_curve_supplements],
+        "ompl_curve_supplement_sha256": {str(path): file_sha256(path) for path in accepted_curve_supplements},
+        "ompl_per_query_tradeoff_policy": "per_query_seed_select_fastest_within_1p08x_best_path",
+        "ompl_per_query_tradeoff_rows": len(per_query_tradeoff_rows),
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_manifest": str(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
         "bitstar_trace_manifest_uses_required_simplify": manifest_uses_required_simplify(bitstar_trace_manifest_payload),
+        "bitstar_trace_supplements": [str(path) for path in accepted_bitstar_trace_supplements],
+        "bitstar_trace_supplement_sha256": {str(path): file_sha256(path) for path in accepted_bitstar_trace_supplements},
         "ompl_curve_rows_100pct": len(curve_rows),
         "registered_baseline_context": not bool(baseline_rows or curve_rows or iris_rows),
         "old_random_context_table": str(OLD_RANDOM_TABLE) if OLD_RANDOM_TABLE.exists() else None,

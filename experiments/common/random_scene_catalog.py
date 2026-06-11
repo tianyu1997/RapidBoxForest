@@ -126,30 +126,51 @@ def make_iiwa_robot() -> Any:
 
 
 def make_ur5_like_robot() -> Any:
+    # Universal Robots official Modified-DH parameters for UR5.
+    # Keep this in sync with link_interval_envelope/examples/data/ur5.json.
     dh = [
-        make_dh(math.pi / 2.0, 0.0, 0.0892),
+        make_dh(0.0, 0.0, 0.089159),
+        make_dh(math.pi / 2.0, 0.0, 0.0),
         make_dh(0.0, -0.425, 0.0),
-        make_dh(0.0, -0.392, 0.0),
-        make_dh(math.pi / 2.0, 0.0, 0.109),
-        make_dh(-math.pi / 2.0, 0.0, 0.095),
-        make_dh(0.0, 0.0, 0.0),
+        make_dh(0.0, -0.39225, 0.10915),
+        make_dh(math.pi / 2.0, 0.0, 0.09465),
+        make_dh(-math.pi / 2.0, 0.0, 0.0823),
     ]
     limits = make_limits([(-math.pi, math.pi)] * 6)
-    return sbf.Robot("ur5_like_standalone", dh, limits, None, [0.055, 0.055, 0.055, 0.055, 0.055, 0.0])
+    return sbf.Robot("ur5_like_standalone", dh, limits, None, [0.075, 0.075, 0.065, 0.060, 0.050, 0.045, 0.045])
 
 
 def make_panda_like_robot() -> Any:
+    # Modified-DH Panda model matching the bundled link_interval_envelope
+    # example. The wrist offset and flange/tool length must stay explicit;
+    # otherwise pack_arrays() treats the last joints as zero-length geometry
+    # and the LECT split schedule never refines q4/q5/q6.
     dh = [
-        make_dh(-math.pi / 2.0, 0.0, 0.333),
-        make_dh(math.pi / 2.0, 0.0, 0.0),
+        make_dh(0.0, 0.0, 0.333),
+        make_dh(-math.pi / 2.0, 0.0, 0.0),
         make_dh(math.pi / 2.0, 0.0, 0.316),
-        make_dh(-math.pi / 2.0, 0.0825, 0.0),
-        make_dh(math.pi / 2.0, -0.0825, 0.384),
+        make_dh(math.pi / 2.0, 0.0825, 0.0),
+        make_dh(-math.pi / 2.0, -0.0825, 0.384),
         make_dh(math.pi / 2.0, 0.0, 0.0),
-        make_dh(0.0, 0.0, 0.0),
+        make_dh(math.pi / 2.0, 0.088, 0.0),
     ]
-    limits = make_limits([(-2.8, 2.8), (-1.8, 1.8), (-2.8, 2.8), (-3.0, 0.0), (-2.8, 2.8), (-0.1, 3.7), (-2.8, 2.8)])
-    return sbf.Robot("panda_like_standalone", dh, limits, None, [0.055, 0.055, 0.055, 0.055, 0.055, 0.0, 0.0])
+    limits = make_limits([
+        (-2.8973, 2.8973),
+        (-1.7628, 1.7628),
+        (-2.8973, 2.8973),
+        (-3.0718, -0.0698),
+        (-2.8973, 2.8973),
+        (-0.0175, 3.7525),
+        (-2.8973, 2.8973),
+    ])
+    tool_frame = make_dh(0.0, 0.0, 0.107)
+    return sbf.Robot(
+        "panda_like_standalone",
+        dh,
+        limits,
+        tool_frame,
+        [0.090, 0.090, 0.080, 0.080, 0.070, 0.070, 0.060, 0.050],
+    )
 
 
 def make_robot(name: str) -> Any:

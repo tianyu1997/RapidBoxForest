@@ -123,6 +123,11 @@ struct RBFPlanningConfig {
 	bool enable_connector = true;
 	/// Optional query-bridge chain-pave FFB depth. <=0 reuses connector.pave.
 	int query_bridge_pave_depth = 0;
+	/// Optional query-bridge FFB start/skip depth. <0 reuses connector.pave.
+	int query_bridge_ffb_start_depth = -1;
+	/// Optional endpoint-anchor FFB depth for online queries. <=0 reuses
+	/// query_bridge_pave_depth, then connector.pave.
+	int query_endpoint_anchor_ffb_depth = 0;
 	/// Optional shallow-to-deep query bridge FFB schedule. Empty reuses
 	/// connector.pave.adaptive_ffb_depths.
 	std::vector<int> query_bridge_adaptive_ffb_depths;
@@ -332,6 +337,11 @@ struct AdaptiveLeafSweepConfig {
 	int hipac_transition_min_predicted_bridge_edges = 16;
 	double hipac_transition_max_pair_distance = 1.50;
 	bool hipac_transition_allow_same_component = true;
+	bool hipac_promote_transition_slices = false;
+	std::string hipac_promote_transition_target_query_indices = "2,3";
+	int hipac_promote_transition_min_boxes = 8;
+	int hipac_promote_transition_max_boxes = 64;
+	int hipac_promote_transition_max_attempts_per_query = 1;
 };
 
 struct AdaptiveLeafSweepResult {

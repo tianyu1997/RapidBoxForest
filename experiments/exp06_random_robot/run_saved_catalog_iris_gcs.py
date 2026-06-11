@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Exp.6 saved-catalog IRIS-NP+GCS runner.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp06" / "current_iris_gcs")
     parser.add_argument("--robots", default="iiwa,ur5,panda")
-    parser.add_argument("--difficulties", default="easy,medium,hard")
+    parser.add_argument("--difficulties", default="medium,hard")
     parser.add_argument("--scene-seeds", type=int, default=8)
     parser.add_argument("--scene-catalog", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp06" / "random_scene_catalog.json")
     parser.add_argument("--scene-catalog-mode", choices=["reuse", "verify", "auto", "generate"], default="reuse")
@@ -74,6 +74,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--budget-s", type=float, default=240.0)
     parser.add_argument("--max-region-seeds", type=int, default=8)
+    parser.add_argument("--scene-region-seed-cap", type=int, default=0)
     parser.add_argument("--iteration-limit", type=int, default=DEFAULT_IRIS_NP["iteration_limit"])
     parser.add_argument("--relative-termination-threshold", type=float, default=DEFAULT_IRIS_NP["relative_termination_threshold"])
     parser.add_argument("--query-time-limit-s", type=float, default=90.0)
@@ -155,7 +156,96 @@ def make_iris_args(args: argparse.Namespace) -> SimpleNamespace:
     )
 
 
-def run_query(
+def query_seed(args: argparse.Namespace, robot_name: str, difficulty: str, scene_seed: int, query_index: int) -> int:
+    return (
+        int(args.seed_base)
+        + 73856093 * int(scene_seed)
+        + 19349663 * (1 + len(robot_name) + len(difficulty))
+        + 83492791 * int(query_index)
+    )
+
+
+def build_scene_regions(
+    args: argparse.Namespace,
+    scene: Any,
+    robot: Any,
+    robot_name: str,
+    difficulty: str,
+    scene_seed: int,
+    query_records: list[dict[str, Any]],
+) -> tuple[Any, list[Any], float, dict[str, Any]]:
+    iris_args = make_iris_args(args)
+    scene_seed_value = int(args.seed_base) + 73856093 * int(scene_seed) + 19349663 * (1 + len(robot_name) + len(difficulty))
+    guides: list[dict[str, Any]] = []
+    raw_seed_points: list[np.ndarray] = []
+    guide_s_total = 0.0
+    for index, query in enumerate(query_records):
+        start = [float(value) for value in query["start"]]
+        goal = [float(value) for value in query["goal"]]
+        raw_seed_points.append(np.asarray(start, dtype=float))
+        raw_seed_points.append(np.asarray(goal, dtype=float))
+        guide, guide_s, guide_result = guide_path(
+            iris_args,
+            robot,
+            list(scene.obstacles),
+            start,
+            goal,
+            query_seed(args, robot_name, difficulty, scene_seed, index),
+        )
+        guide_s_total += float(guide_s)
+        guide_points = region_seed_points(guide, int(args.max_region_seeds))
+        raw_seed_points.extend(guide_points)
+        guides.append({
+            "query_index": index,
+            "guide_s": float(guide_s),
+            "guide_ok": bool(guide_result.get("ok")),
+            "guide_waypoints": len(guide),
+            "guide_seed_points": len(guide_points),
+        })
+    robot_diagram, plant, model_instance, checker = build_drake_random_scene(robot_name, list(scene.obstacles))
+    seed_points: list[np.ndarray] = []
+    seen_seed_keys: set[tuple[float, ...]] = set()
+    filtered_collision = 0
+    for point in raw_seed_points:
+        key = tuple(round(float(value), 9) for value in point)
+        if key in seen_seed_keys:
+            continue
+        seen_seed_keys.add(key)
+        if checker.CheckConfigCollisionFree(point):
+            seed_points.append(np.asarray(point, dtype=float))
+        else:
+            filtered_collision += 1
+    uncapped_seed_points = len(seed_points)
+    if int(args.scene_region_seed_cap) > 0:
+        seed_points = seed_points[:int(args.scene_region_seed_cap)]
+    regions, timings, failures = build_regions(
+        iris_args,
+        robot_diagram,
+        plant,
+        model_instance,
+        checker,
+        seed_points,
+        scene_seed_value,
+        float(args.budget_s),
+    )
+    build_s = float(guide_s_total) + sum(float(value) for value in timings)
+    diagnostics = {
+        "guide_s_total": float(guide_s_total),
+        "guides": guides,
+        "candidate_seed_points": len(raw_seed_points),
+        "unique_seed_points": len(seen_seed_keys),
+        "collision_filtered_seed_points": int(filtered_collision),
+        "uncapped_seed_points": int(uncapped_seed_points),
+        "scene_region_seed_cap": int(args.scene_region_seed_cap),
+        "used_seed_points": len(seed_points),
+        "region_build_s": [float(value) for value in timings],
+        "failed_region_seeds": failures,
+        "n_regions": len(regions),
+    }
+    return checker, regions, build_s, diagnostics
+
+
+def solve_query_with_regions(
     args: argparse.Namespace,
     scene: Any,
     robot: Any,
@@ -164,43 +254,14 @@ def run_query(
     scene_seed: int,
     query: dict[str, Any],
     query_index: int,
+    checker: Any,
+    regions: list[Any],
 ) -> dict[str, Any]:
     iris_args = make_iris_args(args)
     start = [float(value) for value in query["start"]]
     goal = [float(value) for value in query["goal"]]
-    planner_seed = (
-        int(args.seed_base)
-        + 73856093 * int(scene_seed)
-        + 19349663 * (1 + len(robot_name) + len(difficulty))
-        + 83492791 * int(query_index)
-    )
+    planner_seed = query_seed(args, robot_name, difficulty, scene_seed, query_index)
     label = f"{robot_name}_{difficulty}_{scene_seed}_{query.get('label', f'q{query_index}')}"
-    print(f"[exp06-iris] robot={robot_name} difficulty={difficulty} seed={scene_seed} query={query_index}", flush=True)
-    guide, guide_s, guide_result = guide_path(iris_args, robot, list(scene.obstacles), start, goal, planner_seed)
-    robot_diagram, plant, model_instance, checker = build_drake_random_scene(robot_name, list(scene.obstacles))
-    raw_seed_points = [np.asarray(start, dtype=float), np.asarray(goal, dtype=float)]
-    raw_seed_points.extend(region_seed_points(guide, int(args.max_region_seeds)))
-    seed_points = []
-    seen_seed_keys: set[tuple[float, ...]] = set()
-    for point in raw_seed_points:
-        key = tuple(round(float(value), 9) for value in point)
-        if key in seen_seed_keys:
-            continue
-        seen_seed_keys.add(key)
-        if checker.CheckConfigCollisionFree(point):
-            seed_points.append(np.asarray(point, dtype=float))
-    if not seed_points:
-        seed_points = [np.asarray(start, dtype=float), np.asarray(goal, dtype=float)]
-    regions, timings, failures = build_regions(
-        iris_args,
-        robot_diagram,
-        plant,
-        model_instance,
-        checker,
-        seed_points,
-        planner_seed,
-        float(args.budget_s),
-    )
     result = solve_regions_gcs(
         np.asarray(start, dtype=float),
         np.asarray(goal, dtype=float),
@@ -267,12 +328,11 @@ def run_query(
             collision_tolerance=float(args.audit_collision_tolerance),
         )
     success = bool(drake_success and audit_ok)
-    build_s = float(guide_s) + sum(float(value) for value in timings)
     query_s = float(result.get("time_s", 0.0) or 0.0) + float(repair.get("time_s", 0.0) or 0.0) + simplify_s
     length = list_path_length(path) if success else math.nan
     print(
         f"[exp06-iris] done robot={robot_name} difficulty={difficulty} seed={scene_seed} "
-        f"query={query_index} regions={len(regions)} success={success} build_s={build_s:.3f} query_s={query_s:.3f}",
+        f"query={query_index} regions={len(regions)} success={success} query_s={query_s:.3f}",
         flush=True,
     )
     return {
@@ -281,16 +341,12 @@ def run_query(
         "audit_passed": audit_ok,
         "audit_status": audit_status,
         "query_ms": query_s * 1000.0,
-        "build_ms": build_s * 1000.0,
+        "build_ms": 0.0,
         "audit_ms": 0.0,
         "path_length": length,
         "segment_fraction": 0.0 if success else math.nan,
         "waypoint_count": len(path),
         "diagnostics": {
-            "guide_s": guide_s,
-            "guide_ok": bool(guide_result.get("ok")),
-            "region_build_s": [float(value) for value in timings],
-            "failed_region_seeds": failures,
             "n_regions": len(regions),
             "gcs_result": {key: value for key, value in result.items() if key != "path"},
             "sbf_repair": repair,
@@ -304,12 +360,24 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
     query_records = list(queries_for_key(catalog, robot_name, difficulty, scene_seed))
+    print(
+        f"[exp06-iris] build robot={robot_name} difficulty={difficulty} seed={scene_seed} queries={len(query_records)}",
+        flush=True,
+    )
+    checker, regions, build_s, build_diagnostics = build_scene_regions(
+        args,
+        scene,
+        robot,
+        robot_name,
+        difficulty,
+        scene_seed,
+        [dict(query) for query in query_records],
+    )
     qrows = [
-        run_query(args, scene, robot, robot_name, difficulty, scene_seed, dict(query), index)
+        solve_query_with_regions(args, scene, robot, robot_name, difficulty, scene_seed, dict(query), index, checker, regions)
         for index, query in enumerate(query_records)
     ]
     successes = [row for row in qrows if bool(row.get("success")) and bool(row.get("audit_passed"))]
-    build_s = sum(float(row.get("build_ms", 0.0)) for row in qrows) / 1000.0
     query_s = sum(float(row.get("query_ms", 0.0)) for row in qrows) / 1000.0
     success = len(successes) == len(qrows)
     return {
@@ -336,6 +404,8 @@ def run_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str
             "final_ompl_simplify_time_s": float(args.final_ompl_simplify_time_s),
             "scene_catalog": str(args.scene_catalog),
             "q10_batch": True,
+            "scene_reusable_regions": True,
+            "build": build_diagnostics,
         },
     }
 

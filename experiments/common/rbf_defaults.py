@@ -68,6 +68,10 @@ DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS = 2
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS = 24
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY = 1
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION = 0.0
+DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS = False
+DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES = True
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE = True
+DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS = False
 DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY = 2.0
 DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY = 2.0
 DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY = 5.0
@@ -197,6 +201,7 @@ def default_rbf_profile() -> dict[str, Any]:
         "query_bridge": {
             "depth_semantics": "lect_active_tree",
             "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
+            "ffb_start_depth": -1,
             "adaptive_ffb_depths": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
             "direct_sample_step": DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
             "repair_subdivisions": DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
@@ -204,6 +209,7 @@ def default_rbf_profile() -> dict[str, Any]:
             "forced_attempts": DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
             "attempt_offset": DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
             "no_path_retry_attempts": DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+            "no_path_retry_stop_on_first_success": DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
             "rrt_fixed_iters": DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
             "rrt_fixed_timeout_ms": DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
             "adaptive_step_repair": DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
@@ -214,6 +220,8 @@ def default_rbf_profile() -> dict[str, Any]:
             "adaptive_repair_target_segment_fraction": (
                 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
             ),
+            "partition_neighbor_candidates": DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
+            "direct_append_partition_immediate": DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
             "box_transition_line_deviation_penalty": DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
             "foreign_edge_cost_penalty": DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
             "query_bridge_edge_cost_penalty": DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
@@ -281,7 +289,18 @@ def robot_lectdb_depth(robot_name: str) -> int:
 
 def robot_lectdb_label(robot_name: str, *, depth: int | None = None, envelope: str = "support_hull") -> str:
     actual_depth = robot_lectdb_depth(robot_name) if depth is None else int(depth)
-    return f"tro2026_{robot_name}_p{actual_depth}_{envelope}_d{ROBOT_LECTDB_MAX_DEPTH}_canonical_native_stateless"
+    robot_key = str(robot_name)
+    if robot_key == "panda":
+        return (
+            f"tro2026_panda_full_wrist_p{actual_depth}_{envelope}_sched_"
+            f"d{ROBOT_LECTDB_MAX_DEPTH}_canonical_native_stateless"
+        )
+    if robot_key == "ur5":
+        return (
+            f"tro2026_ur5_p{actual_depth}_{envelope}_sched_"
+            f"d{ROBOT_LECTDB_MAX_DEPTH}_canonical_native_stateless"
+        )
+    return f"tro2026_{robot_key}_p{actual_depth}_{envelope}_d{ROBOT_LECTDB_MAX_DEPTH}_canonical_native_stateless"
 
 
 def robot_lectdb_path(robot_name: str, *, depth: int | None = None, envelope: str = "support_hull") -> Path:

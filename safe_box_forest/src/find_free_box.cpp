@@ -9,6 +9,8 @@
 #include <string>
 #include <utility>
 
+#include "virtual_sparse_ffb.h"
+
 namespace rbf {
 
 namespace {
@@ -151,6 +153,182 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
     const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
     if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth &&
         options.adaptive_depths.empty()) {
+        const int virtual_start_depth =
+            std::max(0, std::min(effective_max_depth,
+                                 std::max(options.start_depth, options.skip_to_depth)));
+        if (detail::split_policy_supports_virtual_cells(oracle_.split_policy_descriptor(),
+                                                        effective_max_depth)) {
+            if (options.record_diagnostics) {
+                context.diagnostics().add_counter("ffb.virtual_sparse_binary_attempts");
+            }
+            auto validate_virtual_depth = [&](int depth, FindFreeBoxResult& candidate) {
+                if (depth < options.skip_to_depth) {
+                    candidate.hit_unknown_depth_cap = true;
+                    candidate.fail_code = 2;
+                    return BoxValidation::Unknown;
+                }
+                const auto cell = detail::virtual_seed_cell_at_depth(oracle_, seed, depth);
+                if (!cell) {
+                    candidate.fail_code = 6;
+                    return BoxValidation::Unknown;
+                }
+                candidate.node = oracle_.root_node();
+                candidate.changed_dim = cell->changed_dim;
+                candidate.intervals = cell->query_intervals;
+                const auto validation_start = Clock::now();
+                const auto validation = oracle_.validate_node(oracle_.root_node(),
+                                                              candidate.intervals,
+                                                              candidate.changed_dim);
+                candidate.validation_detail = oracle_.last_validation_detail();
+                record_elapsed(context, "oracle.validate_node", validation_start, options.record_diagnostics);
+                candidate.decisions += 1;
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.virtual_sparse_binary_probes");
+                    context.diagnostics().add_counter("ffb.virtual_sparse_binary_probe_depth_sum",
+                                                      static_cast<double>(depth));
+                    set_max_diagnostic(context,
+                                       "ffb.virtual_sparse_binary_probe_depth_max",
+                                       static_cast<double>(depth),
+                                       true);
+                }
+                if (validation == BoxValidation::Free) {
+                    candidate.found = true;
+                    candidate.fail_code = 0;
+                } else if (validation == BoxValidation::Occupied) {
+                    candidate.fail_code = 3;
+                } else {
+                    candidate.hit_unknown_depth_cap = depth >= effective_max_depth;
+                    candidate.fail_code = 2;
+                }
+                return validation;
+            };
+
+            int lo = virtual_start_depth;
+            int hi = effective_max_depth;
+            int best_depth = -1;
+            FindFreeBoxResult best;
+            const int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+            if (probe_depth >= virtual_start_depth && probe_depth < effective_max_depth) {
+                FindFreeBoxResult probe_candidate;
+                const BoxValidation probe_validation = validate_virtual_depth(probe_depth,
+                                                                              probe_candidate);
+                result.decisions += probe_candidate.decisions;
+                if (probe_validation == BoxValidation::Free) {
+                    best = std::move(probe_candidate);
+                    best_depth = probe_depth;
+                    hi = probe_depth;
+                    if (options.record_diagnostics) {
+                        context.diagnostics().add_counter("ffb.binary_probe_free");
+                    }
+                } else if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.binary_probe_not_free");
+                }
+            }
+            if (!best.found) {
+                FindFreeBoxResult high_candidate;
+                const BoxValidation high_validation = validate_virtual_depth(effective_max_depth,
+                                                                             high_candidate);
+                result.decisions += high_candidate.decisions;
+                if (high_validation != BoxValidation::Free) {
+                    high_candidate.decisions = result.decisions;
+                    high_candidate.splits = 0;
+                    high_candidate.total_ms = elapsed_ms();
+                    return high_candidate;
+                }
+                best = high_candidate;
+                best_depth = effective_max_depth;
+            }
+            while (lo < hi) {
+                if (context.should_stop() ||
+                    (options.deadline_ms > 0.0 && elapsed_ms() > options.deadline_ms)) {
+                    best.deadline_reached =
+                        context.deadline().expired() || options.deadline_ms > 0.0;
+                    best.fail_code = 4;
+                    break;
+                }
+                const int mid = lo + (hi - lo) / 2;
+                FindFreeBoxResult candidate;
+                const BoxValidation validation = validate_virtual_depth(mid, candidate);
+                result.decisions += candidate.decisions;
+                if (validation == BoxValidation::Free) {
+                    best = std::move(candidate);
+                    best_depth = mid;
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            best.decisions = result.decisions;
+            if (best.found && best_depth >= 0) {
+                const auto materialized = detail::materialize_seed_path_to_depth(
+                    oracle_,
+                    seed,
+                    best_depth,
+                    split_options,
+                    [&](const SplitNodeResult& split,
+                        const std::vector<Interval>& intervals,
+                        int depth,
+                        double split_ms) {
+                        if (options.record_diagnostics) {
+                            context.diagnostics().record_timing("oracle.split_node", split_ms);
+                        }
+                        record_split_diagnostics(context,
+                                                 split,
+                                                 intervals,
+                                                 depth,
+                                                 options.record_diagnostics);
+                    });
+                if (materialized) {
+                    result.splits += materialized->splits;
+                    best.splits = result.splits;
+                    if (!detail::intervals_equal_with_tolerance(best.intervals,
+                                                                materialized->query_intervals,
+                                                                1e-10)) {
+                        if (options.record_diagnostics) {
+                            context.diagnostics().add_counter("ffb.virtual_sparse_binary_materialize_mismatch");
+                        }
+                        const auto validation_start = Clock::now();
+                        const auto validation = oracle_.validate_node(materialized->node,
+                                                                      materialized->query_intervals,
+                                                                      materialized->changed_dim);
+                        record_elapsed(context,
+                                       "oracle.validate_node",
+                                       validation_start,
+                                       options.record_diagnostics);
+                        best.validation_detail = oracle_.last_validation_detail();
+                        best.decisions += 1;
+                        if (validation != BoxValidation::Free) {
+                            best.found = false;
+                            best.node = materialized->node;
+                            best.changed_dim = materialized->changed_dim;
+                            best.intervals = materialized->query_intervals;
+                            best.fail_code = validation == BoxValidation::Occupied ? 3 : 2;
+                            best.hit_unknown_depth_cap = validation == BoxValidation::Unknown;
+                            best.total_ms = elapsed_ms();
+                            return best;
+                        }
+                    }
+                    best.node = materialized->node;
+                    best.changed_dim = materialized->changed_dim;
+                    best.intervals = materialized->query_intervals;
+                    best.total_ms = elapsed_ms();
+                    if (options.record_diagnostics) {
+                        context.diagnostics().add_counter("ffb.virtual_sparse_binary_successes");
+                        context.diagnostics().add_counter("ffb.free_ancestor_hits");
+                        context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
+                                                          static_cast<double>(best_depth));
+                    }
+                    set_max_diagnostic(context,
+                                       "ffb.free_ancestor_depth_max",
+                                       static_cast<double>(best_depth),
+                                       options.record_diagnostics);
+                    return best;
+                }
+                if (options.record_diagnostics) {
+                    context.diagnostics().add_counter("ffb.virtual_sparse_binary_materialize_failures");
+                }
+            }
+        }
         struct PathEntry {
             OracleNodeId node = kInvalidOracleNodeId;
             int changed_dim = -1;

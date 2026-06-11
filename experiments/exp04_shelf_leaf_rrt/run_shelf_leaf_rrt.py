@@ -52,10 +52,14 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
+    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
@@ -247,6 +251,17 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         warm_cache_label = CRITSAMPLE_D23_CACHE_LABEL
     leaf_max_depth = int(args.leaf_max_depth)
     adaptive_target_depth = int(args.adaptive_target_depth)
+    hipac_improved = bool(args.hipac_improved_leaf_sweep)
+    hipac_portal_connectivity = bool(args.hipac_portal_connectivity) or hipac_improved
+    hipac_online_connectivity = bool(args.hipac_online_connectivity) or hipac_improved
+    hipac_online_prebridge_portal = bool(args.hipac_online_prebridge_portal) or hipac_improved
+    query_bridge_no_path_retry_stop_on_first_success = (
+        bool(args.query_bridge_no_path_retry_stop_on_first_success) or hipac_improved
+    )
+    # TransitionPortal has not passed validation yet.  Keep the CLI flags for
+    # future debug compatibility, but do not enable them in this paper runner.
+    hipac_online_transition_portal = False
+    hipac_promote_transition_slices = False
     options = RBFLeafRRTOptions(
         seed=int(seed),
         offline_grower=str(args.offline_grower),
@@ -286,13 +301,13 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         adaptive_max_merge_input_boxes=int(args.adaptive_max_merge_input_boxes),
         adaptive_max_free_boxes=min(int(args.adaptive_max_free_boxes), int(deep_max_boxes)),
         adaptive_max_unresolved_domains=int(args.adaptive_max_unresolved_domains),
-        hipac_portal_connectivity=bool(args.hipac_portal_connectivity),
+        hipac_portal_connectivity=hipac_portal_connectivity,
         hipac_portal_cell_native_validate=bool(args.hipac_portal_cell_native_validate),
         hipac_portal_max_internal_boxes=int(args.hipac_portal_max_internal_boxes),
         hipac_portal_max_recursion_depth=int(args.hipac_portal_max_recursion_depth),
         hipac_portal_ffb_depth=int(args.hipac_portal_ffb_depth),
         hipac_portal_ffb_deadline_ms=float(args.hipac_portal_ffb_deadline_ms),
-        hipac_online_connectivity=bool(args.hipac_online_connectivity),
+        hipac_online_connectivity=hipac_online_connectivity,
         hipac_online_before_query_bridge=bool(args.hipac_online_before_query_bridge),
         hipac_promote_query_repairs=bool(args.hipac_promote_query_repairs),
         hipac_online_ffb_portal_fallback=bool(args.hipac_online_ffb_portal_fallback),
@@ -300,11 +315,24 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         hipac_online_max_resolves_per_query=int(args.hipac_online_max_resolves_per_query),
         hipac_online_max_hidden_boxes_per_portal=int(args.hipac_online_max_hidden_boxes_per_portal),
         hipac_online_max_ffb_calls_per_portal=int(args.hipac_online_max_ffb_calls_per_portal),
-        hipac_online_prebridge_portal=bool(args.hipac_online_prebridge_portal),
+        hipac_online_prebridge_portal=hipac_online_prebridge_portal,
         hipac_online_prebridge_candidate_limit=int(args.hipac_online_prebridge_candidate_limit),
         hipac_online_prebridge_max_pair_distance=float(args.hipac_online_prebridge_max_pair_distance),
         hipac_online_prebridge_route_distance_weight=float(args.hipac_online_prebridge_route_distance_weight),
         hipac_online_prebridge_pair_distance_weight=float(args.hipac_online_prebridge_pair_distance_weight),
+        hipac_online_transition_portal=hipac_online_transition_portal,
+        hipac_transition_target_query_indices=str(args.hipac_transition_target_query_indices),
+        hipac_transition_max_attempts_per_query=int(args.hipac_transition_max_attempts_per_query),
+        hipac_transition_candidate_limit=int(args.hipac_transition_candidate_limit),
+        hipac_transition_window_stride=int(args.hipac_transition_window_stride),
+        hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
+        hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
+        hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
+        hipac_promote_transition_slices=hipac_promote_transition_slices,
+        hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
+        hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
+        hipac_promote_transition_max_boxes=int(args.hipac_promote_transition_max_boxes),
+        hipac_promote_transition_max_attempts_per_query=int(args.hipac_promote_transition_max_attempts_per_query),
         deep_ffb_depth=int(args.deep_ffb_depth),
         refine_timeout_ms=float(args.refine_timeout_ms),
         domain_seed_cap=int(args.domain_seed_cap),
@@ -363,13 +391,20 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         connector_pave_depth=int(args.connector_pave_depth),
         connector_adaptive_min_segment_fraction=float(args.connector_adaptive_min_segment_fraction),
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
+        query_bridge_ffb_start_depth=int(args.query_bridge_ffb_start_depth),
         query_bridge_adaptive_ffb_depths=str(args.query_bridge_adaptive_ffb_depths),
         query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
         query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
+        query_bridge_group_residual_gaps=bool(args.query_bridge_group_residual_gaps),
+        query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
+        query_bridge_direct_append_partition_immediate=bool(
+            args.query_bridge_direct_append_partition_immediate
+        ),
         query_bridge_force_indices=str(args.query_bridge_force_indices),
         query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
         query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
         query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
+        query_bridge_no_path_retry_stop_on_first_success=query_bridge_no_path_retry_stop_on_first_success,
         query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
         query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
@@ -528,6 +563,19 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_online_prebridge_max_pair_distance": float(options.hipac_online_prebridge_max_pair_distance),
         "option.hipac_online_prebridge_route_distance_weight": float(options.hipac_online_prebridge_route_distance_weight),
         "option.hipac_online_prebridge_pair_distance_weight": float(options.hipac_online_prebridge_pair_distance_weight),
+        "option.hipac_online_transition_portal": bool(options.hipac_online_transition_portal),
+        "option.hipac_transition_target_query_indices": str(options.hipac_transition_target_query_indices),
+        "option.hipac_transition_max_attempts_per_query": int(options.hipac_transition_max_attempts_per_query),
+        "option.hipac_transition_candidate_limit": int(options.hipac_transition_candidate_limit),
+        "option.hipac_transition_window_stride": int(options.hipac_transition_window_stride),
+        "option.hipac_transition_min_predicted_bridge_edges": int(options.hipac_transition_min_predicted_bridge_edges),
+        "option.hipac_transition_max_pair_distance": float(options.hipac_transition_max_pair_distance),
+        "option.hipac_transition_allow_same_component": bool(options.hipac_transition_allow_same_component),
+        "option.hipac_promote_transition_slices": bool(options.hipac_promote_transition_slices),
+        "option.hipac_promote_transition_target_query_indices": str(options.hipac_promote_transition_target_query_indices),
+        "option.hipac_promote_transition_min_boxes": int(options.hipac_promote_transition_min_boxes),
+        "option.hipac_promote_transition_max_boxes": int(options.hipac_promote_transition_max_boxes),
+        "option.hipac_promote_transition_max_attempts_per_query": int(options.hipac_promote_transition_max_attempts_per_query),
         "option.offline_anchor_sampling": str(options.offline_anchor_sampling),
         "option.query_bridge_labels": str(options.query_bridge_labels),
         "option.query_bridge_segment_only_indices": str(options.query_bridge_segment_only_indices),
@@ -549,6 +597,9 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_forced_attempts": int(options.query_bridge_forced_attempts),
         "option.query_bridge_attempt_offset": int(options.query_bridge_attempt_offset),
         "option.query_bridge_no_path_retry_attempts": int(options.query_bridge_no_path_retry_attempts),
+        "option.query_bridge_no_path_retry_stop_on_first_success": bool(
+            options.query_bridge_no_path_retry_stop_on_first_success
+        ),
         "option.query_bridge_rrt_fixed_iters": int(options.query_bridge_rrt_fixed_iters),
         "option.query_bridge_rrt_fixed_timeout_ms": float(options.query_bridge_rrt_fixed_timeout_ms),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
@@ -614,6 +665,9 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
             getattr(cfg.connector.pave, "adaptive_min_segment_fraction", 0.0)
         ),
         "cfg.query_bridge_pave_depth": int(cfg.query_bridge_pave_depth),
+        "cfg.query_bridge_ffb_start_depth": int(
+            getattr(cfg, "query_bridge_ffb_start_depth", -1)
+        ),
         "cfg.query_bridge_adaptive_ffb_depths": list(
             getattr(cfg, "query_bridge_adaptive_ffb_depths", [])
         ),
@@ -942,6 +996,20 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "query_bridge_hipac_prebridge_ffb_calls_median": median(row.get("query_bridge_hipac_prebridge_ffb_calls", 0) for row in items),
             "query_bridge_hipac_prebridge_cell_native_validations_median": median(row.get("query_bridge_hipac_prebridge_cell_native_validations", 0) for row in items),
             "query_bridge_hipac_prebridge_cell_native_free_median": median(row.get("query_bridge_hipac_prebridge_cell_native_free", 0) for row in items),
+            "query_bridge_hipac_transition_attempts_median": median(row.get("query_bridge_hipac_transition_attempts", 0) for row in items),
+            "query_bridge_hipac_transition_candidates_median": median(row.get("query_bridge_hipac_transition_candidates", 0) for row in items),
+            "query_bridge_hipac_transition_gated_median": median(row.get("query_bridge_hipac_transition_gated", 0) for row in items),
+            "query_bridge_hipac_transition_portal_attempts_median": median(row.get("query_bridge_hipac_transition_portal_attempts", 0) for row in items),
+            "query_bridge_hipac_transition_added_median": median(row.get("query_bridge_hipac_transition_added", 0) for row in items),
+            "query_bridge_hipac_transition_satisfied_median": median(row.get("query_bridge_hipac_transition_satisfied", 0) for row in items),
+            "query_bridge_hipac_transition_not_sufficient_median": median(row.get("query_bridge_hipac_transition_not_sufficient", 0) for row in items),
+            "query_bridge_hipac_transition_failures_median": median(row.get("query_bridge_hipac_transition_failures", 0) for row in items),
+            "query_bridge_hipac_transition_ms_median": median(row.get("query_bridge_hipac_transition_ms", 0.0) for row in items),
+            "query_bridge_hipac_transition_portal_edges_median": median(row.get("query_bridge_hipac_transition_portal_edges", 0) for row in items),
+            "query_bridge_hipac_transition_internal_boxes_median": median(row.get("query_bridge_hipac_transition_internal_boxes", 0) for row in items),
+            "query_bridge_hipac_transition_ffb_calls_median": median(row.get("query_bridge_hipac_transition_ffb_calls", 0) for row in items),
+            "query_bridge_hipac_transition_cell_native_validations_median": median(row.get("query_bridge_hipac_transition_cell_native_validations", 0) for row in items),
+            "query_bridge_hipac_transition_cell_native_free_median": median(row.get("query_bridge_hipac_transition_cell_native_free", 0) for row in items),
             "query_bridge_hipac_promote_attempts_median": median(row.get("query_bridge_hipac_promote_attempts", 0) for row in items),
             "query_bridge_hipac_promote_added_median": median(row.get("query_bridge_hipac_promote_added", 0) for row in items),
             "query_bridge_hipac_promote_failures_median": median(row.get("query_bridge_hipac_promote_failures", 0) for row in items),
@@ -1203,6 +1271,20 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_hipac_prebridge_ffb_calls_median",
         "query_bridge_hipac_prebridge_cell_native_validations_median",
         "query_bridge_hipac_prebridge_cell_native_free_median",
+        "query_bridge_hipac_transition_attempts_median",
+        "query_bridge_hipac_transition_candidates_median",
+        "query_bridge_hipac_transition_gated_median",
+        "query_bridge_hipac_transition_portal_attempts_median",
+        "query_bridge_hipac_transition_added_median",
+        "query_bridge_hipac_transition_satisfied_median",
+        "query_bridge_hipac_transition_not_sufficient_median",
+        "query_bridge_hipac_transition_failures_median",
+        "query_bridge_hipac_transition_ms_median",
+        "query_bridge_hipac_transition_portal_edges_median",
+        "query_bridge_hipac_transition_internal_boxes_median",
+        "query_bridge_hipac_transition_ffb_calls_median",
+        "query_bridge_hipac_transition_cell_native_validations_median",
+        "query_bridge_hipac_transition_cell_native_free_median",
         "query_bridge_hipac_promote_attempts_median",
         "query_bridge_hipac_promote_added_median",
         "query_bridge_hipac_promote_failures_median",
@@ -1351,9 +1433,25 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
     parser.add_argument("--connector-adaptive-min-segment-fraction", type=float, default=DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
+    parser.add_argument("--query-bridge-ffb-start-depth", type=int, default=-1)
     parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS)
+    parser.add_argument(
+        "--query-bridge-group-residual-gaps",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
+    )
+    parser.add_argument(
+        "--query-bridge-partition-neighbor-candidates",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
+    )
+    parser.add_argument(
+        "--query-bridge-direct-append-partition-immediate",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+    )
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
@@ -1406,6 +1504,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
     parser.add_argument("--query-bridge-attempt-offset", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET)
     parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
+    parser.add_argument(
+        "--query-bridge-no-path-retry-stop-on-first-success",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
+    )
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
     parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-adaptive-step-repair", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR)
@@ -1431,6 +1534,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
     parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
     parser.add_argument("--offline-shortcut-max-segment-length", type=float, default=3.0)
+    parser.add_argument("--hipac-improved-leaf-sweep", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-portal-connectivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-portal-cell-native-validate", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--hipac-portal-max-internal-boxes", type=int, default=64)
@@ -1450,6 +1554,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-online-prebridge-max-pair-distance", type=float, default=1.25)
     parser.add_argument("--hipac-online-prebridge-route-distance-weight", type=float, default=1.0)
     parser.add_argument("--hipac-online-prebridge-pair-distance-weight", type=float, default=0.25)
+    parser.add_argument("--hipac-online-transition-portal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-transition-target-query-indices", default="2,3")
+    parser.add_argument("--hipac-transition-max-attempts-per-query", type=int, default=1)
+    parser.add_argument("--hipac-transition-candidate-limit", type=int, default=16)
+    parser.add_argument("--hipac-transition-window-stride", type=int, default=2)
+    parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
+    parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
+    parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-promote-transition-target-query-indices", default="2,3")
+    parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
+    parser.add_argument("--hipac-promote-transition-max-boxes", type=int, default=64)
+    parser.add_argument("--hipac-promote-transition-max-attempts-per-query", type=int, default=1)
     parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
     parser.add_argument("--rrt-grower-timeout-ms", type=float, default=DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS)
@@ -1575,6 +1692,7 @@ def main() -> int:
             },
             "deep_ffb_depth": int(args.deep_ffb_depth),
             "ffb_start_depth": int(args.ffb_start_depth),
+            "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
             "ffb_search_mode": str(args.ffb_search_mode),
             "lect_leaf_start_depth": int(args.leaf_start_depth),
             "lect_leaf_max_depth": int(args.leaf_max_depth),
@@ -1584,6 +1702,7 @@ def main() -> int:
             "lect_connector_pave_depth": int(args.connector_pave_depth),
             "lect_connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),
             "lect_query_bridge_pave_depth": int(args.query_bridge_pave_depth),
+            "lect_query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
             "lect_query_bridge_adaptive_ffb_depths": str(args.query_bridge_adaptive_ffb_depths),
             "lect_rbf_max_depth": int(args.rbf_max_depth),
             "audit_segment_step": float(args.audit_segment_step),

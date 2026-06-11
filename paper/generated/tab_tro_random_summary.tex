@@ -1,13 +1,14 @@
-\begin{table*}[t]
+\begingroup
 \centering
-\caption{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
+\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
 \label{tab:tro-random-summary}
 \footnotesize
 \begin{tabular}{llrrrrrrrrr}
 \toprule
 Robot & Difficulty & Boxes & SR & Build & Online/q & Simplify/q & Amort@10 & Path & Seg. \\
 \midrule
-iiwa & easy & 800 & 100/100 & 0.430 & 0.001 & 0.000 & 0.044 & 4.341 & 0.000 \\
+ur5 & medium & 400 & 10/10 & 0.155 & 0.076 & 0.010 & 0.091 & 6.089 & 0.107 \\
+ur5 & hard & 400 & 10/10 & 0.120 & 0.174 & 0.010 & 0.186 & 12.400 & 0.738 \\
 \bottomrule
 \end{tabular}
-\end{table*}
+\par\endgroup

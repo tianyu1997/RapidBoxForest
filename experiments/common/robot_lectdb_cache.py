@@ -31,7 +31,18 @@ def directory_size(path: Path) -> int:
     return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
 
 
-def make_prewarm_config(robot: Any, database_path: Path, *, max_depth: int = ROBOT_LECTDB_MAX_DEPTH, threads: int = 8) -> Any:
+def robot_split_schedule_kind(robot_name: str) -> str:
+    return "support_hull_volume_min" if str(robot_name) in {"ur5", "panda"} else "aafk_volume_min"
+
+
+def make_prewarm_config(
+    robot: Any,
+    database_path: Path,
+    *,
+    max_depth: int = ROBOT_LECTDB_MAX_DEPTH,
+    threads: int = 8,
+    split_schedule_kind: str = "aafk_volume_min",
+) -> Any:
     cfg = sbf.SBFConfig()
     cfg.enable_connector = False
     cfg.endpoint_source.source = sbf.EndpointSource.IFK
@@ -47,7 +58,12 @@ def make_prewarm_config(robot: Any, database_path: Path, *, max_depth: int = ROB
     cfg.database.canonical_mode = True
     cfg.database.symmetry_descriptor = CANONICAL_SYMMETRY_DESCRIPTOR
     cfg.database.online_cache.allow_database_backfill = True
-    cfg.database.split_policy = make_aafk_split_policy(robot, int(max_depth), None)
+    cfg.database.split_policy = make_aafk_split_policy(
+        robot,
+        int(max_depth),
+        None,
+        split_schedule_kind=split_schedule_kind,
+    )
 
     n_threads = max(1, int(threads))
     cfg.runtime.mode = sbf.ExecutionMode.Parallel if n_threads > 1 else sbf.ExecutionMode.Inline
@@ -128,7 +144,13 @@ def ensure_robot_lectdb_cache(
         shutil.rmtree(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     robot = make_robot(robot_name)
-    cfg = make_prewarm_config(robot, path, max_depth=max_depth, threads=threads)
+    cfg = make_prewarm_config(
+        robot,
+        path,
+        max_depth=max_depth,
+        threads=threads,
+        split_schedule_kind=robot_split_schedule_kind(str(robot_name)),
+    )
     forest = sbf.SafeBoxForest(robot, cfg)
     start = time.perf_counter()
     result = dict(forest.prewarm_lifelong_cache(actual_depth, [far_obstacle()]))

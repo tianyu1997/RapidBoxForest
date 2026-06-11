@@ -35,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-s", type=float, default=1800.0)
     parser.add_argument("--candidate-only", action="store_true")
     parser.add_argument("--confirm-only", action="store_true")
+    parser.add_argument("--skip-assemble", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
@@ -47,6 +48,7 @@ def robot_candidate_args(robot: str, attempt: int = 0) -> list[str]:
         "--query-sampling-mode", "local",
         "--query-min-l2", "0.8",
         "--endpoint-source", "critsample",
+        "--endpoint-threads", "8",
         "--prefix-selection-mode", "candidate",
         "--planner-seeds", "1",
         "--rrt-probe-timeout-s", "0.5",
@@ -339,7 +341,7 @@ def main() -> int:
                 break
         if not success:
             raise RuntimeError(f"failed to confirm {robot}/seed{scene_seed} after {args.max_attempts} attempts")
-    if not args.candidate_only:
+    if not args.candidate_only and not args.skip_assemble:
         final_catalog = args.out_dir / "distribution_q10x10_three_robot_strict_catalog.json"
         assemble_cmd = [
             sys.executable,

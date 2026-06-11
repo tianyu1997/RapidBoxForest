@@ -1466,6 +1466,10 @@ double DatabaseBoxOracle::split_value(OracleNodeId node) const {
     return database_.topology(to_database_node(node)).split_value;
 }
 
+OracleSplitPolicyDescriptor DatabaseBoxOracle::split_policy_descriptor() const {
+    return database_.split_policy_descriptor();
+}
+
 OracleNodeId DatabaseBoxOracle::left_child(OracleNodeId node) const {
     const auto id = database_.topology(to_database_node(node)).left;
     return from_database_node(id);

@@ -32,12 +32,16 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
+    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
+    DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
@@ -269,6 +273,9 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.direct_corridor_ffb_calls_total",
         "query_bridge.direct_corridor_all_ffb_calls",
         "query_bridge.direct_corridor_all_ffb_calls_total",
+        "query_bridge.direct_corridor_ffb_start_depth",
+        "query_bridge.direct_corridor_coverage_order_direct_tasks",
+        "query_bridge.direct_corridor_center_out_direct_tasks",
         "query_bridge.direct_corridor_direct_ffb_ms",
         "query_bridge.direct_corridor_repair_ffb_ms",
         "query_bridge.direct_corridor_adaptive_repair_ffb_ms",
@@ -395,7 +402,11 @@ def _query_bridge_diagnostic_fields(
             "pave_ms",
             "total_ms",
             "waypoint_length",
+            "skip_reason_code",
             "direct_corridor_ms",
+            "direct_corridor_ffb_start_depth",
+            "direct_corridor_coverage_order_direct_tasks",
+            "direct_corridor_center_out_direct_tasks",
             "direct_corridor_added",
             "direct_corridor_repair_added",
             "direct_corridor_adaptive_repair_calls",
@@ -504,8 +515,15 @@ class RBFLeafRRTOptions:
     hipac_transition_min_predicted_bridge_edges: int = 16
     hipac_transition_max_pair_distance: float = 1.50
     hipac_transition_allow_same_component: bool = True
+    hipac_promote_transition_slices: bool = False
+    hipac_promote_transition_target_query_indices: str = "2,3"
+    hipac_promote_transition_min_boxes: int = 8
+    hipac_promote_transition_max_boxes: int = 64
+    hipac_promote_transition_max_attempts_per_query: int = 1
     validation_batch_size: int = DEFAULT_RBF_VALIDATION_BATCH_SIZE
+    split_schedule_kind: str = "aafk_volume_min"
     ffb_start_depth: int = DEFAULT_RBF_FFB_START_DEPTH
+    query_bridge_ffb_start_depth: int = -1
     ffb_search_mode: str = DEFAULT_RBF_FFB_SEARCH_MODE
     audit_resolution: int = DEFAULT_RBF_AUDIT_RESOLUTION
     audit_segment_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP
@@ -550,6 +568,7 @@ class RBFLeafRRTOptions:
     connector_pave_depth: int = DEFAULT_RBF_CONNECTOR_PAVE_DEPTH
     connector_adaptive_min_segment_fraction: float = DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION
     query_bridge_pave_depth: int = DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH
+    query_endpoint_anchor_ffb_depth: int = 0
     query_bridge_adaptive_ffb_depths: str = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS
     connector_pave_fill_gaps: bool = DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS
     connector_pave_require_connected_chain: bool = DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN
@@ -573,6 +592,8 @@ class RBFLeafRRTOptions:
     query_bridge_accept_segment_fraction: float = 0.25
     query_bridge_accept_path_ratio: float = 1.50
     query_bridge_accept_path_additive: float = 0.75
+    query_bridge_sequential_reuse: bool = False
+    query_bridge_scene_reusable_edges: bool = False
     query_endpoint_anchor_before_bridge: bool = DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE
     query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
     query_bridge_segment_only_indices: str = ""
@@ -581,6 +602,9 @@ class RBFLeafRRTOptions:
     query_bridge_forced_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS
     query_bridge_attempt_offset: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET
     query_bridge_no_path_retry_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS
+    query_bridge_no_path_retry_stop_on_first_success: bool = (
+        DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS
+    )
     query_bridge_rrt_fixed_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS
     query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
     query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
@@ -593,6 +617,9 @@ class RBFLeafRRTOptions:
     query_bridge_adaptive_repair_target_segment_fraction: float = (
         DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
     )
+    query_bridge_group_residual_gaps: bool = DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS
+    query_bridge_partition_neighbor_candidates: bool = DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES
+    query_bridge_direct_append_partition_immediate: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE
     query_box_transition_line_deviation_penalty: float = DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY
     query_foreign_edge_cost_penalty: float = DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY
     query_bridge_edge_cost_penalty: float = DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY
@@ -619,6 +646,8 @@ class RBFLeafRRTOptions:
     offline_anchor_sampling: str = "random"
     offline_anchor_lca_lambda: float = 0.35
     offline_anchor_distance_mu: float = 0.10
+    offline_anchor_skip_if_main_accessible: bool = False
+    offline_anchor_main_accessible_threshold: float = 0.95
     offline_shortcut_edges: int = 0
     offline_shortcut_candidate_limit: int = 48
     offline_shortcut_min_gain_ratio: float = 1.6
@@ -683,6 +712,33 @@ def serialize_depth_dimensions(depth_dimensions: Iterable[int]) -> str:
     return ",".join(str(int(dim)) for dim in depth_dimensions)
 
 
+def _normalized_split_schedule_kind(kind: str) -> str:
+    key = str(kind or "aafk_volume_min").strip().lower().replace("-", "_")
+    if key in {"aafk", "aafk_volume", "aafk_volume_min", "endpoint_aafk"}:
+        return "aafk_volume_min"
+    if key in {"support_hull", "support_hull_volume", "support_hull_volume_min", "sh", "sh_volume_min"}:
+        return "support_hull_volume_min"
+    raise ValueError(f"unknown LECT split schedule kind: {kind!r}")
+
+
+def _volume_min_depth_schedule(
+    robot: Any,
+    root_intervals: Iterable[Any] | None,
+    max_depth: int,
+    sample_nodes_per_depth: int,
+    split_schedule_kind: str,
+) -> list[int]:
+    kind = _normalized_split_schedule_kind(split_schedule_kind)
+    schedule_fn = (
+        sbf.support_hull_volume_min_depth_schedule
+        if kind == "support_hull_volume_min"
+        else sbf.aafk_volume_min_depth_schedule
+    )
+    if root_intervals is None:
+        return list(schedule_fn(robot, int(max_depth), int(sample_nodes_per_depth)))
+    return list(schedule_fn(robot, list(root_intervals), int(max_depth), int(sample_nodes_per_depth)))
+
+
 def interval_pairs(intervals: Iterable[Any]) -> list[list[float]]:
     pairs: list[list[float]] = []
     for interval in intervals:
@@ -715,7 +771,9 @@ def make_aafk_split_policy(
     *,
     force_dim0_first_two: bool = False,
     forced_tail_schedule: Iterable[int] | None = None,
+    split_schedule_kind: str = "aafk_volume_min",
 ) -> Any:
+    split_schedule_kind = _normalized_split_schedule_kind(split_schedule_kind)
     if force_dim0_first_two:
         tail = [int(dim) for dim in (forced_tail_schedule or [])]
         schedule_root = list(root_intervals) if root_intervals is not None else list(
@@ -732,23 +790,14 @@ def make_aafk_split_policy(
             schedule_root[0] = sbf.Interval(0.0, 0.5 * math.pi)
         if not tail:
             tail_depth = max(0, int(max_depth) - 2)
-            tail = list(sbf.aafk_volume_min_depth_schedule(robot, schedule_root, tail_depth, 8))
+            tail = _volume_min_depth_schedule(robot, schedule_root, tail_depth, 8, split_schedule_kind)
         elif len(tail) + 2 < int(max_depth):
             extra_depth = int(max_depth) - 2 - len(tail)
-            extra = list(
-                sbf.aafk_volume_min_depth_schedule(
-                    robot,
-                    schedule_root,
-                    extra_depth,
-                    8,
-                )
-            )
+            extra = _volume_min_depth_schedule(robot, schedule_root, extra_depth, 8, split_schedule_kind)
             tail.extend(int(dim) for dim in extra)
         schedule = [0, 0] + [int(dim) for dim in tail]
-    elif root_intervals is None:
-        schedule = list(sbf.aafk_volume_min_depth_schedule(robot, int(max_depth), 8))
     else:
-        schedule = list(sbf.aafk_volume_min_depth_schedule(robot, list(root_intervals), int(max_depth), 8))
+        schedule = _volume_min_depth_schedule(robot, root_intervals, int(max_depth), 8, split_schedule_kind)
     if len(schedule) < int(max_depth):
         raise RuntimeError(f"AAFKVolumeMin schedule has {len(schedule)} entries, expected {int(max_depth)}")
     split_policy = sbf.SplitPolicyDescriptor()
@@ -869,6 +918,19 @@ def _halton_point(index: int, dim: int) -> list[float]:
     return [_halton_value(index, primes[i]) for i in range(dim)]
 
 
+def empty_offline_anchor_metrics(reason: str) -> dict[str, Any]:
+    return {
+        "offline_anchor_candidates": 0,
+        "offline_anchor_candidates_free": 0,
+        "offline_anchor_roots_requested": 0,
+        "offline_anchor_lca_depth_mean": math.nan,
+        "offline_anchor_lca_depth_max": math.nan,
+        "offline_anchor_min_distance_mean": math.nan,
+        "offline_anchor_skip_reason": str(reason),
+        "offline_anchor_skip_p_main_accessible": math.nan,
+    }
+
+
 def generate_offline_anchor_points(
     robot: Any,
     obstacles: list[Any],
@@ -877,14 +939,7 @@ def generate_offline_anchor_points(
     count = max(0, int(options.offline_anchor_count))
     candidate_count = max(0, int(options.offline_anchor_candidate_count))
     if not bool(options.offline_random_anchors) or count <= 0 or candidate_count <= 0:
-        return [], {
-            "offline_anchor_candidates": 0,
-            "offline_anchor_candidates_free": 0,
-            "offline_anchor_roots_requested": 0,
-            "offline_anchor_lca_depth_mean": math.nan,
-            "offline_anchor_lca_depth_max": math.nan,
-            "offline_anchor_min_distance_mean": math.nan,
-        }
+        return [], empty_offline_anchor_metrics("disabled")
     coverage_root = _root_tuple_list(robot, options)
     tree_root = _active_tree_root_tuple_list(robot, options)
     cache_schedule = (
@@ -893,7 +948,8 @@ def generate_offline_anchor_points(
         and options.external_evidence_path is not None
         else []
     )
-    if cache_schedule:
+    split_schedule_kind = _normalized_split_schedule_kind(getattr(options, "split_schedule_kind", "aafk_volume_min"))
+    if cache_schedule and split_schedule_kind == "aafk_volume_min":
         split_policy = make_aafk_split_policy_from_cache_prefix(
             robot,
             int(options.rbf_max_depth),
@@ -919,6 +975,7 @@ def generate_offline_anchor_points(
             [sbf.Interval(float(lo), float(hi)) for lo, hi in tree_root],
             force_dim0_first_two=bool(options.symmetry_aligned_cache_schedule),
             forced_tail_schedule=forced_tail_schedule,
+            split_schedule_kind=split_schedule_kind,
         )
     schedule = [int(dim) for dim in list(split_policy.depth_dimensions)]
     rng = random.Random((int(options.seed) + 1) * 1000003)
@@ -987,6 +1044,8 @@ def generate_offline_anchor_points(
         "offline_anchor_lca_depth_mean": mean(lca_depths) if lca_depths else math.nan,
         "offline_anchor_lca_depth_max": max(lca_depths) if lca_depths else math.nan,
         "offline_anchor_min_distance_mean": mean(min_distances) if min_distances else math.nan,
+        "offline_anchor_skip_reason": "",
+        "offline_anchor_skip_p_main_accessible": math.nan,
     }
     return selected, metrics
 
@@ -1052,7 +1111,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         and options.external_evidence_path is not None
         else []
     )
-    if cache_schedule:
+    split_schedule_kind = _normalized_split_schedule_kind(getattr(options, "split_schedule_kind", "aafk_volume_min"))
+    if cache_schedule and split_schedule_kind == "aafk_volume_min":
         cfg.database.split_policy = make_aafk_split_policy_from_cache_prefix(
             robot,
             int(options.rbf_max_depth),
@@ -1078,6 +1138,7 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
             root_intervals,
             force_dim0_first_two=bool(options.symmetry_aligned_cache_schedule),
             forced_tail_schedule=forced_tail_schedule,
+            split_schedule_kind=split_schedule_kind,
         )
 
     endpoint_cache_enabled = bool(
@@ -1145,6 +1206,10 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     if hasattr(cfg.connector.pave, "adaptive_min_segment_fraction"):
         cfg.connector.pave.adaptive_min_segment_fraction = float(options.connector_adaptive_min_segment_fraction)
     cfg.query_bridge_pave_depth = int(options.query_bridge_pave_depth)
+    if hasattr(cfg, "query_bridge_ffb_start_depth"):
+        cfg.query_bridge_ffb_start_depth = int(getattr(options, "query_bridge_ffb_start_depth", -1))
+    if hasattr(cfg, "query_endpoint_anchor_ffb_depth"):
+        cfg.query_endpoint_anchor_ffb_depth = int(options.query_endpoint_anchor_ffb_depth)
     if hasattr(cfg, "query_bridge_adaptive_ffb_depths"):
         cfg.query_bridge_adaptive_ffb_depths = [
             int(item.strip())
@@ -1351,6 +1416,16 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.hipac_transition_max_pair_distance = float(options.hipac_transition_max_pair_distance)
     if hasattr(cfg, "hipac_transition_allow_same_component"):
         cfg.hipac_transition_allow_same_component = bool(options.hipac_transition_allow_same_component)
+    if hasattr(cfg, "hipac_promote_transition_slices"):
+        cfg.hipac_promote_transition_slices = bool(options.hipac_promote_transition_slices)
+    if hasattr(cfg, "hipac_promote_transition_target_query_indices"):
+        cfg.hipac_promote_transition_target_query_indices = str(options.hipac_promote_transition_target_query_indices)
+    if hasattr(cfg, "hipac_promote_transition_min_boxes"):
+        cfg.hipac_promote_transition_min_boxes = int(options.hipac_promote_transition_min_boxes)
+    if hasattr(cfg, "hipac_promote_transition_max_boxes"):
+        cfg.hipac_promote_transition_max_boxes = int(options.hipac_promote_transition_max_boxes)
+    if hasattr(cfg, "hipac_promote_transition_max_attempts_per_query"):
+        cfg.hipac_promote_transition_max_attempts_per_query = int(options.hipac_promote_transition_max_attempts_per_query)
     return cfg
 
 
@@ -1576,6 +1651,31 @@ def bridge_all_queries(
         start = query_point(robot, query.start, bool(options.canonicalize_queries))
         goal = query_point(robot, query.goal, bool(options.canonicalize_queries))
         query_items.append((str(query.label), start, goal, stable_query_index(query.label, query_index)))
+
+    def query_good_enough(probe: Any, start: list[float], goal: list[float]) -> bool:
+        raw_length = float(getattr(probe, "raw_path_length", getattr(probe, "path_length", math.inf)))
+        segment_length = float(getattr(probe, "segment_edge_length", 0.0))
+        segment_fraction = (
+            segment_length / raw_length
+            if raw_length > 1e-12 and math.isfinite(raw_length)
+            else math.inf
+        )
+        segment_ok = segment_fraction <= float(getattr(options, "query_bridge_accept_segment_fraction", 0.0))
+        path_length_value = float(getattr(probe, "path_length", math.inf))
+        direct = point_distance(start, goal)
+        absolute_short_enough = path_length_value <= float(
+            getattr(options, "query_bridge_adaptive_max_path_length", math.inf)
+        )
+        ratio = float(getattr(options, "query_bridge_accept_path_ratio", 1.35))
+        additive = float(getattr(options, "query_bridge_accept_path_additive", 0.35))
+        short_enough = (
+            direct <= 1e-9 or
+            path_length_value <= max(direct * ratio, direct + additive) or
+            absolute_short_enough
+        )
+        audit_ok = bool(getattr(probe, "audit_passed", True))
+        return bool(getattr(probe, "success", False)) and audit_ok and segment_ok and short_enough
+
     if bool(getattr(options, "query_endpoint_anchor_before_bridge", True)) and hasattr(forest, "anchor_query_endpoint_box"):
         anchor_t0 = time.perf_counter()
         anchor_added = 0
@@ -1662,33 +1762,11 @@ def bridge_all_queries(
             continue
         if labels or adaptive_all:
             probe = forest.query(start, goal)
-            direct = point_distance(start, goal)
-            raw_length = float(getattr(probe, "raw_path_length", getattr(probe, "path_length", math.inf)))
-            segment_length = float(getattr(probe, "segment_edge_length", 0.0))
-            segment_fraction = (
-                segment_length / raw_length
-                if raw_length > 1e-12 and math.isfinite(raw_length)
-                else math.inf
-            )
-            segment_ok = segment_fraction <= float(getattr(options, "query_bridge_accept_segment_fraction", 0.0))
-            path_length_value = float(getattr(probe, "path_length", math.inf))
-            absolute_short_enough = path_length_value <= float(
-                getattr(options, "query_bridge_adaptive_max_path_length", math.inf)
-            )
-            ratio = float(getattr(options, "query_bridge_accept_path_ratio", 1.35))
-            additive = float(getattr(options, "query_bridge_accept_path_additive", 0.35))
-            short_enough = (
-                direct <= 1e-9 or
-                path_length_value <= max(direct * ratio, direct + additive) or
-                absolute_short_enough
-            )
-            if bool(probe.success) and segment_ok and short_enough:
+            if query_good_enough(probe, start, goal):
                 continue
             if (
                 bool(getattr(options, "query_bridge_to_main_island", False)) and
-                bool(probe.success) and
-                segment_ok and
-                short_enough
+                query_good_enough(probe, start, goal)
             ):
                 continue
         selected_index = len(selected)
@@ -1734,6 +1812,11 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS"] = str(
             int(getattr(options, "query_bridge_no_path_retry_attempts", 0))
         )
+        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_no_path_retry_stop_on_first_success", False))
+            else "0"
+        )
         env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_ITERS"] = str(
             int(getattr(options, "query_bridge_rrt_fixed_iters", 0))
         )
@@ -1762,6 +1845,20 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION"] = str(
             float(getattr(options, "query_bridge_adaptive_repair_target_segment_fraction", 0.0))
         )
+        env_updates["RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_scene_reusable_edges", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS"] = (
+            "1" if bool(getattr(options, "query_bridge_group_residual_gaps", False)) else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES"] = (
+            "1" if bool(getattr(options, "query_bridge_partition_neighbor_candidates", False)) else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE"] = (
+            "1" if bool(getattr(options, "query_bridge_direct_append_partition_immediate", False)) else "0"
+        )
         if float(options.query_bridge_direct_max_length) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
         previous_env = {name: os.environ.get(name) for name in env_updates}
@@ -1771,7 +1868,42 @@ def bridge_all_queries(
             else:
                 os.environ[name] = value
         try:
-            added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+            if bool(getattr(options, "query_bridge_sequential_reuse", False)):
+                added_values: list[int] = []
+                reuse_skips = 0
+                segment_only_indices = {
+                    int(item.strip())
+                    for item in str(options.query_bridge_segment_only_indices).split(",")
+                    if item.strip()
+                }
+                for selected_index, (label, start, goal, global_query_index) in enumerate(selected):
+                    q0 = time.perf_counter()
+                    probe = forest.query(start, goal)
+                    if query_good_enough(probe, start, goal):
+                        reuse_skips += 1
+                        added_values.append(0)
+                        timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
+                        added_by_label[label] = added_by_label.get(label, 0) + 0
+                        continue
+                    os.environ["RBF_QUERY_BRIDGE_GLOBAL_INDICES"] = str(int(global_query_index))
+                    if selected_index in force_indices:
+                        os.environ["RBF_QUERY_BRIDGE_FORCE_INDICES"] = "0"
+                    else:
+                        os.environ.pop("RBF_QUERY_BRIDGE_FORCE_INDICES", None)
+                    if selected_index in segment_only_indices:
+                        os.environ["RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES"] = "0"
+                    else:
+                        os.environ.pop("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", None)
+                    added = int(forest.bridge_queries([start], [goal])[0])
+                    added_values.append(added)
+                    timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
+                    added_by_label[label] = added_by_label.get(label, 0) + added
+                added_by_label["__sequential_reuse_skips__"] = (
+                    added_by_label.get("__sequential_reuse_skips__", 0) + reuse_skips
+                )
+                timing_by_label["__sequential_reuse__"] = time.perf_counter() - t0
+            else:
+                added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
         finally:
             for name, previous_value in previous_env.items():
                 if previous_value is None:
@@ -1781,7 +1913,8 @@ def bridge_all_queries(
         elapsed = time.perf_counter() - t0
         timing_by_label["__batch_total__"] = elapsed
         for (label, _start, _goal, _global_query_index), added in zip(selected, added_values, strict=True):
-            added_by_label[label] = added_by_label.get(label, 0) + added
+            if not bool(getattr(options, "query_bridge_sequential_reuse", False)):
+                added_by_label[label] = added_by_label.get(label, 0) + added
             added_total += added
         attempts += len(selected)
         return elapsed, added_total, attempts, timing_by_label, added_by_label
@@ -1837,18 +1970,40 @@ def run_leaf_rrt(
     refine_cfg = make_refine_config(options)
     adaptive_cfg = make_adaptive_leaf_sweep_config(options)
     offline_t0 = time.perf_counter()
-    anchor_select_t0 = time.perf_counter()
-    offline_anchor_points, offline_anchor_select_metrics = generate_offline_anchor_points(
-        robot,
-        list(obstacles),
-        options,
-    )
-    offline_anchor_select_s = time.perf_counter() - anchor_select_t0
+    offline_anchor_points: list[list[float]] = []
+    offline_anchor_select_metrics = empty_offline_anchor_metrics("not_selected")
+    offline_anchor_select_s = 0.0
+    def select_offline_anchor_points() -> None:
+        nonlocal offline_anchor_points, offline_anchor_select_metrics, offline_anchor_select_s
+        anchor_select_t0 = time.perf_counter()
+        offline_anchor_points, offline_anchor_select_metrics = generate_offline_anchor_points(
+            robot,
+            list(obstacles),
+            options,
+        )
+        offline_anchor_select_s = time.perf_counter() - anchor_select_t0
     offline_anchor_insert_added = 0
     offline_anchor_insert_attempts = 0
     offline_anchor_insert_s = 0.0
     if str(options.offline_grower) == "adaptive_deep_leaf":
+        if not bool(options.offline_anchor_skip_if_main_accessible):
+            select_offline_anchor_points()
         build = forest.build_adaptive_deep_leaf_sweep_cover(obstacles, adaptive_cfg)
+        if bool(options.offline_anchor_skip_if_main_accessible):
+            p_main_accessible = float(getattr(build, "p_main_accessible", math.nan))
+            if not math.isfinite(p_main_accessible):
+                profile = getattr(build, "profile", None)
+                diagnostics = getattr(profile, "diagnostics", {}) if profile is not None else {}
+                p_main_accessible = float(diagnostics.get("adaptive.p_main_accessible", math.nan))
+            anchor_skip = (
+                math.isfinite(p_main_accessible) and
+                p_main_accessible >= float(options.offline_anchor_main_accessible_threshold)
+            )
+            if anchor_skip:
+                offline_anchor_select_metrics = empty_offline_anchor_metrics("main_accessible")
+                offline_anchor_select_metrics["offline_anchor_skip_p_main_accessible"] = p_main_accessible
+            else:
+                select_offline_anchor_points()
         if offline_anchor_points and hasattr(forest, "anchor_query_endpoint_box"):
             anchor_insert_t0 = time.perf_counter()
             for point in offline_anchor_points:
@@ -1860,6 +2015,7 @@ def run_leaf_rrt(
                     offline_anchor_insert_added += after_count - before_count
             offline_anchor_insert_s = time.perf_counter() - anchor_insert_t0
     else:
+        select_offline_anchor_points()
         build = forest.build_leaf_sweep_refined(
             obstacles,
             refine_cfg,
@@ -1906,30 +2062,67 @@ def run_leaf_rrt(
         )
         after_corridor_boxes = len(list(forest.boxes()))
         after_corridor_segment_edges = len(list(forest.segment_edges()))
-        (
-            query_bridge_s,
-            query_bridge_added,
-            query_bridge_attempts,
-            query_bridge_by_label_s,
-            query_bridge_added_by_label,
-        ) = bridge_all_queries(
-            forest,
-            robot,
-            query_list,
-            options,
-        )
+        if bool(options.query_bridge_sequential_reuse):
+            query_bridge_s = 0.0
+            query_bridge_added = 0
+            query_bridge_attempts = 0
+            query_bridge_by_label_s: dict[str, float] = {}
+            query_bridge_added_by_label: dict[str, int] = {}
+            qrows = []
+            for raw_query in query_list:
+                (
+                    step_bridge_s,
+                    step_bridge_added,
+                    step_bridge_attempts,
+                    step_bridge_by_label_s,
+                    step_bridge_added_by_label,
+                ) = bridge_all_queries(
+                    forest,
+                    robot,
+                    [raw_query],
+                    options,
+                )
+                query_bridge_s += float(step_bridge_s)
+                query_bridge_added += int(step_bridge_added)
+                query_bridge_attempts += int(step_bridge_attempts)
+                for key, value in step_bridge_by_label_s.items():
+                    query_bridge_by_label_s[key] = query_bridge_by_label_s.get(key, 0.0) + float(value)
+                for key, value in step_bridge_added_by_label.items():
+                    query_bridge_added_by_label[key] = query_bridge_added_by_label.get(key, 0) + int(value)
+                qrows.extend(query_rows(
+                    forest,
+                    robot,
+                    [raw_query],
+                    obstacles=list(obstacles),
+                    audit_step=float(options.audit_segment_step),
+                    audit_collision_tolerance=float(options.audit_collision_tolerance),
+                    canonicalize_queries=bool(options.canonicalize_queries),
+                ))
+        else:
+            (
+                query_bridge_s,
+                query_bridge_added,
+                query_bridge_attempts,
+                query_bridge_by_label_s,
+                query_bridge_added_by_label,
+            ) = bridge_all_queries(
+                forest,
+                robot,
+                query_list,
+                options,
+            )
+            qrows = query_rows(
+                forest,
+                robot,
+                query_list,
+                obstacles=list(obstacles),
+                audit_step=float(options.audit_segment_step),
+                audit_collision_tolerance=float(options.audit_collision_tolerance),
+                canonicalize_queries=bool(options.canonicalize_queries),
+            )
         final_boxes = len(list(forest.boxes()))
         final_segment_edges = len(list(forest.segment_edges()))
         final_adjacency_islands = -1 if partition_native_requested else forest_adjacency_island_count(forest)
-        qrows = query_rows(
-            forest,
-            robot,
-            query_list,
-            obstacles=list(obstacles),
-            audit_step=float(options.audit_segment_step),
-            audit_collision_tolerance=float(options.audit_collision_tolerance),
-            canonicalize_queries=bool(options.canonicalize_queries),
-        )
     finally:
         for name, previous_value in previous_query_cost_env.items():
             if previous_value is None:
@@ -1995,6 +2188,22 @@ def run_leaf_rrt(
     }
     external_evidence_fields = _external_evidence_diagnostic_fields(diagnostics)
     query_bridge_diagnostic_fields = _query_bridge_diagnostic_fields(diagnostics, query_count)
+    query_success_by_label = {str(row["label"]): bool(row["audit_passed"]) for row in qrows}
+    query_status_by_label = {str(row["label"]): str(row["audit_status"]) for row in qrows}
+    query_raw_length_by_label = {
+        str(row["label"]): float(row["raw_path_length"])
+        for row in qrows
+        if math.isfinite(float(row["raw_path_length"]))
+    }
+    query_segment_fraction_by_label = {
+        str(row["label"]): float(row["segment_fraction"])
+        for row in qrows
+        if math.isfinite(float(row["segment_fraction"]))
+    }
+    query_segment_edges_used_by_label = {
+        str(row["label"]): int(row["segment_edges_used"])
+        for row in qrows
+    }
     return {
         "case": options.case_label,
         "seed": int(options.seed),
@@ -2005,6 +2214,14 @@ def run_leaf_rrt(
         "status": "ok" if len(successes) == len(qrows) else "partial",
         "success_count": len(successes),
         "query_count": len(qrows),
+        "query_success_by_label": query_success_by_label,
+        "query_audit_status_by_label": query_status_by_label,
+        "query_raw_length_by_label": query_raw_length_by_label,
+        "query_segment_fraction_by_label": query_segment_fraction_by_label,
+        "query_segment_edges_used_by_label": query_segment_edges_used_by_label,
+        "query_bridge_sequential_reuse": bool(options.query_bridge_sequential_reuse),
+        "query_bridge_scene_reusable_edges": bool(options.query_bridge_scene_reusable_edges),
+        "query_bridge_reuse_scope": "scene_seed_local" if bool(options.query_bridge_scene_reusable_edges) else "query_index_local",
         "planning_s": offline_build_s + query_s,
         "planning_total_s": offline_build_s + query_total_s,
         "build_s": offline_build_s,
@@ -2061,6 +2278,8 @@ def run_leaf_rrt(
         "offline_anchor_lca_depth_mean": float(offline_anchor_select_metrics.get("offline_anchor_lca_depth_mean", math.nan)),
         "offline_anchor_lca_depth_max": float(offline_anchor_select_metrics.get("offline_anchor_lca_depth_max", math.nan)),
         "offline_anchor_min_distance_mean": float(offline_anchor_select_metrics.get("offline_anchor_min_distance_mean", math.nan)),
+        "offline_anchor_skip_reason": str(offline_anchor_select_metrics.get("offline_anchor_skip_reason", "")),
+        "offline_anchor_skip_p_main_accessible": float(offline_anchor_select_metrics.get("offline_anchor_skip_p_main_accessible", math.nan)),
         "offline_anchor_box_volume_mean": float(diagnostics.get("leaf_refine.offline_anchor_box_volume_mean", 0.0)),
         "offline_anchor_box_volume_max": float(diagnostics.get("leaf_refine.offline_anchor_box_volume_max", 0.0)),
         "offline_shortcut_s": float(offline_shortcut_s),
@@ -2236,6 +2455,21 @@ def run_leaf_rrt(
         "query_bridge_hipac_transition_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_ffb_calls", 0.0)),
         "query_bridge_hipac_transition_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_validations", 0.0)),
         "query_bridge_hipac_transition_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_free", 0.0)),
+        "query_bridge_hipac_promote_transition_attempts": int(diagnostics.get("query_bridge.hipac_promote_transition.attempts", 0.0)),
+        "query_bridge_hipac_promote_transition_target_rejects": int(diagnostics.get("query_bridge.hipac_promote_transition.target_rejects", 0.0)),
+        "query_bridge_hipac_promote_transition_candidate_boxes": int(diagnostics.get("query_bridge.hipac_promote_transition.candidate_boxes", 0.0)),
+        "query_bridge_hipac_promote_transition_added": int(diagnostics.get("query_bridge.hipac_promote_transition.added", 0.0)),
+        "query_bridge_hipac_promote_transition_failures": int(diagnostics.get("query_bridge.hipac_promote_transition.failures", 0.0)),
+        "query_bridge_hipac_promote_transition_chain_fail": int(diagnostics.get("query_bridge.hipac_promote_transition.chain_fail", 0.0)),
+        "query_bridge_hipac_promote_transition_short_chain": int(diagnostics.get("query_bridge.hipac_promote_transition.short_chain", 0.0)),
+        "query_bridge_hipac_promote_transition_edge_fail": int(diagnostics.get("query_bridge.hipac_promote_transition.edge_fail", 0.0)),
+        "query_bridge_hipac_promote_transition_slice_components": int(diagnostics.get("query_bridge.hipac_promote_transition.slice_components", 0.0)),
+        "query_bridge_hipac_promote_transition_added_full": int(diagnostics.get("query_bridge.hipac_promote_transition.added_full", 0.0)),
+        "query_bridge_hipac_promote_transition_added_slice": int(diagnostics.get("query_bridge.hipac_promote_transition.added_slice", 0.0)),
+        "query_bridge_hipac_promote_transition_local_adj_edges": int(diagnostics.get("query_bridge.hipac_promote_transition.local_adj_edges", 0.0)),
+        "query_bridge_hipac_promote_transition_local_adj_tests": int(diagnostics.get("query_bridge.hipac_promote_transition.local_adj_tests", 0.0)),
+        "query_bridge_hipac_promote_transition_internal_boxes": int(diagnostics.get("query_bridge.hipac_promote_transition.internal_boxes", 0.0)),
+        "query_bridge_hipac_promote_transition_ms": float(diagnostics.get("query_bridge.hipac_promote_transition.ms_total", 0.0)),
         "query_bridge_hipac_promote_attempts": int(diagnostics.get("query_bridge.hipac_promote_attempts", 0.0)),
         "query_bridge_hipac_promote_added": int(diagnostics.get("query_bridge.hipac_promote_added", 0.0)),
         "query_bridge_hipac_promote_failures": int(diagnostics.get("query_bridge.hipac_promote_failures", 0.0)),

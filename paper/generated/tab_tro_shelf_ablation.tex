@@ -1,17 +1,20 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Times are in seconds; Path is the success-only mean and Seg. is the raw segment fraction.}
+\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Numeric entries report only the [Q1,Q3] interval and exclude the fixed 0.01\,s final simplification from timing columns. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same shelf query. Seg. is the raw segment fraction.}
 \label{tab:tro-shelf-ablation}
-\begin{tabular}{lrrrrrrr}
+\footnotesize
+\setlength{\tabcolsep}{2.0pt}
+\renewcommand{\arraystretch}{0.96}
+\begin{tabular}{lccccc}
 \toprule
-Case & Build & Batch/q & Amort@5 & Path & Seg. & Boxes & SR \\
+Case & Build & Online/q & Amort@5 & $L/L^\star$ & Seg. \\
 \midrule
-RBF-SH d23 & 0.076 & 0.033 & 0.049 & 2.733 & 0.196 & 344.0 & 40/40 \\
-CritSample endpoints & 0.042 & 0.035 & 0.043 & 2.963 & 0.139 & 335.5 & 40/40 \\
-Link AABB & 0.069 & 0.038 & 0.052 & 3.192 & 0.277 & 305.5 & 40/40 \\
-No external LECT, HIFK-5 & 7.388 & 0.071 & 1.544 & 2.936 & 0.152 & 285.0 & 40/40 \\
-SH w/o broadphase & 0.158 & 0.055 & 0.087 & 2.746 & 0.195 & 344.0 & 40/40 \\
+RBF-SH d23 & [0.073,0.077] & [0.030,0.034] & [0.045,0.050] & [0.98,1.07] & [0.14,0.24] \\
+CritSample endpoints & [0.039,0.041] & [0.033,0.035] & [0.041,0.043] & [0.98,1.04] & [0.10,0.18] \\
+Link AABB & [0.056,0.059] & [0.031,0.037] & [0.042,0.048] & [0.99,1.14] & [0.17,0.33] \\
+No external LECT, HIFK-5 & [6.771,6.959] & [0.065,0.072] & [1.419,1.461] & [0.98,1.07] & [0.11,0.20] \\
+SH w/o broadphase & [0.124,0.136] & [0.044,0.052] & [0.069,0.079] & [0.98,1.07] & [0.14,0.24] \\
 \bottomrule
 \end{tabular}
 \par\endgroup

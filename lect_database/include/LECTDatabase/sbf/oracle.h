@@ -371,6 +371,11 @@ public:
     virtual int depth(OracleNodeId node) const = 0;
     virtual int split_dim(OracleNodeId node) const = 0;
     virtual double split_value(OracleNodeId node) const = 0;
+    virtual OracleSplitPolicyDescriptor split_policy_descriptor() const {
+        OracleSplitPolicyDescriptor descriptor;
+        descriptor.strategy = lect_database::SplitStrategy::AAFKVolumeMin;
+        return descriptor;
+    }
     virtual OracleNodeId left_child(OracleNodeId node) const = 0;
     virtual OracleNodeId right_child(OracleNodeId node) const = 0;
     virtual OracleNodeTopology node_topology(OracleNodeId node) const {
@@ -480,6 +485,7 @@ public:
     int depth(OracleNodeId node) const override;
     int split_dim(OracleNodeId node) const override;
     double split_value(OracleNodeId node) const override;
+    OracleSplitPolicyDescriptor split_policy_descriptor() const override;
     OracleNodeId left_child(OracleNodeId node) const override;
     OracleNodeId right_child(OracleNodeId node) const override;
     OracleNodeTopology node_topology(OracleNodeId node) const override;

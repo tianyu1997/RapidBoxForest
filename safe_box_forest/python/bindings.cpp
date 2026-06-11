@@ -1197,7 +1197,12 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("hipac_transition_window_stride", &rbf::AdaptiveLeafSweepConfig::hipac_transition_window_stride)
         .def_readwrite("hipac_transition_min_predicted_bridge_edges", &rbf::AdaptiveLeafSweepConfig::hipac_transition_min_predicted_bridge_edges)
         .def_readwrite("hipac_transition_max_pair_distance", &rbf::AdaptiveLeafSweepConfig::hipac_transition_max_pair_distance)
-        .def_readwrite("hipac_transition_allow_same_component", &rbf::AdaptiveLeafSweepConfig::hipac_transition_allow_same_component);
+        .def_readwrite("hipac_transition_allow_same_component", &rbf::AdaptiveLeafSweepConfig::hipac_transition_allow_same_component)
+        .def_readwrite("hipac_promote_transition_slices", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_slices)
+        .def_readwrite("hipac_promote_transition_target_query_indices", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_target_query_indices)
+        .def_readwrite("hipac_promote_transition_min_boxes", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_min_boxes)
+        .def_readwrite("hipac_promote_transition_max_boxes", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_max_boxes)
+        .def_readwrite("hipac_promote_transition_max_attempts_per_query", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_max_attempts_per_query);
 
     py::class_<rbf::EndpointMainBoxCorridorConfig>(module, "EndpointMainBoxCorridorConfig")
         .def(py::init<>())
@@ -1605,6 +1610,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("enable_merger", &rbf::RBFPlanningConfig::enable_merger)
         .def_readwrite("enable_connector", &rbf::RBFPlanningConfig::enable_connector)
         .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth)
+        .def_readwrite("query_bridge_ffb_start_depth", &rbf::RBFPlanningConfig::query_bridge_ffb_start_depth)
+        .def_readwrite("query_endpoint_anchor_ffb_depth", &rbf::RBFPlanningConfig::query_endpoint_anchor_ffb_depth)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
@@ -4171,7 +4178,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            int seed,
            int max_nearest_neighbors,
            const std::string& planner_kind,
-           bool preload_query_endpoints) {
+           bool preload_query_endpoints,
+           int early_stop_success_stall_checkpoints,
+           double early_stop_path_rel_tol,
+           double unresolved_query_retry_interval_s,
+           double solved_query_recheck_interval_s) {
             namespace ob = ompl::base;
             namespace og = ompl::geometric;
             ompl::msg::setLogLevel(ompl::msg::LOG_ERROR);
@@ -4258,6 +4269,29 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             double last_target_s = 0.0;
             double final_build_s = 0.0;
             int final_nodes = 0;
+            std::vector<bool> has_incumbent(starts.size(), false);
+            std::vector<double> best_lengths(starts.size(), std::numeric_limits<double>::infinity());
+            std::vector<double> last_query_checkpoint_s(starts.size(), -std::numeric_limits<double>::infinity());
+            int success_stall_checkpoints = 0;
+            bool stopped_early = false;
+            auto vector_path_length = [](const std::vector<std::vector<double>>& path) {
+                if (path.size() < 2) {
+                    return std::numeric_limits<double>::infinity();
+                }
+                double total = 0.0;
+                for (std::size_t i = 1; i < path.size(); ++i) {
+                    const auto& a = path[i - 1];
+                    const auto& b = path[i];
+                    double squared = 0.0;
+                    const std::size_t dims = std::min(a.size(), b.size());
+                    for (std::size_t dim = 0; dim < dims; ++dim) {
+                        const double delta = b[dim] - a[dim];
+                        squared += delta * delta;
+                    }
+                    total += std::sqrt(squared);
+                }
+                return total;
+            };
             for (std::size_t stage_index = 0; stage_index < checkpoints.size(); ++stage_index) {
                 const double target_s = checkpoints[stage_index];
                 const double delta_s = std::max(0.0, target_s - last_target_s);
@@ -4274,6 +4308,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 final_nodes = static_cast<int>(planner_data.numVertices());
 
                 py::list query_results;
+                bool stage_significant_improvement = false;
+                bool stage_had_query = false;
+                bool stage_had_incumbent_recheck = false;
+                int stage_queries_executed = 0;
                 for (std::size_t index = 0; index < starts.size(); ++index) {
                     py::dict row;
                     row["index"] = static_cast<int>(index);
@@ -4288,6 +4326,31 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                         query_results.append(row);
                         continue;
                     }
+                    const bool is_final_checkpoint = (stage_index + 1 == checkpoints.size());
+                    const double retry_interval = has_incumbent[index]
+                        ? std::max(0.0, solved_query_recheck_interval_s)
+                        : std::max(0.0, unresolved_query_retry_interval_s);
+                    const bool query_due =
+                        is_final_checkpoint ||
+                        !std::isfinite(last_query_checkpoint_s[index]) ||
+                        target_s - last_query_checkpoint_s[index] >= retry_interval - 1e-12;
+                    if (!query_due) {
+                        row["ok"] = false;
+                        row["reason"] = "skipped_between_trace_queries";
+                        row["status"] = "skipped_between_trace_queries";
+                        row["solve_s"] = 0.0;
+                        row["simplify_s"] = 0.0;
+                        row["t_s"] = 0.0;
+                        row["path"] = std::vector<std::vector<double>>{};
+                        query_results.append(row);
+                        continue;
+                    }
+                    stage_had_query = true;
+                    if (has_incumbent[index]) {
+                        stage_had_incumbent_recheck = true;
+                    }
+                    ++stage_queries_executed;
+                    last_query_checkpoint_s[index] = target_s;
                     planner->clearQuery();
                     set_problem_query(problem, space, si, starts[index], goals[index], dimension);
                     if (!milestones_inserted[index]) {
@@ -4313,6 +4376,19 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     if (path.size() < 2) {
                         ok = false;
                     }
+                    if (ok) {
+                        const double length = vector_path_length(path);
+                        const bool first_solution = !has_incumbent[index];
+                        const double previous = best_lengths[index];
+                        if (first_solution || length < previous) {
+                            if (first_solution ||
+                                length < previous * (1.0 - std::max(0.0, early_stop_path_rel_tol))) {
+                                stage_significant_improvement = true;
+                            }
+                            best_lengths[index] = std::min(previous, length);
+                            has_incumbent[index] = true;
+                        }
+                    }
                     row["ok"] = ok;
                     row["reason"] = ok ? "connected" : std::string(status.asString());
                     row["status"] = std::string(status.asString());
@@ -4330,13 +4406,45 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 stage["build_s"] = cumulative_build_s;
                 stage["nodes"] = static_cast<int>(planner_data.numVertices());
                 stage["queries"] = query_results;
+                const bool all_success = std::all_of(
+                    has_incumbent.begin(),
+                    has_incumbent.end(),
+                    [](bool value) { return value; });
+                if (all_success) {
+                    if (stage_significant_improvement) {
+                        success_stall_checkpoints = 0;
+                    } else if (stage_had_incumbent_recheck) {
+                        ++success_stall_checkpoints;
+                    }
+                } else {
+                    success_stall_checkpoints = 0;
+                }
+                stage["all_queries_have_incumbent"] = all_success;
+                stage["significant_improvement"] = stage_significant_improvement;
+                stage["success_stall_checkpoints"] = success_stall_checkpoints;
+                stage["queries_executed"] = stage_queries_executed;
+                stage["had_query"] = stage_had_query;
+                stage["had_incumbent_recheck"] = stage_had_incumbent_recheck;
+                stage["early_stop"] = false;
                 stages.append(stage);
+                if (early_stop_success_stall_checkpoints > 0 &&
+                    all_success &&
+                    success_stall_checkpoints >= early_stop_success_stall_checkpoints) {
+                    stage["early_stop"] = true;
+                    stopped_early = true;
+                    break;
+                }
             }
             result["ok"] = true;
             result["planner"] = use_prmstar ? "OMPL_PRMstar" : "OMPL_PRM";
             result["cumulative"] = true;
             result["build_s"] = final_build_s;
             result["nodes"] = final_nodes;
+            result["stopped_early"] = stopped_early;
+            result["early_stop_success_stall_checkpoints"] = early_stop_success_stall_checkpoints;
+            result["early_stop_path_rel_tol"] = early_stop_path_rel_tol;
+            result["unresolved_query_retry_interval_s"] = unresolved_query_retry_interval_s;
+            result["solved_query_recheck_interval_s"] = solved_query_recheck_interval_s;
             result["checking_resolution"] = checking_resolution;
             result["preload_query_endpoints"] = preload_query_endpoints;
             result["stages"] = stages;
@@ -4353,7 +4461,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("seed") = 42,
         py::arg("max_nearest_neighbors") = 32,
         py::arg("planner_kind") = "prm",
-        py::arg("preload_query_endpoints") = false);
+        py::arg("preload_query_endpoints") = false,
+        py::arg("early_stop_success_stall_checkpoints") = 0,
+        py::arg("early_stop_path_rel_tol") = 0.0,
+        py::arg("unresolved_query_retry_interval_s") = 0.0,
+        py::arg("solved_query_recheck_interval_s") = 0.0);
 
     module.def("ompl_simplify_path",
         [](const rbf::Robot& robot,
@@ -5055,6 +5167,31 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const double interval_s = std::max(1e-3, checkpoint_interval_ms / 1000.0);
             std::string last_status = "not_run";
             bool last_exact = false;
+            bool trace_stopped_early = false;
+            const int quality_stall_checkpoints = 0;
+            const double quality_stall_rel_tol = 0.005;
+            std::string trace_stop_reason = "";
+            double best_path_length = std::numeric_limits<double>::infinity();
+            int quality_stall_count = 0;
+
+            auto vector_path_length = [](const std::vector<std::vector<double>>& path) {
+                if (path.size() < 2) {
+                    return std::numeric_limits<double>::infinity();
+                }
+                double total = 0.0;
+                for (std::size_t i = 1; i < path.size(); ++i) {
+                    const auto& a = path[i - 1];
+                    const auto& b = path[i];
+                    double squared = 0.0;
+                    const std::size_t dims = std::min(a.size(), b.size());
+                    for (std::size_t dim = 0; dim < dims; ++dim) {
+                        const double delta = b[dim] - a[dim];
+                        squared += delta * delta;
+                    }
+                    total += std::sqrt(squared);
+                }
+                return total;
+            };
 
             auto append_checkpoint = [&](double target_s) {
                 const double elapsed_s = ompl_elapsed_s(t0);
@@ -5064,6 +5201,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     path = path_from_problem_solution(setup.getProblemDefinition(), dimension);
                     ok = path.size() >= 2;
                 }
+                const double length = ok ? vector_path_length(path) : std::numeric_limits<double>::infinity();
                 py::dict row;
                 row["checkpoint_s"] = target_s;
                 row["elapsed_s"] = elapsed_s;
@@ -5075,10 +5213,26 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 row["simplify_s"] = 0.0;
                 row["t_s"] = elapsed_s;
                 row["path"] = path;
+                row["path_length"] = std::isfinite(length) ? length : std::numeric_limits<double>::quiet_NaN();
                 row["nodes"] = 0;
                 row["iterations"] = static_cast<int>(planner->numIterations());
                 row["batches"] = static_cast<int>(planner->numBatches());
                 checkpoints.append(row);
+                return length;
+            };
+
+            auto update_quality_stall = [&](double length) {
+                if (quality_stall_checkpoints <= 0 || !std::isfinite(length)) {
+                    return false;
+                }
+                const double rel_tol = std::max(0.0, quality_stall_rel_tol);
+                if (!std::isfinite(best_path_length) || length < best_path_length * (1.0 - rel_tol)) {
+                    best_path_length = length;
+                    quality_stall_count = 0;
+                    return false;
+                }
+                ++quality_stall_count;
+                return quality_stall_count >= quality_stall_checkpoints;
             };
 
             if (timeout_s <= 0.0) {
@@ -5096,10 +5250,21 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                         if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
                             break;
                         }
+                        if (stop_on_solution_improvement && setup.haveSolutionPath()) {
+                            trace_stopped_early = true;
+                            break;
+                        }
                     }
-                    append_checkpoint(clamped_target_s);
+                    const double checkpoint_length = append_checkpoint(clamped_target_s);
+                    if (update_quality_stall(checkpoint_length)) {
+                        trace_stopped_early = true;
+                        trace_stop_reason = "quality_stall";
+                    }
+                    if (trace_stopped_early) {
+                        break;
+                    }
                 }
-                while (ompl_elapsed_s(t0) < timeout_s - 1e-6) {
+                while (!trace_stopped_early && ompl_elapsed_s(t0) < timeout_s - 1e-6) {
                     const double remaining_s = std::max(1e-5, timeout_s - ompl_elapsed_s(t0));
                     const double ptc_interval_s = std::max(1e-3, std::min(0.05, remaining_s / 20.0));
                     const auto before_s = ompl_elapsed_s(t0);
@@ -5109,8 +5274,16 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
                         break;
                     }
+                    if (stop_on_solution_improvement && setup.haveSolutionPath()) {
+                        trace_stopped_early = true;
+                        break;
+                    }
                 }
-                append_checkpoint(timeout_s);
+                if (checkpoints.empty()) {
+                    append_checkpoint(timeout_s);
+                } else if (!trace_stopped_early) {
+                    append_checkpoint(timeout_s);
+                }
             }
 
             std::vector<std::vector<double>> final_path;
@@ -5133,6 +5306,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             result["planner"] = "OMPL_CSpace_BITstar";
             result["iterations"] = static_cast<int>(planner->numIterations());
             result["batches"] = static_cast<int>(planner->numBatches());
+            result["stopped_early"] = trace_stopped_early;
+            result["stop_on_solution_improvement"] = stop_on_solution_improvement;
             result["checkpoints"] = checkpoints;
             return result;
         },
@@ -5173,6 +5348,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            int samples_per_batch,
            double rewire_factor,
            bool stop_on_solution_improvement,
+           int quality_stall_checkpoints,
+           double quality_stall_rel_tol,
            int use_k_nearest,
            int pruning,
            double prune_threshold_fraction,
@@ -5262,6 +5439,29 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             const double interval_s = std::max(1e-3, checkpoint_interval_ms / 1000.0);
             std::string last_status = "not_run";
             bool last_exact = false;
+            bool trace_stopped_early = false;
+            std::string trace_stop_reason = "";
+            double best_path_length = std::numeric_limits<double>::infinity();
+            int quality_stall_count = 0;
+
+            auto vector_path_length = [](const std::vector<std::vector<double>>& path) {
+                if (path.size() < 2) {
+                    return std::numeric_limits<double>::infinity();
+                }
+                double total = 0.0;
+                for (std::size_t i = 1; i < path.size(); ++i) {
+                    const auto& a = path[i - 1];
+                    const auto& b = path[i];
+                    double squared = 0.0;
+                    const std::size_t dims = std::min(a.size(), b.size());
+                    for (std::size_t dim = 0; dim < dims; ++dim) {
+                        const double delta = b[dim] - a[dim];
+                        squared += delta * delta;
+                    }
+                    total += std::sqrt(squared);
+                }
+                return total;
+            };
 
             auto append_checkpoint = [&](double target_s) {
                 const double elapsed_s = ompl_elapsed_s(t0);
@@ -5271,6 +5471,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     path = path_from_problem_solution(setup.getProblemDefinition(), dimension);
                     ok = path.size() >= 2;
                 }
+                const double length = ok ? vector_path_length(path) : std::numeric_limits<double>::infinity();
                 py::dict row;
                 row["checkpoint_s"] = target_s;
                 row["elapsed_s"] = elapsed_s;
@@ -5282,10 +5483,26 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 row["simplify_s"] = 0.0;
                 row["t_s"] = elapsed_s;
                 row["path"] = path;
+                row["path_length"] = std::isfinite(length) ? length : std::numeric_limits<double>::quiet_NaN();
                 row["nodes"] = 0;
                 row["iterations"] = static_cast<int>(planner->numIterations());
                 row["batches"] = static_cast<int>(planner->numBatches());
                 checkpoints.append(row);
+                return length;
+            };
+
+            auto update_quality_stall = [&](double length) {
+                if (quality_stall_checkpoints <= 0 || !std::isfinite(length)) {
+                    return false;
+                }
+                const double rel_tol = std::max(0.0, quality_stall_rel_tol);
+                if (!std::isfinite(best_path_length) || length < best_path_length * (1.0 - rel_tol)) {
+                    best_path_length = length;
+                    quality_stall_count = 0;
+                    return false;
+                }
+                ++quality_stall_count;
+                return quality_stall_count >= quality_stall_checkpoints;
             };
 
             if (timeout_s <= 0.0) {
@@ -5303,10 +5520,22 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                         if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
                             break;
                         }
+                        if (stop_on_solution_improvement && setup.haveSolutionPath()) {
+                            trace_stopped_early = true;
+                            trace_stop_reason = "first_solution";
+                            break;
+                        }
                     }
-                    append_checkpoint(clamped_target_s);
+                    const double checkpoint_length = append_checkpoint(clamped_target_s);
+                    if (update_quality_stall(checkpoint_length)) {
+                        trace_stopped_early = true;
+                        trace_stop_reason = "quality_stall";
+                    }
+                    if (trace_stopped_early) {
+                        break;
+                    }
                 }
-                while (ompl_elapsed_s(t0) < timeout_s - 1e-6) {
+                while (!trace_stopped_early && ompl_elapsed_s(t0) < timeout_s - 1e-6) {
                     const double remaining_s = std::max(1e-5, timeout_s - ompl_elapsed_s(t0));
                     const double ptc_interval_s = std::max(1e-3, std::min(0.05, remaining_s / 20.0));
                     const auto before_s = ompl_elapsed_s(t0);
@@ -5316,8 +5545,19 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                     if (ompl_elapsed_s(t0) <= before_s + 1e-6) {
                         break;
                     }
+                    if (stop_on_solution_improvement && setup.haveSolutionPath()) {
+                        trace_stopped_early = true;
+                        trace_stop_reason = "first_solution";
+                        break;
+                    }
                 }
-                append_checkpoint(timeout_s);
+                if (checkpoints.empty() || !trace_stopped_early) {
+                    const double checkpoint_length = append_checkpoint(timeout_s);
+                    if (update_quality_stall(checkpoint_length)) {
+                        trace_stopped_early = true;
+                        trace_stop_reason = "quality_stall";
+                    }
+                }
             }
 
             std::vector<std::vector<double>> final_path;
@@ -5340,6 +5580,11 @@ PYBIND11_MODULE(_sbf_cpp, module) {
             result["planner"] = "OMPL_BITstar";
             result["iterations"] = static_cast<int>(planner->numIterations());
             result["batches"] = static_cast<int>(planner->numBatches());
+            result["stopped_early"] = trace_stopped_early;
+            result["early_stop_reason"] = trace_stop_reason;
+            result["stop_on_solution_improvement"] = stop_on_solution_improvement;
+            result["quality_stall_checkpoints"] = quality_stall_checkpoints;
+            result["quality_stall_rel_tol"] = quality_stall_rel_tol;
             result["checkpoints"] = checkpoints;
             return result;
         },
@@ -5354,6 +5599,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         py::arg("samples_per_batch") = -1,
         py::arg("rewire_factor") = -1.0,
         py::arg("stop_on_solution_improvement") = false,
+        py::arg("quality_stall_checkpoints") = 0,
+        py::arg("quality_stall_rel_tol") = 0.005,
         py::arg("use_k_nearest") = -1,
         py::arg("pruning") = -1,
         py::arg("prune_threshold_fraction") = -1.0,
