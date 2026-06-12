@@ -1,7 +1,7 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA per-query cross-algorithm comparison. Rows are stratified by query. Numeric entries report only the [Q1,Q3] interval; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same query. RBF uses the registered Exp.~4 profile, with time measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}.}
+\captionof{table}{Shelf+IIWA per-query cross-algorithm comparison. Rows are stratified by query. Numeric entries are median [Q1,Q3]; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ uses success-only aggregation and the query-level globally shortest strict-audited path found for the same query across all available methods and checkpoints. RBF uses the registered Exp.~4 profile, with time measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}.}
 \label{tab:tro-shelf-cross-algorithm}
 \footnotesize
 \setlength{\tabcolsep}{1.55pt}
@@ -9,15 +9,15 @@
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}lrr|rr|rr|rr|rr@{}}
 \toprule
-  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.076\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 355.425\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 15.032\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} \\
+  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.070\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP+GCS\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 355.425\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 15.032\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} \\
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
 Query & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ \\
 \midrule
-AS$\rightarrow$TS & [0.048,0.058] & [1.01,1.27] & [0.449,0.449] & [1.08,1.08] & [0.029,0.170] & [1.08,1.31] & [0.024,0.052] & [1.54,2.05] & [0.204,0.204] & [0.96,1.08] \\
-TS$\rightarrow$CS & [0.026,0.030] & [0.99,1.01] & [0.269,0.269] & [1.11,1.11] & [0.123,0.394] & [2.13,3.10] & [0.021,0.089] & [2.48,4.51] & [1.904,1.904] & [1.05,1.45] \\
-CS$\rightarrow$LB & [0.061,0.065] & [1.24,1.50] & [0.381,0.381] & [1.00,1.00] & [0.184,0.338] & [1.30,1.95] & [0.027,0.070] & [1.64,2.35] & [0.054,0.064] & [1.18,1.72] \\
-LB$\rightarrow$RB & [0.022,0.027] & [1.00,1.14] & [0.786,0.786] & [1.00,1.00] & [0.100,0.288] & [1.03,1.20] & [0.001,0.002] & [1.18,1.23] & [0.054,0.054] & [0.96,1.02] \\
-RB$\rightarrow$AS & [0.013,0.015] & [1.02,1.03] & [0.527,0.527] & [1.00,1.00] & [0.253,0.400] & [1.15,1.22] & [0.001,0.001] & [1.02,1.08] & [0.054,0.055] & [1.01,1.02] \\
+AS$\rightarrow$TS & 0.043 [0.041,0.046] & 1.40 [1.34,1.68] & 0.449 [0.449,0.449] & 1.44 [1.44,1.44] & 0.073 [0.029,0.170] & 1.61 [1.44,1.73] & 0.034 [0.024,0.052] & 2.27 [2.05,2.72] & 0.204 [0.204,0.204] & 1.33 [1.28,1.43] \\
+TS$\rightarrow$CS & 0.015 [0.013,0.017] & 1.13 [1.11,1.14] & 0.269 [0.269,0.269] & 1.26 [1.26,1.26] & 0.287 [0.123,0.394] & 3.04 [2.40,3.50] & 0.054 [0.021,0.089] & 3.98 [2.80,5.09] & 1.904 [1.904,1.904] & 1.22 [1.18,1.63] \\
+CS$\rightarrow$LB & 0.041 [0.039,0.043] & 1.44 [1.32,1.61] & 0.381 [0.381,0.381] & 1.07 [1.07,1.07] & 0.247 [0.184,0.338] & 1.49 [1.39,2.09] & 0.032 [0.027,0.070] & 2.20 [1.75,2.51] & 0.057 [0.054,0.064] & 1.50 [1.26,1.83] \\
+LB$\rightarrow$RB & 0.009 [0.008,0.009] & 1.09 [1.07,1.22] & 0.786 [0.786,0.786] & 1.07 [1.07,1.07] & 0.191 [0.100,0.288] & 1.20 [1.10,1.28] & 0.001 [0.001,0.002] & 1.29 [1.27,1.32] & 0.054 [0.054,0.054] & 1.07 [1.03,1.10] \\
+RB$\rightarrow$AS & 0.005 [0.005,0.005] & 1.04 [1.03,1.05] & 0.527 [0.527,0.527] & 1.01 [1.01,1.01] & 0.328 [0.253,0.400] & 1.23 [1.17,1.24] & 0.001 [0.001,0.001] & 1.07 [1.03,1.10] & 0.054 [0.054,0.055] & 1.03 [1.03,1.03] \\
 \bottomrule
 \end{tabular}%
 }

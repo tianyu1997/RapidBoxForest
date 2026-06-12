@@ -711,8 +711,11 @@ def select_distribution_prefixes_from_scan(
     hard_ratio: float = 2.0,
     hard_not_faster_factor: float = 1.0,
     require_strong_planner: bool = True,
+    min_easy_count: int = 0,
     min_medium_count: int = 0,
     min_hard_count: int = 0,
+    min_direct_blocked_fraction: float = 0.0,
+    min_direct_obstruction_fraction: float = 0.0,
 ) -> dict[str, Any]:
     rows = [row for row in scan_rows if bool(row.get("metrics", {}).get("selectable"))]
     rows.sort(key=lambda row: int(row["count"]))
@@ -723,13 +726,18 @@ def select_distribution_prefixes_from_scan(
         for medium_index in range(easy_index + 1, len(rows)):
             medium = rows[medium_index]
             for hard in rows[medium_index + 1:]:
-                if int(medium["count"]) < int(min_medium_count) or int(hard["count"]) < int(min_hard_count):
+                if (
+                    int(easy["count"]) < int(min_easy_count)
+                    or int(medium["count"]) < int(min_medium_count)
+                    or int(hard["count"]) < int(min_hard_count)
+                ):
                     if best_reject is None:
                         best_reject = {
                             "easy_count": int(easy["count"]),
                             "medium_count": int(medium["count"]),
                             "hard_count": int(hard["count"]),
                             "reason": "prefix_count_below_minimum",
+                            "min_easy_count": int(min_easy_count),
                             "min_medium_count": int(min_medium_count),
                             "min_hard_count": int(min_hard_count),
                         }
@@ -741,6 +749,33 @@ def select_distribution_prefixes_from_scan(
                             "medium_count": int(medium["count"]),
                             "hard_count": int(hard["count"]),
                             "reason": "prefix_counts_not_strictly_nested",
+                        }
+                    continue
+                direct_reject = None
+                for name, row in (("easy", easy), ("medium", medium), ("hard", hard)):
+                    blocked_fraction = float(row.get("direct_blocked_fraction", math.nan))
+                    direct_min = float(row.get("direct_min", math.nan))
+                    if math.isfinite(blocked_fraction) and blocked_fraction < float(min_direct_blocked_fraction) - 1e-12:
+                        direct_reject = {
+                            "reason": f"{name}_direct_blocked_fraction_too_low",
+                            "direct_blocked_fraction": float(blocked_fraction),
+                            "min_direct_blocked_fraction": float(min_direct_blocked_fraction),
+                        }
+                        break
+                    if math.isfinite(direct_min) and direct_min < float(min_direct_obstruction_fraction) - 1e-12:
+                        direct_reject = {
+                            "reason": f"{name}_direct_obstruction_fraction_too_low",
+                            "direct_min": float(direct_min),
+                            "min_direct_obstruction_fraction": float(min_direct_obstruction_fraction),
+                        }
+                        break
+                if direct_reject is not None:
+                    if best_reject is None:
+                        best_reject = {
+                            "easy_count": int(easy["count"]),
+                            "medium_count": int(medium["count"]),
+                            "hard_count": int(hard["count"]),
+                            **direct_reject,
                         }
                     continue
                 ok, score, details = _distribution_triple_score(
@@ -781,8 +816,11 @@ def select_distribution_prefixes_from_scan(
             "medium_over_easy_min": float(medium_ratio),
             "hard_over_medium_min": float(hard_ratio),
             "hard_not_faster_factor": float(hard_not_faster_factor),
+            "min_easy_count": int(min_easy_count),
             "min_medium_count": int(min_medium_count),
             "min_hard_count": int(min_hard_count),
+            "min_direct_blocked_fraction": float(min_direct_blocked_fraction),
+            "min_direct_obstruction_fraction": float(min_direct_obstruction_fraction),
             "strict_prefix_nesting": True,
             "require_strong_reference_planner": bool(require_strong_planner),
         },
@@ -793,11 +831,18 @@ def compact_prefix_scan_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "count": int(row["count"]),
         "direct_obstruction_fraction_mean": float(row.get("direct_mean", math.nan)),
+        "direct_obstruction_fraction_min": float(row.get("direct_min", math.nan)),
+        "direct_blocked_fraction": float(row.get("direct_blocked_fraction", math.nan)),
         "metrics": copy.deepcopy(row.get("metrics", {})),
     }
 
 
 def query_direct_mean(robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], samples: int) -> float:
+    stats = query_direct_stats(robot, obstacles, queries, samples)
+    return float(stats["mean"])
+
+
+def query_direct_stats(robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], samples: int) -> dict[str, Any]:
     values = [
         direct_obstruction_fraction(
             sbf,
@@ -809,7 +854,15 @@ def query_direct_mean(robot: Any, obstacles: list[Any], queries: list[dict[str, 
         )
         for query in queries
     ]
-    return float(sum(values) / len(values)) if values else math.nan
+    blocked = [value for value in values if float(value) > 0.0]
+    return {
+        "fractions": [float(value) for value in values],
+        "mean": float(sum(values) / len(values)) if values else math.nan,
+        "min": float(min(values)) if values else math.nan,
+        "blocked_fraction": float(len(blocked) / len(values)) if values else math.nan,
+        "blocked_count": int(len(blocked)),
+        "query_count": int(len(values)),
+    }
 
 
 def obstacle_score(robot: Any, bounds: Sequence[float], queries: list[dict[str, Any]], samples: int) -> tuple[int, float]:
@@ -2000,13 +2053,17 @@ def distribution_prefix_scan_rows(
             bitstar_rewire_factor=float(bitstar_rewire_factor),
         )
         metrics = distribution_metrics_from_summary(measurement, float(min_success_fraction))
-        direct_mean = query_direct_mean(robot, obstacles, queries, int(direct_obstruction_samples))
+        direct_stats = query_direct_stats(robot, obstacles, queries, int(direct_obstruction_samples))
         scan_rows.append(
             {
                 "count": int(count),
                 "measurement": measurement,
                 "metrics": metrics,
-                "direct_mean": float(direct_mean),
+                "direct_mean": float(direct_stats["mean"]),
+                "direct_min": float(direct_stats["min"]),
+                "direct_blocked_fraction": float(direct_stats["blocked_fraction"]),
+                "direct_blocked_count": int(direct_stats["blocked_count"]),
+                "direct_query_count": int(direct_stats["query_count"]),
             }
         )
     return scan_rows
@@ -2070,8 +2127,11 @@ def find_distribution_prefixes(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_easy_count: int,
     distribution_min_medium_count: int,
     distribution_min_hard_count: int,
+    distribution_min_direct_blocked_fraction: float,
+    distribution_min_direct_obstruction_fraction: float,
 ) -> dict[str, tuple[int, dict[str, Any], float]]:
     counts = prefix_counts(
         len(bounds_ordered),
@@ -2104,8 +2164,11 @@ def find_distribution_prefixes(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_easy_count=int(distribution_min_easy_count),
         min_medium_count=int(distribution_min_medium_count),
         min_hard_count=int(distribution_min_hard_count),
+        min_direct_blocked_fraction=float(distribution_min_direct_blocked_fraction),
+        min_direct_obstruction_fraction=float(distribution_min_direct_obstruction_fraction),
     )
     return distribution_prefix_output_from_selection(selection)
 
@@ -2136,8 +2199,11 @@ def find_distribution_prefixes_two_stage(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_easy_count: int,
     distribution_min_medium_count: int,
     distribution_min_hard_count: int,
+    distribution_min_direct_blocked_fraction: float,
+    distribution_min_direct_obstruction_fraction: float,
 ) -> dict[str, tuple[int, dict[str, Any], float]]:
     all_counts = prefix_counts(
         len(bounds_ordered),
@@ -2170,8 +2236,11 @@ def find_distribution_prefixes_two_stage(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_easy_count=int(distribution_min_easy_count),
         min_medium_count=int(distribution_min_medium_count),
         min_hard_count=int(distribution_min_hard_count),
+        min_direct_blocked_fraction=float(distribution_min_direct_blocked_fraction),
+        min_direct_obstruction_fraction=float(distribution_min_direct_obstruction_fraction),
     )
     selected_counts = [
         int(stage_a_selection["prefix_counts"][difficulty])
@@ -2198,6 +2267,9 @@ def find_distribution_prefixes_two_stage(
         nearest = nearest_available_count_at_least(threshold)
         if nearest is not None:
             required_stage_b_counts.add(int(nearest))
+    nearest = nearest_available_count_at_least(int(distribution_min_easy_count))
+    if nearest is not None:
+        required_stage_b_counts.add(int(nearest))
     stage_b_counts = sorted(
         set(stage_b_counts).union(
             count
@@ -2230,8 +2302,11 @@ def find_distribution_prefixes_two_stage(
         hard_ratio=float(distribution_hard_ratio),
         hard_not_faster_factor=float(distribution_hard_not_faster_factor),
         require_strong_planner=bool(distribution_require_strong_planner),
+        min_easy_count=int(distribution_min_easy_count),
         min_medium_count=int(distribution_min_medium_count),
         min_hard_count=int(distribution_min_hard_count),
+        min_direct_blocked_fraction=float(distribution_min_direct_blocked_fraction),
+        min_direct_obstruction_fraction=float(distribution_min_direct_obstruction_fraction),
     )
     stage_b_selection["two_stage_prefix_confirmation"] = {
         "stage_a_planner_seeds": int(stage_a_planner_seeds),
@@ -2389,8 +2464,11 @@ def find_prefixes_by_mode(
     distribution_hard_ratio: float,
     distribution_hard_not_faster_factor: float,
     distribution_require_strong_planner: bool,
+    distribution_min_easy_count: int,
     distribution_min_medium_count: int,
     distribution_min_hard_count: int,
+    distribution_min_direct_blocked_fraction: float,
+    distribution_min_direct_obstruction_fraction: float,
     prefix_confirm_mode: str = "single_stage",
     prefix_stage_a_planner_seeds: int = 1,
     prefix_stage_b_planner_seeds: int = 3,
@@ -2431,8 +2509,11 @@ def find_prefixes_by_mode(
             distribution_hard_ratio=float(distribution_hard_ratio),
             distribution_hard_not_faster_factor=float(distribution_hard_not_faster_factor),
             distribution_require_strong_planner=bool(distribution_require_strong_planner),
+            distribution_min_easy_count=int(distribution_min_easy_count),
             distribution_min_medium_count=int(distribution_min_medium_count),
             distribution_min_hard_count=int(distribution_min_hard_count),
+            distribution_min_direct_blocked_fraction=float(distribution_min_direct_blocked_fraction),
+            distribution_min_direct_obstruction_fraction=float(distribution_min_direct_obstruction_fraction),
         )
     if mode == "distribution":
         return find_distribution_prefixes(
@@ -2458,8 +2539,11 @@ def find_prefixes_by_mode(
             distribution_hard_ratio=float(distribution_hard_ratio),
             distribution_hard_not_faster_factor=float(distribution_hard_not_faster_factor),
             distribution_require_strong_planner=bool(distribution_require_strong_planner),
+            distribution_min_easy_count=int(distribution_min_easy_count),
             distribution_min_medium_count=int(distribution_min_medium_count),
             distribution_min_hard_count=int(distribution_min_hard_count),
+            distribution_min_direct_blocked_fraction=float(distribution_min_direct_blocked_fraction),
+            distribution_min_direct_obstruction_fraction=float(distribution_min_direct_obstruction_fraction),
         )
     return find_prefixes(
         robot_name=robot_name,
@@ -2774,8 +2858,11 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                 distribution_hard_ratio=float(args.distribution_hard_ratio),
                 distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                 distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                distribution_min_easy_count=int(args.distribution_min_easy_count),
                 distribution_min_medium_count=int(args.distribution_min_medium_count),
                 distribution_min_hard_count=int(args.distribution_min_hard_count),
+                distribution_min_direct_blocked_fraction=float(args.distribution_min_direct_blocked_fraction),
+                distribution_min_direct_obstruction_fraction=float(args.distribution_min_direct_obstruction_fraction),
                 prefix_confirm_mode=str(args.prefix_confirm_mode),
                 prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
                 prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
@@ -2845,8 +2932,11 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     distribution_hard_ratio=float(args.distribution_hard_ratio),
                     distribution_hard_not_faster_factor=float(args.distribution_hard_not_faster_factor),
                     distribution_require_strong_planner=bool(args.distribution_require_strong_planner),
+                    distribution_min_easy_count=int(args.distribution_min_easy_count),
                     distribution_min_medium_count=int(args.distribution_min_medium_count),
                     distribution_min_hard_count=int(args.distribution_min_hard_count),
+                    distribution_min_direct_blocked_fraction=float(args.distribution_min_direct_blocked_fraction),
+                    distribution_min_direct_obstruction_fraction=float(args.distribution_min_direct_obstruction_fraction),
                     prefix_confirm_mode=str(args.prefix_confirm_mode),
                     prefix_stage_a_planner_seeds=int(args.prefix_stage_a_planner_seeds),
                     prefix_stage_b_planner_seeds=int(args.prefix_stage_b_planner_seeds),
@@ -2889,8 +2979,11 @@ def build_robot_scene_group(args: argparse.Namespace, robot_name: str, scene_see
                     "hard_over_medium_min": float(args.distribution_hard_ratio),
                     "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
                     "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
+                    "min_easy_count": int(args.distribution_min_easy_count),
                     "min_medium_count": int(args.distribution_min_medium_count),
                     "min_hard_count": int(args.distribution_min_hard_count),
+                    "min_direct_blocked_fraction": float(args.distribution_min_direct_blocked_fraction),
+                    "min_direct_obstruction_fraction": float(args.distribution_min_direct_obstruction_fraction),
                     "time_floor_s": float(TIME_FLOOR_S),
                 },
                 "query_sampling_obstacle_count": int(len(query_bounds)),
@@ -2984,8 +3077,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--distribution-medium-ratio", type=float, default=5.0)
     parser.add_argument("--distribution-hard-ratio", type=float, default=2.0)
     parser.add_argument("--distribution-hard-not-faster-factor", type=float, default=1.0)
+    parser.add_argument("--distribution-min-easy-count", type=int, default=0)
     parser.add_argument("--distribution-min-medium-count", type=int, default=0)
     parser.add_argument("--distribution-min-hard-count", type=int, default=0)
+    parser.add_argument("--distribution-min-direct-blocked-fraction", type=float, default=0.0)
+    parser.add_argument("--distribution-min-direct-obstruction-fraction", type=float, default=0.0)
     parser.add_argument("--distribution-require-strong-planner", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-min-l2", type=float, default=0.8)
     parser.add_argument("--query-max-l2", type=float, default=math.inf, help="Maximum start-goal L2 distance; <=0 or inf disables the upper bound.")
@@ -3136,8 +3232,11 @@ def main() -> int:
                 "medium_over_easy_min": float(args.distribution_medium_ratio),
                 "hard_over_medium_min": float(args.distribution_hard_ratio),
                 "hard_not_faster_factor": float(args.distribution_hard_not_faster_factor),
+                "min_easy_count": int(args.distribution_min_easy_count),
                 "min_medium_count": int(args.distribution_min_medium_count),
                 "min_hard_count": int(args.distribution_min_hard_count),
+                "min_direct_blocked_fraction": float(args.distribution_min_direct_blocked_fraction),
+                "min_direct_obstruction_fraction": float(args.distribution_min_direct_obstruction_fraction),
                 "require_strong_reference_planner": bool(args.distribution_require_strong_planner),
                 "time_floor_s": float(TIME_FLOOR_S),
             },

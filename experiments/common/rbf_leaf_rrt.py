@@ -5,6 +5,7 @@ import os
 import random
 import shutil
 import time
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -218,6 +219,9 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.batch_pave_ms_total",
         "query_bridge.batch_segment_only_retry_ms_total",
         "query_bridge.batch_no_path_retry_ms_total",
+        "query_bridge.batch_no_path_retry_adaptive_ms_total",
+        "query_bridge.batch_no_path_retry_adaptive_attempts",
+        "query_bridge.batch_no_path_retry_adaptive_successes",
         "query_bridge.batch_tasks_initial",
         "query_bridge.batch_tasks_attempted",
         "query_bridge.batch_tasks_skipped",
@@ -228,6 +232,7 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.parallel_task_rrt_jobs",
         "query_bridge.rrt_fixed_iters",
         "query_bridge.rrt_fixed_timeout_ms",
+        "query_bridge.no_path_retry_budget_stages",
         "query_bridge.oracle_node_validations",
         "query_bridge.oracle_validation_cache_hits",
         "query_bridge.oracle_validation_cache_misses",
@@ -338,6 +343,9 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.direct_corridor_bad_initial_total",
         "query_bridge.direct_corridor_bad_final",
         "query_bridge.direct_corridor_bad_final_total",
+        "query_bridge.direct_corridor_assimilate_covered_samples",
+        "query_bridge.direct_corridor_assimilate_coverage_span_max",
+        "query_bridge.direct_corridor_assimilate_coverage_span_mean",
         "query_bridge.direct_corridor_segment_edges",
         "query_bridge.direct_corridor_segment_edges_total",
         "query_bridge.direct_corridor_local_connected",
@@ -605,6 +613,12 @@ class RBFLeafRRTOptions:
     query_bridge_no_path_retry_stop_on_first_success: bool = (
         DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS
     )
+    query_bridge_no_path_retry_budget_iters: str = ""
+    query_bridge_no_path_retry_budget_attempts: str = ""
+    query_bridge_waypoint_quality_retry: bool = False
+    query_bridge_waypoint_quality_retry_attempts: int = 4
+    query_bridge_waypoint_quality_max_ratio: float = 2.0
+    query_bridge_waypoint_quality_max_additive: float = 0.75
     query_bridge_rrt_fixed_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS
     query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
     query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
@@ -625,6 +639,7 @@ class RBFLeafRRTOptions:
     query_bridge_edge_cost_penalty: float = DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY
     query_bridge_direct_max_length: float = 6.5
     query_bridge_to_main_island: bool = False
+    query_bridge_failure_fallback_to_main: bool = False
     query_bridge_to_main_direct_segment_max_length: float = 0.0
     query_bridge_to_main_box_corridor: bool = True
     endpoint_main_target_k: int = 8
@@ -632,7 +647,7 @@ class RBFLeafRRTOptions:
     endpoint_main_fine_step: float = 0.02
     endpoint_main_max_ffb_calls: int = 48
     endpoint_main_max_boxes: int = 64
-    endpoint_main_adaptive_ffb_depths: str = "50,58,62"
+    endpoint_main_adaptive_ffb_depths: str = ""
     endpoint_main_residual_segment_max_length: float = 0.25
     endpoint_main_lateral_offset: float = 0.03
     endpoint_main_lateral_rounds: int = 2
@@ -1718,7 +1733,7 @@ def bridge_all_queries(
                 corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
                 corridor_cfg.adaptive_ffb_depths = [
                     int(item.strip())
-                    for item in str(getattr(options, "endpoint_main_adaptive_ffb_depths", "50,58,62")).split(",")
+                    for item in str(getattr(options, "endpoint_main_adaptive_ffb_depths", "")).split(",")
                     if item.strip()
                 ]
                 corridor_cfg.residual_segment_max_length = float(
@@ -1816,6 +1831,26 @@ def bridge_all_queries(
             "1"
             if bool(getattr(options, "query_bridge_no_path_retry_stop_on_first_success", False))
             else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS"] = (
+            str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip() or None
+        )
+        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS"] = (
+            str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip() or None
+        )
+        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_waypoint_quality_retry", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS"] = str(
+            int(getattr(options, "query_bridge_waypoint_quality_retry_attempts", 4))
+        )
+        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO"] = str(
+            float(getattr(options, "query_bridge_waypoint_quality_max_ratio", 2.0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_ADDITIVE"] = str(
+            float(getattr(options, "query_bridge_waypoint_quality_max_additive", 0.75))
         )
         env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_ITERS"] = str(
             int(getattr(options, "query_bridge_rrt_fixed_iters", 0))
@@ -2089,7 +2124,7 @@ def run_leaf_rrt(
                     query_bridge_by_label_s[key] = query_bridge_by_label_s.get(key, 0.0) + float(value)
                 for key, value in step_bridge_added_by_label.items():
                     query_bridge_added_by_label[key] = query_bridge_added_by_label.get(key, 0) + int(value)
-                qrows.extend(query_rows(
+                step_qrows = query_rows(
                     forest,
                     robot,
                     [raw_query],
@@ -2097,7 +2132,47 @@ def run_leaf_rrt(
                     audit_step=float(options.audit_segment_step),
                     audit_collision_tolerance=float(options.audit_collision_tolerance),
                     canonicalize_queries=bool(options.canonicalize_queries),
-                ))
+                )
+                if (
+                    bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
+                    not all(bool(row.get("audit_passed", False)) for row in step_qrows)
+                ):
+                    fallback_options = copy.copy(options)
+                    fallback_options.query_bridge_to_main_island = True
+                    fallback_options.query_bridge_force_selected = True
+                    (
+                        fallback_bridge_s,
+                        fallback_added,
+                        fallback_attempts,
+                        fallback_by_label_s,
+                        fallback_added_by_label,
+                    ) = bridge_all_queries(
+                        forest,
+                        robot,
+                        [raw_query],
+                        fallback_options,
+                    )
+                    query_bridge_s += float(fallback_bridge_s)
+                    query_bridge_added += int(fallback_added)
+                    query_bridge_attempts += int(fallback_attempts)
+                    for key, value in fallback_by_label_s.items():
+                        query_bridge_by_label_s[f"fallback:{key}"] = (
+                            query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
+                        )
+                    for key, value in fallback_added_by_label.items():
+                        query_bridge_added_by_label[f"fallback:{key}"] = (
+                            query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
+                        )
+                    step_qrows = query_rows(
+                        forest,
+                        robot,
+                        [raw_query],
+                        obstacles=list(obstacles),
+                        audit_step=float(options.audit_segment_step),
+                        audit_collision_tolerance=float(options.audit_collision_tolerance),
+                        canonicalize_queries=bool(options.canonicalize_queries),
+                    )
+                qrows.extend(step_qrows)
         else:
             (
                 query_bridge_s,

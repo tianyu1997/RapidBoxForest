@@ -87,14 +87,11 @@ struct ChainPaveConfig {
 	// Deprecated: chain_pave_along_path now treats this as always true. Connector
 	// box commits must be graph-adjacent to the current parent/front box.
 	bool require_connected_chain = false;
-	// Optional shallow-to-deep FFB schedule for each seed. Empty means use
-	// find_free_box.max_depth directly. Values above find_free_box.max_depth are
-	// capped, and duplicate/nonpositive values are ignored.
+	// Deprecated: FFB semantics are now always "find the shallowest certified-free
+	// cell along the seed path" according to find_free_box.search_mode. Connector
+	// paving ignores this legacy schedule and uses find_free_box.max_depth.
 	std::vector<int> adaptive_ffb_depths;
-	// When adaptive_ffb_depths is non-empty, accept a non-final-depth FFB result
-	// only if its box covers at least this fraction of the local path segment
-	// currently being paved. This prevents shallow early exits that certify a
-	// free box but do not materially advance the corridor.
+	// Deprecated with adaptive_ffb_depths; kept for API compatibility.
 	double adaptive_min_segment_fraction = 0.75;
 	FindFreeBoxOptions find_free_box;
 	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;

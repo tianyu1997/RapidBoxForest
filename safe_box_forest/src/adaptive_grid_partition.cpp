@@ -2908,15 +2908,68 @@ std::vector<int> AdaptiveGridPartition::largest_component_box_ids_with_overlay()
 		return largest;
 	}
 	if (overlay_parent_.size() == cells_.size()) {
+		std::unordered_map<int, int> island_to_component;
+		std::unordered_map<int, int> overlay_to_component;
+		island_to_component.reserve(cells_.size());
+		overlay_to_component.reserve(cells_.size());
+		std::vector<int> parent(cells_.size());
+		for (int i = 0; i < static_cast<int>(parent.size()); ++i) {
+			parent[static_cast<std::size_t>(i)] = i;
+		}
+		auto find_root = [&](int value) {
+			int root = value;
+			while (root >= 0 &&
+				   root < static_cast<int>(parent.size()) &&
+				   parent[static_cast<std::size_t>(root)] != root) {
+				root = parent[static_cast<std::size_t>(root)];
+			}
+			while (value >= 0 &&
+				   value < static_cast<int>(parent.size()) &&
+				   parent[static_cast<std::size_t>(value)] != value) {
+				const int next = parent[static_cast<std::size_t>(value)];
+				parent[static_cast<std::size_t>(value)] = root;
+				value = next;
+			}
+			return root;
+		};
+		auto unite = [&](int lhs, int rhs) {
+			if (lhs < 0 || rhs < 0 ||
+				lhs >= static_cast<int>(parent.size()) ||
+				rhs >= static_cast<int>(parent.size())) {
+				return;
+			}
+			const int lhs_root = find_root(lhs);
+			const int rhs_root = find_root(rhs);
+			if (lhs_root != rhs_root) {
+				parent[static_cast<std::size_t>(rhs_root)] = lhs_root;
+			}
+		};
+		for (int cell = 0; cell < static_cast<int>(cells_.size()); ++cell) {
+			const int island = cells_[static_cast<std::size_t>(cell)].island_id;
+			if (island >= 0) {
+				const auto it = island_to_component.find(island);
+				if (it == island_to_component.end()) {
+					island_to_component.emplace(island, cell);
+				} else {
+					unite(it->second, cell);
+				}
+			}
+			const int overlay_root = overlay_component_root(cell);
+			if (overlay_root >= 0) {
+				const auto it = overlay_to_component.find(overlay_root);
+				if (it == overlay_to_component.end()) {
+					overlay_to_component.emplace(overlay_root, cell);
+				} else {
+					unite(it->second, cell);
+				}
+			}
+		}
 		std::unordered_map<int, int> counts;
 		counts.reserve(cells_.size());
 		int best_root = -1;
 		int best_count = 0;
 		for (int cell = 0; cell < static_cast<int>(cells_.size()); ++cell) {
-			const int root = overlay_component_root(cell);
-			if (root < 0) {
-				continue;
-			}
+			const int root = find_root(cell);
 			const int count = ++counts[root];
 			if (count > best_count || (count == best_count && root < best_root)) {
 				best_root = root;
@@ -2928,7 +2981,7 @@ std::vector<int> AdaptiveGridPartition::largest_component_box_ids_with_overlay()
 		}
 		largest.reserve(static_cast<std::size_t>(best_count));
 		for (int cell = 0; cell < static_cast<int>(cells_.size()); ++cell) {
-			if (overlay_component_root(cell) == best_root) {
+			if (find_root(cell) == best_root) {
 				largest.push_back(cells_[static_cast<std::size_t>(cell)].box_id);
 			}
 		}

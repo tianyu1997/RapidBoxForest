@@ -1362,91 +1362,17 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                           int& next_box_id,
                           StageContext& context,
                           const ChainPaveConfig& config) {
-    if (waypoint_path.empty()) {
-        return 0;
-    }
-    FindFreeBoxService ffb(oracle);
-    std::vector<int> adaptive_depths;
-    adaptive_depths.reserve(config.adaptive_ffb_depths.size() + 1);
-    int last_depth = -1;
-    for (int depth : config.adaptive_ffb_depths) {
-        depth = std::min(config.find_free_box.max_depth, depth);
-        if (depth <= 0 || depth == last_depth) {
-            continue;
-        }
-        adaptive_depths.push_back(depth);
-        last_depth = depth;
-    }
-    if (adaptive_depths.empty() ||
-        adaptive_depths.back() != config.find_free_box.max_depth) {
-        adaptive_depths.push_back(config.find_free_box.max_depth);
-    }
-    auto find_at_depth = [&](const Eigen::VectorXd& seed,
-                             StageContext& stage_context,
-                             int depth) {
-        FindFreeBoxOptions options = config.find_free_box;
-        options.max_depth = std::max(1, depth);
-        return ffb.find(seed, stage_context, options);
-    };
-    auto segment_coverage_fraction =
-        [&](const std::vector<Interval>& intervals,
-            const Eigen::VectorXd& a,
-            const Eigen::VectorXd& b) -> double {
-        if (intervals.size() != static_cast<std::size_t>(a.size()) ||
-            b.size() != a.size()) {
-            return 0.0;
-        }
-        double lo = 0.0;
-        double hi = 1.0;
-        const Eigen::VectorXd delta = b - a;
-        for (int dim = 0; dim < a.size(); ++dim) {
-            const auto& interval = intervals[static_cast<std::size_t>(dim)];
-            if (std::abs(delta[dim]) < 1e-15) {
-                if (a[dim] < interval.lo - config.adjacency_tolerance ||
-                    a[dim] > interval.hi + config.adjacency_tolerance) {
-                    return 0.0;
-                }
-                continue;
-            }
-            double t0 = (interval.lo - config.adjacency_tolerance - a[dim]) /
-                        delta[dim];
-            double t1 = (interval.hi + config.adjacency_tolerance - a[dim]) /
-                        delta[dim];
-            if (t0 > t1) {
-                std::swap(t0, t1);
-            }
-            lo = std::max(lo, t0);
-            hi = std::min(hi, t1);
-            if (lo > hi) {
-                return 0.0;
-            }
-        }
-        return std::max(0.0, std::min(1.0, hi) - std::max(0.0, lo));
-    };
-    auto passes_adaptive_segment_gate =
-        [&](const FindFreeBoxResult& result,
-            const Eigen::VectorXd& a,
-            const Eigen::VectorXd& b,
-            int depth) {
-        if (adaptive_depths.size() <= 1 ||
-            depth >= config.find_free_box.max_depth ||
-            config.adaptive_min_segment_fraction <= 0.0) {
-            return true;
-        }
-        if ((b - a).norm() <= std::max(config.gap_fill_min_step, 1e-9)) {
-            return true;
-        }
-        const double fraction =
-            segment_coverage_fraction(result.intervals, a, b);
-        if (fraction + 1e-12 >= config.adaptive_min_segment_fraction) {
-            context.diagnostics().add_counter(
-                "connector.chain_pave_adaptive_early_accepts");
-            return true;
-        }
-        context.diagnostics().add_counter(
-            "connector.chain_pave_adaptive_depth_skips");
-        return false;
-    };
+	    if (waypoint_path.empty()) {
+	        return 0;
+	    }
+	    FindFreeBoxService ffb(oracle);
+	    auto find_at_depth = [&](const Eigen::VectorXd& seed,
+	                             StageContext& stage_context,
+	                             int depth) {
+	        FindFreeBoxOptions options = config.find_free_box;
+	        options.max_depth = std::max(1, depth);
+	        return ffb.find(seed, stage_context, options);
+	    };
     int current_box_id = anchor_box_id;
     int added = 0;
 
@@ -1519,7 +1445,8 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         if (parent_box == nullptr) {
             return -1;
         }
-        if (result.node == parent_box->tree_id) {
+        if (result.node != kInvalidOracleNodeId &&
+            result.node == parent_box->tree_id) {
             return -1;
         }
         // Normally a canonical tree node hosts a single committed box. As a
@@ -1754,42 +1681,13 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 config.debug_boundary_failures->push_back(std::move(failure));
             }
         };
-        if (existing_cover < 0 && adaptive_depths.size() > 1) {
-            context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
-            FindFreeBoxOptions options = config.find_free_box;
-            options.adaptive_depths = adaptive_depths;
-            auto result = ffb.find_incremental(
-                to_pt,
-                context,
-                options,
-                [&](const FindFreeBoxResult& candidate) {
-                    return passes_adaptive_segment_gate(candidate,
-                                                        from_pt,
-                                                        to_pt,
-                                                        oracle.depth(candidate.node));
-                });
-            if (result.seed_collision) {
-                record_boundary_ffb_failure(result);
-                context.diagnostics().add_counter("connector.chain_pave_adaptive_seed_collision_stops");
-                context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
-                rejection_counted = true;
-            } else if (result.found ||
-                       (result.hit_reserved_depth_cap &&
-                        intervals_contain_point(result.intervals,
-                                                to_pt,
-                                                config.adjacency_tolerance))) {
-                consume_result(result);
-            } else {
-                record_boundary_ffb_failure(result);
-            }
-        } else if (existing_cover < 0) {
-            context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
-            auto result = find_at_depth(to_pt, context, adaptive_depths.front());
-            if (result.seed_collision) {
-                record_boundary_ffb_failure(result);
-                context.diagnostics().add_counter("connector.chain_pave_adaptive_seed_collision_stops");
-                context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
-                rejection_counted = true;
+	        if (existing_cover < 0) {
+	            context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
+	            auto result = find_at_depth(to_pt, context, config.find_free_box.max_depth);
+	            if (result.seed_collision) {
+	                record_boundary_ffb_failure(result);
+	                context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
+	                rejection_counted = true;
             } else if (result.found ||
                        (result.hit_reserved_depth_cap &&
                         intervals_contain_point(result.intervals,

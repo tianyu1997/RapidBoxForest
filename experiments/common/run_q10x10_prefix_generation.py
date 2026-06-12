@@ -62,6 +62,32 @@ def robot_candidate_args(robot: str, attempt: int = 0) -> list[str]:
     if key == "ur5":
         profiles = [
             [
+                "--query-local-radius", "0.18",
+                "--wall-count", "10",
+                "--gate-gap-scale", "0.08",
+                "--map-mode", "path_cells",
+                "--path-cell-half-width", "0.16",
+                "--max-path-cells", "140",
+                "--obstacle-order", "direct_desc",
+                "--max-workspace-obstacles", "220",
+                "--n-samples-crit", "420",
+                "--allowed-link-idxs", "2,3,4,5,6",
+                "--workspace-aabb-shrink", "0.9",
+            ],
+            [
+                "--query-local-radius", "0.22",
+                "--wall-count", "8",
+                "--gate-gap-scale", "0.10",
+                "--map-mode", "path_cells",
+                "--path-cell-half-width", "0.20",
+                "--max-path-cells", "120",
+                "--obstacle-order", "direct_desc",
+                "--max-workspace-obstacles", "180",
+                "--n-samples-crit", "360",
+                "--allowed-link-idxs", "2,3,4,5",
+                "--workspace-aabb-shrink", "1.0",
+            ],
+            [
                 "--query-local-radius", "0.22",
                 "--obstacle-order", "mixed",
                 "--max-workspace-obstacles", "100",
@@ -83,8 +109,8 @@ def robot_candidate_args(robot: str, attempt: int = 0) -> list[str]:
             ],
         ]
         return common + profiles[attempt % len(profiles)] + [
-            "--prefix-fine-until", "80",
-            "--prefix-mid-step", "10",
+            "--prefix-fine-until", "120",
+            "--prefix-mid-step", "5",
             "--prefix-coarse-step", "50",
         ]
     if key == "iiwa":
@@ -134,14 +160,6 @@ def robot_candidate_args(robot: str, attempt: int = 0) -> list[str]:
     if key == "panda":
         profiles = [
             [
-                "--query-local-radius", "0.22",
-                "--obstacle-order", "mixed",
-                "--max-workspace-obstacles", "100",
-                "--n-samples-crit", "220",
-                "--allowed-link-idxs", "2,3,4",
-                "--workspace-aabb-shrink", "0.5",
-            ],
-            [
                 "--query-local-radius", "0.18",
                 "--wall-count", "8",
                 "--gate-gap-scale", "0.12",
@@ -154,17 +172,35 @@ def robot_candidate_args(robot: str, attempt: int = 0) -> list[str]:
                 "--workspace-aabb-shrink", "0.5",
             ],
             [
-                "--query-local-radius", "0.26",
-                "--obstacle-order", "mixed",
-                "--max-workspace-obstacles", "120",
-                "--n-samples-crit", "220",
+                "--query-local-radius", "0.18",
+                "--wall-count", "10",
+                "--gate-gap-scale", "0.04",
+                "--map-mode", "path_cells",
+                "--path-cell-half-width", "0.16",
+                "--max-path-cells", "100",
+                "--obstacle-order", "direct_desc",
+                "--max-workspace-obstacles", "220",
+                "--n-samples-crit", "500",
                 "--allowed-link-idxs", "2,3,4,5,6,7",
-                "--workspace-aabb-shrink", "0.35",
+                "--workspace-aabb-shrink", "1.0",
+            ],
+            [
+                "--query-local-radius", "0.18",
+                "--wall-count", "8",
+                "--gate-gap-scale", "0.08",
+                "--map-mode", "path_cells",
+                "--path-cell-half-width", "0.20",
+                "--max-path-cells", "100",
+                "--obstacle-order", "direct_desc",
+                "--max-workspace-obstacles", "180",
+                "--n-samples-crit", "500",
+                "--allowed-link-idxs", "2,3,4,5,6,7",
+                "--workspace-aabb-shrink", "1.0",
             ],
         ]
         return common + profiles[attempt % len(profiles)] + [
-            "--prefix-fine-until", "80",
-            "--prefix-mid-step", "10",
+            "--prefix-fine-until", "120",
+            "--prefix-mid-step", "5",
             "--prefix-coarse-step", "50",
         ]
     raise ValueError(f"unknown robot profile: {robot}")
@@ -191,8 +227,11 @@ def confirm_args() -> list[str]:
         "--min-probe-success-fraction", "0.3",
         "--distribution-medium-ratio", "1.0",
         "--distribution-hard-ratio", "1.0",
+        "--distribution-min-easy-count", "1",
         "--distribution-min-medium-count", "1",
         "--distribution-min-hard-count", "2",
+        "--distribution-min-direct-blocked-fraction", "1.0",
+        "--distribution-min-direct-obstruction-fraction", "0.001",
         "--distribution-hard-not-faster-factor", "0.6",
         "--no-distribution-require-strong-planner",
     ]
@@ -274,8 +313,11 @@ def iiwa_candidate_screen_passes(candidate: Path) -> bool:
             hard_ratio=1.0,
             hard_not_faster_factor=0.6,
             require_strong_planner=False,
+            min_easy_count=1,
             min_medium_count=1,
             min_hard_count=2,
+            min_direct_blocked_fraction=1.0,
+            min_direct_obstruction_fraction=0.001,
         )
         print(f"[q10x10] screen passed: {selection['prefix_counts']}", flush=True)
         return True
@@ -313,7 +355,7 @@ def main() -> int:
                     "--queries-per-scene", str(args.queries_per_scene),
                     "--initial-queries-per-scene", str(args.queries_per_scene),
                     "--seed-base", str(int(args.seed_base) + 10_000_019 * attempt),
-                    "--max-scene-tries", "1",
+                    "--max-scene-tries", "8" if str(robot).lower() in {"panda", "ur5"} else "1",
                     *robot_candidate_args(robot, attempt),
                 ]
                 if not run_command(candidate_cmd, timeout_s=float(args.timeout_s), dry_run=bool(args.dry_run)):

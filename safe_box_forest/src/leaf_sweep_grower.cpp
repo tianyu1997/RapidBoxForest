@@ -650,9 +650,7 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 							   const OracleValidationDetail& detail) {
 		if (config_.max_free_boxes > 0 &&
 			static_cast<int>(group.result.free_boxes.size()) >= config_.max_free_boxes) {
-			add_counter(result, context, "leaf_sweep.free_boxes_cap_reached");
-			result.deadline_reached = true;
-			context.cancellation().cancel();
+			add_counter(result, context, "leaf_sweep.free_boxes_dropped_by_cap");
 			return;
 		}
 		group.free_nodes.push_back(node);

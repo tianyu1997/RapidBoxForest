@@ -1,20 +1,22 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Numeric entries report only the [Q1,Q3] interval and exclude the fixed 0.01\,s final simplification from timing columns. $L/L^\star$ is the success-only path-length ratio normalized by the best median path for the same shelf query. Seg. is the raw segment fraction.}
+\captionof{table}{Shelf+IIWA RBF ablation at the selected b100 point. Numeric entries are median [Q1,Q3] and exclude the fixed 0.01\,s final simplification from timing columns. Cache marks whether Build excludes replay of the precomputed d23 LECT snapshot (d23 excl.) or includes live endpoint/evidence materialization (live incl.); the d23 snapshot used by warm-cache rows contains 2,097,151 evidence records and occupies 13,684,743,849\,B (12.75\,GiB) on disk. $L/L^\star$ uses success-only aggregation and the query-level globally shortest strict-audited path found for the same shelf query across all available Exp.~4 ablation runs. BC is the number of strict-audited returned paths with zero recorded segment edges over all queries, used as a box-contained proxy rather than a conservative-only certificate. Boxes B/F gives build/final box-count medians. Seg. F/E gives raw segment fraction and final segment witness-edge count. Audit/q is strict audit time per query and is not charged to planning.}
 \label{tab:tro-shelf-ablation}
-\footnotesize
-\setlength{\tabcolsep}{2.0pt}
-\renewcommand{\arraystretch}{0.96}
-\begin{tabular}{lccccc}
+\scriptsize
+\setlength{\tabcolsep}{1.2pt}
+\renewcommand{\arraystretch}{0.94}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{llcccccccc}
 \toprule
-Case & Build & Online/q & Amort@5 & $L/L^\star$ & Seg. \\
+Case & Cache & Build & Online/q & Amort@5 & $L/L^\star$ & BC & Boxes B/F & Seg. F/E & Audit/q \\
 \midrule
-RBF-SH d23 & [0.073,0.077] & [0.030,0.034] & [0.045,0.050] & [0.98,1.07] & [0.14,0.24] \\
-CritSample endpoints & [0.039,0.041] & [0.033,0.035] & [0.041,0.043] & [0.98,1.04] & [0.10,0.18] \\
-Link AABB & [0.056,0.059] & [0.031,0.037] & [0.042,0.048] & [0.99,1.14] & [0.17,0.33] \\
-No external LECT, HIFK-5 & [6.771,6.959] & [0.065,0.072] & [1.419,1.461] & [0.98,1.07] & [0.11,0.20] \\
-SH w/o broadphase & [0.124,0.136] & [0.044,0.052] & [0.069,0.079] & [0.98,1.07] & [0.14,0.24] \\
+RBF-SH d23 & d23 excl. & 0.070 [0.070,0.071] & 0.018 [0.017,0.018] & 0.032 [0.031,0.032] & 1.05 [1.03,1.24] & 1/40 & 63/345 & 0.17/78 & 0.014 [0.013,0.015] \\
+CritSample endpoints & live incl. & 0.035 [0.034,0.036] & 0.020 [0.020,0.021] & 0.027 [0.027,0.029] & 1.06 [1.02,1.20] & 1/40 & 51/336 & 0.15/61 & 0.014 [0.013,0.016] \\
+Link AABB & d23 excl. & 0.061 [0.061,0.062] & 0.021 [0.020,0.021] & 0.033 [0.033,0.033] & 1.08 [1.03,1.32] & 1/40 & 63/306 & 0.23/77 & 0.014 [0.012,0.016] \\
+No external LECT, HIFK-5 & live incl. & 7.496 [7.428,7.663] & 0.053 [0.051,0.054] & 1.549 [1.538,1.585] & 1.06 [1.03,1.28] & 1/40 & 4/286 & 0.16/67 & 0.014 [0.014,0.015] \\
+SH w/o broadphase & d23 excl. & 0.151 [0.149,0.154] & 0.049 [0.045,0.050] & 0.079 [0.076,0.081] & 1.05 [1.03,1.24] & 1/40 & 63/345 & 0.17/78 & 0.014 [0.013,0.015] \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \par\endgroup

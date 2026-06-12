@@ -3,154 +3,148 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import math
+import os
+import random
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
-from experiments.common.metrics import mean, median, tex_num
+from experiments.common.experiment_io import (
+    DEFAULT_OUTPUT_ROOT,
+    environment_metadata,
+    namespace_dict,
+    run_id,
+    write_json,
+)
+from experiments.common.metrics import percentile, tex_num
 from experiments.common.progress import progress
-from experiments.common.random_scene_catalog import generate_catalog, make_robot, scene_for_key
+from experiments.common.random_scene_catalog import (
+    aabb_overlaps,
+    make_robot,
+    narrow_obstacle_count,
+    normalize_obstacles,
+    obstacle_bounds,
+    obstacle_clears_fixed_robot,
+    obstacle_from_bounds,
+    random_narrow_workspace_obstacle,
+    random_obstacle_count,
+    random_obstacle_scale,
+    random_workspace_obstacle,
+)
 from experiments.common.rbf_defaults import (
-    DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
     DEFAULT_RBF_DEEP_FFB_DEPTH,
-    DEFAULT_RBF_LEAF_MAX_DEPTH,
+    DEFAULT_RBF_FFB_IMPLEMENTATION,
+    DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_MAX_DEPTH,
-    DEFAULT_RBF_SHELF_BOX_BUDGET,
     ROBOT_LECTDB_CACHE_ROOT,
     default_rbf_profile,
     robot_lectdb_profile,
 )
 from experiments.common.rbf_leaf_rrt import (
-    QuerySpec,
     RBFLeafRRTOptions,
-    bridge_all_queries,
-    canonical_priority_points,
     configure_leaf_rrt,
     make_adaptive_leaf_sweep_config,
-    make_refine_config,
-    query_rows,
-    run_leaf_rrt,
 )
 from experiments.common.robot_lectdb_cache import ensure_robot_lectdb_cache, robot_external_evidence_path
 from experiments.common.sbf_import import import_sbf
 
 
-TRANSITIONS = ["easy->medium", "medium->hard", "hard->medium", "medium->easy"]
-EXP07_RBF_LEAF_MAX_DEPTH = 16
-EXP07_RBF_FFB_START_DEPTH = 16
-EXP07_RBF_QUERY_BRIDGE_PAVE_DEPTH = 56
 sbf = import_sbf()
 
-
-def exp04_profile_tag(args: argparse.Namespace) -> str:
-    return (
-        f"l{int(args.leaf_start_depth)}_{int(args.leaf_max_depth)}"
-        f"_ffb{int(args.deep_ffb_depth)}"
-        f"_qb{int(args.query_bridge_pave_depth)}"
-        f"_b{int(args.deep_max_boxes)}"
-    )
-
-
-def exp04_profile_overrides(args: argparse.Namespace) -> dict[str, Any]:
-    return {
-        "source": (
-            "Exp.4/5 registered b100 partition-native RBF profile with "
-            "Exp.7 adaptive warm-build coverage override"
-        ),
-        "deep_max_boxes": int(args.deep_max_boxes),
-        "rbf_max_depth": int(args.rbf_max_depth),
-        "leaf_start_depth": int(args.leaf_start_depth),
-        "leaf_max_depth": int(args.leaf_max_depth),
-        "adaptive_target_depth": int(args.leaf_max_depth),
-        "adaptive_grid_target_depth": int(args.leaf_max_depth),
-        "adaptive_planning_backend": "partition_native",
-        "adaptive_max_free_boxes": int(args.deep_max_boxes),
-        "adaptive_depth": {
-            "enabled": bool(args.adaptive_depth_enabled),
-            "min": int(args.adaptive_depth_min),
-            "max": int(args.adaptive_depth_max),
-            "probe_count": int(args.adaptive_depth_probe_count),
-            "anchor_probe_cap": int(args.adaptive_depth_anchor_probe_cap),
-            "probe_seed": int(args.adaptive_depth_probe_seed),
-            "min_free_probes": int(args.adaptive_depth_min_free_probes),
-            "min_covered_probes": int(args.adaptive_depth_min_covered_probes),
-            "min_main_probes": int(args.adaptive_depth_min_main_probes),
-            "min_main_ratio": float(args.adaptive_depth_min_main_ratio),
-            "min_cells": int(args.adaptive_depth_min_cells),
-            "min_main_cells": int(args.adaptive_depth_min_main_cells),
-            "max_online_cells": int(args.adaptive_depth_max_online_cells),
-            "max_probe_ms": float(args.adaptive_depth_max_probe_ms),
-        },
-        "deep_ffb_depth": int(args.deep_ffb_depth),
-        "connector_pave_depth": int(args.connector_pave_depth),
-        "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
-        "ffb_start_depth": int(args.ffb_start_depth),
-        "override_reason": (
-            "Exp.7 uses fast adaptive checkpoints over d13..d16; pilot "
-            "validation selected d13 for easy reusable skeletons and d15 for "
-            "harder transitions, with d16 kept as a fallback checkpoint."
-        ),
-        "threads": int(args.threads),
-        "parallel_virtual_validation": True,
-        "leaf_threads": int(args.threads),
-        "database_canonical_mode": True,
-        "canonical_mapping_scope": "LECT_internal_only",
-        "planner_state_space": "native_joint_space",
-        "audit_segment_step": 0.01,
-        "final_rrt_simplify_timeout_ms": 10.0,
-    }
+CATALOG_SCHEMA = "tro2026_exp07_ordered_obstacle_update_v1"
+DEFAULT_LEAF_MAX_DEPTH = 14
+DEFAULT_ADAPTIVE_TARGET_DEPTH = 14
+DEFAULT_EXP07_BOX_BUDGET = 200
+DEFAULT_EXP07_LOCAL_REGROW_BOX_LIMIT = 200
+DEFAULT_MIN_OBSTACLES = 2
+DEFAULT_MAX_OBSTACLES = 3
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Exp.7 current dynamic-update study.")
-    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp07")
-    parser.add_argument("--phase", choices=["smoke", "pilot", "paper", "full", "assets"], default="smoke")
-    parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--scene-catalog", type=Path, default=None)
-    parser.add_argument("--scene-catalog-mode", choices=["auto", "generate", "reuse", "verify"], default="auto")
-    parser.add_argument("--seeds", default="0,1,2,3,4,5,6,7")
-    parser.add_argument("--robot", default="iiwa")
-    parser.add_argument("--scene-profile", choices=["balanced", "balanced_probe", "legacy"], default="balanced")
-    parser.add_argument("--max-scene-tries", type=int, default=64)
-    parser.add_argument("--seed-base", type=int, default=9176)
-    parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_SHELF_BOX_BUDGET)
-    parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
-    parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
-    parser.add_argument("--leaf-max-depth", type=int, default=EXP07_RBF_LEAF_MAX_DEPTH)
-    parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
-    parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
-    parser.add_argument("--query-bridge-pave-depth", type=int, default=EXP07_RBF_QUERY_BRIDGE_PAVE_DEPTH)
-    parser.add_argument("--ffb-start-depth", type=int, default=EXP07_RBF_FFB_START_DEPTH)
-    parser.add_argument("--adaptive-depth-enabled", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--adaptive-depth-min", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
-    parser.add_argument("--adaptive-depth-max", type=int, default=EXP07_RBF_LEAF_MAX_DEPTH)
-    parser.add_argument("--adaptive-depth-probe-count", type=int, default=1024)
-    parser.add_argument("--adaptive-depth-anchor-probe-cap", type=int, default=64)
-    parser.add_argument("--adaptive-depth-probe-seed", type=int, default=20260607)
-    parser.add_argument("--adaptive-depth-min-free-probes", type=int, default=64)
-    parser.add_argument("--adaptive-depth-min-covered-probes", type=int, default=0)
-    parser.add_argument("--adaptive-depth-min-main-probes", type=int, default=0)
-    parser.add_argument("--adaptive-depth-min-main-ratio", type=float, default=0.0)
-    parser.add_argument("--adaptive-depth-min-cells", type=int, default=5)
-    parser.add_argument("--adaptive-depth-min-main-cells", type=int, default=1)
-    parser.add_argument("--adaptive-depth-max-online-cells", type=int, default=320)
-    parser.add_argument("--adaptive-depth-max-probe-ms", type=float, default=10.0)
-    parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
-    parser.add_argument("--skip-lect-cache-ensure", action="store_true")
-    return parser.parse_args()
+def parse_int_list(text: str) -> list[int]:
+    return [int(item.strip()) for item in str(text).split(",") if item.strip()]
+
+
+def set_thread_env(threads: int) -> None:
+    value = str(max(1, int(threads)))
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[key] = value
+
+
+def finite(value: Any) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return math.nan
+    return out if math.isfinite(out) else math.nan
+
+
+def q1(values: Iterable[Any]) -> float | None:
+    return percentile(values, 0.25)
+
+
+def q3(values: Iterable[Any]) -> float | None:
+    return percentile(values, 0.75)
+
+
+def qrange_ms(values_s: Iterable[Any]) -> str:
+    lo = q1(1000.0 * finite(value) for value in values_s)
+    hi = q3(1000.0 * finite(value) for value in values_s)
+    if lo is None or hi is None:
+        return "--"
+    return f"\\([{lo:.2f},{hi:.2f}]\\)"
+
+
+def tex_qrange_ms(lo_s: Any, hi_s: Any) -> str:
+    lo = finite(lo_s)
+    hi = finite(hi_s)
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        return "--"
+    return f"\\([{1000.0 * lo:.2f},{1000.0 * hi:.2f}]\\)"
+
+
+def tex_qrange_s(lo_s: Any, hi_s: Any) -> str:
+    lo = finite(lo_s)
+    hi = finite(hi_s)
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        return "--"
+    return f"\\([{lo:.3f},{hi:.3f}]\\)"
+
+
+def tex_speedup_range(lo_value: Any, hi_value: Any) -> str:
+    lo = finite(lo_value)
+    hi = finite(hi_value)
+    if not math.isfinite(lo) or not math.isfinite(hi):
+        return "--"
+    return f"{lo:.1f}--{hi:.1f}$\\times$"
 
 
 def profile_row(profile: Any) -> dict[str, Any]:
-    row = {
+    diagnostics: dict[str, float] = {}
+    raw = getattr(profile, "diagnostics", {}) or {}
+    try:
+        items = dict(raw).items()
+    except TypeError:
+        items = []
+    for key, value in items:
+        try:
+            diagnostics[str(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return {
         "boxes_before": int(getattr(profile, "boxes_before", 0)),
         "boxes_after": int(getattr(profile, "boxes_after", 0)),
         "boxes_added": int(getattr(profile, "boxes_added", 0)),
@@ -167,145 +161,165 @@ def profile_row(profile: Any) -> dict[str, Any]:
         "regrow_ms": float(getattr(profile, "regrow_ms", 0.0)),
         "warm_rebuild_ms": float(getattr(profile, "warm_rebuild_ms", 0.0)),
         "total_ms": float(getattr(profile, "total_ms", 0.0)),
+        "diagnostics": diagnostics,
     }
+
+
+def build_result_row(result: Any, wall_s: float) -> dict[str, Any]:
     diagnostics: dict[str, float] = {}
-    raw_diagnostics = getattr(profile, "diagnostics", {}) or {}
+    raw = getattr(result, "diagnostics", {}) or {}
     try:
-        raw_items = dict(raw_diagnostics).items()
+        items = dict(raw).items()
     except TypeError:
-        raw_items = []
-    for key, value in raw_items:
+        items = []
+    for key, value in items:
         try:
             diagnostics[str(key)] = float(value)
         except (TypeError, ValueError):
             continue
-    row["diagnostics"] = diagnostics
-    for key, value in diagnostics.items():
-        row[diag_column(key)] = value
-    return row
+    return {
+        "wall_s": float(wall_s),
+        "reported_s": float(getattr(result, "total_ms", 0.0)) / 1000.0,
+        "leaf_sweep_s": float(getattr(result, "leaf_sweep_ms", 0.0)) / 1000.0,
+        "adaptive_s": float(getattr(result, "adaptive_ms", 0.0)) / 1000.0,
+        "coverage_probe_s": float(getattr(result, "coverage_probe_ms", 0.0)) / 1000.0,
+        "shallow_free_count": int(getattr(result, "shallow_free_count", 0)),
+        "shallow_collision_count": int(getattr(result, "shallow_collision_count", 0)),
+        "adaptive_free_added": int(getattr(result, "adaptive_free_added", 0)),
+        "adaptive_validated": int(getattr(result, "adaptive_validated", 0)),
+        "adaptive_splits": int(getattr(result, "adaptive_splits", 0)),
+        "adaptive_deferred": int(getattr(result, "adaptive_deferred", 0)),
+        "adaptive_promoted": int(getattr(result, "adaptive_promoted", 0)),
+        "unresolved_domains": int(getattr(result, "unresolved_domains", 0)),
+        "p_box_covered": float(getattr(result, "p_box_covered", math.nan)),
+        "p_main_accessible": float(getattr(result, "p_main_accessible", math.nan)),
+        "selected_leaf_depth": int(getattr(result, "selected_leaf_depth", -1)),
+        "partition_cell_count": int(getattr(result, "partition_cell_count", 0)),
+        "partition_grid_cell_count": int(getattr(result, "partition_grid_cell_count", 0)),
+        "partition_non_grid_cell_count": int(getattr(result, "partition_non_grid_cell_count", 0)),
+        "partition_face_index_entries": int(getattr(result, "partition_face_index_entries", 0)),
+        "partition_islands": int(getattr(result, "partition_islands", 0)),
+        "partition_largest_island": int(getattr(result, "partition_largest_island", 0)),
+        "diagnostics": diagnostics,
+    }
 
 
-def diag_column(key: str) -> str:
-    cleaned = []
-    for char in str(key):
-        cleaned.append(char if char.isalnum() else "_")
-    return "diag_" + "".join(cleaned).strip("_")
+def obstacle_to_json(obstacle: Any) -> list[float]:
+    return [float(value) for value in obstacle_bounds(obstacle)]
 
 
-def diag_is_state_value(key: str) -> bool:
-    return (
-        key.startswith("adaptive.")
-        or key.endswith("_before")
-        or key.endswith("_after")
-        or key.endswith(".before")
-        or key.endswith(".after")
-        or key.endswith(".segment_edges_before")
-        or key.endswith(".segment_edges_after")
-    )
+def obstacles_sha256(records: list[dict[str, Any]]) -> str:
+    text = repr([
+        (record["robot"], record["seed"], record["obstacles"])
+        for record in records
+    ]).encode("utf-8")
+    return hashlib.sha256(text).hexdigest()
 
 
-def merge_diagnostics(items: list[dict[str, Any]]) -> dict[str, float]:
-    keys: set[str] = set()
-    for row in items:
-        diagnostics = row.get("diagnostics")
-        if isinstance(diagnostics, dict):
-            keys.update(str(key) for key in diagnostics.keys())
-    merged: dict[str, float] = {}
-    for key in sorted(keys):
-        values: list[float] = []
-        for row in items:
-            diagnostics = row.get("diagnostics")
-            if isinstance(diagnostics, dict) and key in diagnostics:
-                try:
-                    values.append(float(diagnostics[key]))
-                except (TypeError, ValueError):
-                    pass
-        if not values:
+def candidate_obstacle(robot_name: str, rng: random.Random, profile: str, base: float) -> Any:
+    if profile == "narrow":
+        return random_narrow_workspace_obstacle(rng, base)
+    if profile == "mixed":
+        if rng.random() < 0.5:
+            return random_narrow_workspace_obstacle(rng, max(base, 0.18))
+        return random_workspace_obstacle(rng, base)
+    return random_workspace_obstacle(rng, base)
+
+
+def generate_ordered_obstacles(
+    robot_name: str,
+    seed: int,
+    *,
+    seed_base: int,
+    max_obstacles: int,
+    obstacle_profile: str,
+    obstacle_scale: float,
+    min_separation_margin: float,
+    max_tries: int,
+) -> list[Any]:
+    robot_offsets = {"iiwa": 101, "ur5": 503, "panda": 907}
+    rng = random.Random(int(seed_base) + 1009 * int(seed) + robot_offsets.get(str(robot_name), 1709))
+    obstacles: list[Any] = []
+    tries = 0
+    while len(obstacles) < int(max_obstacles) and tries < int(max_tries):
+        tries += 1
+        obstacle = candidate_obstacle(robot_name, rng, obstacle_profile, float(obstacle_scale))
+        if not obstacle_clears_fixed_robot(robot_name, obstacle):
             continue
-        merged[key] = values[-1] if diag_is_state_value(key) else sum(values)
-    return merged
+        if any(aabb_overlaps(obstacle, existing, margin=float(min_separation_margin)) for existing in obstacles):
+            continue
+        obstacles.append(obstacle)
+    if len(obstacles) < int(max_obstacles):
+        raise RuntimeError(
+            f"could only generate {len(obstacles)}/{max_obstacles} obstacles "
+            f"for {robot_name} seed {seed}"
+        )
+    return obstacles
 
 
-def attach_diagnostic_columns(row: dict[str, Any], diagnostics: dict[str, float]) -> None:
-    row["diagnostics"] = diagnostics
-    for key, value in diagnostics.items():
-        row[diag_column(key)] = value
+def generate_catalog(args: argparse.Namespace, path: Path) -> dict[str, Any]:
+    robots = [item.strip() for item in str(args.robots).split(",") if item.strip()]
+    seeds = parse_int_list(str(args.seeds))
+    records: list[dict[str, Any]] = []
+    for robot_name in robots:
+        for seed in seeds:
+            obstacles = generate_ordered_obstacles(
+                robot_name,
+                seed,
+                seed_base=int(args.seed_base),
+                max_obstacles=int(args.max_obstacles),
+                obstacle_profile=str(args.obstacle_profile),
+                obstacle_scale=float(args.obstacle_scale),
+                min_separation_margin=float(args.min_obstacle_separation),
+                max_tries=int(args.max_obstacle_tries),
+            )
+            records.append(
+                {
+                    "robot": robot_name,
+                    "seed": int(seed),
+                    "min_obstacles": int(args.min_obstacles),
+                    "max_obstacles": int(args.max_obstacles),
+                    "obstacle_profile": str(args.obstacle_profile),
+                    "obstacle_scale": float(args.obstacle_scale),
+                    "obstacles": [obstacle_to_json(obstacle) for obstacle in obstacles],
+                }
+            )
+    payload = {
+        "schema": CATALOG_SCHEMA,
+        "seed_base": int(args.seed_base),
+        "robots": robots,
+        "seeds": seeds,
+        "min_obstacles": int(args.min_obstacles),
+        "max_obstacles": int(args.max_obstacles),
+        "obstacle_profile": str(args.obstacle_profile),
+        "obstacle_scale": float(args.obstacle_scale),
+        "records": records,
+    }
+    payload["obstacle_sha256"] = obstacles_sha256(records)
+    write_json(path, payload)
+    return payload
 
 
-def merge_profile_rows(items: list[dict[str, Any]]) -> dict[str, Any]:
-    if not items:
-        row = {
-            "boxes_before": 0,
-            "boxes_after": 0,
-            "boxes_added": 0,
-            "boxes_removed": 0,
-            "dirty_boxes": 0,
-            "dirty_seed_count": 0,
-            "regrow_attempts": 0,
-            "segment_edges_added": 0,
-            "collision_cache_candidates": 0,
-            "collision_cache_promoted": 0,
-            "used_warm_rebuild": False,
-            "fallback_reason": "",
-            "dirty_region_ms": 0.0,
-            "regrow_ms": 0.0,
-            "warm_rebuild_ms": 0.0,
-            "total_ms": 0.0,
-        }
-        attach_diagnostic_columns(row, {})
-        return row
-    first = items[0]
-    last = items[-1]
-    summed = dict(last)
-    summed["boxes_before"] = first["boxes_before"]
-    summed["boxes_added"] = sum(int(row["boxes_added"]) for row in items)
-    summed["boxes_removed"] = sum(int(row["boxes_removed"]) for row in items)
-    summed["dirty_boxes"] = sum(int(row["dirty_boxes"]) for row in items)
-    summed["dirty_seed_count"] = sum(int(row["dirty_seed_count"]) for row in items)
-    summed["regrow_attempts"] = sum(int(row["regrow_attempts"]) for row in items)
-    summed["segment_edges_added"] = sum(int(row["segment_edges_added"]) for row in items)
-    summed["collision_cache_candidates"] = sum(int(row["collision_cache_candidates"]) for row in items)
-    summed["collision_cache_promoted"] = sum(int(row["collision_cache_promoted"]) for row in items)
-    summed["used_warm_rebuild"] = any(bool(row["used_warm_rebuild"]) for row in items)
-    summed["fallback_reason"] = ";".join(str(row["fallback_reason"]) for row in items if str(row["fallback_reason"]))
-    for key in ["dirty_region_ms", "regrow_ms", "warm_rebuild_ms", "total_ms"]:
-        summed[key] = sum(float(row[key]) for row in items)
-    attach_diagnostic_columns(summed, merge_diagnostics(items))
-    return summed
+def load_or_create_catalog(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(args.scene_catalog or (args.out_dir / "ordered_obstacle_catalog.json"))
+    mode = str(args.scene_catalog_mode)
+    if mode == "generate" or (mode == "auto" and not path.exists()):
+        return generate_catalog(args, path)
+    if not path.exists():
+        raise FileNotFoundError(path)
+    payload = __import__("json").loads(path.read_text(encoding="utf-8"))
+    if payload.get("schema") != CATALOG_SCHEMA:
+        raise RuntimeError(f"catalog {path} schema mismatch: {payload.get('schema')} != {CATALOG_SCHEMA}")
+    if mode == "verify":
+        expected = generate_catalog(args, path.with_suffix(path.suffix + ".verify_tmp"))
+        if expected.get("obstacle_sha256") != payload.get("obstacle_sha256"):
+            raise RuntimeError("catalog verify failed: obstacle SHA differs")
+        path.with_suffix(path.suffix + ".verify_tmp").unlink(missing_ok=True)
+    return payload
 
 
-def add_profile_rows(lhs: dict[str, Any], rhs: dict[str, Any]) -> dict[str, Any]:
-    return merge_profile_rows([lhs, rhs])
-
-
-def diag_value(row: dict[str, Any], key: str) -> float:
-    diagnostics = row.get("diagnostics")
-    if isinstance(diagnostics, dict) and key in diagnostics:
-        return finite_or_nan(diagnostics.get(key))
-    return finite_or_nan(row.get(diag_column(key)))
-
-
-def first_diag_value(row: dict[str, Any], keys: list[str]) -> float:
-    for key in keys:
-        value = diag_value(row, key)
-        if math.isfinite(value):
-            return value
-    return math.nan
-
-
-def finite_or_nan(value: Any) -> float:
-    try:
-        if value is None:
-            return math.nan
-        out = float(value)
-        return out if math.isfinite(out) else math.nan
-    except (TypeError, ValueError):
-        return math.nan
-
-
-def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOptions:
-    robot_name = str(args.robot)
-    is_iiwa = robot_name == "iiwa"
+def make_options(args: argparse.Namespace, robot_name: str, seed: int, label: str) -> RBFLeafRRTOptions:
+    adaptive_target_depth = max(int(args.leaf_max_depth), int(args.adaptive_target_depth))
     return RBFLeafRRTOptions(
         seed=int(seed),
         deep_max_boxes=int(args.deep_max_boxes),
@@ -313,13 +327,22 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         threads=int(args.threads),
         leaf_start_depth=int(args.leaf_start_depth),
         leaf_max_depth=int(args.leaf_max_depth),
-        adaptive_target_depth=int(args.leaf_max_depth),
-        adaptive_grid_target_depth=int(args.leaf_max_depth),
+        adaptive_target_depth=adaptive_target_depth,
+        adaptive_grid_target_depth=adaptive_target_depth,
         adaptive_planning_backend="partition_native",
         adaptive_max_free_boxes=int(args.deep_max_boxes),
+        adaptive_time_budget_ms=float(args.adaptive_time_budget_ms),
+        adaptive_node_budget=int(args.adaptive_node_budget),
+        adaptive_defer_min_depth=int(args.adaptive_defer_min_depth),
+        adaptive_overlap_depth_threshold=float(args.adaptive_overlap_depth_threshold),
+        adaptive_overlap_depth_min_threshold=float(args.adaptive_overlap_depth_min_threshold),
+        adaptive_overlap_depth_decay_per_depth=float(args.adaptive_overlap_depth_decay_per_depth),
+        adaptive_overlap_ratio_threshold=0.0,
+        adaptive_seed_probe_count=int(args.adaptive_seed_probe_count),
+        adaptive_seed_anchor_probe_cap=int(args.adaptive_seed_anchor_probe_cap),
         adaptive_depth_enabled=bool(args.adaptive_depth_enabled),
-        adaptive_depth_min=int(args.adaptive_depth_min),
-        adaptive_depth_max=int(args.adaptive_depth_max),
+        adaptive_depth_min=min(int(args.adaptive_depth_min), adaptive_target_depth),
+        adaptive_depth_max=adaptive_target_depth,
         adaptive_depth_probe_count=int(args.adaptive_depth_probe_count),
         adaptive_depth_anchor_probe_cap=int(args.adaptive_depth_anchor_probe_cap),
         adaptive_depth_probe_seed=int(args.adaptive_depth_probe_seed),
@@ -331,10 +354,14 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         adaptive_depth_min_main_cells=int(args.adaptive_depth_min_main_cells),
         adaptive_depth_max_online_cells=int(args.adaptive_depth_max_online_cells),
         adaptive_depth_max_probe_ms=float(args.adaptive_depth_max_probe_ms),
+        adaptive_fast_virtual_checkpoint_mode=bool(args.adaptive_fast_virtual_checkpoint_mode),
+        adaptive_max_merge_ms=float(args.adaptive_max_merge_ms),
+        adaptive_max_merge_rounds=int(args.adaptive_max_merge_rounds),
+        adaptive_max_merge_input_boxes=int(args.adaptive_max_merge_input_boxes),
+        validation_batch_size=int(args.validation_batch_size),
         deep_ffb_depth=int(args.deep_ffb_depth),
-        connector_pave_depth=int(args.connector_pave_depth),
-        query_bridge_pave_depth=int(args.query_bridge_pave_depth),
         ffb_start_depth=int(args.ffb_start_depth),
+        ffb_search_mode=str(args.ffb_search_mode),
         use_external_evidence=True,
         external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
         external_evidence_verify_identity=False,
@@ -342,353 +369,338 @@ def options(args: argparse.Namespace, seed: int, label: str) -> RBFLeafRRTOption
         symmetry_aligned_cache_schedule=False,
         database_canonical_mode=True,
         case_label=label,
-        parallel_virtual_validation=True,
+        use_virtual_topology=bool(args.use_virtual_topology),
+        parallel_virtual_validation=bool(args.parallel_virtual_validation),
         leaf_threads=int(args.threads),
         canonicalize_queries=False,
     )
 
 
-def run_transition(args: argparse.Namespace, catalog: dict[str, Any], transition: str, seed: int) -> dict[str, Any]:
-    source_diff, target_diff = transition.split("->")
-    robot_name = str(args.robot)
-    source = scene_for_key(catalog, robot_name, source_diff, seed)
-    target = scene_for_key(catalog, robot_name, target_diff, seed)
-    robot = make_robot(robot_name)
-    query = QuerySpec(
-        label=f"{robot_name}_{transition}_{seed}",
-        start=list(source.start),
-        goal=list(source.goal),
-        actual_start=list(source.start),
-        actual_goal=list(source.goal),
-    )
-    opt = options(args, seed, f"dynamic_{robot_name}_{transition}")
-    profile_tag = exp04_profile_tag(args)
-    cfg = configure_leaf_rrt(robot, args.out_dir / "active_cache" / f"dynamic_{transition}_{seed}_{profile_tag}", opt)
-    cfg.dynamic_update.dirty_region_padding = 100.0
-    cfg.dynamic_update.local_regrow_box_limit = int(args.deep_max_boxes)
-    cfg.dynamic_update.local_regrow_timeout_ms = 1000.0
+def configure_dynamic_update(cfg: Any, args: argparse.Namespace) -> None:
+    cfg.enable_merger = bool(args.enable_merger)
+    cfg.dynamic_update.dirty_region_padding = float(args.dirty_region_padding)
+    cfg.dynamic_update.local_regrow_box_limit = int(args.local_regrow_box_limit)
+    cfg.dynamic_update.local_regrow_timeout_ms = float(args.local_regrow_timeout_ms)
     cfg.dynamic_update.enable_warm_rebuild_fallback = False
     cfg.dynamic_update.warm_rebuild_dirty_box_fraction = 0.0
-    cfg.dynamic_update.warm_rebuild_min_local_boxes_added = int(args.deep_max_boxes) + 1
-    forest = sbf.SafeBoxForest(robot, cfg)
-    if str(opt.offline_grower) == "adaptive_deep_leaf":
-        forest.build_adaptive_deep_leaf_sweep_cover(
-            list(source.obstacles),
-            make_adaptive_leaf_sweep_config(opt),
-        )
-    else:
-        forest.build_leaf_sweep_refined(
-            list(source.obstacles),
-            make_refine_config(opt),
-            canonical_priority_points(robot, [query], canonicalize=False),
-        )
-    source_bridge_s = 0.0
-    source_bridge_added = 0
-    if hasattr(forest, "bridge_queries") or hasattr(forest, "bridge_query"):
-        source_bridge_s, source_bridge_added, _source_bridge_attempts, _source_bridge_timings, _source_bridge_added_by_label = bridge_all_queries(
-            forest,
-            robot,
-            [query],
-            opt,
-        )
-    source_query = query_rows(
-        forest,
-        robot,
-        [query],
-        obstacles=list(source.obstacles),
-        audit_step=opt.audit_segment_step,
-        canonicalize_queries=False,
-    )[0]
-    source_count = len(source.obstacles)
-    target_count = len(target.obstacles)
-    if target_count > source_count:
-        update = merge_profile_rows([profile_row(forest.add_obstacle_and_rebuild(obstacle)) for obstacle in target.obstacles[source_count:target_count]])
-    else:
-        update = profile_row(forest.remove_obstacle_suffix_and_regrow(target_count))
-    target_query_spec = QuerySpec(
-        label=query.label,
-        start=list(target.start),
-        goal=list(target.goal),
-        actual_start=list(target.start),
-        actual_goal=list(target.goal),
+    cfg.dynamic_update.warm_rebuild_min_local_boxes_added = int(args.local_regrow_box_limit) + 1
+
+
+def make_forest(args: argparse.Namespace, robot: Any, robot_name: str, seed: int, label: str) -> Any:
+    opt = make_options(args, robot_name, seed, label)
+    cfg = configure_leaf_rrt(robot, args.out_dir / "active_cache" / label, opt)
+    configure_dynamic_update(cfg, args)
+    return sbf.SafeBoxForest(robot, cfg), opt
+
+
+def build_adaptive(args: argparse.Namespace, forest: Any, obstacles: list[Any], opt: RBFLeafRRTOptions) -> dict[str, Any]:
+    start = time.perf_counter()
+    result = forest.build_adaptive_deep_leaf_sweep_cover(obstacles, make_adaptive_leaf_sweep_config(opt))
+    wall_s = time.perf_counter() - start
+    row = build_result_row(result, wall_s)
+    row["forest_boxes"] = len(list(forest.boxes()))
+    row["forest_segment_edges"] = len(list(forest.segment_edges()))
+    return row
+
+
+def run_record(args: argparse.Namespace, record: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    robot_name = str(record["robot"])
+    seed = int(record["seed"])
+    robot = make_robot(robot_name)
+    obstacles = normalize_obstacles(obstacle_from_bounds(bounds) for bounds in record["obstacles"])
+    min_count = int(record.get("min_obstacles", args.min_obstacles))
+    max_count = int(record.get("max_obstacles", args.max_obstacles))
+    prefix = obstacles[:min_count]
+
+    forest, opt = make_forest(args, robot, robot_name, seed, f"exp07_{robot_name}_seed{seed}_incremental")
+    initial_build = build_adaptive(args, forest, prefix, opt)
+
+    events: list[dict[str, Any]] = []
+    insert_profile = profile_row(forest.add_obstacles_and_rebuild(obstacles[min_count:max_count]))
+    events.append(
+        {
+            "robot": robot_name,
+            "seed": seed,
+            "operation": "insert",
+            "obstacle_index": f"{min_count}-{max_count - 1}",
+            "count_before": min_count,
+            "count_after": max_count,
+            "time_s": insert_profile["total_ms"] / 1000.0,
+            **insert_profile,
+        }
     )
-    target_query = query_rows(
-        forest,
-        robot,
-        [target_query_spec],
-        obstacles=list(target.obstacles),
-        audit_step=opt.audit_segment_step,
-        canonicalize_queries=False,
-    )[0]
-    target_source = "incremental"
-    if (
-        target_count > source_count
-        and not bool(target_query["audit_passed"])
-        and hasattr(forest, "connect_update_endpoint_segment_fallback")
-    ):
-        fallback = profile_row(forest.connect_update_endpoint_segment_fallback(list(target_query_spec.start), list(target_query_spec.goal)))
-        fallback["fallback_reason"] = fallback["fallback_reason"] or "endpoint_segment_fallback_after_failed_audit"
-        update = add_profile_rows(update, fallback)
-        target_query = query_rows(
-            forest,
-            robot,
-            [target_query_spec],
-            obstacles=list(target.obstacles),
-            audit_step=opt.audit_segment_step,
-            canonicalize_queries=False,
-        )[0]
-        target_source = "endpoint_segment_fallback"
-    if (
-        not bool(target_query["audit_passed"])
-        and (hasattr(forest, "bridge_queries") or hasattr(forest, "bridge_query"))
-    ):
-        boxes_before_bridge = len(list(forest.boxes()))
-        segments_before_bridge = len(list(forest.segment_edges()))
-        bridge_s, bridge_added, _bridge_attempts, _bridge_timings, _bridge_added_by_label = bridge_all_queries(
-            forest,
-            robot,
-            [target_query_spec],
-            opt,
-        )
-        boxes_after_bridge = len(list(forest.boxes()))
-        segments_after_bridge = len(list(forest.segment_edges()))
-        bridge_wall_ms = 1000.0 * bridge_s
-        bridge_profile = merge_profile_rows([])
-        bridge_profile["boxes_before"] = boxes_before_bridge
-        bridge_profile["boxes_after"] = boxes_after_bridge
-        bridge_profile["boxes_added"] = max(0, boxes_after_bridge - boxes_before_bridge)
-        bridge_profile["segment_edges_added"] = max(0, segments_after_bridge - segments_before_bridge)
-        bridge_profile["total_ms"] = float(bridge_wall_ms)
-        bridge_profile["fallback_reason"] = "query_bridge_after_failed_update"
-        bridge_profile["diagnostics"] = {"query_bridge_after_update.reported_added": float(bridge_added)}
-        update = add_profile_rows(update, bridge_profile)
-        target_query = query_rows(
-            forest,
-            robot,
-            [target_query_spec],
-            obstacles=list(target.obstacles),
-            audit_step=opt.audit_segment_step,
-            canonicalize_queries=False,
-        )[0]
-        target_source = "query_bridge_after_update" if bool(target_query["audit_passed"]) else "query_bridge_after_update_failed"
-    warm = run_leaf_rrt(
-        robot=robot,
-        obstacles=list(target.obstacles),
-        queries=[target_query_spec],
-        database_path=args.out_dir / "active_cache" / f"warm_{transition}_{seed}_{profile_tag}",
-        options=options(args, seed, f"warm_{robot_name}_{transition}"),
+
+    max_forest, max_opt = make_forest(args, robot, robot_name, seed, f"exp07_{robot_name}_seed{seed}_max_build")
+    max_build = build_adaptive(args, max_forest, obstacles[:max_count], max_opt)
+
+    remove_profile = profile_row(forest.remove_obstacle_suffix_and_regrow(min_count))
+    events.append(
+        {
+            "robot": robot_name,
+            "seed": seed,
+            "operation": "remove",
+            "obstacle_index": f"{min_count}-{max_count - 1}",
+            "count_before": max_count,
+            "count_after": min_count,
+            "time_s": remove_profile["total_ms"] / 1000.0,
+            **remove_profile,
+        }
     )
-    return {
-        "transition": transition,
+
+    build_row = {
         "robot": robot_name,
-        "seed": int(seed),
-        "source_obstacles": source_count,
-        "target_obstacles": target_count,
-        "source_audit_passed": bool(source_query["audit_passed"]),
-        "source_bridge_added": int(source_bridge_added),
-        "source_bridge_s": float(source_bridge_s),
-        "target_audit_passed": bool(target_query["audit_passed"]),
-        "target_source": target_source,
-        "update_s": update["total_ms"] / 1000.0,
-        "warm_rebuild_s": float(warm["planning_s"]),
-        "warm_selected_leaf_depth": int(warm.get("selected_leaf_depth", -1)),
-        "warm_adaptive_depth_readiness_met": bool(warm.get("adaptive_depth_readiness_met", False)),
-        "warm_adaptive_depth_stop_reason": str(warm.get("adaptive_depth_stop_reason", "")),
-        "warm_adaptive_depth_snapshots_json": str(warm.get("adaptive_depth_snapshots_json", "")),
-        "speedup_vs_warm": (float(warm["planning_s"]) / (update["total_ms"] / 1000.0)) if update["total_ms"] > 1e-9 else math.nan,
-        "target_path_length": float(target_query["path_length"]) if bool(target_query["audit_passed"]) else math.nan,
-        "target_segment_fraction": float(target_query["segment_fraction"]) if bool(target_query["audit_passed"]) else math.nan,
-        "warm_path_length": finite_or_nan(warm.get("path_length_mean")),
-        "warm_segment_fraction": finite_or_nan(warm.get("raw_segment_fraction")),
-        **update,
-        "status": "executed",
-        "lectdb": robot_lectdb_profile(robot_name),
-        "external_evidence_path": str(robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root))),
+        "seed": seed,
+        "min_obstacles": min_count,
+        "max_obstacles": max_count,
+        "initial_build": initial_build,
+        "max_build": max_build,
+        "initial_build_s": initial_build["wall_s"],
+        "max_build_s": max_build["wall_s"],
     }
+    return events, build_row
 
 
-def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for transition in sorted({str(row["transition"]) for row in rows}):
-        items = [row for row in rows if str(row["transition"]) == transition]
-        append_ms_values = [
-            first_diag_value(
-                row,
-                [
-                    "remove.partition_append.append_ms",
-                    "remove_suffix.partition_append.append_ms",
-                ],
-            )
-            for row in items
+def summarize_by_count(events: list[dict[str, Any]], builds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    keys = sorted({(row["robot"], int(row["count_after"] if row["operation"] == "insert" else row["count_before"])) for row in events})
+    for robot_name, obstacle_count in keys:
+        insert_items = [
+            row for row in events
+            if row["robot"] == robot_name and row["operation"] == "insert" and int(row["count_after"]) == obstacle_count
         ]
-        delta_ms_values = [
-            first_diag_value(
-                row,
-                [
-                    "insert.partition_delta.delta_ms",
-                    "insert_batch.partition_delta.delta_ms",
-                ],
-            )
-            for row in items
+        remove_items = [
+            row for row in events
+            if row["robot"] == robot_name and row["operation"] == "remove" and int(row["count_before"]) == obstacle_count
         ]
-        rebuild_ms_values = [
-            first_diag_value(
-                row,
-                [
-                    "remove.partition_append.rebuild_after_append_failure.rebuild_ms",
-                    "remove_suffix.partition_append.rebuild_after_append_failure.rebuild_ms",
-                    "insert.partition_delta.rebuild_after_remove_failure.rebuild_ms",
-                    "insert.partition_delta.rebuild_after_append_failure.rebuild_ms",
-                    "insert_batch.partition_delta.rebuild_after_remove_failure.rebuild_ms",
-                    "insert_batch.partition_delta.rebuild_after_append_failure.rebuild_ms",
-                    "insert.partition_update.rebuild_ms",
-                    "insert_batch.partition_update.rebuild_ms",
-                    "remove.partition_update.rebuild_ms",
-                    "remove_suffix.partition_update.rebuild_ms",
-                ],
-            )
-            for row in items
+        build_items = [
+            row for row in builds
+            if row["robot"] == robot_name and int(row["max_obstacles"]) == obstacle_count
         ]
-        boxes_appended_values = [
-            first_diag_value(
-                row,
-                [
-                    "remove.partition_append.boxes_appended",
-                    "remove_suffix.partition_append.boxes_appended",
-                ],
-            )
-            for row in items
-        ]
-        delta_boxes_removed_values = [
-            first_diag_value(
-                row,
-                [
-                    "insert.partition_delta.boxes_removed",
-                    "insert_batch.partition_delta.boxes_removed",
-                ],
-            )
-            for row in items
-        ]
-        delta_boxes_appended_values = [
-            first_diag_value(
-                row,
-                [
-                    "insert.partition_delta.boxes_appended",
-                    "insert_batch.partition_delta.boxes_appended",
-                ],
-            )
-            for row in items
-        ]
-        out.append(
+        rows.append(
             {
-                "transition": transition,
-                "runs": len(items),
-                "success_runs": sum(1 for row in items if bool(row["target_audit_passed"])),
-                "update_s_median": median(row["update_s"] for row in items),
-                "warm_rebuild_s_median": median(row["warm_rebuild_s"] for row in items),
-                "warm_selected_leaf_depth_median": median(row.get("warm_selected_leaf_depth", math.nan) for row in items),
-                "warm_adaptive_depth_readiness_rate": mean(
-                    1.0 if row.get("warm_adaptive_depth_readiness_met", False) else 0.0
-                    for row in items
-                ),
-                "speedup_median": median(row["speedup_vs_warm"] for row in items),
-                "dirty_boxes_median": median(row["dirty_boxes"] for row in items),
-                "boxes_added_median": median(row["boxes_added"] for row in items),
-                "boxes_removed_median": median(row["boxes_removed"] for row in items),
-                "segment_fraction_median": median(row["target_segment_fraction"] for row in items if bool(row["target_audit_passed"])),
-                "path_length_mean": mean(row["target_path_length"] for row in items if bool(row["target_audit_passed"])),
-                "segment_fallback_runs": sum(1 for row in items if str(row.get("target_source")) == "endpoint_segment_fallback"),
-                "partition_append_s_median": median(value / 1000.0 for value in append_ms_values if math.isfinite(value)),
-                "partition_delta_s_median": median(value / 1000.0 for value in delta_ms_values if math.isfinite(value)),
-                "partition_rebuild_s_median": median(value / 1000.0 for value in rebuild_ms_values if math.isfinite(value)),
-                "partition_boxes_appended_median": median(value for value in boxes_appended_values if math.isfinite(value)),
-                "partition_delta_boxes_removed_median": median(value for value in delta_boxes_removed_values if math.isfinite(value)),
-                "partition_delta_boxes_appended_median": median(value for value in delta_boxes_appended_values if math.isfinite(value)),
-                "partition_cells_median": median(
-                    diag_value(row, "adaptive.partition_cells") for row in items
-                    if math.isfinite(diag_value(row, "adaptive.partition_cells"))
-                ),
-                "partition_islands_median": median(
-                    diag_value(row, "adaptive.partition_islands") for row in items
-                    if math.isfinite(diag_value(row, "adaptive.partition_islands"))
-                ),
-                "status": "executed",
+                "robot": robot_name,
+                "obstacle_count": obstacle_count,
+                "insert_runs": len(insert_items),
+                "insert_s_q1": q1(row["time_s"] for row in insert_items),
+                "insert_s_q3": q3(row["time_s"] for row in insert_items),
+                "insert_dirty_boxes_q1": q1(row["dirty_boxes"] for row in insert_items),
+                "insert_dirty_boxes_q3": q3(row["dirty_boxes"] for row in insert_items),
+                "insert_boxes_added_q1": q1(row["boxes_added"] for row in insert_items),
+                "insert_boxes_added_q3": q3(row["boxes_added"] for row in insert_items),
+                "remove_runs": len(remove_items),
+                "remove_s_q1": q1(row["time_s"] for row in remove_items),
+                "remove_s_q3": q3(row["time_s"] for row in remove_items),
+                "remove_dirty_boxes_q1": q1(row["dirty_boxes"] for row in remove_items),
+                "remove_dirty_boxes_q3": q3(row["dirty_boxes"] for row in remove_items),
+                "remove_boxes_added_q1": q1(row["boxes_added"] for row in remove_items),
+                "remove_boxes_added_q3": q3(row["boxes_added"] for row in remove_items),
+                "max_build_runs": len(build_items),
+                "max_build_s_q1": q1(row["max_build_s"] for row in build_items),
+                "max_build_s_q3": q3(row["max_build_s"] for row in build_items),
+                "max_build_boxes_q1": q1(row["max_build"]["forest_boxes"] for row in build_items),
+                "max_build_boxes_q3": q3(row["max_build"]["forest_boxes"] for row in build_items),
+                "max_build_cells_q1": q1(row["max_build"]["partition_cell_count"] for row in build_items),
+                "max_build_cells_q3": q3(row["max_build"]["partition_cell_count"] for row in build_items),
             }
         )
-    return out
+    return rows
+
+
+def summarize(events: list[dict[str, Any]], builds: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for robot_name in sorted({str(row["robot"]) for row in events}):
+        insert_items = [
+            row for row in events
+            if row["robot"] == robot_name and row["operation"] == "insert"
+        ]
+        remove_items = [
+            row for row in events
+            if row["robot"] == robot_name and row["operation"] == "remove"
+        ]
+        build_items = [row for row in builds if row["robot"] == robot_name]
+        max_build_by_seed = {
+            int(row["seed"]): float(row["max_build_s"])
+            for row in build_items
+            if finite(row.get("max_build_s")) > 0.0
+        }
+        insert_speedups = [
+            max_build_by_seed[int(row["seed"])] / float(row["time_s"])
+            for row in insert_items
+            if int(row["seed"]) in max_build_by_seed and finite(row.get("time_s")) > 0.0
+        ]
+        remove_speedups = [
+            max_build_by_seed[int(row["seed"])] / float(row["time_s"])
+            for row in remove_items
+            if int(row["seed"]) in max_build_by_seed and finite(row.get("time_s")) > 0.0
+        ]
+        rows.append(
+            {
+                "robot": robot_name,
+                "source_obstacles": int(build_items[0]["min_obstacles"]) if build_items else None,
+                "target_obstacles": int(build_items[0]["max_obstacles"]) if build_items else None,
+                "insert_runs": len(insert_items),
+                "insert_s_q1": q1(row["time_s"] for row in insert_items),
+                "insert_s_q3": q3(row["time_s"] for row in insert_items),
+                "insert_speedup_q1": q1(insert_speedups),
+                "insert_speedup_q3": q3(insert_speedups),
+                "insert_dirty_boxes_q1": q1(row["dirty_boxes"] for row in insert_items),
+                "insert_dirty_boxes_q3": q3(row["dirty_boxes"] for row in insert_items),
+                "insert_boxes_added_q1": q1(row["boxes_added"] for row in insert_items),
+                "insert_boxes_added_q3": q3(row["boxes_added"] for row in insert_items),
+                "remove_runs": len(remove_items),
+                "remove_s_q1": q1(row["time_s"] for row in remove_items),
+                "remove_s_q3": q3(row["time_s"] for row in remove_items),
+                "remove_speedup_q1": q1(remove_speedups),
+                "remove_speedup_q3": q3(remove_speedups),
+                "remove_dirty_boxes_q1": q1(row["dirty_boxes"] for row in remove_items),
+                "remove_dirty_boxes_q3": q3(row["dirty_boxes"] for row in remove_items),
+                "remove_boxes_added_q1": q1(row["boxes_added"] for row in remove_items),
+                "remove_boxes_added_q3": q3(row["boxes_added"] for row in remove_items),
+                "max_build_runs": len(build_items),
+                "source_warm_s_q1": q1(row["initial_build_s"] for row in build_items),
+                "source_warm_s_q3": q3(row["initial_build_s"] for row in build_items),
+                "target_warm_s_q1": q1(row["max_build_s"] for row in build_items),
+                "target_warm_s_q3": q3(row["max_build_s"] for row in build_items),
+                "max_build_s_q1": q1(row["max_build_s"] for row in build_items),
+                "max_build_s_q3": q3(row["max_build_s"] for row in build_items),
+                "max_build_boxes_q1": q1(row["max_build"]["forest_boxes"] for row in build_items),
+                "max_build_boxes_q3": q3(row["max_build"]["forest_boxes"] for row in build_items),
+            }
+        )
+    return rows
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "transition",
-        "runs",
-        "success_runs",
-        "update_s_median",
-        "warm_rebuild_s_median",
-        "speedup_median",
-        "dirty_boxes_median",
-        "boxes_added_median",
-        "boxes_removed_median",
-        "path_length_mean",
-        "segment_fraction_median",
-        "segment_fallback_runs",
-        "partition_append_s_median",
-        "partition_delta_s_median",
-        "partition_rebuild_s_median",
-        "partition_boxes_appended_median",
-        "partition_delta_boxes_removed_median",
-        "partition_delta_boxes_appended_median",
-        "partition_cells_median",
-        "partition_islands_median",
-        "status",
-    ]
+    fieldnames: list[str] = []
+    for row in rows:
+        for key in row.keys():
+            if key not in fieldnames and key != "diagnostics":
+                fieldnames.append(key)
     with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in rows)
-
-
-def tex_sec(value: Any) -> str:
-    numeric = finite_or_nan(value)
-    if not math.isfinite(numeric):
-        return "--"
-    return f"{numeric:.4f}"
+        for row in rows:
+            writer.writerow({key: row.get(key) for key in fieldnames})
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
+    source_n = int(rows[0].get("source_obstacles") or DEFAULT_MIN_OBSTACLES) if rows else DEFAULT_MIN_OBSTACLES
+    target_n = int(rows[0].get("target_obstacles") or DEFAULT_MAX_OBSTACLES) if rows else DEFAULT_MAX_OBSTACLES
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Saved-catalog dynamic-update results. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}",
+        rf"\caption{{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Times are seconds shown as \([Q_1,Q_3]\) over saved ordered random scenes. Warm@{source_n} and Warm@{target_n} are fresh adaptive leaf-sweep builds; Insert and Remove are batched updates between the two obstacle counts. Speedup is Warm@{target_n}/Update.}}",
         r"\label{tab:tro-dynamic-update}",
-        r"\footnotesize",
-        r"\begin{tabular}{lrrrr}",
+        r"\scriptsize",
+        r"\setlength{\tabcolsep}{1.5pt}",
+        r"\resizebox{\columnwidth}{!}{%",
+        r"\begin{tabular}{rrrrrr}",
         r"\toprule",
-        r"Transition & SR & Update (s) & Warm (s) & Speedup \\",
+        rf"Warm@{source_n} & Insert & Ins. sp. & Remove & Rem. sp. & Warm@{target_n} \\",
         r"\midrule",
     ]
     for row in rows:
-        sr = f"{int(row.get('success_runs', 0))}/{int(row.get('runs', 0))}"
         lines.append(
-            f"{row.get('transition')} & {sr} & {tex_sec(row.get('update_s_median'))} & "
-            f"{tex_sec(row.get('warm_rebuild_s_median'))} & {tex_num(row.get('speedup_median'))} \\\\"
+            f"{tex_qrange_s(row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & "
+            f"{tex_qrange_s(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
+            f"{tex_speedup_range(row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} & "
+            f"{tex_qrange_s(row.get('remove_s_q1'), row.get('remove_s_q3'))} & "
+            f"{tex_speedup_range(row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} & "
+            f"{tex_qrange_s(row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} \\\\"
         )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\end{table}", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Exp.7 obstacle-count dynamic update for adaptive leaf sweep.")
+    parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp07")
+    parser.add_argument("--phase", choices=["smoke", "pilot", "paper", "full", "assets"], default="smoke")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--scene-catalog", type=Path, default=None)
+    parser.add_argument("--scene-catalog-mode", choices=["auto", "generate", "reuse", "verify"], default="auto")
+    parser.add_argument("--robots", default="iiwa")
+    parser.add_argument("--seeds", default="0,1,2,3,4,5,6,7")
+    parser.add_argument("--seed-base", type=int, default=9207)
+    parser.add_argument("--min-obstacles", type=int, default=DEFAULT_MIN_OBSTACLES)
+    parser.add_argument("--max-obstacles", type=int, default=DEFAULT_MAX_OBSTACLES)
+    parser.add_argument("--obstacle-profile", choices=["random", "narrow", "mixed"], default="random")
+    parser.add_argument("--obstacle-scale", type=float, default=0.12)
+    parser.add_argument("--min-obstacle-separation", type=float, default=0.01)
+    parser.add_argument("--max-obstacle-tries", type=int, default=10000)
+    parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_EXP07_BOX_BUDGET)
+    parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
+    parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
+    parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_LEAF_MAX_DEPTH)
+    parser.add_argument("--adaptive-target-depth", type=int, default=DEFAULT_ADAPTIVE_TARGET_DEPTH)
+    parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
+    parser.add_argument("--ffb-start-depth", type=int, default=16)
+    parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE, choices=["linear", "binary", "binary-depth", "BinaryDepth", "Linear"])
+    parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
+    parser.add_argument("--adaptive-node-budget", type=int, default=0)
+    parser.add_argument("--adaptive-defer-min-depth", type=int, default=16)
+    parser.add_argument("--adaptive-overlap-depth-threshold", type=float, default=0.05)
+    parser.add_argument("--adaptive-overlap-depth-min-threshold", type=float, default=0.01)
+    parser.add_argument("--adaptive-overlap-depth-decay-per-depth", type=float, default=0.002)
+    parser.add_argument("--adaptive-seed-probe-count", type=int, default=1024)
+    parser.add_argument("--adaptive-seed-anchor-probe-cap", type=int, default=64)
+    parser.add_argument("--adaptive-depth-enabled", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-depth-min", type=int, default=10)
+    parser.add_argument("--adaptive-depth-probe-count", type=int, default=1024)
+    parser.add_argument("--adaptive-depth-anchor-probe-cap", type=int, default=64)
+    parser.add_argument("--adaptive-depth-probe-seed", type=int, default=20260607)
+    parser.add_argument("--adaptive-depth-min-free-probes", type=int, default=64)
+    parser.add_argument("--adaptive-depth-min-covered-probes", type=int, default=0)
+    parser.add_argument("--adaptive-depth-min-main-probes", type=int, default=0)
+    parser.add_argument("--adaptive-depth-min-main-ratio", type=float, default=0.0)
+    parser.add_argument("--adaptive-depth-min-cells", type=int, default=200)
+    parser.add_argument("--adaptive-depth-min-main-cells", type=int, default=1)
+    parser.add_argument("--adaptive-depth-max-online-cells", type=int, default=320)
+    parser.add_argument("--adaptive-depth-max-probe-ms", type=float, default=10.0)
+    parser.add_argument("--adaptive-fast-virtual-checkpoint-mode", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--adaptive-max-merge-ms", type=float, default=1500.0)
+    parser.add_argument("--adaptive-max-merge-rounds", type=int, default=2)
+    parser.add_argument("--adaptive-max-merge-input-boxes", type=int, default=20000)
+    parser.add_argument("--validation-batch-size", type=int, default=512)
+    parser.add_argument("--enable-merger", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--use-virtual-topology", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--parallel-virtual-validation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--dirty-region-padding", type=float, default=0.0)
+    parser.add_argument("--local-regrow-box-limit", type=int, default=DEFAULT_EXP07_LOCAL_REGROW_BOX_LIMIT)
+    parser.add_argument("--local-regrow-timeout-ms", type=float, default=1000.0)
+    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--lect-cache-root", type=Path, default=ROBOT_LECTDB_CACHE_ROOT)
+    parser.add_argument("--skip-lect-cache-ensure", action="store_true")
+    return parser.parse_args()
+
+
 def main() -> int:
     args = parse_args()
-    seeds = [int(item) for item in str(args.seeds).split(",") if item.strip()]
     if args.phase == "smoke":
-        seeds = seeds[:1]
-        transitions = ["medium->easy"]
+        args.seeds = ",".join(parse_int_list(args.seeds)[:1] and [str(parse_int_list(args.seeds)[0])] or ["0"])
+        args.min_obstacles = 1
+        args.max_obstacles = 2
+    elif args.phase == "pilot":
+        args.seeds = ",".join(str(seed) for seed in parse_int_list(args.seeds)[:3])
+        args.min_obstacles = DEFAULT_MIN_OBSTACLES
+        args.max_obstacles = DEFAULT_MAX_OBSTACLES
+    set_thread_env(int(args.threads))
+
+    catalog_path = Path(args.scene_catalog or (args.out_dir / "ordered_obstacle_catalog.json"))
+    if args.dry_run:
+        catalog_payload: dict[str, Any] | None = None
     else:
-        transitions = TRANSITIONS
+        catalog_payload = load_or_create_catalog(args)
+
     cache_rows: list[dict[str, Any]] = []
-    for robot_name in progress([str(args.robot)], desc="exp07 lect cache", total=1, disable=bool(args.dry_run or args.skip_lect_cache_ensure)):
+    for robot_name in progress(
+        [item.strip() for item in str(args.robots).split(",") if item.strip()],
+        desc="exp07 lect cache",
+        total=len([item for item in str(args.robots).split(",") if item.strip()]),
+        disable=bool(args.dry_run or args.skip_lect_cache_ensure),
+    ):
         cache_rows.append(
             ensure_robot_lectdb_cache(
                 robot_name,
@@ -697,67 +709,78 @@ def main() -> int:
                 dry_run=bool(args.dry_run or args.skip_lect_cache_ensure),
             )
         )
-    catalog = args.scene_catalog or (args.out_dir / "dynamic_scene_catalog.json")
-    catalog_payload: dict[str, Any] | None = None
-    if not args.dry_run:
-        catalog_payload = generate_catalog(
-            path=catalog,
-            robots=[str(args.robot)],
-            difficulties=["easy", "medium", "hard"],
-            scene_seeds=max(seeds) + 1 if seeds else 1,
-            scene_profile=str(args.scene_profile),
-            seed_base=int(args.seed_base),
-            max_scene_tries=int(args.max_scene_tries),
-            mode=str(args.scene_catalog_mode),
-        )
-    rows = [
-        {
-            "transition": transition,
-            "seed": seed,
-            "scene_catalog": str(catalog),
-            "scene_catalog_mode": str(args.scene_catalog_mode),
-            "backend": "adaptive_deep_leaf_partition_update_current_exp07",
-            "warm_rebuild_backend": "adaptive_deep_leaf_partition_native",
-            "rbf_default_profile": default_rbf_profile(),
-            "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
-            "rbf_robot_lectdb": robot_lectdb_profile(str(args.robot)),
-            "rbf_registered_box_budget": int(args.deep_max_boxes),
-            "status": "planned" if args.dry_run else "planned_for_execution",
-            "metrics": ["update_s", "warm_rebuild_s", "invalidated_boxes", "promoted_boxes", "audit_success", "segment_fraction"],
-        }
-        for transition in transitions
-        for seed in seeds
-    ]
-    run_rows: list[dict[str, Any]] = []
+
+    planned_records = [] if catalog_payload is None else list(catalog_payload.get("records", []))
+    events: list[dict[str, Any]] = []
+    builds: list[dict[str, Any]] = []
     if not args.dry_run and catalog_payload is not None:
-        for row in progress(rows, desc="exp07 transitions", total=len(rows)):
-            print(f"[exp07] transition={row['transition']} seed={row['seed']}", flush=True)
-            run_rows.append(run_transition(args, catalog_payload, str(row["transition"]), int(row["seed"])))
-    summary_rows = aggregate(run_rows) if run_rows else []
-    payload: dict[str, Any] = {
-        "experiment": "exp07_dynamic_update",
+        for record in progress(planned_records, desc="exp07 ordered scenes", total=len(planned_records)):
+            print(f"[exp07] robot={record['robot']} seed={record['seed']} obstacles={record['max_obstacles']}", flush=True)
+            record_events, build_row = run_record(args, record)
+            events.extend(record_events)
+            builds.append(build_row)
+
+    by_count_rows = summarize_by_count(events, builds) if events else []
+    summary_rows = summarize(events, builds) if events else []
+    payload = {
+        "experiment": "exp07_obstacle_count_dynamic_update",
         "run_id": run_id("exp07"),
         "phase": args.phase,
         "status": "dry_run" if args.dry_run else "executed",
+        "args": namespace_dict(args),
         "environment": environment_metadata(),
         "rbf_default_profile": default_rbf_profile(),
-        "rbf_exp04_profile_overrides": exp04_profile_overrides(args),
+        "rbf_exp07_profile": {
+            "backend": "adaptive_leaf_sweep_only_partition_native",
+            "leaf_start_depth": int(args.leaf_start_depth),
+            "leaf_max_depth": int(args.leaf_max_depth),
+            "adaptive_target_depth": max(int(args.leaf_max_depth), int(args.adaptive_target_depth)),
+            "adaptive_time_budget_ms": float(args.adaptive_time_budget_ms),
+            "deep_max_boxes": int(args.deep_max_boxes),
+            "ffb_search_mode": str(args.ffb_search_mode),
+            "ffb_implementation": DEFAULT_RBF_FFB_IMPLEMENTATION,
+            "use_virtual_topology": bool(args.use_virtual_topology),
+            "parallel_virtual_validation": bool(args.parallel_virtual_validation),
+            "canonical_mapping_scope": "LECT_internal_only",
+            "planner_stage": "none",
+            "query_stage": "none",
+            "statistic": "Q1_Q3_over_ordered_random_scenes",
+        },
         "lectdb_caches": cache_rows,
         "scene_catalog": {
-            "path": str(catalog),
+            "path": str(catalog_path),
             "mode": str(args.scene_catalog_mode),
-            "schema": catalog_payload.get("schema") if catalog_payload is not None else None,
-            "records": len(catalog_payload.get("records", [])) if catalog_payload is not None else None,
-            "scene_profile": str(args.scene_profile),
-            "seed_base": int(args.seed_base),
-            "max_scene_tries": int(args.max_scene_tries),
+            "schema": None if catalog_payload is None else catalog_payload.get("schema"),
+            "records": None if catalog_payload is None else len(catalog_payload.get("records", [])),
+            "obstacle_sha256": None if catalog_payload is None else catalog_payload.get("obstacle_sha256"),
         },
-        "planned_rows": rows,
-        "rows": run_rows,
+        "build_rows": builds,
+        "event_rows": events,
+        "by_count_summary": by_count_rows,
         "summary": summary_rows,
     }
     write_json(args.out_dir / "dynamic_update_manifest.json", payload)
+    if events:
+        write_csv(args.out_dir / "dynamic_update_events.csv", events)
+    if builds:
+        flat_builds = []
+        for row in builds:
+            flat = {
+                "robot": row["robot"],
+                "seed": row["seed"],
+                "min_obstacles": row["min_obstacles"],
+                "max_obstacles": row["max_obstacles"],
+                "initial_build_s": row["initial_build_s"],
+                "max_build_s": row["max_build_s"],
+            }
+            for prefix in ("initial_build", "max_build"):
+                for key, value in row[prefix].items():
+                    if key != "diagnostics":
+                        flat[f"{prefix}_{key}"] = value
+            flat_builds.append(flat)
+        write_csv(args.out_dir / "dynamic_update_builds.csv", flat_builds)
     if summary_rows:
+        write_csv(args.out_dir / "dynamic_update_by_count_summary.csv", by_count_rows)
         write_csv(args.out_dir / "dynamic_update_summary.csv", summary_rows)
         write_tex(args.out_dir / "tab_tro_dynamic_update.tex", summary_rows)
         if str(args.phase) == "paper":

@@ -41,6 +41,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--scene-seeds", type=int, default=10)
     parser.add_argument("--queries-per-scene", type=int, default=10)
     parser.add_argument("--min-probe-success-fraction", type=float, default=1.0)
+    parser.add_argument("--min-easy-prefix-count", type=int, default=1)
+    parser.add_argument("--min-medium-prefix-count", type=int, default=1)
+    parser.add_argument("--min-hard-prefix-count", type=int, default=2)
+    parser.add_argument("--min-direct-blocked-fraction", type=float, default=1.0)
+    parser.add_argument("--min-direct-obstruction-fraction", type=float, default=1.0e-12)
     parser.add_argument("--allow-extra-records", action="store_true")
     return parser.parse_args()
 
@@ -55,6 +60,43 @@ def probe_median(record: dict[str, Any], planner_key: str) -> float:
     probe = record.get("difficulty_probe", {})
     planner = probe.get(planner_key, {}) if isinstance(probe, dict) else {}
     return float(planner.get("median_first_success_s", math.nan) or math.nan)
+
+
+def selected_prefix_scan_row(record: dict[str, Any]) -> dict[str, Any] | None:
+    count = int(len(record.get("obstacles", [])))
+    probe = record.get("difficulty_probe", {})
+    scan = probe.get("distribution_prefix_scan", []) if isinstance(probe, dict) else []
+    if not isinstance(scan, list):
+        return None
+    for row in scan:
+        if isinstance(row, dict) and int(row.get("count", -1)) == count:
+            return row
+    return None
+
+
+def selected_direct_stats(record: dict[str, Any]) -> dict[str, float]:
+    row = selected_prefix_scan_row(record)
+    if row is None:
+        return {
+            "blocked_fraction": math.nan,
+            "obstruction_min": math.nan,
+            "obstruction_mean": math.nan,
+        }
+    return {
+        "blocked_fraction": float(row.get("direct_blocked_fraction", math.nan)),
+        "obstruction_min": float(
+            row.get(
+                "direct_obstruction_fraction_min",
+                row.get("direct_min", math.nan),
+            )
+        ),
+        "obstruction_mean": float(
+            row.get(
+                "direct_obstruction_fraction_mean",
+                row.get("direct_mean", math.nan),
+            )
+        ),
+    }
 
 
 def load_part_records(parts_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -115,6 +157,11 @@ def validate_records(
     scene_seeds: int,
     queries_per_scene: int,
     min_probe_success_fraction: float,
+    min_easy_prefix_count: int,
+    min_medium_prefix_count: int,
+    min_hard_prefix_count: int,
+    min_direct_blocked_fraction: float,
+    min_direct_obstruction_fraction: float,
     allow_extra_records: bool,
 ) -> dict[str, Any]:
     errors: list[str] = []
@@ -153,13 +200,43 @@ def validate_records(
                 difficulty: len(record_map[scene_cache_key(robot, difficulty, scene_seed)].get("obstacles", []))
                 for difficulty in difficulties
             }
+            min_prefix_counts = {
+                "easy": int(min_easy_prefix_count),
+                "medium": int(min_medium_prefix_count),
+                "hard": int(min_hard_prefix_count),
+            }
             for difficulty in difficulties:
                 key = scene_cache_key(robot, difficulty, scene_seed)
                 record = record_map[key]
+                prefix_count = int(len(record.get("obstacles", [])))
+                min_prefix_count = int(min_prefix_counts.get(difficulty, 0))
+                if prefix_count < min_prefix_count:
+                    errors.append(
+                        f"{key} prefix count {prefix_count} is below required minimum {min_prefix_count}"
+                    )
                 if len(query_records_from_record(record)) < int(queries_per_scene):
                     errors.append(f"{key} has too few queries")
                 if not record_has_shared_query_median_gate(record):
                     errors.append(f"{key} does not have a strict confirmed difficulty probe")
+                direct_stats = selected_direct_stats(record)
+                blocked_fraction = float(direct_stats["blocked_fraction"])
+                obstruction_min = float(direct_stats["obstruction_min"])
+                if (
+                    not math.isfinite(blocked_fraction)
+                    or blocked_fraction < float(min_direct_blocked_fraction) - 1e-12
+                ):
+                    errors.append(
+                        f"{key} direct blocked fraction {blocked_fraction:.6g} "
+                        f"is below required minimum {float(min_direct_blocked_fraction):.6g}"
+                    )
+                if (
+                    not math.isfinite(obstruction_min)
+                    or obstruction_min < float(min_direct_obstruction_fraction) - 1e-12
+                ):
+                    errors.append(
+                        f"{key} direct obstruction minimum {obstruction_min:.6g} "
+                        f"is below required minimum {float(min_direct_obstruction_fraction):.6g}"
+                    )
                 for planner_key in ("rrtconnect", "bitstar"):
                     success_fraction = probe_success_fraction(record, planner_key)
                     if success_fraction < float(min_probe_success_fraction) - 1e-12:
@@ -173,6 +250,12 @@ def validate_records(
                     "scene_seed": int(scene_seed),
                     "prefix_counts": prefix_counts,
                     "query_count": int(len(reference_queries)),
+                    "direct_blocked_fraction": {
+                        difficulty: selected_direct_stats(
+                            record_map[scene_cache_key(robot, difficulty, scene_seed)]
+                        )["blocked_fraction"]
+                        for difficulty in difficulties
+                    },
                 }
             )
     summary_rows: list[dict[str, Any]] = []
@@ -218,6 +301,13 @@ def validate_records(
         "scene_seeds": int(scene_seeds),
         "queries_per_scene": int(queries_per_scene),
         "min_probe_success_fraction": float(min_probe_success_fraction),
+        "min_prefix_counts": {
+            "easy": int(min_easy_prefix_count),
+            "medium": int(min_medium_prefix_count),
+            "hard": int(min_hard_prefix_count),
+        },
+        "min_direct_blocked_fraction": float(min_direct_blocked_fraction),
+        "min_direct_obstruction_fraction": float(min_direct_obstruction_fraction),
         "groups": group_rows,
         "summary": summary_rows,
     }
@@ -232,6 +322,9 @@ def write_markdown(path: Path, report: dict[str, Any]) -> None:
         f"- scene seeds per robot/difficulty: `{report['scene_seeds']}`",
         f"- queries per scene: `{report['queries_per_scene']}`",
         f"- minimum reference-probe success fraction: `{report['min_probe_success_fraction']}`",
+        f"- minimum prefix counts: `{report['min_prefix_counts']}`",
+        f"- minimum direct blocked fraction: `{report['min_direct_blocked_fraction']}`",
+        f"- minimum direct obstruction fraction: `{report['min_direct_obstruction_fraction']}`",
         "- probe policy: successful reference-planner paths are strict-audited at 0.01; "
         "the success-fraction threshold is a relaxed scene-generation filter.",
         "",
@@ -280,6 +373,11 @@ def main() -> int:
         scene_seeds=int(args.scene_seeds),
         queries_per_scene=int(args.queries_per_scene),
         min_probe_success_fraction=float(args.min_probe_success_fraction),
+        min_easy_prefix_count=int(args.min_easy_prefix_count),
+        min_medium_prefix_count=int(args.min_medium_prefix_count),
+        min_hard_prefix_count=int(args.min_hard_prefix_count),
+        min_direct_blocked_fraction=float(args.min_direct_blocked_fraction),
+        min_direct_obstruction_fraction=float(args.min_direct_obstruction_fraction),
         allow_extra_records=bool(args.allow_extra_records),
     )
     report["inputs"] = inputs
@@ -313,6 +411,13 @@ def main() -> int:
                 "queries_per_scene": int(args.queries_per_scene),
                 "scene_seeds_per_robot_difficulty": int(args.scene_seeds),
                 "minimum_reference_probe_success_fraction": float(args.min_probe_success_fraction),
+                "minimum_prefix_counts": {
+                    "easy": int(args.min_easy_prefix_count),
+                    "medium": int(args.min_medium_prefix_count),
+                    "hard": int(args.min_hard_prefix_count),
+                },
+                "minimum_direct_blocked_fraction": float(args.min_direct_blocked_fraction),
+                "minimum_direct_obstruction_fraction": float(args.min_direct_obstruction_fraction),
                 "reference_probe_policy": (
                     "relaxed generator-side filter; successful reference-planner paths "
                     "are strict-audited at 0.01, and Exp.6 planner runs re-evaluate "

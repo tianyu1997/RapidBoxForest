@@ -2176,6 +2176,9 @@ bool DatabaseBoxOracle::validate_intervals(const std::vector<Interval>& interval
 }
 
 bool DatabaseBoxOracle::is_reserved(OracleNodeId node) const {
+    if (node < 0) {
+        return false;
+    }
     if (active_tree_is_primary_canonical_sector(robot_, database_)) {
         return false;
     }
@@ -2183,6 +2186,9 @@ bool DatabaseBoxOracle::is_reserved(OracleNodeId node) const {
 }
 
 std::optional<int> DatabaseBoxOracle::reservation_owner(OracleNodeId node) const {
+    if (node < 0) {
+        return std::nullopt;
+    }
     if (active_tree_is_primary_canonical_sector(robot_, database_)) {
         return std::nullopt;
     }
@@ -2191,6 +2197,9 @@ std::optional<int> DatabaseBoxOracle::reservation_owner(OracleNodeId node) const
 }
 
 void DatabaseBoxOracle::reserve_node(OracleNodeId node, int box_id) {
+    if (node < 0) {
+        return;
+    }
     if (active_tree_is_primary_canonical_sector(robot_, database_)) {
         return;
     }
@@ -2199,6 +2208,9 @@ void DatabaseBoxOracle::reserve_node(OracleNodeId node, int box_id) {
 }
 
 void DatabaseBoxOracle::release_node(OracleNodeId node) {
+    if (node < 0) {
+        return;
+    }
     const auto it = node_to_box_.find(node);
     if (it == node_to_box_.end()) {
         return;

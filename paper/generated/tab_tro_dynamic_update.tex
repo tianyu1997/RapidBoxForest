@@ -1,16 +1,20 @@
-\begin{table}[t]
+\par\smallskip
+\noindent\begin{minipage}{\columnwidth}
+\begingroup
 \centering
-\caption{Saved-catalog dynamic-update results. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}
+\captionof{table}{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Times are seconds shown as \([Q_1,Q_3]\) over saved ordered random scenes. Warm@10 and Warm@15 are fresh adaptive leaf-sweep builds; Insert and Remove are batched updates between the two obstacle counts. Speedup is Warm@15/Update.}
 \label{tab:tro-dynamic-update}
-\footnotesize
-\begin{tabular}{lrrrr}
+\scriptsize
+\setlength{\tabcolsep}{1.5pt}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{rrrrrr}
 \toprule
-Transition & SR & Update (s) & Warm (s) & Speedup \\
+Warm@10 & Insert & Ins. sp. & Remove & Rem. sp. & Warm@15 \\
 \midrule
-easy->medium & 8/8 & 0.026 & 0.412 & 36.085 \\
-hard->medium & 8/8 & 0.000 & 0.396 & 907.978 \\
-medium->easy & 8/8 & 0.000 & 0.211 & 749.683 \\
-medium->hard & 8/8 & 0.005 & 0.420 & 102.821 \\
+\([1.356,1.626]\) & \([0.031,0.050]\) & 35.9--55.9$\times$ & \([0.034,0.071]\) & 24.5--47.7$\times$ & \([1.571,1.800]\) \\
 \bottomrule
-\end{tabular}
-\end{table}
+\end{tabular}%
+}
+\par\endgroup
+\end{minipage}
+\par\smallskip

@@ -30,6 +30,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
     DEFAULT_RBF_DEEP_FFB_DEPTH,
     DEFAULT_RBF_DEEP_MAX_BOXES,
+    DEFAULT_RBF_FFB_IMPLEMENTATION,
     DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
@@ -43,6 +44,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
+    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
+    DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
@@ -57,7 +60,11 @@ from experiments.common.rbf_defaults import (
     robot_joint_limit_tuples,
 )
 from experiments.common.rbf_leaf_rrt import QuerySpec, RBFLeafRRTOptions, run_leaf_rrt
-from experiments.common.robot_lectdb_cache import ensure_robot_lectdb_cache, robot_external_evidence_path
+from experiments.common.robot_lectdb_cache import (
+    ensure_robot_lectdb_cache,
+    robot_external_evidence_path,
+    robot_split_schedule_kind,
+)
 from experiments.common.sbf_import import import_sbf
 
 
@@ -214,7 +221,8 @@ def configure_thread_environment(threads: int) -> None:
         os.environ[key] = value
 
 
-def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace) -> None:
+def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace,
+                                            argv: list[str] | None = None) -> None:
     """Apply the validated Exp.6 HiPaC leaf-sweep profile.
 
     TransitionPortal is intentionally excluded from paper-facing runners until
@@ -222,24 +230,136 @@ def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace) -> None:
     """
     if not bool(getattr(args, "hipac_improved_leaf_sweep", False)):
         return
-    args.leaf_max_depth = max(int(args.leaf_max_depth), 20)
-    args.adaptive_depth_min = max(int(args.adaptive_depth_min), 14)
-    args.adaptive_depth_max = max(int(args.adaptive_depth_max), 20)
-    args.rbf_max_depth = max(int(args.rbf_max_depth), 110)
-    args.deep_ffb_depth = max(int(args.deep_ffb_depth), 110)
-    args.connector_pave_depth = max(int(args.connector_pave_depth), 110)
-    args.query_bridge_pave_depth = max(int(args.query_bridge_pave_depth), 110)
-    args.query_endpoint_anchor_ffb_depth = max(int(getattr(args, "query_endpoint_anchor_ffb_depth", 0)), 110)
-    args.query_bridge_rrt_fixed_iters = max(int(args.query_bridge_rrt_fixed_iters), 10000)
-    args.query_bridge_no_path_retry_attempts = max(int(args.query_bridge_no_path_retry_attempts), 32)
-    args.query_bridge_no_path_retry_stop_on_first_success = True
-    args.query_bridge_direct_max_length = max(float(args.query_bridge_direct_max_length), 15.0)
+    supplied = argv or []
+
+    def max_if_implicit(attr: str, flag: str, value: int) -> None:
+        if not _flag_was_supplied(supplied, flag):
+            setattr(args, attr, max(int(getattr(args, attr)), int(value)))
+
+    def max_float_if_implicit(attr: str, flag: str, value: float) -> None:
+        if not _flag_was_supplied(supplied, flag):
+            setattr(args, attr, max(float(getattr(args, attr)), float(value)))
+
+    max_if_implicit("leaf_max_depth", "--leaf-max-depth", 20)
+    max_if_implicit("adaptive_depth_min", "--adaptive-depth-min", 14)
+    max_if_implicit("adaptive_depth_max", "--adaptive-depth-max", 20)
+    max_if_implicit("rbf_max_depth", "--rbf-max-depth", 110)
+    max_if_implicit("deep_ffb_depth", "--deep-ffb-depth", 110)
+    max_if_implicit("connector_pave_depth", "--connector-pave-depth", 110)
+    max_if_implicit("query_bridge_pave_depth", "--query-bridge-pave-depth", 110)
+    max_if_implicit("query_endpoint_anchor_ffb_depth", "--query-endpoint-anchor-ffb-depth", 110)
+    max_if_implicit("query_bridge_rrt_fixed_iters", "--query-bridge-rrt-fixed-iters", 10000)
+    max_if_implicit("query_bridge_no_path_retry_attempts", "--query-bridge-no-path-retry-attempts", 32)
+    if not _flag_was_supplied(supplied, "--query-bridge-no-path-retry-stop-on-first-success"):
+        args.query_bridge_no_path_retry_stop_on_first_success = True
+    max_float_if_implicit("query_bridge_direct_max_length", "--query-bridge-direct-max-length", 15.0)
     args.hipac_online_transition_portal = False
     args.hipac_promote_transition_slices = False
 
 
 def _flag_was_supplied(argv: list[str], flag: str) -> bool:
     return any(item == flag or item.startswith(f"{flag}=") for item in argv)
+
+
+def effective_lect_split_schedule(args: argparse.Namespace,
+                                  robot_name: str,
+                                  argv: list[str] | None = None) -> str:
+    """Use robot-specific LECT split schedule unless the CLI overrides it."""
+    supplied = argv or []
+    if _flag_was_supplied(supplied, "--lect-split-schedule"):
+        return str(args.lect_split_schedule)
+    return robot_split_schedule_kind(str(robot_name))
+
+
+def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
+                                        robot_name: str,
+                                        difficulty: str,
+                                        argv: list[str] | None = None) -> argparse.Namespace:
+    """Return per-robot Exp.6 RBF settings unless the CLI explicitly overrides them.
+
+    The saved random-scene catalog is not kinematically uniform: IIWA keeps the
+    Exp.4-derived AAFK-style profile, while UR5/Panda need shallower offline
+    cover plus deeper endpoint anchoring and a lower QueryBridge edge penalty to
+    avoid long certified-graph detours.  This helper keeps those choices
+    reproducible without hiding user-specified overrides.
+    """
+    if not bool(getattr(args, "rbf_robot_tuned_profile", True)):
+        return args
+    tuned = copy.copy(args)
+    supplied = argv or []
+    robot = str(robot_name).lower()
+    level = str(difficulty).lower()
+
+    def set_if_implicit(attr: str, flag: str, value: Any) -> None:
+        if not _flag_was_supplied(supplied, flag):
+            setattr(tuned, attr, value)
+
+    def set_true_if_implicit(attr: str, flag: str) -> None:
+        if not _flag_was_supplied(supplied, flag):
+            setattr(tuned, attr, True)
+
+    def set_false_if_implicit(attr: str, flag: str) -> None:
+        if not _flag_was_supplied(supplied, flag):
+            setattr(tuned, attr, False)
+
+    def set_leaf_cap(depth: int) -> None:
+        set_if_implicit("leaf_max_depth", "--leaf-max-depth", int(depth))
+        set_if_implicit("adaptive_depth_min", "--adaptive-depth-min", int(depth))
+        set_if_implicit("adaptive_depth_max", "--adaptive-depth-max", int(depth))
+
+    if robot == "iiwa":
+        set_leaf_cap(10)
+        set_if_implicit("deep_ffb_depth", "--deep-ffb-depth", 56)
+        set_if_implicit("connector_pave_depth", "--connector-pave-depth", 56)
+        set_if_implicit("query_bridge_pave_depth", "--query-bridge-pave-depth", 56)
+        set_if_implicit("query_endpoint_anchor_ffb_depth", "--query-endpoint-anchor-ffb-depth", 110)
+    elif robot == "ur5":
+        set_leaf_cap(8)
+        ur5_pave_depth = 62 if level == "hard" else 56
+        set_if_implicit("deep_ffb_depth", "--deep-ffb-depth", ur5_pave_depth)
+        set_if_implicit("connector_pave_depth", "--connector-pave-depth", ur5_pave_depth)
+        set_if_implicit("query_bridge_pave_depth", "--query-bridge-pave-depth", ur5_pave_depth)
+        set_if_implicit("query_endpoint_anchor_ffb_depth", "--query-endpoint-anchor-ffb-depth", 80)
+        set_if_implicit("ffb_start_depth", "--ffb-start-depth", 8)
+        set_if_implicit("query_bridge_ffb_start_depth", "--query-bridge-ffb-start-depth", 8)
+        set_if_implicit("query_bridge_edge_cost_penalty", "--query-bridge-edge-cost-penalty", 0.0)
+        set_if_implicit("query_bridge_rrt_fixed_iters", "--query-bridge-rrt-fixed-iters", 10000)
+        set_if_implicit("query_bridge_no_path_retry_attempts", "--query-bridge-no-path-retry-attempts", 32)
+        set_true_if_implicit(
+            "query_bridge_no_path_retry_stop_on_first_success",
+            "--query-bridge-no-path-retry-stop-on-first-success",
+        )
+        set_if_implicit("query_bridge_direct_max_length", "--query-bridge-direct-max-length", 15.0)
+        set_false_if_implicit("query_bridge_to_main_island", "--query-bridge-to-main-island")
+        if level == "hard":
+            set_if_implicit("query_bridge_forced_attempts", "--query-bridge-forced-attempts", 6)
+            set_if_implicit("query_bridge_attempt_offset", "--query-bridge-attempt-offset", 6)
+    elif robot == "panda":
+        set_leaf_cap(10)
+        set_if_implicit("deep_ffb_depth", "--deep-ffb-depth", 56)
+        set_if_implicit("connector_pave_depth", "--connector-pave-depth", 56)
+        set_if_implicit("query_bridge_pave_depth", "--query-bridge-pave-depth", 56)
+        set_if_implicit("query_endpoint_anchor_ffb_depth", "--query-endpoint-anchor-ffb-depth", 110)
+        set_if_implicit("ffb_start_depth", "--ffb-start-depth", 8)
+        set_if_implicit("query_bridge_ffb_start_depth", "--query-bridge-ffb-start-depth", 8)
+        set_if_implicit("query_bridge_edge_cost_penalty", "--query-bridge-edge-cost-penalty", 0.0)
+        if level == "hard":
+            set_if_implicit("query_bridge_rrt_fixed_iters", "--query-bridge-rrt-fixed-iters", 40000)
+            set_if_implicit("query_bridge_no_path_retry_attempts", "--query-bridge-no-path-retry-attempts", 0)
+            set_if_implicit("query_bridge_no_path_retry_budget_iters", "--query-bridge-no-path-retry-budget-iters", "")
+            set_if_implicit("query_bridge_no_path_retry_budget_attempts", "--query-bridge-no-path-retry-budget-attempts", "")
+        else:
+            set_if_implicit("query_bridge_rrt_fixed_iters", "--query-bridge-rrt-fixed-iters", 10000)
+            set_if_implicit("query_bridge_no_path_retry_attempts", "--query-bridge-no-path-retry-attempts", 32)
+            set_if_implicit("query_bridge_no_path_retry_budget_iters", "--query-bridge-no-path-retry-budget-iters", "50000")
+            set_if_implicit("query_bridge_no_path_retry_budget_attempts", "--query-bridge-no-path-retry-budget-attempts", "64")
+        set_true_if_implicit(
+            "query_bridge_no_path_retry_stop_on_first_success",
+            "--query-bridge-no-path-retry-stop-on-first-success",
+        )
+        set_if_implicit("query_bridge_direct_max_length", "--query-bridge-direct-max-length", 15.0)
+        set_true_if_implicit("query_bridge_to_main_island", "--query-bridge-to-main-island")
+    return tuned
 
 
 def normalize_adaptive_depth_cap(args: argparse.Namespace, argv: list[str]) -> None:
@@ -271,8 +391,12 @@ def normalize_adaptive_depth_cap(args: argparse.Namespace, argv: list[str]) -> N
     )
 
 
-def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | None = None) -> dict[str, Any]:
+def effective_rbf_profile(args: argparse.Namespace,
+                          box_budgets: list[int] | None = None,
+                          *,
+                          split_schedule_kind: str | None = None) -> dict[str, Any]:
     profile = copy.deepcopy(default_rbf_profile())
+    effective_split = str(split_schedule_kind or args.lect_split_schedule)
     inherited_profile = str(profile.get("profile", "registered_exp4_profile"))
     profile["profile"] = (
         f"exp06_leaf{int(args.leaf_max_depth)}"
@@ -283,6 +407,7 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["offline_query_agnostic_build"] = True
     profile["inherits_from"] = inherited_profile
     profile["override_reason"] = "Exp.6 controlled depth trade-off scan on saved random-scene catalog."
+    profile["robot_tuned_profile"] = bool(getattr(args, "rbf_robot_tuned_profile", False))
     profile["leaf_sweep"]["leaf_start_depth"] = int(args.leaf_start_depth)
     profile["leaf_sweep"]["leaf_max_depth"] = int(args.leaf_max_depth)
     profile["leaf_sweep"]["adaptive_target_depth"] = resolved_adaptive_target_depth(args)
@@ -320,16 +445,23 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
     profile["deep_refine"]["ffb_start_depth"] = int(args.ffb_start_depth)
     profile["deep_refine"]["ffb_search_mode"] = str(args.ffb_search_mode)
-    profile["deep_refine"]["split_schedule_kind"] = str(args.lect_split_schedule)
+    profile["deep_refine"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
+    profile["deep_refine"]["split_schedule_kind"] = effective_split
+    profile["leaf_sweep"]["split_schedule_kind"] = effective_split
+    profile["query_bridge"]["split_schedule_kind"] = effective_split
     profile["robot_overrides"] = {
         "ur5_ffb_start_depth": int(args.ur5_ffb_start_depth),
         "policy": "value >= 0 overrides global ffb_start_depth for all UR5 RBF stages",
     }
     profile["connector"]["pave_depth"] = int(args.connector_pave_depth)
+    profile["connector"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["connector"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
     profile["connector"]["max_pairs_per_gap"] = int(DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP)
     profile["connector"]["per_pair_timeout_ms"] = int(DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS)
     profile["query_bridge"]["pave_depth"] = int(args.query_bridge_pave_depth)
     profile["query_bridge"]["ffb_start_depth"] = int(args.query_bridge_ffb_start_depth)
+    profile["query_bridge"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["query_bridge"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
     profile["query_bridge"]["endpoint_anchor_ffb_depth"] = int(args.query_endpoint_anchor_ffb_depth)
     profile["query_bridge"]["all_queries"] = bool(args.query_bridge_all)
     profile["query_bridge"]["adaptive_all"] = bool(args.query_bridge_adaptive_all)
@@ -344,13 +476,32 @@ def effective_rbf_profile(args: argparse.Namespace, box_budgets: list[int] | Non
     profile["query_bridge"]["direct_append_partition_immediate"] = bool(
         args.query_bridge_direct_append_partition_immediate
     )
+    profile["query_bridge"]["box_transition_line_deviation_penalty"] = float(args.box_transition_line_deviation_penalty)
+    profile["query_bridge"]["foreign_edge_cost_penalty"] = float(args.query_foreign_edge_cost_penalty)
     profile["query_bridge"]["query_bridge_edge_cost_penalty"] = float(args.query_bridge_edge_cost_penalty)
+    profile["query_bridge"]["forced_attempts"] = int(args.query_bridge_forced_attempts)
+    profile["query_bridge"]["attempt_offset"] = int(args.query_bridge_attempt_offset)
     profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
     profile["query_bridge"]["rrt_fixed_timeout_ms"] = float(args.query_bridge_rrt_fixed_timeout_ms)
     profile["query_bridge"]["no_path_retry_attempts"] = int(args.query_bridge_no_path_retry_attempts)
     profile["query_bridge"]["no_path_retry_stop_on_first_success"] = bool(
         args.query_bridge_no_path_retry_stop_on_first_success
     )
+    profile["query_bridge"]["no_path_retry_budget_iters"] = str(
+        getattr(args, "query_bridge_no_path_retry_budget_iters", "")
+    ).strip()
+    profile["query_bridge"]["no_path_retry_budget_attempts"] = str(
+        getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
+    ).strip()
+    profile["query_bridge"]["to_main_island"] = bool(args.query_bridge_to_main_island)
+    profile["query_bridge"]["to_main_direct_segment_max_length"] = float(
+        args.query_bridge_to_main_direct_segment_max_length
+    )
+    profile["query_bridge"]["failure_fallback_to_main"] = bool(args.query_bridge_failure_fallback_to_main)
+    profile["query_bridge"]["waypoint_quality_retry"] = bool(args.query_bridge_waypoint_quality_retry)
+    profile["query_bridge"]["waypoint_quality_retry_attempts"] = int(args.query_bridge_waypoint_quality_retry_attempts)
+    profile["query_bridge"]["waypoint_quality_max_ratio"] = float(args.query_bridge_waypoint_quality_max_ratio)
+    profile["query_bridge"]["waypoint_quality_max_additive"] = float(args.query_bridge_waypoint_quality_max_additive)
     profile["query_bridge"]["group_residual_gaps"] = bool(args.query_bridge_group_residual_gaps)
     profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
     profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)
@@ -388,6 +539,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--queries-per-scene", type=int, default=DEFAULT_QUERIES_PER_SCENE)
     parser.add_argument("--seed-base", type=int, default=9176)
     parser.add_argument("--methods", default="sbf_leaf_rrt")
+    parser.add_argument(
+        "--rbf-robot-tuned-profile",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Use the validated Exp.6 per-robot RBF profile when a setting is not "
+            "explicitly supplied.  This keeps IIWA on the Exp.4-derived profile "
+            "and applies UR5/Panda-specific depth and QueryBridge cost settings."
+        ),
+    )
     parser.add_argument("--deep-max-boxes", type=int, default=DEFAULT_RBF_DEEP_MAX_BOXES)
     parser.add_argument("--box-budgets", default="")
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
@@ -477,24 +638,35 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     )
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
+    parser.add_argument("--box-transition-line-deviation-penalty", type=float, default=2.0)
+    parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=2.0)
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-sequential-reuse", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-scene-reusable-edges", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
+    parser.add_argument("--query-bridge-attempt-offset", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET)
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
     parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
     parser.add_argument("--query-bridge-no-path-retry-stop-on-first-success",
                         action=argparse.BooleanOptionalAction,
                         default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS)
+    parser.add_argument("--query-bridge-no-path-retry-budget-iters", default="")
+    parser.add_argument("--query-bridge-no-path-retry-budget-attempts", default="")
+    parser.add_argument("--query-bridge-waypoint-quality-retry", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--query-bridge-waypoint-quality-retry-attempts", type=int, default=4)
+    parser.add_argument("--query-bridge-waypoint-quality-max-ratio", type=float, default=2.0)
+    parser.add_argument("--query-bridge-waypoint-quality-max-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--query-bridge-failure-fallback-to-main", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
     parser.add_argument("--endpoint-main-target-k", type=int, default=8)
     parser.add_argument("--endpoint-main-coarse-step", type=float, default=0.08)
     parser.add_argument("--endpoint-main-fine-step", type=float, default=0.02)
     parser.add_argument("--endpoint-main-max-ffb-calls", type=int, default=48)
     parser.add_argument("--endpoint-main-max-boxes", type=int, default=64)
-    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="50,58,62")
+    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="")
     parser.add_argument("--endpoint-main-residual-segment-max-length", type=float, default=0.25)
     parser.add_argument("--endpoint-main-lateral-offset", type=float, default=0.03)
     parser.add_argument("--endpoint-main-lateral-rounds", type=int, default=2)
@@ -795,6 +967,12 @@ def simplify_path_if_requested(
 
 
 def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
+    args = apply_exp06_robot_tuned_rbf_profile(
+        args,
+        robot_name,
+        difficulty,
+        getattr(args, "_argv", []),
+    )
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
     queries = [
@@ -832,6 +1010,11 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     effective_ffb_start_depth = int(args.ffb_start_depth)
     if robot_name == "ur5" and int(args.ur5_ffb_start_depth) >= 0:
         effective_ffb_start_depth = int(args.ur5_ffb_start_depth)
+    effective_split_schedule_kind = effective_lect_split_schedule(
+        args,
+        robot_name,
+        getattr(args, "_argv", []),
+    )
     hipac_profile_tag = (
         f"_hp{int(hipac_improved)}"
         f"_hpre{int(hipac_online_prebridge_portal)}"
@@ -839,11 +1022,22 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_askip{int(scene_anchor_skip_if_main_accessible)}"
         f"_ath{fmt_float(float(args.offline_anchor_main_accessible_threshold))}"
     )
+    query_quality_tag = (
+        f"_qbp{fmt_float(float(args.query_bridge_edge_cost_penalty))}"
+        f"_fa{int(args.query_bridge_forced_attempts)}"
+    )
+    budget_iters_tag = str(getattr(args, "query_bridge_no_path_retry_budget_iters", "")).strip()
+    budget_attempts_tag = str(getattr(args, "query_bridge_no_path_retry_budget_attempts", "")).strip()
+    if budget_iters_tag or budget_attempts_tag:
+        query_quality_tag += (
+            f"_nbi{slugify(budget_iters_tag or '0', limit=10)}"
+            f"_nba{slugify(budget_attempts_tag or '0', limit=10)}"
+        )
     stage_id = (
         f"l{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
         f"_fs{int(effective_ffb_start_depth)}"
-        f"_sp{str(args.lect_split_schedule).replace('-', '_')}"
+        f"_sp{str(effective_split_schedule_kind).replace('-', '_')}"
         f"_ead{int(args.query_endpoint_anchor_ffb_depth)}"
         f"_b{int(args.deep_max_boxes)}"
         f"_a{int(args.offline_anchor_count)}"
@@ -851,6 +1045,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
         f"{hipac_profile_tag}"
+        f"{query_quality_tag}"
     )
     active_cache_name = (
         f"rbf_{robot_name}_{difficulty}_{int(scene_seed)}"
@@ -858,13 +1053,14 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_l{int(args.leaf_max_depth)}"
         f"_ffb{int(args.deep_ffb_depth)}"
         f"_fs{int(effective_ffb_start_depth)}"
-        f"_sp{str(args.lect_split_schedule).replace('-', '_')}"
+        f"_sp{str(effective_split_schedule_kind).replace('-', '_')}"
         f"_ead{int(args.query_endpoint_anchor_ffb_depth)}"
         f"_a{int(args.offline_anchor_count)}"
         f"_c{int(args.offline_anchor_candidate_count)}"
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
         f"{hipac_profile_tag}"
+        f"{query_quality_tag}"
     )
     row = run_leaf_rrt(
         robot=robot,
@@ -917,7 +1113,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_endpoint_anchor_ffb_depth=int(args.query_endpoint_anchor_ffb_depth),
             ffb_start_depth=int(effective_ffb_start_depth),
             ffb_search_mode=str(args.ffb_search_mode),
-            split_schedule_kind=str(args.lect_split_schedule),
+            split_schedule_kind=str(effective_split_schedule_kind),
             use_external_evidence=True,
             external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
             external_evidence_verify_identity=False,
@@ -999,14 +1195,27 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_sequential_reuse=bool(args.query_bridge_sequential_reuse),
             query_bridge_scene_reusable_edges=bool(args.query_bridge_scene_reusable_edges),
             query_bridge_force_selected=bool(args.query_bridge_force_selected),
+            query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
+            query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
             query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
             query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
             query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
             query_bridge_no_path_retry_stop_on_first_success=bool(
                 args.query_bridge_no_path_retry_stop_on_first_success
             ),
+            query_bridge_no_path_retry_budget_iters=str(
+                getattr(args, "query_bridge_no_path_retry_budget_iters", "")
+            ).strip(),
+            query_bridge_no_path_retry_budget_attempts=str(
+                getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
+            ).strip(),
+            query_bridge_waypoint_quality_retry=bool(args.query_bridge_waypoint_quality_retry),
+            query_bridge_waypoint_quality_retry_attempts=int(args.query_bridge_waypoint_quality_retry_attempts),
+            query_bridge_waypoint_quality_max_ratio=float(args.query_bridge_waypoint_quality_max_ratio),
+            query_bridge_waypoint_quality_max_additive=float(args.query_bridge_waypoint_quality_max_additive),
             query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
             query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
+            query_bridge_failure_fallback_to_main=bool(args.query_bridge_failure_fallback_to_main),
             query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
             endpoint_main_target_k=int(args.endpoint_main_target_k),
             endpoint_main_coarse_step=float(args.endpoint_main_coarse_step),
@@ -1018,6 +1227,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             endpoint_main_lateral_offset=float(args.endpoint_main_lateral_offset),
             endpoint_main_lateral_rounds=int(args.endpoint_main_lateral_rounds),
             endpoint_main_face_epsilon=float(args.endpoint_main_face_epsilon),
+            query_box_transition_line_deviation_penalty=float(args.box_transition_line_deviation_penalty),
+            query_foreign_edge_cost_penalty=float(args.query_foreign_edge_cost_penalty),
             connector_segment_resolution=(
                 int(args.connector_segment_resolution)
                 if args.connector_segment_resolution is not None
@@ -1044,6 +1255,11 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "ffb_start_depth": int(effective_ffb_start_depth),
             "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
             "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
+            "lect_split_schedule": str(effective_split_schedule_kind),
+            "lect_split_schedule_explicit": _flag_was_supplied(
+                getattr(args, "_argv", []),
+                "--lect-split-schedule",
+            ),
             "offline_anchor_count": int(args.offline_anchor_count),
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
             "offline_anchor_skip_if_main_accessible": bool(scene_anchor_skip_if_main_accessible),
@@ -1065,8 +1281,11 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "hipac_transition_target_query_indices": str(args.hipac_transition_target_query_indices),
             "hipac_promote_transition_slices": hipac_promote_transition_slices,
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
+            "query_bridge_failure_fallback_to_main": bool(args.query_bridge_failure_fallback_to_main),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
+            "box_transition_line_deviation_penalty": float(args.box_transition_line_deviation_penalty),
+            "query_foreign_edge_cost_penalty": float(args.query_foreign_edge_cost_penalty),
             "query_bridge_sequential_reuse": bool(args.query_bridge_sequential_reuse),
             "query_bridge_scene_reusable_edges": bool(args.query_bridge_scene_reusable_edges),
             "query_bridge_reuse_scope": "scene_seed_local",
@@ -1077,14 +1296,27 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 args.query_bridge_direct_append_partition_immediate
             ),
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
+            "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
+            "query_bridge_attempt_offset": int(args.query_bridge_attempt_offset),
             "query_bridge_rrt_fixed_iters": int(args.query_bridge_rrt_fixed_iters),
             "query_bridge_rrt_fixed_timeout_ms": float(args.query_bridge_rrt_fixed_timeout_ms),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
             "query_bridge_no_path_retry_stop_on_first_success": bool(
                 args.query_bridge_no_path_retry_stop_on_first_success
             ),
+            "query_bridge_no_path_retry_budget_iters": str(
+                getattr(args, "query_bridge_no_path_retry_budget_iters", "")
+            ).strip(),
+            "query_bridge_no_path_retry_budget_attempts": str(
+                getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
+            ).strip(),
+            "query_bridge_waypoint_quality_retry": bool(args.query_bridge_waypoint_quality_retry),
+            "query_bridge_waypoint_quality_retry_attempts": int(args.query_bridge_waypoint_quality_retry_attempts),
+            "query_bridge_waypoint_quality_max_ratio": float(args.query_bridge_waypoint_quality_max_ratio),
+            "query_bridge_waypoint_quality_max_additive": float(args.query_bridge_waypoint_quality_max_additive),
             "ffb_start_depth": int(effective_ffb_start_depth),
             "rbf_max_depth": int(args.rbf_max_depth),
+            "rbf_robot_tuned_profile": bool(args.rbf_robot_tuned_profile),
             "deep_max_boxes": int(args.deep_max_boxes),
             "obstacle_count": len(scene.obstacles),
             "queries_per_scene": len(queries),
@@ -1425,6 +1657,10 @@ def run_prm_scene_cumulative(
         int(args.prm_max_nearest_neighbors),
         str(args.prm_planner_kind),
         bool(args.prm_preload_query_endpoints),
+        int(args.prm_early_stop_success_stall_checkpoints),
+        float(args.prm_early_stop_path_rel_tol),
+        float(args.prm_unresolved_query_retry_interval_s),
+        float(args.prm_solved_query_recheck_interval_s),
     )
     incumbents: dict[str, dict[str, Any]] = {}
     rows: list[dict[str, Any]] = []
@@ -1443,20 +1679,25 @@ def run_prm_scene_cumulative(
             audit_s = 0.0
             audit_status = "not_attempted"
             raw_length = math.nan
+            current = incumbents.get(label)
             if bool(qresult.get("ok")) and len(path) >= 2:
-                audit_passed, audit_s, audit_status = audit_path(
-                    robot,
-                    list(scene.obstacles),
-                    path,
-                    float(args.audit_segment_step),
-                    start=start,
-                    goal=goal,
-                    collision_tolerance=float(args.audit_collision_tolerance),
-                )
-                audit_total_s += audit_s
+                candidate_length = path_length(path)
+                should_audit = current is None or candidate_length <= float(current["path_length"]) + 1e-12
+                if should_audit:
+                    audit_passed, audit_s, audit_status = audit_path(
+                        robot,
+                        list(scene.obstacles),
+                        path,
+                        float(args.audit_segment_step),
+                        start=start,
+                        goal=goal,
+                        collision_tolerance=float(args.audit_collision_tolerance),
+                    )
+                    audit_total_s += audit_s
+                else:
+                    audit_status = "skipped_not_better_than_audited_incumbent"
                 if audit_passed:
-                    raw_length = path_length(path)
-                    current = incumbents.get(label)
+                    raw_length = candidate_length
                     if current is None or raw_length <= float(current["path_length"]) + 1e-12:
                         incumbents[label] = {
                             "path_length": raw_length,
@@ -1846,6 +2087,16 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     1.0 if bool(row.get("query_bridge_scene_reusable_edges", False)) else 0.0
                     for row in items
                 ),
+                "query_bridge_edge_cost_penalty": median(
+                    row.get("query_bridge_edge_cost_penalty", math.nan) for row in items
+                ),
+                "query_bridge_forced_attempts": median(
+                    row.get("query_bridge_forced_attempts", math.nan) for row in items
+                ),
+                "rbf_robot_tuned_profile": median(
+                    1.0 if bool(row.get("rbf_robot_tuned_profile", False)) else 0.0
+                    for row in items
+                ),
                 "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
                 "rbf_max_depth": median(row.get("rbf_max_depth", math.nan) for row in items),
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
@@ -1906,6 +2157,10 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
                 "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
                 "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
+                "diag_query_bridge_no_path_retry_budget_stages_median": median(row.get("diag_query_bridge_no_path_retry_budget_stages", 0.0) for row in items),
+                "diag_query_bridge_no_path_retry_adaptive_attempts_median": median(row.get("diag_query_bridge_batch_no_path_retry_adaptive_attempts", 0.0) for row in items),
+                "diag_query_bridge_no_path_retry_adaptive_successes_median": median(row.get("diag_query_bridge_batch_no_path_retry_adaptive_successes", 0.0) for row in items),
+                "diag_query_bridge_no_path_retry_adaptive_ms_total_median": median(row.get("diag_query_bridge_batch_no_path_retry_adaptive_ms_total", 0.0) for row in items),
                 "diag_query_bridge_batch_tasks_initial_median": median(row.get("diag_query_bridge_batch_tasks_initial", 0.0) for row in items),
                 "diag_query_bridge_batch_tasks_attempted_median": median(row.get("diag_query_bridge_batch_tasks_attempted", 0.0) for row in items),
                 "diag_query_bridge_batch_tasks_no_path_median": median(row.get("diag_query_bridge_batch_tasks_no_path", 0.0) for row in items),
@@ -2045,8 +2300,12 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "connector_pave_depth",
         "query_bridge_pave_depth",
         "query_endpoint_anchor_ffb_depth",
+        "query_bridge_ffb_start_depth",
         "query_bridge_sequential_reuse",
         "query_bridge_scene_reusable_edges",
+        "query_bridge_edge_cost_penalty",
+        "query_bridge_forced_attempts",
+        "rbf_robot_tuned_profile",
         "ffb_start_depth",
         "rbf_max_depth",
         "budget_s",
@@ -2077,6 +2336,10 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_batch_pave_ms_total_median",
         "diag_query_bridge_rrt_fixed_iters_median",
         "diag_query_bridge_rrt_fixed_timeout_ms_median",
+        "diag_query_bridge_no_path_retry_budget_stages_median",
+        "diag_query_bridge_no_path_retry_adaptive_attempts_median",
+        "diag_query_bridge_no_path_retry_adaptive_successes_median",
+        "diag_query_bridge_no_path_retry_adaptive_ms_total_median",
         "diag_query_bridge_batch_tasks_initial_median",
         "diag_query_bridge_batch_tasks_attempted_median",
         "diag_query_bridge_batch_tasks_no_path_median",
@@ -2289,7 +2552,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def main() -> int:
     args = parse_args()
-    apply_hipac_improved_leaf_sweep_profile(args)
+    args._argv = list(sys.argv[1:])
+    apply_hipac_improved_leaf_sweep_profile(args, args._argv)
     normalize_adaptive_depth_cap(args, sys.argv[1:])
     configure_thread_environment(int(args.threads))
     robots = csv_list(args.robots)
@@ -2413,6 +2677,27 @@ def main() -> int:
                             else f"timeout{float(args.rrt_timeout_s):g}s" if method == "rrtconnect"
                             else method
                         )
+                        row_rbf_profile = None
+                        row_rbf_lectdb = None
+                        row_args = args
+                        if method == "sbf_leaf_rrt":
+                            row_args = apply_exp06_robot_tuned_rbf_profile(
+                                args,
+                                robot,
+                                difficulty,
+                                getattr(args, "_argv", []),
+                            )
+                            row_split = effective_lect_split_schedule(
+                                row_args,
+                                robot,
+                                getattr(row_args, "_argv", []),
+                            )
+                            row_rbf_profile = effective_rbf_profile(
+                                row_args,
+                                box_budgets,
+                                split_schedule_kind=row_split,
+                            )
+                            row_rbf_lectdb = robot_lectdb_profile(robot)
                         rows.append({
                             "method": method,
                             "robot": robot,
@@ -2436,8 +2721,12 @@ def main() -> int:
                             "canonical_mapping_scope": "LECT_internal_only",
                             "offline_query_agnostic_build": bool(method == "sbf_leaf_rrt"),
                             "status": "planned" if args.dry_run else "planned_for_execution",
-                            "rbf_default_profile": copy.deepcopy(rbf_profile) if method == "sbf_leaf_rrt" else None,
-                            "rbf_robot_lectdb": robot_lectdb_profile(robot) if method == "sbf_leaf_rrt" else None,
+                            "rbf_default_profile": row_rbf_profile,
+                            "rbf_robot_lectdb": row_rbf_lectdb,
+                            "rbf_robot_tuned_profile": (
+                                bool(getattr(row_args, "rbf_robot_tuned_profile", False))
+                                if method == "sbf_leaf_rrt" else None
+                            ),
                             "rbf_box_budgets": box_budgets if method == "sbf_leaf_rrt" else None,
                             "ompl_registered_profile": "exp05_registered" if method in {"prm", "bitstar"} else None,
                             "ompl_simplify_time_s": float(args.ompl_simplify_time_s) if method in {"prm", "bitstar", "rrtconnect"} else None,

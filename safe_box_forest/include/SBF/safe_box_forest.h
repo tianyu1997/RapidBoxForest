@@ -128,8 +128,8 @@ struct RBFPlanningConfig {
 	/// Optional endpoint-anchor FFB depth for online queries. <=0 reuses
 	/// query_bridge_pave_depth, then connector.pave.
 	int query_endpoint_anchor_ffb_depth = 0;
-	/// Optional shallow-to-deep query bridge FFB schedule. Empty reuses
-	/// connector.pave.adaptive_ffb_depths.
+	/// Deprecated: query-bridge FFB now follows FindFreeBoxOptions::search_mode
+	/// and ignores shallow-to-deep depth schedules.
 	std::vector<int> query_bridge_adaptive_ffb_depths;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
@@ -392,7 +392,9 @@ struct EndpointMainBoxCorridorConfig {
 	double fine_step = 0.02;
 	int max_ffb_calls = 48;
 	int max_boxes = 64;
-	std::vector<int> adaptive_ffb_depths = {50, 58, 62};
+	// Deprecated: endpoint-to-main FFB ignores this legacy schedule and uses the
+	// configured FindFreeBoxOptions::search_mode path.
+	std::vector<int> adaptive_ffb_depths;
 	double residual_segment_max_length = 0.25;
 	double lateral_offset = 0.03;
 	int lateral_rounds = 2;

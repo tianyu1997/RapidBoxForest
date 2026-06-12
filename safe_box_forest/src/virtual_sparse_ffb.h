@@ -29,6 +29,12 @@ struct MaterializedSeedCell {
     std::vector<Interval> query_intervals;
 };
 
+struct VirtualSeedPathEntry {
+    int depth = 0;
+    int changed_dim = -1;
+    std::vector<Interval> tree_intervals;
+};
+
 inline bool split_policy_supports_virtual_cells(const OracleSplitPolicyDescriptor& descriptor,
                                                 int target_depth) {
     if (target_depth < 0) {
@@ -83,6 +89,50 @@ inline std::optional<VirtualSeedCell> virtual_seed_cell_at_depth(
         cell.tree_intervals,
         seed);
     return cell;
+}
+
+inline std::optional<std::vector<VirtualSeedPathEntry>> virtual_seed_path_to_depth(
+    BoxOracle& oracle,
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    int target_depth) {
+    const auto descriptor = oracle.split_policy_descriptor();
+    if (!split_policy_supports_virtual_cells(descriptor, target_depth)) {
+        return std::nullopt;
+    }
+    const auto& root = oracle.root_intervals();
+    if (root.empty() || seed.size() != static_cast<int>(root.size())) {
+        return std::nullopt;
+    }
+
+    lect_database::SplitPolicy policy(descriptor);
+    Eigen::VectorXd tree_seed = oracle.tree_configuration_for_query(seed);
+    std::vector<Interval> intervals = root;
+    std::vector<VirtualSeedPathEntry> path;
+    path.reserve(static_cast<std::size_t>(target_depth + 1));
+    path.push_back(VirtualSeedPathEntry{0, -1, intervals});
+
+    int changed_dim = -1;
+    for (int depth = 0; depth < target_depth; ++depth) {
+        const int dim = policy.choose_dimension(root, intervals, depth);
+        if (dim < 0 || dim >= static_cast<int>(intervals.size()) ||
+            dim >= tree_seed.size()) {
+            return std::nullopt;
+        }
+        const double split_value =
+            policy.choose_split_value(intervals[static_cast<std::size_t>(dim)]);
+        auto& interval = intervals[static_cast<std::size_t>(dim)];
+        if (!(split_value > interval.lo && split_value < interval.hi)) {
+            return std::nullopt;
+        }
+        if (tree_seed[dim] <= split_value) {
+            interval.hi = split_value;
+        } else {
+            interval.lo = split_value;
+        }
+        changed_dim = dim;
+        path.push_back(VirtualSeedPathEntry{depth + 1, changed_dim, intervals});
+    }
+    return path;
 }
 
 inline bool intervals_equal_with_tolerance(const std::vector<Interval>& lhs,

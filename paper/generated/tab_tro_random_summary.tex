@@ -1,14 +1,24 @@
+% Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Saved-catalog random-scene reusable-planner best trade-off points. Each obstacle scene stores fixed multi-query batches; RBF builds once per scene and online timings reuse the offline forest. Online/q excludes final simplification; Simplify/q reports the measured cost under the globally fixed 0.01~s OMPL post-processing budget. Times exclude final audit; full box-budget and amortization curves are shown in Fig.~\ref{fig:tro_random_tradeoff}.}
+\captionof{table}{Saved-catalog random-scene best trade-off points. Numeric entries are median [Q1,Q3] when distributions are available; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ uses success-only aggregation with a query-level globally shortest strict-audited reference when saved-query samples are available; summary-only imported context rows use a scenario-level reference. RBF and PRM are reusable planners and report Build/Online/q/$L/L^\star$; RRTConnect and BIT* are one-shot online baselines. PRM and BIT* entries select the fastest audited checkpoint within 1.08$\times$ of the best path independently for each query/seed, rather than charging one fixed checkpoint to all queries. Full curves appear in \Cref{fig:tro_random_tradeoff}.}
 \label{tab:tro-random-summary}
-\footnotesize
-\begin{tabular}{llrrrrrrrrr}
+\scriptsize
+\setlength{\tabcolsep}{1.5pt}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{lccc|ccc|cc|cc}
 \toprule
-Robot & Difficulty & Boxes & SR & Build & Online/q & Simplify/q & Amort@10 & Path & Seg. \\
+Scenario & \multicolumn{3}{c|}{RBF} & \multicolumn{3}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\
+\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
+ & Build & Online/q & $L/L^\star$ & Build & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ \\
 \midrule
-ur5 & medium & 400 & 10/10 & 0.155 & 0.076 & 0.010 & 0.091 & 6.089 & 0.107 \\
-ur5 & hard & 400 & 10/10 & 0.120 & 0.174 & 0.010 & 0.186 & 12.400 & 0.738 \\
+IIWA-Medium & 0.088 [0.078,0.097] & 0.024 [0.021,0.040] & 1.00 [1.00,1.00] & 0.565 [0.016,1.528] & 0.029 [0.012,0.058] & 1.07 [1.05,1.11] & 0.002 [0.001,0.002] & 1.01 [1.00,1.04] & 0.014 [0.007,0.042] & 1.04 [1.01,1.06] \\
+IIWA-Hard & 0.093 [0.084,0.100] & 0.032 [0.028,0.048] & 1.00 [1.00,1.00] & 0.721 [0.036,0.995] & 0.029 [0.013,0.061] & 1.07 [1.04,1.09] & 0.002 [0.002,0.003] & 1.03 [1.00,1.05] & 0.027 [0.012,0.076] & 1.04 [1.02,1.06] \\
+UR5-Medium & 0.306 [0.294,0.310] & 0.063 [0.017,0.084] & 1.11 [1.03,1.42] & 1.836 [1.195,2.603] & 0.057 [0.039,0.094] & 1.01 [1.00,1.06] & 0.023 [0.002,0.049] & 1.22 [1.04,1.51] & 0.026 [0.012,0.058] & 1.03 [1.00,1.10] \\
+UR5-Hard & 0.302 [0.290,0.312] & 0.074 [0.027,0.107] & 1.14 [1.02,1.36] & 2.684 [1.727,3.632] & 0.068 [0.044,0.110] & 1.00 [1.00,1.05] & 0.048 [0.008,0.090] & 1.29 [1.11,1.53] & 0.046 [0.022,0.091] & 1.05 [1.01,1.15] \\
+PANDA-Medium & 0.314 [0.283,0.353] & 0.036 [0.024,0.067] & 1.01 [1.00,1.06] & 0.553 [0.008,1.180] & 0.041 [0.022,0.073] & 1.07 [1.03,1.10] & 0.005 [0.002,0.011] & 1.19 [1.10,1.31] & 0.016 [0.007,0.031] & 1.01 [1.00,1.04] \\
+PANDA-Hard & 0.280 [0.275,0.291] & 0.285 [0.132,0.336] & 1.03 [1.00,1.10] & 1.436 [0.746,4.094] & 0.044 [0.024,0.073] & 1.08 [1.03,1.13] & 0.056 [0.019,0.136] & 1.22 [1.13,1.35] & 0.062 [0.027,0.124] & 1.00 [1.00,1.11] \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \par\endgroup

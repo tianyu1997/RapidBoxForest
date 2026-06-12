@@ -48,16 +48,25 @@ def robot_json_payload(robot_name: str) -> dict[str, Any]:
         return {
             "name": "panda_like_standalone",
             "dh_params": [
-                {"alpha": -math.pi / 2.0, "a": 0.0, "d": 0.333, "theta": 0.0, "type": "revolute"},
-                {"alpha": math.pi / 2.0, "a": 0.0, "d": 0.0, "theta": 0.0, "type": "revolute"},
+                {"alpha": 0.0, "a": 0.0, "d": 0.333, "theta": 0.0, "type": "revolute"},
+                {"alpha": -math.pi / 2.0, "a": 0.0, "d": 0.0, "theta": 0.0, "type": "revolute"},
                 {"alpha": math.pi / 2.0, "a": 0.0, "d": 0.316, "theta": 0.0, "type": "revolute"},
-                {"alpha": -math.pi / 2.0, "a": 0.0825, "d": 0.0, "theta": 0.0, "type": "revolute"},
-                {"alpha": math.pi / 2.0, "a": -0.0825, "d": 0.384, "theta": 0.0, "type": "revolute"},
+                {"alpha": math.pi / 2.0, "a": 0.0825, "d": 0.0, "theta": 0.0, "type": "revolute"},
+                {"alpha": -math.pi / 2.0, "a": -0.0825, "d": 0.384, "theta": 0.0, "type": "revolute"},
                 {"alpha": math.pi / 2.0, "a": 0.0, "d": 0.0, "theta": 0.0, "type": "revolute"},
-                {"alpha": 0.0, "a": 0.0, "d": 0.0, "theta": 0.0, "type": "revolute"},
+                {"alpha": math.pi / 2.0, "a": 0.088, "d": 0.0, "theta": 0.0, "type": "revolute"},
             ],
-            "joint_limits": [[-2.8, 2.8], [-1.8, 1.8], [-2.8, 2.8], [-3.0, 0.0], [-2.8, 2.8], [-0.1, 3.7], [-2.8, 2.8]],
-            "link_radii": [0.055, 0.055, 0.055, 0.055, 0.055, 0.0, 0.0],
+            "joint_limits": [
+                [-2.8973, 2.8973],
+                [-1.7628, 1.7628],
+                [-2.8973, 2.8973],
+                [-3.0718, -0.0698],
+                [-2.8973, 2.8973],
+                [-0.0175, 3.7525],
+                [-2.8973, 2.8973],
+            ],
+            "tool_frame": {"alpha": 0.0, "a": 0.0, "d": 0.107, "theta": 0.0},
+            "link_radii": [0.090, 0.090, 0.080, 0.080, 0.070, 0.070, 0.060, 0.050],
         }
     raise ValueError(f"unknown robot {robot_name!r}")
 

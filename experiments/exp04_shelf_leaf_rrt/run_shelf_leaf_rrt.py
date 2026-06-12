@@ -1461,7 +1461,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-main-fine-step", type=float, default=0.02)
     parser.add_argument("--endpoint-main-max-ffb-calls", type=int, default=48)
     parser.add_argument("--endpoint-main-max-boxes", type=int, default=64)
-    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="50,58,62")
+    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="")
     parser.add_argument("--endpoint-main-residual-segment-max-length", type=float, default=0.25)
     parser.add_argument("--endpoint-main-lateral-offset", type=float, default=0.03)
     parser.add_argument("--endpoint-main-lateral-rounds", type=int, default=2)

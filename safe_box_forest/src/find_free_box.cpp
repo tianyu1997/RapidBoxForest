@@ -156,10 +156,14 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         const int virtual_start_depth =
             std::max(0, std::min(effective_max_depth,
                                  std::max(options.start_depth, options.skip_to_depth)));
-        if (detail::split_policy_supports_virtual_cells(oracle_.split_policy_descriptor(),
-                                                        effective_max_depth)) {
+        const auto virtual_path =
+            detail::virtual_seed_path_to_depth(oracle_, seed, effective_max_depth);
+        if (virtual_path) {
             if (options.record_diagnostics) {
                 context.diagnostics().add_counter("ffb.virtual_sparse_binary_attempts");
+                context.diagnostics().add_counter(
+                    "ffb.virtual_sparse_binary_path_entries",
+                    static_cast<double>(virtual_path->size()));
             }
             auto validate_virtual_depth = [&](int depth, FindFreeBoxResult& candidate) {
                 if (depth < options.skip_to_depth) {
@@ -167,14 +171,18 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                     candidate.fail_code = 2;
                     return BoxValidation::Unknown;
                 }
-                const auto cell = detail::virtual_seed_cell_at_depth(oracle_, seed, depth);
-                if (!cell) {
+                if (depth < 0 ||
+                    depth >= static_cast<int>(virtual_path->size())) {
                     candidate.fail_code = 6;
                     return BoxValidation::Unknown;
                 }
+                const auto& cell = (*virtual_path)[static_cast<std::size_t>(depth)];
                 candidate.node = oracle_.root_node();
-                candidate.changed_dim = cell->changed_dim;
-                candidate.intervals = cell->query_intervals;
+                candidate.changed_dim = cell.changed_dim;
+                candidate.intervals = oracle_.query_intervals_for_node(
+                    oracle_.root_node(),
+                    cell.tree_intervals,
+                    seed);
                 const auto validation_start = Clock::now();
                 const auto validation = oracle_.validate_node(oracle_.root_node(),
                                                               candidate.intervals,
@@ -207,7 +215,13 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             int hi = effective_max_depth;
             int best_depth = -1;
             FindFreeBoxResult best;
-            const int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+            int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+            if (probe_depth < virtual_start_depth || probe_depth >= effective_max_depth) {
+                const int span = effective_max_depth - virtual_start_depth;
+                if (span >= 4) {
+                    probe_depth = virtual_start_depth + span / 2;
+                }
+            }
             if (probe_depth >= virtual_start_depth && probe_depth < effective_max_depth) {
                 FindFreeBoxResult probe_candidate;
                 const BoxValidation probe_validation = validate_virtual_depth(probe_depth,
@@ -220,8 +234,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                     if (options.record_diagnostics) {
                         context.diagnostics().add_counter("ffb.binary_probe_free");
                     }
-                } else if (options.record_diagnostics) {
-                    context.diagnostics().add_counter("ffb.binary_probe_not_free");
+                } else {
+                    lo = std::max(lo, probe_depth + 1);
+                    if (options.record_diagnostics) {
+                        context.diagnostics().add_counter("ffb.binary_probe_not_free");
+                    }
                 }
             }
             if (!best.found) {
@@ -260,6 +277,35 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             }
             best.decisions = result.decisions;
             if (best.found && best_depth >= 0) {
+                if (!options.materialize_result_node) {
+                    best.node = kInvalidOracleNodeId;
+                    best.splits = 0;
+                    best.total_ms = elapsed_ms();
+                    if (options.record_diagnostics) {
+                        context.diagnostics().add_counter("ffb.virtual_sparse_binary_successes");
+                        context.diagnostics().add_counter(
+                            "ffb.virtual_sparse_binary_materialize_skipped");
+                        context.diagnostics().add_counter("ffb.free_ancestor_hits");
+                        context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
+                                                          static_cast<double>(best_depth));
+                    }
+                    set_max_diagnostic(context,
+                                       "ffb.free_ancestor_depth_max",
+                                       static_cast<double>(best_depth),
+                                       options.record_diagnostics);
+                    double free_log_volume = 0.0;
+                    for (const auto& interval : best.intervals) {
+                        const double width = std::max(0.0, interval.width());
+                        if (width > 0.0) {
+                            free_log_volume += std::log(width);
+                        }
+                    }
+                    if (options.record_diagnostics) {
+                        context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
+                                                          free_log_volume);
+                    }
+                    return best;
+                }
                 const auto materialized = detail::materialize_seed_path_to_depth(
                     oracle_,
                     seed,
@@ -461,7 +507,13 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         int lo = start_depth;
         int hi = effective_max_depth;
         FindFreeBoxResult best;
-        const int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+        int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+        if (probe_depth < start_depth || probe_depth >= effective_max_depth) {
+            const int span = effective_max_depth - start_depth;
+            if (span >= 4) {
+                probe_depth = start_depth + span / 2;
+            }
+        }
         if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
             FindFreeBoxResult probe_candidate;
             const BoxValidation probe_validation = validate_depth(probe_depth,
@@ -474,6 +526,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
                     context.diagnostics().add_counter("ffb.binary_probe_free");
                 }
             } else {
+                lo = std::max(lo, probe_depth + 1);
                 if (options.record_diagnostics) {
                     context.diagnostics().add_counter("ffb.binary_probe_not_free");
                 }
