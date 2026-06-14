@@ -554,6 +554,10 @@ class RBFLeafRRTOptions:
     hipac_transition_min_predicted_bridge_edges: int = 16
     hipac_transition_max_pair_distance: float = 1.50
     hipac_transition_allow_same_component: bool = True
+    hipac_transition_obb_portal: bool = False
+    hipac_transition_obb_lateral_radius: float = 0.01
+    hipac_transition_obb_longitudinal_margin: float = 0.0
+    hipac_transition_obb_safety_epsilon: float = 0.0
     hipac_promote_transition_slices: bool = False
     hipac_promote_transition_target_query_indices: str = "2,3"
     hipac_promote_transition_min_boxes: int = 8
@@ -711,6 +715,7 @@ class RBFLeafRRTOptions:
     endpoint_main_face_epsilon: float = 1e-6
     allow_anchor_roots: bool = True
     use_priority_points: bool = True
+    offline_coverage_profile: str = ""
     offline_query_agnostic_build: bool = True
     offline_random_anchors: bool = DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS
     offline_anchor_count: int = 16
@@ -721,6 +726,7 @@ class RBFLeafRRTOptions:
     offline_anchor_skip_if_main_accessible: bool = False
     offline_anchor_main_accessible_threshold: float = 0.95
     offline_shortcut_edges: int = 0
+    offline_connector_mode: str = "box_only"
     offline_shortcut_candidate_limit: int = 48
     offline_shortcut_min_gain_ratio: float = 1.6
     offline_shortcut_max_segment_length: float = 3.0
@@ -1490,6 +1496,14 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.hipac_transition_max_pair_distance = float(options.hipac_transition_max_pair_distance)
     if hasattr(cfg, "hipac_transition_allow_same_component"):
         cfg.hipac_transition_allow_same_component = bool(options.hipac_transition_allow_same_component)
+    if hasattr(cfg, "hipac_transition_obb_portal"):
+        cfg.hipac_transition_obb_portal = bool(options.hipac_transition_obb_portal)
+    if hasattr(cfg, "hipac_transition_obb_lateral_radius"):
+        cfg.hipac_transition_obb_lateral_radius = float(options.hipac_transition_obb_lateral_radius)
+    if hasattr(cfg, "hipac_transition_obb_longitudinal_margin"):
+        cfg.hipac_transition_obb_longitudinal_margin = float(options.hipac_transition_obb_longitudinal_margin)
+    if hasattr(cfg, "hipac_transition_obb_safety_epsilon"):
+        cfg.hipac_transition_obb_safety_epsilon = float(options.hipac_transition_obb_safety_epsilon)
     if hasattr(cfg, "hipac_promote_transition_slices"):
         cfg.hipac_promote_transition_slices = bool(options.hipac_promote_transition_slices)
     if hasattr(cfg, "hipac_promote_transition_target_query_indices"):
@@ -2167,14 +2181,22 @@ def run_leaf_rrt(
         )
     offline_shortcut_t0 = time.perf_counter()
     offline_shortcut_edges_added = 0
-    if int(options.offline_shortcut_edges) > 0 and hasattr(forest, "add_offline_shortcut_edges"):
+    offline_connector_mode = str(getattr(options, "offline_connector_mode", "box_only")).strip().lower().replace("-", "_")
+    allow_offline_segment_fallback = offline_connector_mode in {"short_segment", "short_segments", "segment", "segments"}
+    if (
+        int(options.offline_shortcut_edges) > 0
+        and offline_connector_mode not in {"off", "none", "disabled", "disable", "0", "false"}
+        and hasattr(forest, "add_offline_shortcut_edges")
+    ):
         offline_shortcut_edges_added = int(forest.add_offline_shortcut_edges(
             int(options.offline_shortcut_edges),
             int(options.offline_shortcut_candidate_limit),
             float(options.offline_shortcut_min_gain_ratio),
             float(options.offline_shortcut_max_segment_length),
+            bool(allow_offline_segment_fallback),
         ))
     offline_shortcut_s = time.perf_counter() - offline_shortcut_t0
+    offline_coverage_s = max(0.0, time.perf_counter() - offline_t0 - offline_shortcut_s)
     offline_build_wall_s = time.perf_counter() - offline_t0
     build_final_boxes = len(list(forest.boxes()))
     build_segment_edges = len(list(forest.segment_edges()))
@@ -2417,6 +2439,10 @@ def run_leaf_rrt(
         "build_s": offline_build_s,
         "offline_build_s": offline_build_s,
         "offline_build_profile_s": offline_build_profile_s,
+        "offline_coverage_profile": str(getattr(options, "offline_coverage_profile", "")),
+        "offline_coverage_s": float(offline_coverage_s),
+        "offline_connector_mode": offline_connector_mode,
+        "offline_connector_s": float(offline_shortcut_s),
         "query_s": query_s,
         "query_total_s": query_total_s,
         "online_s": query_s,
@@ -2473,6 +2499,7 @@ def run_leaf_rrt(
         "offline_anchor_box_volume_mean": float(diagnostics.get("leaf_refine.offline_anchor_box_volume_mean", 0.0)),
         "offline_anchor_box_volume_max": float(diagnostics.get("leaf_refine.offline_anchor_box_volume_max", 0.0)),
         "offline_shortcut_s": float(offline_shortcut_s),
+        "offline_shortcut_allow_segment_fallback": bool(allow_offline_segment_fallback),
         "offline_shortcut_edges_requested": int(options.offline_shortcut_edges),
         "offline_shortcut_edges_added": int(offline_shortcut_edges_added),
         "offline_shortcut_candidates": int(diagnostics.get("offline_shortcut.candidates", 0.0)),
@@ -2645,6 +2672,14 @@ def run_leaf_rrt(
         "query_bridge_hipac_transition_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_ffb_calls", 0.0)),
         "query_bridge_hipac_transition_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_validations", 0.0)),
         "query_bridge_hipac_transition_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_free", 0.0)),
+        "query_bridge_hipac_transition_obb_attempts": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_attempts", 0.0)),
+        "query_bridge_hipac_transition_obb_success": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_success", 0.0)),
+        "query_bridge_hipac_transition_obb_fail": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_fail", 0.0)),
+        "query_bridge_hipac_transition_obb_edge_fail": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_edge_fail", 0.0)),
+        "query_bridge_hipac_transition_obb_joint_limit_rejects": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_joint_limit_rejects", 0.0)),
+        "query_bridge_hipac_transition_obb_gjk_tests": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_gjk_tests", 0.0)),
+        "query_bridge_hipac_transition_obb_maybe_pairs": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_maybe_pairs", 0.0)),
+        "query_bridge_hipac_transition_obb_ms": float(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_ms", 0.0)),
         "query_bridge_hipac_promote_transition_attempts": int(diagnostics.get("query_bridge.hipac_promote_transition.attempts", 0.0)),
         "query_bridge_hipac_promote_transition_target_rejects": int(diagnostics.get("query_bridge.hipac_promote_transition.target_rejects", 0.0)),
         "query_bridge_hipac_promote_transition_candidate_boxes": int(diagnostics.get("query_bridge.hipac_promote_transition.candidate_boxes", 0.0)),

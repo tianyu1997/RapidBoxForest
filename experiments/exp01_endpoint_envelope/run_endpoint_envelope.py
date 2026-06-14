@@ -138,7 +138,7 @@ def mean(values: Iterable[float]) -> float:
 
 
 def certified_source(label: str) -> bool:
-    return label in {"IFK_AA", "HIFK_3", "HIFK_5", "Analytical"}
+    return label in {"IFK_AA", "HIFK_3", "HIFK_5"}
 
 
 def run_endpoint(robot: Any, box: dict[str, Any], label: str, source: str, hifk_depth: int, args: argparse.Namespace) -> dict[str, Any]:
@@ -270,7 +270,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Endpoint AABB source comparison at fixed joint-box widths. Cert. marks certificate-backed sources. MC uses width-density sampling, and Max neg. gap reports the worst per-axis shortfall against the CritSample/Analytical/MC sampling-union reference.}",
+        r"\caption{Endpoint AABB source comparison at fixed joint-box widths. Cert. marks IFK/HIFK certificate-backed sources. CritSample, Analytical, and MC are diagnostic/reference sources; Max neg. gap reports the worst per-axis shortfall against their sampling-union reference.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",

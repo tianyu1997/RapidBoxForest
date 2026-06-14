@@ -95,6 +95,9 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
+    RBF_OFFLINE_COVERAGE_PROFILE_NAME,
+    apply_offline_coverage_profile,
+    offline_coverage_v1_profile,
     robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
@@ -258,10 +261,15 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
     query_bridge_no_path_retry_stop_on_first_success = (
         bool(args.query_bridge_no_path_retry_stop_on_first_success) or hipac_improved
     )
-    # TransitionPortal has not passed validation yet.  Keep the CLI flags for
-    # future debug compatibility, but do not enable them in this paper runner.
-    hipac_online_transition_portal = False
-    hipac_promote_transition_slices = False
+    # TransitionPortal remains disabled unless the new OBB-zonotope
+    # certificate is explicitly requested.  This avoids enabling the older
+    # unvalidated transition resolver in paper runs.
+    hipac_online_transition_portal = (
+        bool(args.hipac_online_transition_portal) and bool(args.hipac_transition_obb_portal)
+    )
+    hipac_promote_transition_slices = (
+        bool(args.hipac_promote_transition_slices) and bool(args.hipac_transition_obb_portal)
+    )
     options = RBFLeafRRTOptions(
         seed=int(seed),
         offline_grower=str(args.offline_grower),
@@ -328,6 +336,10 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
         hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
         hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
+        hipac_transition_obb_portal=bool(args.hipac_transition_obb_portal),
+        hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
+        hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
+        hipac_transition_obb_safety_epsilon=float(args.hipac_transition_obb_safety_epsilon),
         hipac_promote_transition_slices=hipac_promote_transition_slices,
         hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
         hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
@@ -460,6 +472,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
         allow_anchor_roots=True,
         use_priority_points=True,
+        offline_coverage_profile=str(args.offline_coverage_profile),
         offline_query_agnostic_build=True,
         offline_random_anchors=bool(args.offline_random_anchors),
         offline_anchor_count=int(args.offline_anchor_count),
@@ -467,6 +480,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         offline_anchor_sampling=str(args.offline_anchor_sampling),
         offline_anchor_lca_lambda=float(args.offline_anchor_lca_lambda),
         offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
+        offline_connector_mode=str(args.offline_connector_mode),
         offline_shortcut_edges=int(args.offline_shortcut_edges),
         offline_shortcut_candidate_limit=int(args.offline_shortcut_candidate_limit),
         offline_shortcut_min_gain_ratio=float(args.offline_shortcut_min_gain_ratio),
@@ -540,6 +554,8 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_accept_path_ratio": float(options.query_bridge_accept_path_ratio),
         "option.query_bridge_accept_path_additive": float(options.query_bridge_accept_path_additive),
         "option.query_endpoint_anchor_before_bridge": bool(options.query_endpoint_anchor_before_bridge),
+        "option.offline_coverage_profile": str(options.offline_coverage_profile),
+        "option.offline_connector_mode": str(options.offline_connector_mode),
         "option.offline_shortcut_edges": int(options.offline_shortcut_edges),
         "option.offline_shortcut_candidate_limit": int(options.offline_shortcut_candidate_limit),
         "option.offline_shortcut_min_gain_ratio": float(options.offline_shortcut_min_gain_ratio),
@@ -571,6 +587,10 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_transition_min_predicted_bridge_edges": int(options.hipac_transition_min_predicted_bridge_edges),
         "option.hipac_transition_max_pair_distance": float(options.hipac_transition_max_pair_distance),
         "option.hipac_transition_allow_same_component": bool(options.hipac_transition_allow_same_component),
+        "option.hipac_transition_obb_portal": bool(options.hipac_transition_obb_portal),
+        "option.hipac_transition_obb_lateral_radius": float(options.hipac_transition_obb_lateral_radius),
+        "option.hipac_transition_obb_longitudinal_margin": float(options.hipac_transition_obb_longitudinal_margin),
+        "option.hipac_transition_obb_safety_epsilon": float(options.hipac_transition_obb_safety_epsilon),
         "option.hipac_promote_transition_slices": bool(options.hipac_promote_transition_slices),
         "option.hipac_promote_transition_target_query_indices": str(options.hipac_promote_transition_target_query_indices),
         "option.hipac_promote_transition_min_boxes": int(options.hipac_promote_transition_min_boxes),
@@ -858,6 +878,10 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "amortized_s_k50": median(row.get("amortized_s_k50", row["planning_s"] / 50.0) for row in items),
             "leaf_sweep_s_median": median(row["leaf_sweep_s"] for row in items),
             "deep_refine_s_median": median(row["deep_refine_s"] for row in items),
+            "offline_coverage_profile": str(items[0].get("offline_coverage_profile", "")),
+            "offline_coverage_s_median": median(row.get("offline_coverage_s", math.nan) for row in items),
+            "offline_connector_mode": str(items[0].get("offline_connector_mode", "")),
+            "offline_connector_s_median": median(row.get("offline_connector_s", math.nan) for row in items),
             "adaptive_deep_leaf_s_median": median(row.get("adaptive_deep_leaf_s", 0.0) for row in items),
             "adaptive_target_depth_median": median(row.get("adaptive_target_depth", math.nan) for row in items),
             "selected_leaf_depth_median": median(row.get("selected_leaf_depth", math.nan) for row in items),
@@ -1010,6 +1034,13 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "query_bridge_hipac_transition_ffb_calls_median": median(row.get("query_bridge_hipac_transition_ffb_calls", 0) for row in items),
             "query_bridge_hipac_transition_cell_native_validations_median": median(row.get("query_bridge_hipac_transition_cell_native_validations", 0) for row in items),
             "query_bridge_hipac_transition_cell_native_free_median": median(row.get("query_bridge_hipac_transition_cell_native_free", 0) for row in items),
+            "query_bridge_hipac_transition_obb_attempts_median": median(row.get("query_bridge_hipac_transition_obb_attempts", 0) for row in items),
+            "query_bridge_hipac_transition_obb_success_median": median(row.get("query_bridge_hipac_transition_obb_success", 0) for row in items),
+            "query_bridge_hipac_transition_obb_fail_median": median(row.get("query_bridge_hipac_transition_obb_fail", 0) for row in items),
+            "query_bridge_hipac_transition_obb_joint_limit_rejects_median": median(row.get("query_bridge_hipac_transition_obb_joint_limit_rejects", 0) for row in items),
+            "query_bridge_hipac_transition_obb_gjk_tests_median": median(row.get("query_bridge_hipac_transition_obb_gjk_tests", 0) for row in items),
+            "query_bridge_hipac_transition_obb_maybe_pairs_median": median(row.get("query_bridge_hipac_transition_obb_maybe_pairs", 0) for row in items),
+            "query_bridge_hipac_transition_obb_ms_median": median(row.get("query_bridge_hipac_transition_obb_ms", 0.0) for row in items),
             "query_bridge_hipac_promote_attempts_median": median(row.get("query_bridge_hipac_promote_attempts", 0) for row in items),
             "query_bridge_hipac_promote_added_median": median(row.get("query_bridge_hipac_promote_added", 0) for row in items),
             "query_bridge_hipac_promote_failures_median": median(row.get("query_bridge_hipac_promote_failures", 0) for row in items),
@@ -1153,6 +1184,10 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "amortized_s_k50",
         "leaf_sweep_s_median",
         "deep_refine_s_median",
+        "offline_coverage_profile",
+        "offline_coverage_s_median",
+        "offline_connector_mode",
+        "offline_connector_s_median",
         "adaptive_deep_leaf_s_median",
         "adaptive_target_depth_median",
         "adaptive_validated_median",
@@ -1285,6 +1320,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_hipac_transition_ffb_calls_median",
         "query_bridge_hipac_transition_cell_native_validations_median",
         "query_bridge_hipac_transition_cell_native_free_median",
+        "query_bridge_hipac_transition_obb_attempts_median",
+        "query_bridge_hipac_transition_obb_success_median",
+        "query_bridge_hipac_transition_obb_fail_median",
+        "query_bridge_hipac_transition_obb_joint_limit_rejects_median",
+        "query_bridge_hipac_transition_obb_gjk_tests_median",
+        "query_bridge_hipac_transition_obb_maybe_pairs_median",
+        "query_bridge_hipac_transition_obb_ms_median",
         "query_bridge_hipac_promote_attempts_median",
         "query_bridge_hipac_promote_added_median",
         "query_bridge_hipac_promote_failures_median",
@@ -1364,6 +1406,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-ms", type=float, default=8000.0)
     parser.add_argument("--rbf-max-depth", type=int, default=60)
     parser.add_argument("--offline-grower", choices=["leaf_refine", "adaptive_deep_leaf"], default="adaptive_deep_leaf")
+    parser.add_argument(
+        "--offline-coverage-profile",
+        choices=["", RBF_OFFLINE_COVERAGE_PROFILE_NAME],
+        default="",
+        help="Apply a named query-agnostic offline coverage profile before running online queries.",
+    )
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
     parser.add_argument("--leaf-max-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
     parser.add_argument("--adaptive-target-depth", type=int, default=DEFAULT_RBF_LEAF_MAX_DEPTH)
@@ -1530,6 +1578,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline-anchor-sampling", choices=["random", "halton", "mixed"], default="random")
     parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
     parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-connector-mode", choices=["off", "box_only", "short_segment"], default="box_only")
     parser.add_argument("--offline-shortcut-edges", type=int, default=0)
     parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
     parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
@@ -1562,6 +1611,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
     parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
     parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-transition-obb-portal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
+    parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)
+    parser.add_argument("--hipac-transition-obb-safety-epsilon", type=float, default=0.0)
     parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-promote-transition-target-query-indices", default="2,3")
     parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
@@ -1583,6 +1636,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    apply_offline_coverage_profile(args, sys.argv[1:])
     configure_thread_environment(int(args.threads))
     seeds = [int(item) for item in str(args.seeds).split(",") if item.strip()]
     budgets = [int(item) for item in str(args.box_budgets).split(",") if item.strip()]
@@ -1607,6 +1661,7 @@ def main() -> int:
             "deep_max_boxes": budget,
             "backend": str(args.offline_grower),
             "offline_grower": str(args.offline_grower),
+            "offline_coverage_profile": str(args.offline_coverage_profile),
             "adaptive_target_depth": int(args.adaptive_target_depth),
             "adaptive_planning_backend": str(args.adaptive_planning_backend),
             "adaptive_grid_target_depth": int(args.adaptive_grid_target_depth),
@@ -1614,6 +1669,7 @@ def main() -> int:
             "offline_anchor_count": int(args.offline_anchor_count),
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
             "offline_anchor_sampling": str(args.offline_anchor_sampling),
+            "offline_connector_mode": str(args.offline_connector_mode),
             "offline_shortcut_edges": int(args.offline_shortcut_edges),
             "offline_shortcut_candidate_limit": int(args.offline_shortcut_candidate_limit),
             "offline_shortcut_min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),
@@ -1650,12 +1706,19 @@ def main() -> int:
             "d23_cache_root": str(args.rbf_cache_root),
             "warm_cache_label": str(args.warm_cache_label),
             "rbf_default_profile": shelf_d23_rbf_profile(),
+            "offline_coverage_profile": str(args.offline_coverage_profile),
+            "offline_coverage_profile_details": (
+                offline_coverage_v1_profile()
+                if str(args.offline_coverage_profile) == RBF_OFFLINE_COVERAGE_PROFILE_NAME
+                else {}
+            ),
             "offline_query_agnostic_build": True,
             "offline_anchor_count": int(args.offline_anchor_count),
             "offline_anchor_candidate_count": int(args.offline_anchor_candidate_count),
             "offline_anchor_sampling": str(args.offline_anchor_sampling),
             "offline_anchor_lca_lambda": float(args.offline_anchor_lca_lambda),
             "offline_anchor_distance_mu": float(args.offline_anchor_distance_mu),
+            "offline_connector_mode": str(args.offline_connector_mode),
             "offline_shortcut_edges": int(args.offline_shortcut_edges),
             "offline_shortcut_candidate_limit": int(args.offline_shortcut_candidate_limit),
             "offline_shortcut_min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),

@@ -1,8 +1,10 @@
 #include <SBF/safe_box_forest.h>
 
 #include <sbf/core/joint_symmetry.h>
+#include <sbf/envelope/envelope_collision.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cctype>
@@ -123,6 +125,528 @@ void merge_diagnostic_snapshot(StageDiagnostics& diagnostics,
             diagnostics.add_counter(key, value);
         }
     }
+}
+
+struct ObbPortalAffineScalar {
+    double ctr = 0.0;
+    std::array<double, MAX_JOINTS> lin{};
+    double rem = 0.0;
+};
+
+struct ObbPortalAffineMatrix4 {
+    std::array<ObbPortalAffineScalar, 16> m{};
+};
+
+struct ObbEndpointZonotope {
+    detail::Vec3 center{};
+    std::vector<detail::Vec3> generators;
+    detail::Vec3 remainder{};
+};
+
+struct ObbLinkZonotopeHull {
+    ObbEndpointZonotope proximal;
+    ObbEndpointZonotope distal;
+    double radius = 0.0;
+    float aabb[6] = {};
+};
+
+struct ObbPortalValidationStats {
+    int joint_limit_rejects = 0;
+    int degenerate_rejects = 0;
+    int aabb_tests = 0;
+    int aabb_rejects = 0;
+    int gjk_tests = 0;
+    int gjk_rejects = 0;
+    int gjk_iterations = 0;
+    int maybe_pairs = 0;
+    int active_links = 0;
+    int variables = 0;
+    double longitudinal_radius = 0.0;
+    double lateral_radius = 0.0;
+};
+
+void obb_affine_zero(ObbPortalAffineScalar& scalar) {
+    scalar.ctr = 0.0;
+    scalar.lin.fill(0.0);
+    scalar.rem = 0.0;
+}
+
+void obb_affine_identity(ObbPortalAffineMatrix4& matrix) {
+    for (auto& scalar : matrix.m) {
+        obb_affine_zero(scalar);
+    }
+    matrix.m[0].ctr = 1.0;
+    matrix.m[5].ctr = 1.0;
+    matrix.m[10].ctr = 1.0;
+    matrix.m[15].ctr = 1.0;
+}
+
+double obb_affine_linear_radius(const ObbPortalAffineScalar& scalar, int n_vars) {
+    double radius = 0.0;
+    for (int var = 0; var < n_vars; ++var) {
+        radius += std::abs(scalar.lin[static_cast<std::size_t>(var)]);
+    }
+    return radius;
+}
+
+void obb_affine_mat_mul(const ObbPortalAffineMatrix4& lhs,
+                        const ObbPortalAffineMatrix4& rhs,
+                        ObbPortalAffineMatrix4& out,
+                        int n_vars) {
+    for (auto& scalar : out.m) {
+        obb_affine_zero(scalar);
+    }
+    out.m[15].ctr = 1.0;
+
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 4; ++col) {
+            ObbPortalAffineScalar& result = out.m[static_cast<std::size_t>(row * 4 + col)];
+            obb_affine_zero(result);
+            for (int k = 0; k < 3; ++k) {
+                const auto& te = lhs.m[static_cast<std::size_t>(row * 4 + k)];
+                const auto& ae = rhs.m[static_cast<std::size_t>(k * 4 + col)];
+                result.ctr += te.ctr * ae.ctr;
+                for (int var = 0; var < n_vars; ++var) {
+                    const std::size_t idx = static_cast<std::size_t>(var);
+                    result.lin[idx] += te.ctr * ae.lin[idx] + te.lin[idx] * ae.ctr;
+                }
+                const double te_rad = obb_affine_linear_radius(te, n_vars);
+                const double ae_rad = obb_affine_linear_radius(ae, n_vars);
+                const double te_rem = std::abs(te.rem);
+                const double ae_rem = std::abs(ae.rem);
+                result.rem += te_rad * ae_rad
+                    + te_rem * (std::abs(ae.ctr) + ae_rad + ae_rem)
+                    + te_rad * ae_rem
+                    + std::abs(te.ctr) * ae_rem
+                    + te_rem * ae_rem;
+            }
+            if (col == 3) {
+                const auto& te3 = lhs.m[static_cast<std::size_t>(row * 4 + 3)];
+                result.ctr += te3.ctr;
+                for (int var = 0; var < n_vars; ++var) {
+                    const std::size_t idx = static_cast<std::size_t>(var);
+                    result.lin[idx] += te3.lin[idx];
+                }
+                result.rem += std::abs(te3.rem);
+            }
+        }
+    }
+}
+
+void obb_affine_build_dh_joint(const Robot& robot,
+                               int joint_idx,
+                               const Eigen::VectorXd& center,
+                               const Eigen::MatrixXd& generators,
+                               ObbPortalAffineMatrix4& matrix,
+                               int n_vars) {
+    obb_affine_identity(matrix);
+    for (auto& scalar : matrix.m) {
+        obb_affine_zero(scalar);
+    }
+    matrix.m[15].ctr = 1.0;
+
+    const auto& dh = robot.dh_params()[static_cast<std::size_t>(joint_idx)];
+    const double ca = std::cos(dh.alpha);
+    const double sa = std::sin(dh.alpha);
+
+    if (dh.joint_type == 0) {
+        const double theta0 = center[joint_idx] + dh.theta;
+        const double ct0 = std::cos(theta0);
+        const double st0 = std::sin(theta0);
+        double theta_radius = 0.0;
+        for (int var = 0; var < n_vars; ++var) {
+            theta_radius += std::abs(generators(joint_idx, var));
+        }
+        const double trig_rem = 0.5 * theta_radius * theta_radius;
+        const double d_val = dh.d;
+
+        matrix.m[0].ctr = ct0;
+        matrix.m[1].ctr = -st0;
+        matrix.m[3].ctr = dh.a;
+        matrix.m[4].ctr = st0 * ca;
+        matrix.m[5].ctr = ct0 * ca;
+        matrix.m[6].ctr = -sa;
+        matrix.m[7].ctr = -d_val * sa;
+        matrix.m[8].ctr = st0 * sa;
+        matrix.m[9].ctr = ct0 * sa;
+        matrix.m[10].ctr = ca;
+        matrix.m[11].ctr = d_val * ca;
+
+        for (int var = 0; var < n_vars; ++var) {
+            const double g = generators(joint_idx, var);
+            const std::size_t idx = static_cast<std::size_t>(var);
+            matrix.m[0].lin[idx] = -st0 * g;
+            matrix.m[1].lin[idx] = -ct0 * g;
+            matrix.m[4].lin[idx] = ct0 * ca * g;
+            matrix.m[5].lin[idx] = -st0 * ca * g;
+            matrix.m[8].lin[idx] = ct0 * sa * g;
+            matrix.m[9].lin[idx] = -st0 * sa * g;
+        }
+        matrix.m[0].rem = trig_rem;
+        matrix.m[1].rem = trig_rem;
+        matrix.m[4].rem = trig_rem * std::abs(ca);
+        matrix.m[5].rem = trig_rem * std::abs(ca);
+        matrix.m[8].rem = trig_rem * std::abs(sa);
+        matrix.m[9].rem = trig_rem * std::abs(sa);
+    } else {
+        const double theta = dh.theta;
+        const double ct0 = std::cos(theta);
+        const double st0 = std::sin(theta);
+        const double d0 = center[joint_idx] + dh.d;
+
+        matrix.m[0].ctr = ct0;
+        matrix.m[1].ctr = -st0;
+        matrix.m[3].ctr = dh.a;
+        matrix.m[4].ctr = st0 * ca;
+        matrix.m[5].ctr = ct0 * ca;
+        matrix.m[6].ctr = -sa;
+        matrix.m[7].ctr = -d0 * sa;
+        matrix.m[8].ctr = st0 * sa;
+        matrix.m[9].ctr = ct0 * sa;
+        matrix.m[10].ctr = ca;
+        matrix.m[11].ctr = d0 * ca;
+        for (int var = 0; var < n_vars; ++var) {
+            const double g = generators(joint_idx, var);
+            const std::size_t idx = static_cast<std::size_t>(var);
+            matrix.m[7].lin[idx] = -sa * g;
+            matrix.m[11].lin[idx] = ca * g;
+        }
+    }
+}
+
+void obb_affine_build_tool(const DHParam& tool, ObbPortalAffineMatrix4& matrix) {
+    obb_affine_identity(matrix);
+    const double ca = std::cos(tool.alpha);
+    const double sa = std::sin(tool.alpha);
+    const double ct = std::cos(tool.theta);
+    const double st = std::sin(tool.theta);
+    matrix.m[0].ctr = ct;
+    matrix.m[1].ctr = -st;
+    matrix.m[3].ctr = tool.a;
+    matrix.m[4].ctr = st * ca;
+    matrix.m[5].ctr = ct * ca;
+    matrix.m[6].ctr = -sa;
+    matrix.m[7].ctr = -tool.d * sa;
+    matrix.m[8].ctr = st * sa;
+    matrix.m[9].ctr = ct * sa;
+    matrix.m[10].ctr = ca;
+    matrix.m[11].ctr = tool.d * ca;
+}
+
+detail::Vec3 obb_affine_vec3(const ObbPortalAffineMatrix4& transform,
+                             int var,
+                             bool linear) {
+    if (linear) {
+        const std::size_t idx = static_cast<std::size_t>(var);
+        return detail::make_vec3(static_cast<float>(transform.m[3].lin[idx]),
+                                 static_cast<float>(transform.m[7].lin[idx]),
+                                 static_cast<float>(transform.m[11].lin[idx]));
+    }
+    return detail::make_vec3(static_cast<float>(transform.m[3].ctr),
+                             static_cast<float>(transform.m[7].ctr),
+                             static_cast<float>(transform.m[11].ctr));
+}
+
+ObbEndpointZonotope obb_extract_endpoint_zonotope(const ObbPortalAffineMatrix4& transform,
+                                                  int n_vars) {
+    ObbEndpointZonotope endpoint;
+    endpoint.center = obb_affine_vec3(transform, 0, false);
+    endpoint.generators.reserve(static_cast<std::size_t>(n_vars));
+    for (int var = 0; var < n_vars; ++var) {
+        endpoint.generators.push_back(obb_affine_vec3(transform, var, true));
+    }
+    endpoint.remainder = detail::make_vec3(static_cast<float>(std::abs(transform.m[3].rem)),
+                                           static_cast<float>(std::abs(transform.m[7].rem)),
+                                           static_cast<float>(std::abs(transform.m[11].rem)));
+    return endpoint;
+}
+
+std::vector<ObbLinkZonotopeHull> obb_compute_link_zonotopes(const Robot& robot,
+                                                            const Eigen::VectorXd& center,
+                                                            const Eigen::MatrixXd& generators,
+                                                            int n_vars) {
+    const int n_joints = robot.n_joints();
+    std::array<ObbPortalAffineMatrix4, MAX_TF> prefix;
+    ObbPortalAffineMatrix4 joint_matrix;
+    obb_affine_identity(prefix[0]);
+    for (int joint = 0; joint < n_joints; ++joint) {
+        obb_affine_build_dh_joint(robot, joint, center, generators, joint_matrix, n_vars);
+        obb_affine_mat_mul(prefix[static_cast<std::size_t>(joint)],
+                           joint_matrix,
+                           prefix[static_cast<std::size_t>(joint + 1)],
+                           n_vars);
+    }
+    if (robot.has_tool()) {
+        obb_affine_build_tool(*robot.tool_frame(), joint_matrix);
+        obb_affine_mat_mul(prefix[static_cast<std::size_t>(n_joints)],
+                           joint_matrix,
+                           prefix[static_cast<std::size_t>(n_joints + 1)],
+                           n_vars);
+    }
+
+    const int n_active_links = robot.n_active_links();
+    const int* active_link_map = robot.active_link_map();
+    const double* radii = robot.active_link_radii();
+    std::vector<ObbLinkZonotopeHull> links;
+    links.reserve(static_cast<std::size_t>(n_active_links));
+    for (int active = 0; active < n_active_links; ++active) {
+        const int link_idx = active_link_map[active];
+        ObbLinkZonotopeHull link;
+        link.proximal = obb_extract_endpoint_zonotope(prefix[static_cast<std::size_t>(link_idx)],
+                                                      n_vars);
+        link.distal = obb_extract_endpoint_zonotope(prefix[static_cast<std::size_t>(link_idx + 1)],
+                                                    n_vars);
+        link.radius = radii != nullptr ? radii[active] : 0.0;
+        links.push_back(std::move(link));
+    }
+    return links;
+}
+
+detail::Vec3 obb_support_endpoint(const ObbEndpointZonotope& endpoint,
+                                  const detail::Vec3& dir) {
+    detail::Vec3 support = endpoint.center;
+    for (const auto& generator : endpoint.generators) {
+        if (detail::dot(generator, dir) >= 0.0f) {
+            support = support + generator;
+        } else {
+            support = support - generator;
+        }
+    }
+    support.x += dir.x >= 0.0f ? endpoint.remainder.x : -endpoint.remainder.x;
+    support.y += dir.y >= 0.0f ? endpoint.remainder.y : -endpoint.remainder.y;
+    support.z += dir.z >= 0.0f ? endpoint.remainder.z : -endpoint.remainder.z;
+    return support;
+}
+
+void obb_endpoint_bounds(const ObbEndpointZonotope& endpoint, float out[6]) {
+    float rx = std::abs(endpoint.remainder.x);
+    float ry = std::abs(endpoint.remainder.y);
+    float rz = std::abs(endpoint.remainder.z);
+    for (const auto& generator : endpoint.generators) {
+        rx += std::abs(generator.x);
+        ry += std::abs(generator.y);
+        rz += std::abs(generator.z);
+    }
+    out[0] = endpoint.center.x - rx;
+    out[1] = endpoint.center.y - ry;
+    out[2] = endpoint.center.z - rz;
+    out[3] = endpoint.center.x + rx;
+    out[4] = endpoint.center.y + ry;
+    out[5] = endpoint.center.z + rz;
+}
+
+void obb_compute_link_aabb(ObbLinkZonotopeHull& link, double pad) {
+    float prox[6];
+    float dist[6];
+    obb_endpoint_bounds(link.proximal, prox);
+    obb_endpoint_bounds(link.distal, dist);
+    const float p = static_cast<float>(std::max(0.0, link.radius + pad));
+    for (int axis = 0; axis < 3; ++axis) {
+        link.aabb[axis] = std::min(prox[axis], dist[axis]) - p;
+        link.aabb[axis + 3] = std::max(prox[axis + 3], dist[axis + 3]) + p;
+    }
+}
+
+detail::Vec3 obb_support_link(const ObbLinkZonotopeHull& link,
+                              const detail::Vec3& dir) {
+    const detail::Vec3 prox = obb_support_endpoint(link.proximal, dir);
+    const detail::Vec3 dist = obb_support_endpoint(link.distal, dir);
+    return detail::dot(prox, dir) >= detail::dot(dist, dir) ? prox : dist;
+}
+
+detail::Vec3 obb_support_minkowski_link_vs_obstacle(const ObbLinkZonotopeHull& link,
+                                                    const float* obstacle,
+                                                    float xyz_pad,
+                                                    const detail::Vec3& dir) {
+    return obb_support_link(link, dir) - detail::support_aabb(obstacle, -dir, xyz_pad);
+}
+
+bool obb_zonotope_link_separates_obstacle(const ObbLinkZonotopeHull& link,
+                                          const float* obstacle,
+                                          double pad,
+                                          ObbPortalValidationStats& stats) {
+    stats.aabb_tests += 1;
+    if (!detail::aabb_overlap_padded(link.aabb, obstacle, 0.0f)) {
+        stats.aabb_rejects += 1;
+        return true;
+    }
+
+    const detail::Vec3 link_center =
+        (link.proximal.center + link.distal.center) * 0.5f;
+    detail::Vec3 direction = detail::obstacle_center(obstacle) - link_center;
+    if (detail::norm_sq(direction) <= detail::kCollisionEps) {
+        direction = detail::make_vec3(1.0f, 0.0f, 0.0f);
+    }
+
+    detail::Simplex simplex;
+    const float xyz_pad = static_cast<float>(std::max(0.0, link.radius + pad));
+    simplex.push_front(obb_support_minkowski_link_vs_obstacle(link, obstacle, xyz_pad, direction));
+    direction = -simplex.points[0];
+    stats.gjk_tests += 1;
+    if (detail::norm_sq(direction) <= detail::kCollisionEps) {
+        stats.maybe_pairs += 1;
+        return false;
+    }
+
+    constexpr int kMaxIterations = 32;
+    for (int iter = 0; iter < kMaxIterations; ++iter) {
+        stats.gjk_iterations += 1;
+        const detail::Vec3 support =
+            obb_support_minkowski_link_vs_obstacle(link, obstacle, xyz_pad, direction);
+        if (detail::dot(support, direction) < 0.0f) {
+            stats.gjk_rejects += 1;
+            return true;
+        }
+        simplex.push_front(support);
+        if (detail::update_simplex(simplex, direction)) {
+            stats.maybe_pairs += 1;
+            return false;
+        }
+    }
+    stats.maybe_pairs += 1;
+    return false;
+}
+
+bool obb_build_basis_from_path(const std::vector<Eigen::VectorXd>& path,
+                               Eigen::VectorXd& center,
+                               Eigen::MatrixXd& basis,
+                               Eigen::VectorXd& radii,
+                               double lateral_radius,
+                               double longitudinal_margin,
+                               ObbPortalValidationStats& stats) {
+    if (path.size() < 2U) {
+        ++stats.degenerate_rejects;
+        return false;
+    }
+    const int dims = static_cast<int>(path.front().size());
+    if (dims <= 0 || dims > MAX_JOINTS) {
+        ++stats.degenerate_rejects;
+        return false;
+    }
+    for (const auto& waypoint : path) {
+        if (waypoint.size() != dims) {
+            ++stats.degenerate_rejects;
+            return false;
+        }
+    }
+
+    center = 0.5 * (path.front() + path.back());
+    Eigen::VectorXd axis0 = path.back() - path.front();
+    const double length = axis0.norm();
+    if (length <= 1e-12) {
+        ++stats.degenerate_rejects;
+        return false;
+    }
+    axis0 /= length;
+
+    basis = Eigen::MatrixXd::Zero(dims, dims);
+    int cols = 0;
+    basis.col(cols++) = axis0;
+    for (int dim = 0; dim < dims && cols < dims; ++dim) {
+        Eigen::VectorXd candidate = Eigen::VectorXd::Zero(dims);
+        candidate[dim] = 1.0;
+        for (int col = 0; col < cols; ++col) {
+            candidate -= basis.col(col) * basis.col(col).dot(candidate);
+        }
+        const double norm = candidate.norm();
+        if (norm > 1e-10) {
+            basis.col(cols++) = candidate / norm;
+        }
+    }
+    if (cols != dims) {
+        ++stats.degenerate_rejects;
+        return false;
+    }
+
+    radii = Eigen::VectorXd::Zero(dims);
+    for (const auto& waypoint : path) {
+        const Eigen::VectorXd delta = waypoint - center;
+        for (int col = 0; col < dims; ++col) {
+            radii[col] = std::max(radii[col], std::abs(basis.col(col).dot(delta)));
+        }
+    }
+    radii[0] += std::max(0.0, longitudinal_margin);
+    const double lateral = std::max(0.0, lateral_radius);
+    for (int col = 1; col < dims; ++col) {
+        radii[col] += lateral;
+    }
+    stats.longitudinal_radius = radii[0];
+    stats.lateral_radius = lateral;
+    stats.variables = dims;
+    return true;
+}
+
+bool obb_region_within_domain(const Eigen::VectorXd& center,
+                              const Eigen::MatrixXd& basis,
+                              const Eigen::VectorXd& radii,
+                              const std::vector<Interval>& domain,
+                              double tol) {
+    const int dims = static_cast<int>(center.size());
+    if (static_cast<int>(domain.size()) != dims ||
+        basis.rows() != dims ||
+        basis.cols() != dims ||
+        radii.size() != dims) {
+        return false;
+    }
+    for (int dim = 0; dim < dims; ++dim) {
+        double radius = 0.0;
+        for (int var = 0; var < dims; ++var) {
+            radius += std::abs(basis(dim, var) * radii[var]);
+        }
+        if (center[dim] - radius < domain[static_cast<std::size_t>(dim)].lo - tol ||
+            center[dim] + radius > domain[static_cast<std::size_t>(dim)].hi + tol) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool validate_obb_zonotope_portal(const Robot& robot,
+                                  const Scene& scene,
+                                  const std::vector<Interval>& domain,
+                                  const std::vector<Eigen::VectorXd>& path,
+                                  double lateral_radius,
+                                  double longitudinal_margin,
+                                  double safety_epsilon,
+                                  ObbPortalValidationStats& stats) {
+    Eigen::VectorXd center;
+    Eigen::MatrixXd basis;
+    Eigen::VectorXd radii;
+    if (!obb_build_basis_from_path(path,
+                                   center,
+                                   basis,
+                                   radii,
+                                   lateral_radius,
+                                   longitudinal_margin,
+                                   stats)) {
+        return false;
+    }
+    if (!obb_region_within_domain(center, basis, radii, domain, 1e-10)) {
+        ++stats.joint_limit_rejects;
+        return false;
+    }
+
+    Eigen::MatrixXd generators = basis;
+    for (int col = 0; col < generators.cols(); ++col) {
+        generators.col(col) *= radii[col];
+    }
+    std::vector<ObbLinkZonotopeHull> links =
+        obb_compute_link_zonotopes(robot, center, generators, static_cast<int>(center.size()));
+    stats.active_links = static_cast<int>(links.size());
+    for (auto& link : links) {
+        obb_compute_link_aabb(link, safety_epsilon);
+    }
+
+    const auto& obstacles = scene.obstacles();
+    for (const auto& obstacle : obstacles) {
+        const float* bounds = obstacle.bounds;
+        for (const auto& link : links) {
+            if (!obb_zonotope_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 void record_oracle_cache_counter_snapshot(std::unordered_map<std::string, double>& diagnostics,
@@ -9044,7 +9568,8 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
 int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                   int candidate_limit,
                                                   double min_gain_ratio,
-                                                  double max_segment_length) {
+                                                  double max_segment_length,
+                                                  bool allow_segment_fallback) {
     if (max_edges <= 0 || candidate_limit < 2 || boxes_.size() < 2) {
         return 0;
     }
@@ -9125,6 +9650,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         int pave_added_total = 0;
         int pave_fail = 0;
         int audit_fail = 0;
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         for (const auto& candidate : candidates) {
             if (added >= max_edges) {
                 break;
@@ -9176,6 +9702,32 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                 continue;
             }
             ++pave_fail;
+            if (allow_segment_fallback) {
+                const auto audit = audit_waypoint_path(waypoints,
+                                                       checker,
+                                                       config_.query.audit_resolution,
+                                                       config_.query.audit_segment_step);
+                if (!audit.passed) {
+                    ++audit_fail;
+                    continue;
+                }
+                const int edge_id = add_segment_edge_partition_first(candidate.source,
+                                                                     candidate.target,
+                                                                     std::move(waypoints),
+                                                                     SegmentEdgeType::QueryBridge,
+                                                                     config_.query.audit_resolution,
+                                                                     SegmentEdgeValidation::CollisionChecked,
+                                                                     true,
+                                                                     -1,
+                                                                     nullptr,
+                                                                     "offline_shortcut");
+                if (edge_id >= 0) {
+                    existing_segment_pairs.insert(
+                        partition_segment_pair_key_local(candidate.source, candidate.target));
+                    ++segment_edges;
+                    ++added;
+                }
+            }
         }
         last_build_.diagnostics["offline_shortcut.partition_native"] += 1.0;
         last_build_.diagnostics["offline_shortcut.partition_native_direct_overlay"] += 1.0;
@@ -16844,6 +17396,95 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
     const BoxNode target_box = *target_ptr;
 
     const bool online_portal = online_portal_prefix;
+    const auto domain = oracle_->planning_intervals();
+    const bool transition_obb_prefix =
+        prefix.find("hipac_online_transition") != std::string::npos ||
+        prefix.find("hipac_promote_transition") != std::string::npos;
+    if (transition_obb_prefix && last_adaptive_partition_config_.hipac_transition_obb_portal) {
+        auto obb_t0 = std::chrono::steady_clock::now();
+        std::vector<Eigen::VectorXd> obb_path;
+        obb_path.reserve(waypoint_path.size() + 2U);
+        auto append_unique = [&](const Eigen::VectorXd& waypoint) {
+            if (waypoint.size() != start.size()) {
+                return;
+            }
+            if (obb_path.empty() || (obb_path.back() - waypoint).norm() > 1e-12) {
+                obb_path.push_back(waypoint);
+            }
+        };
+        append_unique(start);
+        for (const auto& waypoint : waypoint_path) {
+            append_unique(waypoint);
+        }
+        append_unique(goal);
+
+        ObbPortalValidationStats obb_stats;
+        const double obb_safety_epsilon =
+            std::max(config_.query.audit_collision_tolerance,
+                     std::max(0.0, last_adaptive_partition_config_.hipac_transition_obb_safety_epsilon));
+        diagnostics[prefix + ".obb_zonotope_attempts"] += 1.0;
+        const bool obb_ok = validate_obb_zonotope_portal(
+            robot_,
+            scene_,
+            domain,
+            obb_path,
+            last_adaptive_partition_config_.hipac_transition_obb_lateral_radius,
+            last_adaptive_partition_config_.hipac_transition_obb_longitudinal_margin,
+            obb_safety_epsilon,
+            obb_stats);
+        diagnostics[prefix + ".obb_zonotope_variables"] =
+            static_cast<double>(obb_stats.variables);
+        diagnostics[prefix + ".obb_zonotope_active_links"] =
+            static_cast<double>(obb_stats.active_links);
+        diagnostics[prefix + ".obb_zonotope_longitudinal_radius"] =
+            obb_stats.longitudinal_radius;
+        diagnostics[prefix + ".obb_zonotope_lateral_radius"] =
+            obb_stats.lateral_radius;
+        diagnostics[prefix + ".obb_zonotope_joint_limit_rejects"] +=
+            static_cast<double>(obb_stats.joint_limit_rejects);
+        diagnostics[prefix + ".obb_zonotope_degenerate_rejects"] +=
+            static_cast<double>(obb_stats.degenerate_rejects);
+        diagnostics[prefix + ".obb_zonotope_aabb_tests"] +=
+            static_cast<double>(obb_stats.aabb_tests);
+        diagnostics[prefix + ".obb_zonotope_aabb_rejects"] +=
+            static_cast<double>(obb_stats.aabb_rejects);
+        diagnostics[prefix + ".obb_zonotope_gjk_tests"] +=
+            static_cast<double>(obb_stats.gjk_tests);
+        diagnostics[prefix + ".obb_zonotope_gjk_rejects"] +=
+            static_cast<double>(obb_stats.gjk_rejects);
+        diagnostics[prefix + ".obb_zonotope_gjk_iterations"] +=
+            static_cast<double>(obb_stats.gjk_iterations);
+        diagnostics[prefix + ".obb_zonotope_maybe_pairs"] +=
+            static_cast<double>(obb_stats.maybe_pairs);
+        diagnostics[prefix + ".obb_zonotope_waypoints"] +=
+            static_cast<double>(obb_path.size());
+        const double obb_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - obb_t0).count();
+        diagnostics[prefix + ".obb_zonotope_ms"] += obb_ms;
+        if (obb_ok) {
+            const int edge_id = append_certified_portal_corridor_edge(
+                segment_edges_,
+                source_box,
+                target_box,
+                std::move(obb_path),
+                SegmentEdgeValidation::ConservativeObbZonotope,
+                -1,
+                query_index);
+            if (edge_id >= 0) {
+                const std::string edge_prefix = prefix + ".partition_native_obb_zonotope_portal";
+                sync_adaptive_partition_segment_edges(out_profile, edge_prefix.c_str());
+                diagnostics[prefix + ".obb_zonotope_success"] += 1.0;
+                diagnostics[prefix + ".portal_corridor_added"] += 1.0;
+                diagnostics[prefix + ".portal_corridor_obb_zonotope_added"] += 1.0;
+                invalidate_query_cache();
+                return anchors_added + 1;
+            }
+            diagnostics[prefix + ".obb_zonotope_edge_fail"] += 1.0;
+        } else {
+            diagnostics[prefix + ".obb_zonotope_fail"] += 1.0;
+        }
+    }
+
     const int max_internal_boxes = online_portal
         ? std::max(0, last_adaptive_partition_config_.hipac_online_max_hidden_boxes_per_portal)
         : std::max(0, last_adaptive_partition_config_.hipac_portal_max_internal_boxes);
@@ -16860,7 +17501,6 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
                     last_adaptive_partition_config_.target_max_depth});
 
     StageContext context = StageContext::from_runtime(config_.runtime);
-    const auto domain = oracle_->planning_intervals();
     const double tol = config_.query.adjacency_tolerance;
     std::vector<BoxNode> internal_boxes;
     internal_boxes.reserve(static_cast<std::size_t>(std::min(max_internal_boxes, 32)));

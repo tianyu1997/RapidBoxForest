@@ -731,11 +731,7 @@ scene-level query reuse, and reactions to changing $\mathcal{O}$ remain in the
 forest routines. Fixed-replay studies can disable writeback, while cache-growth
 studies use a separate writeback policy.
 
-% ==============================================================================
-\section{RapidBoxForest Construction}\label{sec:forest}
-
-\begin{NoHyper}
-\begin{strip}
+\begin{figure*}[!t]
 \centering
 \begin{tabular}{@{}c@{\hspace{2pt}}c@{\hspace{2pt}}c@{}}
 \includegraphics[width=0.292\textwidth]{sbf_old/figures/sbf_grow_1.png} &
@@ -751,15 +747,17 @@ studies use a separate writeback policy.
 {\footnotesize (e) Workspace path} &
 {\footnotesize (f) After regrowth} \\
 \end{tabular}
-\captionof{figure}{Two-link didactic illustration of the \rbf{} build, query, and
+\caption{Two-link didactic illustration of the \rbf{} build, query, and
 obstacle-update cycle. A highlighted $C$-space box maps to workspace AABBs; the
 box corridor yields a path; obstacle insertion invalidates intersecting boxes
 and triggers local refill without a full rebuild. This is a low-dimensional
 teaching rendering of the build/query/update logic, not the robot geometry,
 workspace scale, or dimensionality of the reported experiments.}
 \label{fig:overview}
-\end{strip}
-\end{NoHyper}
+\end{figure*}
+
+% ==============================================================================
+\section{RapidBoxForest Construction}\label{sec:forest}
 
 Figure~\ref{fig:overview} gives a didactic two-link view of the planning layer.
 The algorithm grows a scene-specific forest of $C$-space boxes and exports it as
@@ -1429,11 +1427,15 @@ policy unless a row sweeps a budget. Dynamic-update rows report leaf-sweep
 scene-cache maintenance only; random scenes and queries are saved before planner
 execution.
 
-\begin{NoHyper}
-\begin{strip}
+\begin{table*}[!t]
   \centering
+  \begin{minipage}{0.74\textwidth}
   \input{generated/tab_tro_shelf_ablation.tex}
-  \vspace{0.05ex}
+  \end{minipage}
+\end{table*}
+
+\begin{figure*}[!t]
+  \centering
   \begin{minipage}[t]{0.49\textwidth}
     \centering
     \begin{minipage}[t]{0.54\linewidth}
@@ -1446,24 +1448,28 @@ execution.
       \includegraphics[width=\linewidth,height=0.135\textheight,keepaspectratio]{sbf_old/figures/Marcucci_scene.png}
       \par\vspace{-0.6ex}{\footnotesize\textbf{(c)}}
     \end{minipage}
-    \captionof{figure}{Shelf+IIWA RBF mechanism study and scene context. (a) Full-success points only; d23 replay excludes prewarm/load/RSS; gold rings mark Table~\ref{tab:tro-shelf-ablation} rows. (c) Canonical Marcucci Shelf+IIWA scene used by the fixed AS--TS--CS--LB--RB--AS query cycle.}
+    \caption{Shelf+IIWA RBF mechanism study and scene context. (a) Full-success points only; d23 replay excludes prewarm/load/RSS; gold rings mark Table~\ref{tab:tro-shelf-ablation} rows. (c) Canonical Marcucci Shelf+IIWA scene used by the fixed AS--TS--CS--LB--RB--AS query cycle.}
     \label{fig:tro_shelf_tradeoff}
   \end{minipage}\hfill
   \begin{minipage}[t]{0.48\textwidth}
     \centering
     \includegraphics[width=\linewidth,height=0.145\textheight,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
-    \captionof{figure}{Shelf+IIWA cross-algorithm trade-off. Black rings mark first full-success points; panel (b) uses Table~\ref{tab:tro-shelf-cross-algorithm} online-only timing and reusable-build terms where applicable.}
+    \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark first full-success points; panel (b) uses Table~\ref{tab:tro-shelf-cross-algorithm} online-only timing and reusable-build terms where applicable.}
     \label{fig:tro_shelf_cross_tradeoff}
   \end{minipage}
-\par\vspace{0.7ex}
+\end{figure*}
+
+\begin{table*}[!t]
   \centering
   \TableFontRestore
   \input{generated/tab_tro_shelf_cross_algorithm.tex}
-\par\vspace{0.7ex}
+\end{table*}
+
+\begin{table*}[!t]
   \centering
   \TableFontRestore
   \input{generated/tab_tro_random_summary.tex}
-  \vspace{0.05ex}
+  \vspace{0.25ex}
   \includegraphics[width=0.78\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
   \captionof{figure}{Saved-catalog random-scene trade-off. Left/middle:
   medium/hard Build/5+Online/q with query-level path references; right:
@@ -1471,8 +1477,21 @@ execution.
   Rings mark selected RBF and first full-success context points; PRM is a
   cumulative-roadmap point and BIT* is a post-hoc checkpoint envelope.}
   \label{fig:tro_random_tradeoff}
-\end{strip}
-\end{NoHyper}
+\end{table*}
+
+\begin{table*}[!t]
+\centering
+\begin{minipage}[t]{0.46\textwidth}
+\input{generated/tab_tro_endpoint_envelope.tex}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.50\textwidth}
+\input{generated/tab_tro_link_envelope.tex}
+\vspace{0.35ex}
+\input{generated/tab_tro_lect_performance.tex}
+\vspace{0.35ex}
+\input{generated/tab_tro_dynamic_update.tex}
+\end{minipage}
+\end{table*}
 
 \paragraph{Protocol}
 Wall-clock timings were collected on an Ubuntu 22.04 x86-64 workstation with an
@@ -1631,45 +1650,22 @@ Panda-Hard RBF point therefore uses the same strict 0.01~rad audit but allows a
 query-bridge segment witness after a long RRT bridge has been found; this is a
 deliberate low-latency trade-off rather than a segment-free box-corridor claim.
 
-\begin{table*}[!t]
-\centering
-\begin{minipage}[t]{0.64\textwidth}
-\input{generated/tab_tro_endpoint_envelope.tex}
-\end{minipage}
-\end{table*}
-
-\begin{table*}[!t]
-\centering
-\begin{minipage}[t]{0.48\textwidth}
-\input{generated/tab_tro_link_envelope.tex}
-\end{minipage}\hfill
-\begin{minipage}[t]{0.48\textwidth}
-\input{generated/tab_tro_lect_performance.tex}
-\end{minipage}
-\end{table*}
-
 \subsection{Mechanism Studies}
 \label{sec:exp_mechanisms}
 
 Tables~\ref{tab:tro-endpoint-envelope}--\ref*{tab:tro-lect-performance} isolate
-source certificates, envelope narrow phases, and read-stage LECT replay. The UR5
+endpoint-source behavior, envelope narrow phases, and read-stage LECT replay. The UR5
 snapshot gives hot endpoint/evidence reads of 0.577/0.132~$\mu$s; ``open
 snapshot'' is handle setup, not load-and-resident-memory accounting. Negative
 gaps in \Cref{tab:tro-endpoint-envelope} are measured only against a finite
 sampling-union diagnostic. They can expose empirical under-coverage for
-sampled sources, but for sources marked \emph{Cert.}=Y the certificate follows
-the interval/analytic source contract rather than the sampled reference.
+sampled or diagnostic sources, but only IFK/HIFK rows are treated as
+certificate-backed; Analytical is a diagnostic/reference computation and is not
+used as a safety guarantee.
 \Cref{tab:tro-link-envelope}
 motivates the AABB broadphase: SupportHull/GJK is compact, but wide boxes become
 expensive when every obstacle reaches GJK, as measured again in
 \cref{tab:tro-shelf-ablation}.
-
-\begin{table*}[!t]
-\centering
-\begin{minipage}{0.52\textwidth}
-\input{generated/tab_tro_dynamic_update.tex}
-\end{minipage}
-\end{table*}
 
 \subsection{Dynamic Updates}
 \label{sec:exp_dynamic_updates}
@@ -1682,6 +1678,7 @@ speedups over the 15-obstacle warm rebuild. A matched update+query
 diagnostic returned 0/8 audited paths for both updated and fresh
 maintenance-only forests, so this is not replanning evidence.
 
+\FloatBarrier
 \section{Conclusion}\label{sec:conclusion}
 
 This paper presented \rbf{}, a link-envelope-guided box-forest planner for
@@ -1711,7 +1708,6 @@ policy before they inherit the certificate.
   \setlength{\itemsep}{-0.55ex}%
   \setlength{\parsep}{0pt}%
 }{\endorigthebibliography}
-\IEEEtriggeratref{36}
 \bibliographystyle{IEEEtran}
 \bibliography{sbf_old/references}
 \endgroup

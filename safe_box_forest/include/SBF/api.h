@@ -45,6 +45,7 @@ enum class SegmentEdgeValidation : std::uint8_t {
     Unknown = 0,
     CollisionChecked = 1,
     ConservativeBoxChain = 2,
+    ConservativeObbZonotope = 3,
 };
 
 struct SegmentEdge {
@@ -52,9 +53,11 @@ struct SegmentEdge {
     int source_box_id = -1;
     int target_box_id = -1;
     std::vector<Eigen::VectorXd> waypoints;
-    // For SegmentEdgeType::PortalCorridor, this is the hidden conservative
-    // internal box-chain certificate. These boxes are not global graph
-    // vertices; path extraction lazily expands them only if the edge is used.
+    // For SegmentEdgeType::PortalCorridor with ConservativeBoxChain, this is
+    // the hidden conservative internal box-chain certificate. These boxes are
+    // not global graph vertices; path extraction lazily expands them only if
+    // the edge is used. Other conservative portal certificates, such as
+    // ConservativeObbZonotope, keep their certified centerline in waypoints.
     std::vector<BoxNode> internal_boxes;
     SegmentEdgeType type = SegmentEdgeType::Unknown;
     SegmentEdgeValidation validation = SegmentEdgeValidation::Unknown;

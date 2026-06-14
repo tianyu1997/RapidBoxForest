@@ -937,7 +937,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
     py::enum_<rbf::SegmentEdgeValidation>(module, "SegmentEdgeValidation")
         .value("Unknown", rbf::SegmentEdgeValidation::Unknown)
         .value("CollisionChecked", rbf::SegmentEdgeValidation::CollisionChecked)
-        .value("ConservativeBoxChain", rbf::SegmentEdgeValidation::ConservativeBoxChain);
+        .value("ConservativeBoxChain", rbf::SegmentEdgeValidation::ConservativeBoxChain)
+        .value("ConservativeObbZonotope", rbf::SegmentEdgeValidation::ConservativeObbZonotope);
 
     py::enum_<rbf::PathAuditStatus>(module, "PathAuditStatus")
         .value("NotRun", rbf::PathAuditStatus::NotRun)
@@ -1198,6 +1199,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("hipac_transition_min_predicted_bridge_edges", &rbf::AdaptiveLeafSweepConfig::hipac_transition_min_predicted_bridge_edges)
         .def_readwrite("hipac_transition_max_pair_distance", &rbf::AdaptiveLeafSweepConfig::hipac_transition_max_pair_distance)
         .def_readwrite("hipac_transition_allow_same_component", &rbf::AdaptiveLeafSweepConfig::hipac_transition_allow_same_component)
+        .def_readwrite("hipac_transition_obb_portal", &rbf::AdaptiveLeafSweepConfig::hipac_transition_obb_portal)
+        .def_readwrite("hipac_transition_obb_lateral_radius", &rbf::AdaptiveLeafSweepConfig::hipac_transition_obb_lateral_radius)
+        .def_readwrite("hipac_transition_obb_longitudinal_margin", &rbf::AdaptiveLeafSweepConfig::hipac_transition_obb_longitudinal_margin)
+        .def_readwrite("hipac_transition_obb_safety_epsilon", &rbf::AdaptiveLeafSweepConfig::hipac_transition_obb_safety_epsilon)
         .def_readwrite("hipac_promote_transition_slices", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_slices)
         .def_readwrite("hipac_promote_transition_target_query_indices", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_target_query_indices)
         .def_readwrite("hipac_promote_transition_min_boxes", &rbf::AdaptiveLeafSweepConfig::hipac_promote_transition_min_boxes)
@@ -1852,18 +1857,21 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 .def("add_offline_shortcut_edges",
                         [](rbf::RBFPlanningForest& forest,
                            int max_edges,
-                                int candidate_limit,
-                                double min_gain_ratio,
-                                double max_segment_length) {
+                           int candidate_limit,
+                           double min_gain_ratio,
+                           double max_segment_length,
+                           bool allow_segment_fallback) {
                                     return forest.add_offline_shortcut_edges(max_edges,
                                                                              candidate_limit,
                                                                              min_gain_ratio,
-                                                                             max_segment_length);
+                                                                             max_segment_length,
+                                                                             allow_segment_fallback);
                          },
                          py::arg("max_edges"),
                          py::arg("candidate_limit") = 48,
                          py::arg("min_gain_ratio") = 1.6,
-                         py::arg("max_segment_length") = 3.0)
+                         py::arg("max_segment_length") = 3.0,
+                         py::arg("allow_segment_fallback") = false)
                 .def("bridge_queries",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<std::vector<double>>& starts,

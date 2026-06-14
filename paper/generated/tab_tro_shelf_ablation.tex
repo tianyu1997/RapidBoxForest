@@ -4,19 +4,19 @@
 \captionof{table}{Shelf+IIWA full-success RBF registered point and mechanism rows.}
 \label{tab:tro-shelf-ablation}
 \scriptsize
-\setlength{\tabcolsep}{1.25pt}
+\setlength{\tabcolsep}{2.2pt}
 \renewcommand{\arraystretch}{1.02}
-\begin{tabular}{@{}llccccc@{}}
+\begin{tabular}{@{}lcccc@{}}
 \toprule
-Case & Cache & Build & Online/q & Amort@5 & $L/L^\star$ & Audit/q \\
+Case & Build & Online/q & Amort@5 & $L/L^\star$ \\
 \midrule
-RBF-SH d23 & d23 replay & \shortstack{0.070\\[-0.2ex]{\scriptsize [0.070, 0.071]}} & \shortstack{0.018\\[-0.2ex]{\scriptsize [0.017, 0.018]}} & \shortstack{0.032\\[-0.2ex]{\scriptsize [0.031, 0.032]}} & \shortstack{1.05\\[-0.2ex]{\scriptsize [1.03, 1.24]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.013, 0.015]}} \\
-CritSample & live mat. & \shortstack{0.035\\[-0.2ex]{\scriptsize [0.034, 0.036]}} & \shortstack{0.020\\[-0.2ex]{\scriptsize [0.020, 0.021]}} & \shortstack{0.027\\[-0.2ex]{\scriptsize [0.027, 0.029]}} & \shortstack{1.06\\[-0.2ex]{\scriptsize [1.02, 1.20]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.013, 0.016]}} \\
-Link AABB & d23 replay & \shortstack{0.061\\[-0.2ex]{\scriptsize [0.061, 0.062]}} & \shortstack{0.021\\[-0.2ex]{\scriptsize [0.020, 0.021]}} & \shortstack{0.033\\[-0.2ex]{\scriptsize [0.033, 0.033]}} & \shortstack{1.08\\[-0.2ex]{\scriptsize [1.03, 1.32]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.012, 0.016]}} \\
-No LECT/HIFK-5 & live mat. & \shortstack{7.496\\[-0.2ex]{\scriptsize [7.428, 7.663]}} & \shortstack{0.053\\[-0.2ex]{\scriptsize [0.051, 0.054]}} & \shortstack{1.549\\[-0.2ex]{\scriptsize [1.538, 1.585]}} & \shortstack{1.06\\[-0.2ex]{\scriptsize [1.03, 1.28]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.014, 0.015]}} \\
-SH w/o broadphase & d23 replay & \shortstack{0.151\\[-0.2ex]{\scriptsize [0.149, 0.154]}} & \shortstack{0.049\\[-0.2ex]{\scriptsize [0.045, 0.050]}} & \shortstack{0.079\\[-0.2ex]{\scriptsize [0.076, 0.081]}} & \shortstack{1.05\\[-0.2ex]{\scriptsize [1.03, 1.24]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.013, 0.015]}} \\
+RBF-SH d23 & 0.070 [0.070, 0.071] & 0.018 [0.017, 0.018] & 0.032 [0.031, 0.032] & 1.05 [1.03, 1.24] \\
+CritSample & 0.035 [0.034, 0.036] & 0.020 [0.020, 0.021] & 0.027 [0.027, 0.029] & 1.06 [1.02, 1.20] \\
+Link AABB & 0.061 [0.061, 0.062] & 0.021 [0.020, 0.021] & 0.033 [0.033, 0.033] & 1.08 [1.03, 1.32] \\
+No LECT/HIFK-5 & 7.496 [7.428, 7.663] & 0.053 [0.051, 0.054] & 1.549 [1.538, 1.585] & 1.06 [1.03, 1.28] \\
+SH w/o broadphase & 0.151 [0.149, 0.154] & 0.049 [0.045, 0.050] & 0.079 [0.076, 0.081] & 1.05 [1.03, 1.24] \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.25ex}
-{\scriptsize\emph{Notes:} Median [Q1, Q3] s; Online/q excludes simplification/audit; audit-complete = Online/q+0.010\,s+Audit/q. ``d23 replay'' excludes prewarm/load/RSS (registered artifact: 16,777,215 rec., 12.75\,GiB, 958.079\,s); ``live mat.'' charges materialization. $L/L^\star$ is query-level.\par}
+{\scriptsize\emph{Notes:} Median [Q1, Q3] shown inline; times are seconds. Online/q excludes final simplification/audit; audit time is not tabulated. RBF-SH d23, Link AABB, and SH w/o broadphase use d23 replay excluding prewarm/load/RSS (registered artifact: 16,777,215 rec., 12.75\,GiB, 958.079\,s); CritSample and No LECT/HIFK-5 charge live materialization. $L/L^\star$ is query-level.\par}
 \par\endgroup

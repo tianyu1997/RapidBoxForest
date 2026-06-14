@@ -337,6 +337,10 @@ struct AdaptiveLeafSweepConfig {
 	int hipac_transition_min_predicted_bridge_edges = 16;
 	double hipac_transition_max_pair_distance = 1.50;
 	bool hipac_transition_allow_same_component = true;
+	bool hipac_transition_obb_portal = false;
+	double hipac_transition_obb_lateral_radius = 0.01;
+	double hipac_transition_obb_longitudinal_margin = 0.0;
+	double hipac_transition_obb_safety_epsilon = 0.0;
 	bool hipac_promote_transition_slices = false;
 	std::string hipac_promote_transition_target_query_indices = "2,3";
 	int hipac_promote_transition_min_boxes = 8;
@@ -457,9 +461,10 @@ public:
 		const Eigen::Ref<const Eigen::VectorXd>& point,
 		const EndpointMainBoxCorridorConfig& corridor_config = {});
 	int add_offline_shortcut_edges(int max_edges,
-								   int candidate_limit,
-								   double min_gain_ratio,
-								   double max_segment_length);
+	                               int candidate_limit,
+	                               double min_gain_ratio,
+	                               double max_segment_length,
+	                               bool allow_segment_fallback = false);
 	int bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					 const Eigen::Ref<const Eigen::VectorXd>& goal);
 	int bridge_query_known_needed(const Eigen::Ref<const Eigen::VectorXd>& start,

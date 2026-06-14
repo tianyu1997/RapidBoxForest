@@ -27,6 +27,10 @@ def csv_floats(raw: str) -> list[float]:
     return [float(item.strip()) for item in str(raw).split(",") if item.strip()]
 
 
+def csv_strings(raw: str) -> list[str]:
+    return [item.strip() for item in str(raw).split(",") if item.strip()]
+
+
 def fmt_float(value: float) -> str:
     text = f"{float(value):g}"
     return text.replace(".", "p").replace("-", "m")
@@ -43,6 +47,8 @@ def base_exp04_args(out_dir: Path, threads: int) -> argparse.Namespace:
     args.threads = int(threads)
     args.only = "baseline_d23_aafk_support_hull_8t"
     args.active_cache_tag = ""
+    args.offline_coverage_profile = exp04.RBF_OFFLINE_COVERAGE_PROFILE_NAME
+    exp04.apply_offline_coverage_profile(args, [])
     return args
 
 
@@ -87,6 +93,8 @@ def explicit_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "offline_shortcut_edges",
                 "shortcut_edges",
                 "shortcut_candidate_limit",
+                "adaptive_target_depth",
+                "adaptive_time_budget_ms",
             }:
                 cfg[key] = int(value)
             elif key in {"pair_timeout_ms", "refine_timeout_ms"}:
@@ -124,6 +132,8 @@ def explicit_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
                     cfg[key] = value.lower() not in {"0", "false", "no", "off"}
             elif key in {"endpoint_main_adaptive_ffb_depths", "endpoint_main_depths"}:
                 cfg["endpoint_main_adaptive_ffb_depths"] = value
+            elif key in {"offline_connector_mode", "connector_mode"}:
+                cfg["offline_connector_mode"] = value
             elif key in {"to_main", "query_bridge_to_main_island"}:
                 cfg["query_bridge_to_main_island"] = value.lower() not in {"0", "false", "no", "off"}
             else:
@@ -138,29 +148,38 @@ def grid_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
         return configs
     out: list[dict[str, Any]] = []
     for leaf_max in csv_ints(args.leaf_max_depths):
-        for anchors in csv_ints(args.offline_anchor_counts):
-            for candidates in csv_ints(args.offline_anchor_candidate_counts):
-                for boxes in csv_ints(args.box_budgets):
-                    for bridge_boxes in csv_ints(args.connector_bridge_boxes):
-                        for pair_timeout_ms in csv_floats(args.connector_pair_timeouts_ms):
-                            out.append({
-                                "leaf_start": int(args.leaf_start_depth),
-                                "leaf_max": leaf_max,
-                                "anchors": anchors,
-                                "candidates": candidates,
-                                "boxes": boxes,
-                                "bridge_boxes": bridge_boxes,
-                                "pair_timeout_ms": pair_timeout_ms,
-                                "max_pairs": int(args.connector_max_pairs_per_gap),
-                                "ffb_depth": int(args.deep_ffb_depth),
-                                "refine_timeout_ms": float(args.refine_timeout_ms),
-                            })
+        for adaptive_target_depth in csv_ints(args.adaptive_target_depths):
+            for adaptive_time_budget_ms in csv_ints(args.adaptive_time_budgets_ms):
+                for connector_mode in csv_strings(args.offline_connector_modes):
+                    for anchors in csv_ints(args.offline_anchor_counts):
+                        for candidates in csv_ints(args.offline_anchor_candidate_counts):
+                            for boxes in csv_ints(args.box_budgets):
+                                for bridge_boxes in csv_ints(args.connector_bridge_boxes):
+                                    for pair_timeout_ms in csv_floats(args.connector_pair_timeouts_ms):
+                                        out.append({
+                                            "leaf_start": int(args.leaf_start_depth),
+                                            "leaf_max": leaf_max,
+                                            "adaptive_target_depth": adaptive_target_depth,
+                                            "adaptive_time_budget_ms": adaptive_time_budget_ms,
+                                            "offline_connector_mode": str(connector_mode),
+                                            "anchors": anchors,
+                                            "candidates": candidates,
+                                            "boxes": boxes,
+                                            "bridge_boxes": bridge_boxes,
+                                            "pair_timeout_ms": pair_timeout_ms,
+                                            "max_pairs": int(args.connector_max_pairs_per_gap),
+                                            "ffb_depth": int(args.deep_ffb_depth),
+                                            "refine_timeout_ms": float(args.refine_timeout_ms),
+                                        })
     return out
 
 
 def config_id(cfg: dict[str, Any]) -> str:
     base = (
         f"l{int(cfg.get('leaf_start', 8))}_{int(cfg['leaf_max'])}"
+        f"_at{int(cfg.get('adaptive_target_depth', cfg['leaf_max']))}"
+        f"_tb{int(cfg.get('adaptive_time_budget_ms', 0))}"
+        f"_cm{str(cfg.get('offline_connector_mode', 'box_only')).replace('-', '_')}"
         f"_a{int(cfg['anchors'])}_c{int(cfg['candidates'])}"
         f"_b{int(cfg['boxes'])}_bb{int(cfg['bridge_boxes'])}"
         f"_p{fmt_float(float(cfg['pair_timeout_ms']))}"
@@ -199,6 +218,10 @@ def apply_config(base: argparse.Namespace, cfg: dict[str, Any], out_dir: Path, s
     args.out_dir = out_dir
     args.leaf_start_depth = int(cfg.get("leaf_start", args.leaf_start_depth))
     args.leaf_max_depth = int(cfg["leaf_max"])
+    args.adaptive_target_depth = int(cfg.get("adaptive_target_depth", args.adaptive_target_depth))
+    args.adaptive_grid_target_depth = int(cfg.get("adaptive_target_depth", args.adaptive_grid_target_depth))
+    args.adaptive_time_budget_ms = float(cfg.get("adaptive_time_budget_ms", args.adaptive_time_budget_ms))
+    args.offline_connector_mode = str(cfg.get("offline_connector_mode", args.offline_connector_mode))
     args.offline_anchor_count = int(cfg["anchors"])
     args.offline_anchor_candidate_count = int(cfg["candidates"])
     args.connector_bridge_boxes = int(cfg["bridge_boxes"])
@@ -278,6 +301,12 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "total_queries": total_queries,
             "leaf_start_depth": median(row.get("leaf_start_depth", math.nan) for row in items),
             "leaf_max_depth": median(row.get("leaf_max_depth", math.nan) for row in items),
+            "adaptive_target_depth": median(row.get("adaptive_target_depth", math.nan) for row in items),
+            "adaptive_time_budget_ms": median(row.get("adaptive_time_budget_ms", math.nan) for row in items),
+            "offline_coverage_profile": str(items[0].get("offline_coverage_profile", "")),
+            "offline_coverage_s_median": median(row.get("offline_coverage_s", math.nan) for row in items),
+            "offline_connector_mode": str(items[0].get("offline_connector_mode", "")),
+            "offline_connector_s_median": median(row.get("offline_connector_s", math.nan) for row in items),
             "offline_anchor_count": median(row.get("offline_anchor_count", math.nan) for row in items),
             "offline_anchor_candidate_count": median(row.get("offline_anchor_candidate_count", math.nan) for row in items),
             "offline_anchor_sampling": str(items[0].get("offline_anchor_sampling", "")),
@@ -317,6 +346,13 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success_items),
             "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success_items),
             "leaf_free_count_median": median(row.get("leaf_free_count", math.nan) for row in items),
+            "coverage_probe_free_count_median": median(row.get("coverage_probe_free_count", math.nan) for row in items),
+            "coverage_box_covered_probability_median": median(
+                row.get("coverage_box_covered_probability", math.nan) for row in items
+            ),
+            "coverage_main_accessible_probability_median": median(
+                row.get("coverage_main_accessible_probability", math.nan) for row in items
+            ),
             "leaf_collision_count_median": median(row.get("leaf_collision_count", math.nan) for row in items),
             "offline_anchor_roots_added_median": median(row.get("offline_anchor_roots_added", math.nan) for row in items),
             "offline_segment_edges_added_median": median(row.get("offline_segment_edges_added", math.nan) for row in items),
@@ -450,7 +486,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", default="0,1,2")
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--leaf-start-depth", type=int, default=8)
-    parser.add_argument("--leaf-max-depths", default="14,15,16")
+    parser.add_argument("--leaf-max-depths", default="10,12,13")
+    parser.add_argument("--adaptive-target-depths", default="16,24,32")
+    parser.add_argument("--adaptive-time-budgets-ms", default="500,1000,2000,5000")
+    parser.add_argument("--offline-connector-modes", default="off,box_only,short_segment")
     parser.add_argument("--offline-anchor-counts", default="16,32")
     parser.add_argument("--offline-anchor-candidate-counts", default="512,1024")
     parser.add_argument("--box-budgets", default="400,800")
@@ -503,6 +542,10 @@ def main() -> int:
             "config_id": item["config_id"],
             "leaf_start_depth": int(cfg.get("leaf_start", run_args.leaf_start_depth)),
             "leaf_max_depth": int(cfg["leaf_max"]),
+            "adaptive_target_depth": int(run_args.adaptive_target_depth),
+            "adaptive_time_budget_ms": float(run_args.adaptive_time_budget_ms),
+            "offline_coverage_profile": str(run_args.offline_coverage_profile),
+            "offline_connector_mode": str(run_args.offline_connector_mode),
             "offline_anchor_count": int(cfg["anchors"]),
             "offline_anchor_candidate_count": int(cfg["candidates"]),
             "offline_anchor_sampling": str(run_args.offline_anchor_sampling),
@@ -535,6 +578,8 @@ def main() -> int:
     run_fields = [
         "config_id", "case", "seed", "deep_max_boxes", "success_count", "query_count",
         "leaf_start_depth", "leaf_max_depth", "offline_anchor_count", "offline_anchor_candidate_count",
+        "adaptive_target_depth", "adaptive_time_budget_ms", "offline_coverage_profile",
+        "offline_coverage_s", "offline_connector_mode", "offline_connector_s",
         "connector_bridge_boxes", "connector_pair_timeout_ms",
         "offline_anchor_sampling",
         "query_bridge_accept_segment_fraction", "query_bridge_accept_path_ratio",
@@ -556,6 +601,8 @@ def main() -> int:
         "online_solve_per_query_s", "online_simplify_per_query_s",
         "online_per_query_s", "online_total_per_query_s", "amortized_s_k5", "amortized_s_k10", "path_length_mean",
         "raw_segment_fraction", "leaf_free_count", "leaf_collision_count",
+        "coverage_probe_free_count", "coverage_box_covered_probability",
+        "coverage_main_accessible_probability",
         "offline_anchor_roots_added", "offline_segment_edges_added",
         "offline_shortcut_edges_requested", "offline_shortcut_edges_added",
         "offline_shortcut_box_corridor_edges_added", "offline_shortcut_segment_edges_added",
@@ -565,6 +612,8 @@ def main() -> int:
     summary_fields = [
         "config_id", "runs", "success_runs", "success_queries", "total_queries",
         "leaf_start_depth", "leaf_max_depth", "offline_anchor_count",
+        "adaptive_target_depth", "adaptive_time_budget_ms", "offline_coverage_profile",
+        "offline_coverage_s_median", "offline_connector_mode", "offline_connector_s_median",
         "offline_anchor_candidate_count", "offline_anchor_sampling", "deep_max_boxes", "connector_bridge_boxes",
         "connector_pair_timeout_ms", "query_bridge_accept_segment_fraction",
         "query_bridge_accept_path_ratio", "query_bridge_accept_path_additive",
@@ -586,6 +635,8 @@ def main() -> int:
         "online_solve_per_query_s_median", "online_simplify_per_query_s_median",
         "online_per_query_s_median", "online_total_per_query_s_median", "amortized_s_k5", "amortized_s_k10", "amortized_s_k20",
         "path_length_mean", "raw_segment_fraction_median", "leaf_free_count_median",
+        "coverage_probe_free_count_median", "coverage_box_covered_probability_median",
+        "coverage_main_accessible_probability_median",
         "leaf_collision_count_median", "offline_anchor_roots_added_median",
         "offline_segment_edges_added_median", "offline_shortcut_edges_requested_median",
         "offline_shortcut_edges_added_median", "offline_shortcut_box_corridor_edges_added_median",

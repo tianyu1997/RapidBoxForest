@@ -1387,31 +1387,28 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Endpoint sources; Cert. follows source contract.}",
+        r"\captionof{table}{Endpoint envelope source study.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.2pt}",
-        r"\renewcommand{\arraystretch}{0.74}",
-        r"\resizebox{\linewidth}{!}{%",
-        r"\begin{tabular}{llrrrr}",
+        r"\setlength{\tabcolsep}{2.0pt}",
+        r"\renewcommand{\arraystretch}{0.78}",
+        r"\begin{tabular}{@{}llrrr@{}}",
         r"\toprule",
-        r"Width & Source & Cert. & Vol. & Time ($\mu$s) & Neg. gap \\",
+        r"Width & Source & Vol. & Time ($\mu$s) & Neg. gap \\",
         r"\midrule",
     ]
     for row in table_rows:
-        safe = "Y" if str(row.get("safe", "")).lower() == "true" else "N"
         width = tex_num(row.get("width"), 2)
         source = str(row.get("source", "")).replace("_", r"\_")
         volume = tex_fixed(row.get("volume_m3_median"), 6)
         time_us = tex_num(row.get("endpoint_us_median"), 2)
         gap = tex_fixed(row.get("max_negative_gap"), 6)
-        lines.append(f"{width} & {source} & {safe} & {volume} & {time_us} & {gap} \\\\")
+        lines.append(f"{width} & {source} & {volume} & {time_us} & {gap} \\\\")
     lines.extend([
         r"\bottomrule",
-        r"\end{tabular}%",
-        r"}",
+        r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Neg. gap is only against the sampled-union diagnostic; it is not the certificate test for sources marked Y.\par}",
+        r"{\scriptsize\emph{Notes:} IFK/HIFK rows are certificate-backed; CritSample, Analytical, and MC are diagnostic/reference sources only. Neg. gap is only against the sampled-union diagnostic.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1425,7 +1422,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\centering",
         r"\captionof{table}{Link envelopes; Env. build, Coll. obstacle test.}",
         r"\label{tab:tro-link-envelope}",
-        r"\fontsize{7.0}{7.15}\selectfont",
+        r"\scriptsize",
         r"\setlength{\tabcolsep}{2.2pt}",
         r"\renewcommand{\arraystretch}{0.84}",
         r"\begin{tabular}{llrrrr}",
@@ -1452,7 +1449,7 @@ def generate_exp03_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\centering",
         rf"\captionof{{table}}{{LECT warm-cache cost (UR5 SupportHull snapshot; {EXP03_UR5_D20_CACHE_RECORDS} records, {EXP03_UR5_D20_CACHE_GIB}\,GiB).}}",
         r"\label{tab:tro-lect-performance}",
-        r"\fontsize{7.0}{7.15}\selectfont",
+        r"\scriptsize",
         r"\setlength{\tabcolsep}{1.7pt}",
         r"\renewcommand{\arraystretch}{0.84}",
         r"\begin{tabular}{@{}lrr@{}}",
@@ -2613,8 +2610,8 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         if isinstance(path_by_label, dict) and path_by_label:
             gaps = normalized_gap_from_label_values(path_by_label, path_refs)
             if gaps:
-                return tex_iqr_stacked(gaps, 2)
-        return tex_iqr_stacked(normalized_gap_values(dist.get("path_values") or scalar_path, scalar_path_ref), 2)
+                return tex_iqr(gaps, 2)
+        return tex_iqr(normalized_gap_values(dist.get("path_values") or scalar_path, scalar_path_ref), 2)
 
     def cache_cell(row: dict[str, Any]) -> str:
         hits = as_float(row.get("external_reused_hits_median", row.get("external_hits_median")))
@@ -2665,11 +2662,11 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         r"\captionof{table}{Shelf+IIWA full-success RBF registered point and mechanism rows.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.25pt}",
+        r"\setlength{\tabcolsep}{2.2pt}",
         r"\renewcommand{\arraystretch}{1.02}",
-        r"\begin{tabular}{@{}llccccc@{}}",
+        r"\begin{tabular}{@{}lcccc@{}}",
         r"\toprule",
-        r"Case & Cache & Build & Online/q & Amort@5 & $L/L^\star$ & Audit/q \\",
+        r"Case & Build & Online/q & Amort@5 & $L/L^\star$ \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -2677,18 +2674,16 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         label = labels.get(str(row.get("case", "")), str(row.get("case", ""))).replace("_", r"\_")
         lines.append(
             f"{label} & "
-            f"{cache_cell(row)} & "
-            f"{tex_iqr_stacked(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
-            f"{tex_iqr_stacked(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
-            f"{tex_iqr_stacked(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
-            f"{gap_cell(dist, path_length_stat(row))} & "
-            f"{audit_per_query_cell(dist, row)} \\\\"
+            f"{tex_iqr(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
+            f"{tex_iqr(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
+            f"{tex_iqr(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
+            f"{gap_cell(dist, path_length_stat(row))} \\\\"
         )
     lines.extend([
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.25ex}",
-        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3] s; Online/q excludes simplification/audit; audit-complete = Online/q+0.010\,s+Audit/q. ``d23 replay'' excludes prewarm/load/RSS (registered artifact: {EXP04_D23_CACHE_RECORDS} rec., {EXP04_D23_CACHE_GIB}\,GiB, {EXP04_D23_PREWARM_S}\,s); ``live mat.'' charges materialization. $L/L^\star$ is query-level.\par}}",
+        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3] shown inline; times are seconds. Online/q excludes final simplification/audit; audit time is not tabulated. RBF-SH d23, Link AABB, and SH w/o broadphase use d23 replay excluding prewarm/load/RSS (registered artifact: {EXP04_D23_CACHE_RECORDS} rec., {EXP04_D23_CACHE_GIB}\,GiB, {EXP04_D23_PREWARM_S}\,s); CritSample and No LECT/HIFK-5 charge live materialization. $L/L^\star$ is query-level.\par}}",
         r"\par\endgroup",
         "",
     ])
@@ -4199,7 +4194,7 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
             r"\centering",
             r"\captionof{table}{Adaptive leaf-sweep maintenance only, not end-to-end replanning.}",
             r"\label{tab:tro-dynamic-update}",
-            r"\footnotesize",
+            r"\scriptsize",
             r"\setlength{\tabcolsep}{3.0pt}",
             r"\begin{tabular}{@{}lcc@{}}",
             r"\toprule",

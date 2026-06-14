@@ -212,6 +212,59 @@ void test_portal_corridor_edge_expands_hidden_chain() {
         std::vector<rbf::BoxNode>{gapped_internal}));
 }
 
+void test_obb_zonotope_portal_corridor_edge_is_certified_nonsegment() {
+    rbf::BoxNode source = make_test_box(0, 0.0, 1.0);
+    rbf::BoxNode target = make_test_box(2, 2.0, 3.0);
+    Eigen::VectorXd a(2), b(2), c(2);
+    a << 0.5, 0.5;
+    b << 1.5, 0.6;
+    c << 2.5, 0.5;
+
+    std::vector<rbf::SegmentEdge> edges;
+    const int edge_id = rbf::append_certified_portal_corridor_edge(
+        edges,
+        source,
+        target,
+        std::vector<Eigen::VectorXd>{a, b, c},
+        rbf::SegmentEdgeValidation::ConservativeObbZonotope,
+        11,
+        3);
+    assert(edge_id >= 0);
+    assert(edges.size() == 1);
+    assert(edges.front().type == rbf::SegmentEdgeType::PortalCorridor);
+    assert(edges.front().validation == rbf::SegmentEdgeValidation::ConservativeObbZonotope);
+    assert(edges.front().conservative_certificate);
+    assert(edges.front().portal_domain_id == 11);
+    assert(edges.front().query_index == 3);
+    assert(edges.front().internal_boxes.empty());
+    assert(!rbf::counts_as_segment_edge(edges.front().type));
+
+    rbf::AdjacencyGraph graph;
+    rbf::apply_segment_edges_to_adjacency(edges, graph);
+    assert(edge_set(graph).count({0, 2}) == 1);
+    const std::vector<rbf::BoxNode> global_boxes = {source, target};
+    const auto cache = rbf::build_query_graph_cache(global_boxes, graph, edges);
+    const auto search = rbf::dijkstra_search(cache, 0, 2);
+    assert(search.found);
+    assert(search.segment_edge_sequence.size() == 1);
+    assert(search.segment_edge_sequence.front() == edge_id);
+    const auto waypoints = rbf::extract_waypoints(search.box_sequence, cache, a, c);
+    assert(waypoints.size() >= 3);
+    bool saw_midpoint = false;
+    for (const auto& waypoint : waypoints) {
+        saw_midpoint = saw_midpoint || (waypoint - b).norm() < 1e-12;
+    }
+    assert(saw_midpoint);
+
+    std::vector<rbf::SegmentEdge> rejected;
+    assert(rbf::append_certified_portal_corridor_edge(
+        rejected,
+        source,
+        target,
+        std::vector<Eigen::VectorXd>{a, c},
+        rbf::SegmentEdgeValidation::ConservativeBoxChain) < 0);
+}
+
 void test_extract_waypoints_uses_overlap_transitions() {
     rbf::BoxNode a;
     a.id = 0;
@@ -1117,6 +1170,7 @@ int main() {
     test_runtime_context();
     test_graph();
     test_portal_corridor_edge_expands_hidden_chain();
+    test_obb_zonotope_portal_corridor_edge_is_certified_nonsegment();
     test_extract_waypoints_uses_overlap_transitions();
     test_indexed_graph_equivalence();
     test_adaptive_grid_partition_query_matches_graph();

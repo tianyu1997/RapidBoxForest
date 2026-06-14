@@ -87,6 +87,13 @@ int append_portal_corridor_edge(SegmentEdgeList& edges,
 								int portal_domain_id = -1,
 								double tolerance = 1e-9,
 								int query_index = -1);
+int append_certified_portal_corridor_edge(SegmentEdgeList& edges,
+										  const BoxNode& source,
+										  const BoxNode& target,
+										  std::vector<Eigen::VectorXd> waypoints,
+										  SegmentEdgeValidation validation,
+										  int portal_domain_id = -1,
+										  int query_index = -1);
 int add_portal_corridor_edge(SegmentEdgeList& edges,
 							 AdjacencyGraph& graph,
 							 const BoxNode& source,

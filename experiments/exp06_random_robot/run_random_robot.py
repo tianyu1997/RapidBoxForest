@@ -70,7 +70,10 @@ from experiments.common.rbf_defaults import (
     ROBOT_LECTDB_CACHE_ROOT,
     EXP06_REGISTERED_RBF_PROFILE_NAME,
     EXP06_REGISTERED_RBF_SETTINGS,
+    RBF_OFFLINE_COVERAGE_PROFILE_NAME,
+    apply_offline_coverage_profile,
     default_rbf_profile,
+    offline_coverage_v1_profile,
     rbf_budget_grid,
     robot_lectdb_profile,
     robot_joint_limit_tuples,
@@ -269,8 +272,9 @@ def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace,
     if not _flag_was_supplied(supplied, "--query-bridge-no-path-retry-stop-on-first-success"):
         args.query_bridge_no_path_retry_stop_on_first_success = True
     max_float_if_implicit("query_bridge_direct_max_length", "--query-bridge-direct-max-length", 15.0)
-    args.hipac_online_transition_portal = False
-    args.hipac_promote_transition_slices = False
+    if not bool(getattr(args, "hipac_transition_obb_portal", False)):
+        args.hipac_online_transition_portal = False
+        args.hipac_promote_transition_slices = False
 
 
 def _flag_was_supplied(argv: list[str], flag: str) -> bool:
@@ -451,6 +455,19 @@ def effective_rbf_profile(args: argparse.Namespace,
             "P(main-accessible) reaches threshold; otherwise keep random anchors"
         ),
     }
+    profile["offline_coverage_profile"] = str(getattr(args, "offline_coverage_profile", ""))
+    profile["offline_coverage_profile_details"] = (
+        offline_coverage_v1_profile()
+        if str(getattr(args, "offline_coverage_profile", "")) == RBF_OFFLINE_COVERAGE_PROFILE_NAME
+        else {}
+    )
+    profile["offline_connector"] = {
+        "mode": str(getattr(args, "offline_connector_mode", "box_only")),
+        "shortcut_edges": int(args.offline_shortcut_edges),
+        "candidate_limit": int(args.offline_shortcut_candidate_limit),
+        "min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),
+        "max_segment_length": float(args.offline_shortcut_max_segment_length),
+    }
     profile["leaf_sweep"]["leaf_threads"] = int(args.threads)
     profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
@@ -612,6 +629,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--box-budgets", default="")
     parser.add_argument("--rbf-max-depth", type=int, default=DEFAULT_RBF_MAX_DEPTH)
     parser.add_argument("--offline-grower", choices=["leaf_refine", "adaptive_deep_leaf"], default="adaptive_deep_leaf")
+    parser.add_argument(
+        "--offline-coverage-profile",
+        choices=["", RBF_OFFLINE_COVERAGE_PROFILE_NAME],
+        default="",
+        help="Apply a named query-agnostic offline coverage profile after robot-specific RBF defaults.",
+    )
     parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
     parser.add_argument("--leaf-max-depth", type=int, default=14)
     parser.add_argument("--adaptive-target-depth", type=int, default=0)
@@ -802,6 +825,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--offline-anchor-skip-if-main-accessible", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--offline-anchor-skip-difficulties", default="")
     parser.add_argument("--offline-anchor-main-accessible-threshold", type=float, default=0.95)
+    parser.add_argument("--offline-connector-mode", choices=["off", "box_only", "short_segment"], default="box_only")
     parser.add_argument("--offline-shortcut-edges", type=int, default=0)
     parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
     parser.add_argument("--offline-shortcut-min-gain-ratio", type=float, default=1.6)
@@ -834,6 +858,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
     parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
     parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--hipac-transition-obb-portal", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
+    parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)
+    parser.add_argument("--hipac-transition-obb-safety-epsilon", type=float, default=0.0)
     parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-promote-transition-target-query-indices", default="")
     parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
@@ -1095,6 +1123,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         difficulty,
         getattr(args, "_argv", []),
     )
+    apply_offline_coverage_profile(args, getattr(args, "_argv", []))
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
     queries = [
@@ -1125,10 +1154,15 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     hipac_portal_connectivity = bool(args.hipac_portal_connectivity) or hipac_improved
     hipac_online_connectivity = bool(args.hipac_online_connectivity) or hipac_improved
     hipac_online_prebridge_portal = bool(args.hipac_online_prebridge_portal) or hipac_improved
-    # TransitionPortal has not passed validation yet.  Keep the CLI flags for
-    # future debug compatibility, but do not enable them in this paper runner.
-    hipac_online_transition_portal = False
-    hipac_promote_transition_slices = False
+    # TransitionPortal remains disabled unless the new OBB-zonotope
+    # certificate is explicitly requested.  This avoids enabling the older
+    # unvalidated transition resolver in paper runs.
+    hipac_online_transition_portal = (
+        bool(args.hipac_online_transition_portal) and bool(args.hipac_transition_obb_portal)
+    )
+    hipac_promote_transition_slices = (
+        bool(args.hipac_promote_transition_slices) and bool(args.hipac_transition_obb_portal)
+    )
     effective_ffb_start_depth = int(args.ffb_start_depth)
     if robot_name == "ur5" and int(args.ur5_ffb_start_depth) >= 0:
         effective_ffb_start_depth = int(args.ur5_ffb_start_depth)
@@ -1144,6 +1178,14 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_askip{int(scene_anchor_skip_if_main_accessible)}"
         f"_ath{fmt_float(float(args.offline_anchor_main_accessible_threshold))}"
     )
+    offline_profile_tag = ""
+    if str(args.offline_coverage_profile):
+        offline_profile_tag = (
+            f"_oc{slugify(str(args.offline_coverage_profile), limit=18)}"
+            f"_cm{slugify(str(args.offline_connector_mode), limit=12)}"
+            f"_at{int(resolved_adaptive_target_depth(args))}"
+            f"_tb{int(float(args.adaptive_time_budget_ms))}"
+        )
     query_quality_tag = (
         f"_qbp{fmt_float(float(args.query_bridge_edge_cost_penalty))}"
         f"_rs{fmt_float(float(args.connector_rrt_step_size))}"
@@ -1169,6 +1211,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_c{int(args.offline_anchor_candidate_count)}"
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
+        f"{offline_profile_tag}"
         f"{hipac_profile_tag}"
         f"{query_quality_tag}"
     )
@@ -1184,6 +1227,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
         f"_c{int(args.offline_anchor_candidate_count)}"
         f"_os{int(args.offline_shortcut_edges)}"
         f"_tm{int(bool(args.query_bridge_to_main_island))}"
+        f"{offline_profile_tag}"
         f"{hipac_profile_tag}"
         f"{query_quality_tag}"
     )
@@ -1252,6 +1296,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             leaf_threads=int(args.threads),
             canonicalize_queries=False,
             audit_collision_tolerance=float(args.audit_collision_tolerance),
+            offline_coverage_profile=str(args.offline_coverage_profile),
             offline_query_agnostic_build=True,
             offline_random_anchors=bool(args.offline_random_anchors),
             offline_anchor_count=int(args.offline_anchor_count),
@@ -1260,6 +1305,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             offline_anchor_distance_mu=float(args.offline_anchor_distance_mu),
             offline_anchor_skip_if_main_accessible=bool(scene_anchor_skip_if_main_accessible),
             offline_anchor_main_accessible_threshold=float(args.offline_anchor_main_accessible_threshold),
+            offline_connector_mode=str(args.offline_connector_mode),
             offline_shortcut_edges=int(args.offline_shortcut_edges),
             offline_shortcut_candidate_limit=int(args.offline_shortcut_candidate_limit),
             offline_shortcut_min_gain_ratio=float(args.offline_shortcut_min_gain_ratio),
@@ -1291,6 +1337,10 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
             hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
             hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
+            hipac_transition_obb_portal=bool(args.hipac_transition_obb_portal),
+            hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
+            hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
+            hipac_transition_obb_safety_epsilon=float(args.hipac_transition_obb_safety_epsilon),
             hipac_promote_transition_slices=hipac_promote_transition_slices,
             hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
             hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
@@ -1412,6 +1462,10 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
             "ffb_start_depth": int(effective_ffb_start_depth),
             "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
+            "hipac_transition_obb_portal": bool(args.hipac_transition_obb_portal),
+            "hipac_transition_obb_lateral_radius": float(args.hipac_transition_obb_lateral_radius),
+            "hipac_transition_obb_longitudinal_margin": float(args.hipac_transition_obb_longitudinal_margin),
+            "hipac_transition_obb_safety_epsilon": float(args.hipac_transition_obb_safety_epsilon),
             "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
             "query_bridge_local_sample_assimilation": bool(args.query_bridge_local_sample_assimilation),
             "query_bridge_direct_partition_append_batch_size": int(
@@ -1427,6 +1481,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "offline_anchor_skip_if_main_accessible": bool(scene_anchor_skip_if_main_accessible),
             "offline_anchor_skip_difficulties": str(args.offline_anchor_skip_difficulties),
             "offline_anchor_main_accessible_threshold": float(args.offline_anchor_main_accessible_threshold),
+            "offline_coverage_profile": str(args.offline_coverage_profile),
+            "offline_connector_mode": str(args.offline_connector_mode),
             "offline_shortcut_edges": int(args.offline_shortcut_edges),
             "offline_shortcut_candidate_limit": int(args.offline_shortcut_candidate_limit),
             "offline_shortcut_min_gain_ratio": float(args.offline_shortcut_min_gain_ratio),
@@ -2329,6 +2385,10 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "measured_time_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
+                "offline_coverage_profile": str(items[0].get("offline_coverage_profile", "")),
+                "offline_coverage_s_median": median(row.get("offline_coverage_s", math.nan) for row in items),
+                "offline_connector_mode": str(items[0].get("offline_connector_mode", "")),
+                "offline_connector_s_median": median(row.get("offline_connector_s", math.nan) for row in items),
                 "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0))) for row in items),
                 "online_total_s_median": median(row.get("online_total_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
                 "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
@@ -2550,6 +2610,10 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "measured_time_s_median",
         "planning_s_median",
         "offline_build_s_median",
+        "offline_coverage_profile",
+        "offline_coverage_s_median",
+        "offline_connector_mode",
+        "offline_connector_s_median",
         "online_batch_s_median",
         "online_total_s_median",
         "online_solve_s_median",
@@ -2789,6 +2853,7 @@ def main() -> int:
     args = parse_args()
     args._argv = list(sys.argv[1:])
     apply_hipac_improved_leaf_sweep_profile(args, args._argv)
+    apply_offline_coverage_profile(args, args._argv)
     normalize_adaptive_depth_cap(args, sys.argv[1:])
     configure_thread_environment(int(args.threads))
     robots = csv_list(args.robots)
@@ -2830,7 +2895,9 @@ def main() -> int:
         bitstar_stage_s = [bitstar_trace_timeout_s]
         args.queries_per_scene = min(int(args.queries_per_scene), 3)
     scene_seed_values = explicit_scene_seed_values if explicit_scene_seed_values else list(range(scene_seeds))
-    rbf_profile = effective_rbf_profile(args, box_budgets)
+    profile_args = copy.copy(args)
+    apply_offline_coverage_profile(profile_args, getattr(args, "_argv", []))
+    rbf_profile = effective_rbf_profile(profile_args, box_budgets)
     catalog_path = args.scene_catalog or (args.out_dir / "random_scene_catalog_v7.json")
     catalog_summary: dict[str, Any] = {
         "path": str(catalog_path),
@@ -2903,6 +2970,7 @@ def main() -> int:
                         difficulty,
                         getattr(args, "_argv", []),
                     )
+                    apply_offline_coverage_profile(row_args_for_budget, getattr(args, "_argv", []))
                     scenario_budgets = [int(row_args_for_budget.deep_max_boxes)]
                 for seed in scene_seed_values:
                     for budget in scenario_budgets:
@@ -2940,6 +3008,7 @@ def main() -> int:
                                 difficulty,
                                 getattr(args, "_argv", []),
                             )
+                            apply_offline_coverage_profile(row_args, getattr(args, "_argv", []))
                             row_split = effective_lect_split_schedule(
                                 row_args,
                                 robot,

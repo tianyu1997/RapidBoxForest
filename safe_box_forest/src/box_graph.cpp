@@ -604,6 +604,35 @@ int append_portal_corridor_edge(SegmentEdgeList& edges,
     return next_id;
 }
 
+int append_certified_portal_corridor_edge(SegmentEdgeList& edges,
+                                          const BoxNode& source,
+                                          const BoxNode& target,
+                                          std::vector<Eigen::VectorXd> waypoints,
+                                          SegmentEdgeValidation validation,
+                                          int portal_domain_id,
+                                          int query_index) {
+    if (validation != SegmentEdgeValidation::ConservativeObbZonotope ||
+        waypoints.size() < 2U) {
+        return -1;
+    }
+    const int next_id = append_segment_edge(edges,
+                                            source.id,
+                                            target.id,
+                                            std::move(waypoints),
+                                            SegmentEdgeType::PortalCorridor,
+                                            0,
+                                            validation,
+                                            false,
+                                            query_index);
+    if (next_id < 0) {
+        return -1;
+    }
+    auto& edge = edges.back();
+    edge.portal_domain_id = portal_domain_id;
+    edge.conservative_certificate = true;
+    return next_id;
+}
+
 int add_portal_corridor_edge(SegmentEdgeList& edges,
                              AdjacencyGraph& graph,
                              const BoxNode& source,
