@@ -6,106 +6,115 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "06aa617ce3df8d416ed1c0332c9051e802c90dad1fbb4fe9783b27ee36ced4af"
+      "sha256": "68eb71d7eb42f09ca996d4f1473623c93c5c325f45d95184e186003326857d28"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.png",
       "placeholder": false,
-      "sha256": "6308ee9c71b22023bb8158246a6651098b240885c295bafe72eb8ea09c84aff0"
+      "sha256": "687072fcfee6b1e075e390449caa427fa606416ab532e3a6828edc23dc932aaa"
     },
     "fig_tro_shelf_cross_tradeoff.pdf": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "564375420d24fbd4183a76649bff9159281005053effad126f7a99d46226345d"
+      "sha256": "7814a6a87a596ee1d6f8c1a0c29c785f9efde70114bfd3351c90344da69d28f6"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
       "placeholder": false,
-      "sha256": "918c8365bffa038249685f095e14b1db1533b3285857b4fb7c0d5ca20c7ba338"
+      "sha256": "4c3d0129a13f7eb703955b0ff2fa0f55d0d0324fe451309e18995a6ef9008b68"
     },
     "fig_tro_shelf_tradeoff.pdf": {
-      "caption": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve.",
+      "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "9e06efc8049b1b803beedfe9b94d8efc9635f5efa824b514cd56fd20a3d2bc8c"
+      "sha256": "190bdc3f08ccaf64d2511f3b6580833db10393b903b2132c4663695ba264fad2"
     },
     "fig_tro_shelf_tradeoff.png": {
-      "caption": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve preview.",
+      "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.png",
       "placeholder": false,
-      "sha256": "74f953f51ed9d6e0b1d45b40ada94d4cc87f0c37289511a2a708b311debe4021"
+      "sha256": "cd56483e046d88713d8c66ff471acf093de999ef590b43e6821db1d91e116c46"
     },
     "tab_tro_dynamic_update.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_dynamic_update.tex",
       "placeholder": false,
-      "sha256": "129ef8a2433829be1bd90cae082d978bae73d6d1efbe18fd5ef2c1a447f859ed"
+      "sha256": "a38881da014ad03b575ff0af6f52598382e45391ef1ff9e220339cf641f2df4b"
     },
     "tab_tro_endpoint_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_endpoint_envelope.tex",
       "placeholder": false,
-      "sha256": "6379fd76668880c79a70b35fa15fd3cff7ee4817c441fb1ffd649c2d30ccca43"
+      "sha256": "9cb674cfe2423c1363ca2c669db410b611c8e22d0957d5f908d03e86817035ab"
     },
     "tab_tro_lect_performance.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_lect_performance.tex",
       "placeholder": false,
-      "sha256": "7fcfb01da9e0dcc6483343afe286737fa19a6c97cf8745e81ed70a601a73ad5b"
+      "sha256": "603bf37b27360a4d9c4c931eb658a8f37ba2483d7200fa8c9d3248d91f471810"
     },
     "tab_tro_link_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_link_envelope.tex",
       "placeholder": false,
-      "sha256": "4ecedf957f7d9fd08e0c0915b7c953392649a03007f2f50b680b212db57791a1"
+      "sha256": "36c7652b2d6488a4ce8239062a5e0a938aa38c8f08e9e2fc9718bea1c978132d"
     },
     "tab_tro_random_summary.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "d308dd9e10fbec705de66566a88d84aafa9f5f0bc01b7071b48e9d004489f2db"
+      "sha256": "333129a03dc59038bd20e911d3a6c61c744177b4f6171f4995edda7e0c34f9df"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "9459662e645020ec1c5e78c1c794e1a7ea85f92097b3e4aaddf509a267356220"
+      "sha256": "5657cfbb3c7c7f65753f5e469fae2160498831a4d2453a72ecde018b7dcb30c7"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "d7aa9d029323376244cdbb68732c4857e4e801d751cec840d2f5634eff57ca30"
+      "sha256": "939922f4dab5decdea0159ac76fe35bc4ea11d8e481cad1dedc2e6b472939cad"
     }
   },
   "environment": {
     "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
-    "git_sha": "db3ed0111284",
+    "git_sha": "b708952e2c4d",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 17216,
-      "VmHWM_kb": 27880,
-      "VmRSS_kb": 27880,
-      "VmSize_kb": 31912
+      "VmData_kb": 19388,
+      "VmHWM_kb": 30020,
+      "VmRSS_kb": 30020,
+      "VmSize_kb": 34084
     },
     "processor": "x86_64",
     "python": "3.10.19",
     "repo_root": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
     "thread_env": {}
   },
-  "placeholder_mode": true,
+  "placeholder_mode": false,
   "source_root": "outputs/new_experiments/tro2026",
   "sources": {
+    "dynamic_update_maintenance": {
+      "build_records": "outputs/new_experiments/tro2026/exp07/dynamic_update_builds.csv",
+      "event_records": "outputs/new_experiments/tro2026/exp07/dynamic_update_events.csv",
+      "rows": 1,
+      "status": "generated",
+      "summary": "outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
+      "summary_sha256": "499513a158d81ff37f56a6812e66f02979001ddf78ccde543f4e91bceb15b3e4",
+      "table": "paper/generated/tab_tro_dynamic_update.tex"
+    },
     "exp01_endpoint_envelope": {
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp01/endpoint_envelope_summary.csv",
@@ -124,6 +133,15 @@
       "summary_sha256": "dc17404d0aeccc1ef6d86a2b9e9a69031e5c4b6a356d401a8772f0cb2a9073e1",
       "table": "paper/generated/tab_tro_lect_performance.tex"
     },
+    "exp04_d23_cache_artifact": {
+      "cache_bytes": "13,686,872,489",
+      "cache_gib": "12.75",
+      "path": "outputs/new_experiments/exp04_shelf_ablation_d23/d23_prewarm_canonical_dim0q4_fixed_root_aafk_volume_min.json",
+      "prewarm_s": "958.079",
+      "records": "16,777,215",
+      "sha256": "1a1fccabe4f0f14ae413ed8e1f06f82ebdb53976790767a02ee6cd7e234f332c",
+      "status": "found"
+    },
     "exp04_shelf_leaf_rrt": {
       "figure_pdf": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_shelf_tradeoff.png",
@@ -141,7 +159,7 @@
       "bitstar_trace_summary_sha256": "374ce4cd1b844b085588eb6e71a3638663509a7509f50c015f299c1733f54a33",
       "current_baseline_manifest": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines_001/shelf_cross_algorithm_manifest.json",
       "current_baseline_summary": "outputs/new_experiments/tro2026/exp05/current_ompl_baselines_001/shelf_cross_algorithm_summary.csv",
-      "current_iris_context_policy": "legacy_shelf_context_restored_without_0p01_simplify_manifest_filter",
+      "current_iris_context_policy": "current_shelf_iris_manifest_context_with_strict_audit_status",
       "current_iris_manifest": "outputs/new_experiments/tro2026/exp05/current_iris_gcs/shelf_cross_algorithm_manifest.json",
       "current_iris_manifest_sha256": "e49d1d201d54e9647b63cf9b2b788485649c6a030ecaaab0a769f6dfaec2534a",
       "current_iris_summary": "outputs/new_experiments/tro2026/exp05/current_iris_gcs/shelf_cross_algorithm_summary.csv",
@@ -154,16 +172,15 @@
       "prm_optimized_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/tro2026_current_improve/exp05/current_prm_optimized/shelf_cross_algorithm_summary.csv",
       "prm_optimized_summary_sha256": "62db6698b5e3bad82e87fd1e41654774b25d6a46dfd2112e90afec18666b4e3e",
       "rbf_manifest": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_manifest.json",
-      "rbf_query_manifest": null,
-      "rbf_query_manifest_sha256": null,
+      "rbf_query_manifest_policy": "not_used_rbf_manifest_had_rows",
       "rbf_single_query_manifest": "outputs/new_experiments/tro2026/exp05/rbf_single_query_online/shelf_rbf_single_query_online_manifest.json",
       "rbf_single_query_manifest_sha256": "12222f8f78c378727253101535da9b14d2ced7420bc34e504afa4dfe414e1a3a",
       "rbf_single_query_summary": "outputs/new_experiments/tro2026/exp05/rbf_single_query_online/shelf_rbf_single_query_online_summary.csv",
       "rbf_single_query_summary_sha256": "faf62539550a2c69703cf08adaeadab604d1db5ad92ed938cb35cec84b66da15",
-      "registered_rrtconnect_manifest": null,
+      "registered_rrtconnect_manifest_policy": "not_used_current_saved_baseline_manifest_available",
       "registered_rrtconnect_manifest_rows": 0,
       "registered_rrtconnect_rows": 0,
-      "registered_rrtconnect_summary": null,
+      "registered_rrtconnect_summary_policy": "not_used_current_saved_baseline_rows_available",
       "rows": 36,
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_summary.csv",
@@ -185,49 +202,38 @@
       "current_iris_accepted_summaries": [],
       "current_iris_context_policy": "excluded_from_exp06_table_and_figure_due_to_low_strict_saved_catalog_success",
       "current_iris_rows": 0,
-      "current_iris_summaries": [
-        "outputs/new_experiments/tro2026/exp06/current_iris_gcs/random_robot_iris_gcs_summary.csv"
-      ],
-      "current_iris_summary_sha256": {
-        "outputs/new_experiments/tro2026/exp06/current_iris_gcs/random_robot_iris_gcs_summary.csv": "cec70e63ea93d74a9ae37a27bde8b0d6f4a07cbbb8965f2fc0c00948048f94bd"
-      },
+      "current_iris_summaries": [],
+      "current_iris_summary_sha256": {},
       "figure_pdf": "paper/generated/fig_tro_random_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_random_tradeoff.png",
-      "figure_rows": 33,
+      "figure_rows": 7345,
       "include_current_baselines": true,
       "manifest": "outputs/new_experiments/tro2026/exp06/random_robot_manifest.json",
-      "manifest_merge_policy": "RBF Exp.6 20260612: IIWA/Panda b400 rows replaced by targeted full-catalog recommended-profile runs (leaf10/ffb56/endpoint110 with online to-main fallback); old IIWA/Panda b800 backup rows removed. UR5 remains the tuned support_hull_volume_min run.",
-      "manifest_sha256": "04af77b3cb877be7cdf2455bfda23540a2cc98accbc01671742df2df411f3583",
-      "manifest_status": "executed_merged_with_targeted_recommended_full_success",
-      "old_random_context_table": "/home/tian/\u684c\u9762/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated/tab_tro_main_random_best_tradeoff.tex",
+      "manifest_merge_policy": "none",
+      "manifest_sha256": "f359c81b06ee3d15475f7f38f28475f8b0cf24143e38fd574ef27fccd45508f2",
+      "manifest_status": "restored_from_executed_component_manifests",
       "ompl_curve_manifest": "outputs/new_experiments/tro2026/exp06/ompl_prm_bitstar_60s_quality_stall_v2/random_robot_manifest.json",
-      "ompl_curve_manifest_sha256": "6acb189d85b2e32a9c5e468ef9d82e381199c61512c5d9a6b52b601508010a8c",
+      "ompl_curve_manifest_sha256": "skipped_large_file",
       "ompl_curve_rows_100pct": 7321,
       "ompl_curve_summary": "outputs/new_experiments/tro2026/exp06/ompl_prm_bitstar_60s_quality_stall_v2/random_robot_summary.csv",
       "ompl_curve_summary_sha256": "c046649fce05bf5559ea401e0f33765a983b8df758f5bc190bc0311626f65474",
       "ompl_curve_supplement_sha256": {},
       "ompl_curve_supplements": [],
-      "ompl_per_query_tradeoff_policy": "per_query_seed_select_fastest_within_1p08x_best_path",
-      "ompl_per_query_tradeoff_rows": 18,
-      "rbf_registered_override_manifest": "outputs/new_experiments/tro2026/exp06_rbf_robot_tuned_profile_v3b/random_robot_manifest.json",
-      "rbf_registered_override_manifest_sha256": "9241d5b2c6670f6b55149d76c118ca4779b39b431297f2d69ec2ab07c7e9646c",
+      "ompl_per_query_tradeoff_policy": "bitstar_only_per_query_seed_select_fastest_within_1p08x_best_path_prm_uses_cumulative_scenario_checkpoint",
+      "ompl_per_query_tradeoff_rows": 9,
+      "rbf_registered_override_manifest": "outputs/new_experiments/tro2026/exp06/exp06_rbf_robot_tuned_profile_v8_segment_trade/random_robot_manifest.json",
+      "rbf_registered_override_manifest_sha256": "341fc0aad9f552e3f8530978ff5f141aaf0cf50e1c58e11806ca23cb667ee670",
       "rbf_registered_override_plot_policy": "plot_only_registered_override_rbf_rows",
       "rbf_registered_override_rows": 6,
-      "rbf_registered_override_summary": "outputs/new_experiments/tro2026/exp06_rbf_robot_tuned_profile_v3b/random_robot_summary.csv",
-      "rbf_registered_override_summary_sha256": "b374c62759512cb2b77180096b5f9148f977e9cdbade2e44abd6d1297ae07d5a",
+      "rbf_registered_override_summary": "outputs/new_experiments/tro2026/exp06/exp06_rbf_robot_tuned_profile_v8_segment_trade/random_robot_summary.csv",
+      "rbf_registered_override_summary_sha256": "00e8dc2ced7a17a1e39a570df4fa693c509e50795ea3d5d89a5be321b77d252b",
       "registered_baseline_context": false,
-      "rows": 47,
+      "registered_baseline_context_policy": "inline_registered_context_constants_used_only_when_current_baselines_are_absent",
+      "rows": 7359,
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp06/random_robot_summary.csv",
       "summary_sha256": "5f1a7bdff252a2996c6b225eca6852cdee3dcd921fe299d1e4b54f8160fccc48",
       "table": "paper/generated/tab_tro_random_summary.tex"
-    },
-    "exp07_dynamic_update": {
-      "rows": 1,
-      "status": "generated",
-      "summary": "outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
-      "summary_sha256": "499513a158d81ff37f56a6812e66f02979001ddf78ccde543f4e91bceb15b3e4",
-      "table": "paper/generated/tab_tro_dynamic_update.tex"
     },
     "supporting_table_imports": {
       "manifest": "outputs/new_experiments/tro2026/supporting_imports/supporting_table_import_manifest.json",

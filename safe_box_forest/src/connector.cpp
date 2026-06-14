@@ -32,6 +32,14 @@ bool check_segment_with_step(const CollisionChecker& checker,
     return checker.check_segment(a, b, segment_resolution_for_step(a, b, base_resolution, segment_step));
 }
 
+double waypoint_path_length(const std::vector<Eigen::VectorXd>& path) {
+    double total = 0.0;
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        total += (path[index] - path[index - 1]).norm();
+    }
+    return total;
+}
+
 bool allow_connector_box_commit(BoxOracle& oracle,
                                 FindFreeBoxResult& result,
                                 BoxCommitPolicy policy,
@@ -1251,6 +1259,9 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
     RRTTree goal_tree{{goal}, {-1}};
     std::mt19937 rng(static_cast<unsigned>(seed));
     std::uniform_real_distribution<double> u01(0.0, 1.0);
+    const int optimize_after_first_iters = std::max(0, config.optimize_after_first_iters);
+    int first_solution_iter = -1;
+    double best_solution_length = std::numeric_limits<double>::infinity();
 
     for (int iter = 0; iter < config.max_iters; ++iter) {
         outcome.stats.iterations = iter + 1;
@@ -1305,12 +1316,24 @@ RRTConnectOutcome birrt_connect_impl(const Eigen::Ref<const Eigen::VectorXd>& st
         }
         outcome.stats.merge_iteration = iter + 1;
         outcome.stats.raw_waypoints = static_cast<int>(raw_path.size());
-        outcome.path = config.shortcut_path
-                           ? shortcut_collision_free_path(raw_path, checker, config.segment_resolution, config.segment_step)
-                           : std::move(raw_path);
-        outcome.stats.shortcut_waypoints = static_cast<int>(outcome.path.size());
-        finish_rrt_stats(outcome, start_tree, goal_tree, t0);
-        return outcome;
+        std::vector<Eigen::VectorXd> candidate =
+            config.shortcut_path
+                ? shortcut_collision_free_path(raw_path, checker, config.segment_resolution, config.segment_step)
+                : std::move(raw_path);
+        const double candidate_length = waypoint_path_length(candidate);
+        if (candidate_length < best_solution_length) {
+            best_solution_length = candidate_length;
+            outcome.path = std::move(candidate);
+            outcome.stats.shortcut_waypoints = static_cast<int>(outcome.path.size());
+        }
+        if (first_solution_iter < 0) {
+            first_solution_iter = iter;
+        }
+        if (optimize_after_first_iters <= 0 ||
+            iter + 1 >= first_solution_iter + 1 + optimize_after_first_iters) {
+            finish_rrt_stats(outcome, start_tree, goal_tree, t0);
+            return outcome;
+        }
     }
     finish_rrt_stats(outcome, start_tree, goal_tree, t0);
     return outcome;

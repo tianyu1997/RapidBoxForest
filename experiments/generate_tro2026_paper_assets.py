@@ -18,38 +18,46 @@ if str(REPO_ROOT) not in sys.path:
 
 from experiments.common.experiment_io import environment_metadata, write_json  # noqa: E402
 from experiments.common.metrics import mean, median  # noqa: E402
-from experiments.common.rbf_defaults import DEFAULT_RBF_SHELF_BOX_BUDGET  # noqa: E402
+from experiments.common.rbf_defaults import (  # noqa: E402
+    DEFAULT_RBF_SHELF_BOX_BUDGET,
+    EXP06_REGISTERED_RBF_PROFILE_NAME,
+)
 
 
 REQUIRED_TABLES = {
     "tab_tro_endpoint_envelope.tex": "Endpoint envelope source study.",
     "tab_tro_link_envelope.tex": "S=1 link envelope representation study.",
     "tab_tro_lect_performance.tex": "LECT operation and snapshot-count study.",
-    "tab_tro_shelf_ablation.tex": "Shelf+IIWA SBF ablation.",
+    "tab_tro_shelf_ablation.tex": "Shelf+IIWA RBF registered point and mechanism rows.",
     "tab_tro_shelf_cross_algorithm.tex": "Shelf+IIWA cross-algorithm comparison.",
     "tab_tro_random_summary.tex": "Random multi-robot summary.",
     "tab_tro_dynamic_update.tex": "Dynamic update summary.",
 }
 
 REQUIRED_FIGURES = {
-    "fig_tro_shelf_tradeoff.pdf": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve.",
-    "fig_tro_shelf_tradeoff.png": "Shelf+IIWA SBF five-query amortized-time quality/segment trade-off curve preview.",
+    "fig_tro_shelf_tradeoff.pdf": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve.",
+    "fig_tro_shelf_tradeoff.png": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
     "fig_tro_shelf_cross_tradeoff.pdf": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context.",
     "fig_tro_shelf_cross_tradeoff.png": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
     "fig_tro_random_tradeoff.pdf": "Random-scene five-query amortized-time trade-off curve.",
     "fig_tro_random_tradeoff.png": "Random-scene five-query amortized-time trade-off curve preview.",
 }
 
-OLD_TRO_PAPER_ROOT = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026")
-OLD_RANDOM_TABLE = OLD_TRO_PAPER_ROOT / "generated" / "tab_tro_main_random_best_tradeoff.tex"
 REGISTERED_EXP05_RRTCONNECT_SUMMARY = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_summary.csv"
 REGISTERED_EXP05_RRTCONNECT_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp05_full_joint_rrtconnect_s0_7" / "shelf_cross_algorithm_manifest.json"
 REGISTERED_EXP05_PRM_OPTIMIZED_SUMMARY = REPO_ROOT / "outputs" / "tro2026_current_improve" / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_summary.csv"
 REGISTERED_EXP05_PRM_OPTIMIZED_MANIFEST = REPO_ROOT / "outputs" / "tro2026_current_improve" / "exp05" / "current_prm_optimized" / "shelf_cross_algorithm_manifest.json"
 REGISTERED_EXP04_QUERY_MANIFEST = REPO_ROOT / "outputs" / "tro2026" / "exp04" / "shelf_leaf_rrt_manifest.json"
-EXP04_D23_CACHE_RECORDS = "2,097,151"
-EXP04_D23_CACHE_BYTES = "13,684,743,849"
+EXP04_D23_CACHE_RECORDS = "16,777,215"
+EXP04_D23_CACHE_BYTES = "13,686,872,489"
 EXP04_D23_CACHE_GIB = "12.75"
+EXP04_D23_PREWARM_S = "958.079"
+EXP04_D23_CACHE_ARTIFACT = Path(
+    "outputs/new_experiments/exp04_shelf_ablation_d23/"
+    "d23_prewarm_canonical_dim0q4_fixed_root_aafk_volume_min.json"
+)
+EXP03_UR5_D20_CACHE_RECORDS = "2,097,151"
+EXP03_UR5_D20_CACHE_GIB = "1.67"
 
 METHOD_STYLE = {
     "sbf_leaf_rrt": {"label": "RBF", "color": "#1f77b4", "marker": "o"},
@@ -121,7 +129,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate TRO2026 paper tables/manifest from current artifacts.")
     parser.add_argument("--out-dir", type=Path, default=REPO_ROOT / "outputs" / "new_experiments" / "tro2026")
     parser.add_argument("--paper-dir", type=Path, default=REPO_ROOT / "paper")
-    parser.add_argument("--allow-placeholders", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--allow-placeholders", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument(
         "--include-exp06-current-baselines",
         action=argparse.BooleanOptionalAction,
@@ -162,6 +170,17 @@ def file_sha256(path: Path) -> str | None:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def file_sha256_if_reasonable(path: Path | None, max_bytes: int = 256 * 1024 * 1024) -> str | None:
+    if path is None or not path.exists():
+        return None
+    try:
+        if path.stat().st_size > max_bytes:
+            return "skipped_large_file"
+    except OSError:
+        return None
+    return file_sha256(path)
 
 
 def tex_num(value: Any, digits: int = 3) -> str:
@@ -209,7 +228,21 @@ def tex_qrange_s(lo_s: Any, hi_s: Any) -> str:
         return "--"
     if not math.isfinite(lo) or not math.isfinite(hi):
         return "--"
-    return f"\\([{lo:.3f},{hi:.3f}]\\)"
+    return f"\\([{lo:.3f}, {hi:.3f}]\\)"
+
+
+def tex_iqr_or_qrange_s(values: Any, lo_s: Any, hi_s: Any) -> str:
+    vals = finite_values(values)
+    if vals:
+        return tex_iqr(vals, 3)
+    return tex_qrange_s(lo_s, hi_s)
+
+
+def tex_int_commas(value: Any) -> str:
+    x = as_float(value)
+    if not math.isfinite(x):
+        return "--"
+    return f"{int(round(x)):,}"
 
 
 def tex_speedup_range(lo_value: Any, hi_value: Any) -> str:
@@ -218,6 +251,13 @@ def tex_speedup_range(lo_value: Any, hi_value: Any) -> str:
     if not math.isfinite(lo) or not math.isfinite(hi):
         return "--"
     return f"{lo:.1f}--{hi:.1f}$\\times$"
+
+
+def tex_speedup_iqr_or_range(values: Any, lo_value: Any, hi_value: Any) -> str:
+    vals = finite_values(values)
+    if vals:
+        return rf"{tex_iqr(vals, 1)}$\times$"
+    return tex_speedup_range(lo_value, hi_value)
 
 
 def tex_sci(value: Any, digits: int = 2) -> str:
@@ -233,6 +273,20 @@ def tex_sci(value: Any, digits: int = 2) -> str:
         return "0"
     mantissa, exponent = f"{x:.{digits}e}".split("e")
     return rf"\ensuremath{{{mantissa}\mathrm{{e}}{{{int(exponent)}}}}}"
+
+
+def tex_fixed(value: Any, digits: int = 6) -> str:
+    if value is None:
+        return "--"
+    try:
+        x = float(value)
+    except (TypeError, ValueError):
+        return "--"
+    if not math.isfinite(x):
+        return "--"
+    if abs(x) < 0.5 * (10 ** -digits):
+        x = 0.0
+    return f"{x:.{digits}f}"
 
 
 def as_float(value: Any, default: float = math.nan) -> float:
@@ -278,7 +332,33 @@ def tex_iqr(values: Any, digits: int = 3) -> str:
     med = percentile_value(vals, 0.50)
     q1 = percentile_value(vals, 0.25)
     q3 = percentile_value(vals, 0.75)
-    return rf"{tex_num(med, digits)} [{tex_num(q1, digits)},{tex_num(q3, digits)}]"
+    return rf"{tex_num(med, digits)} [{tex_num(q1, digits)}, {tex_num(q3, digits)}]"
+
+
+def tex_iqr_stacked(values: Any, digits: int = 3) -> str:
+    vals = finite_values(values)
+    if not vals:
+        return "--"
+    med = percentile_value(vals, 0.50)
+    q1 = percentile_value(vals, 0.25)
+    q3 = percentile_value(vals, 0.75)
+    return (
+        rf"\shortstack{{{tex_num(med, digits)}\\[-0.2ex]"
+        rf"{{\scriptsize [{tex_num(q1, digits)}, {tex_num(q3, digits)}]}}}}"
+    )
+
+
+def tex_mean_iqr_stacked(values: Any, digits: int = 3) -> str:
+    vals = finite_values(values)
+    if not vals:
+        return "--"
+    avg = sum(vals) / len(vals)
+    q1 = percentile_value(vals, 0.25)
+    q3 = percentile_value(vals, 0.75)
+    return (
+        rf"\shortstack{{{tex_num(avg, digits)}\\[-0.2ex]"
+        rf"{{\scriptsize [{tex_num(q1, digits)}, {tex_num(q3, digits)}]}}}}"
+    )
 
 
 def tex_time_tail(values: Any, digits: int = 3) -> str:
@@ -371,6 +451,8 @@ def query_solve_seconds(query: dict[str, Any]) -> float:
 
 def online_query_time(row: dict[str, Any]) -> float:
     """Online query time excluding fixed final simplification."""
+    method = str(row.get("method", "")).lower()
+    build = as_float(row.get("offline_build_s_median", row.get("build_s")), 0.0)
     for key in (
         "online_solve_per_query_s_median",
         "online_solve_per_query_s",
@@ -381,6 +463,13 @@ def online_query_time(row: dict[str, Any]) -> float:
     ):
         value = as_float(row.get(key))
         if math.isfinite(value):
+            if method == "prm" and value <= 1e-9:
+                amortized = as_float(row.get("amortized_s_k5"))
+                if math.isfinite(amortized) and math.isfinite(build):
+                    derived = amortized - build / 5.0
+                    if derived > 1e-9:
+                        return derived
+                continue
             return value
     return math.nan
 
@@ -435,14 +524,14 @@ def is_full_success(row: dict[str, Any]) -> bool:
 
 
 AMORTIZATION_QUERY_COUNTS = [1, 5, 10, 20, 50]
-PANEL_TITLE_FONTSIZE = 7.6
-AXIS_LABEL_FONTSIZE = 7.0
-TICK_LABEL_FONTSIZE = 6.2
-LEGEND_FONTSIZE = 6.6
-LINE_WIDTH = 0.95
-POINT_SIZE = 14
-SELECTED_POINT_SIZE = 42
-SELECTED_LINE_WIDTH = 1.2
+PANEL_TITLE_FONTSIZE = 9.4
+AXIS_LABEL_FONTSIZE = 8.9
+TICK_LABEL_FONTSIZE = 8.0
+LEGEND_FONTSIZE = 8.1
+LINE_WIDTH = 1.35
+POINT_SIZE = 32
+SELECTED_POINT_SIZE = 78
+SELECTED_LINE_WIDTH = 1.65
 
 
 def plot_query_amortization_panel(
@@ -471,7 +560,7 @@ def plot_query_amortization_panel(
             AMORTIZATION_QUERY_COUNTS,
             ys,
             marker=marker,
-            markersize=3.0,
+            markersize=3.3,
             linewidth=LINE_WIDTH,
             color=color,
             label=label,
@@ -485,7 +574,7 @@ def plot_query_amortization_panel(
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("number of queries" if show_xlabel else "")
-    ax.set_ylabel("amortized time / query (s)" if show_ylabel else "")
+    ax.set_ylabel("Build/$K$+Online/q (s)" if show_ylabel else "")
     ax.set_title(title, fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
@@ -523,55 +612,146 @@ def ratio_to_ref(value: Any, reference: Any) -> float:
     return x / ref
 
 
-def parse_old_random_context(table_path: Path = OLD_RANDOM_TABLE) -> dict[tuple[str, str], dict[str, dict[str, float]]]:
-    """Read old TRO random best-point table as contextual baseline markers.
+def generate_pipeline_figure(pdf_path: Path, png_path: Path) -> None:
+    os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "rbf_matplotlib"))
+    import matplotlib
 
-    The current Exp.6 RBF rows use the new saved v5 catalog. These imported
-    rows are therefore only plotted/reported as old common-rule context, not as
-    same-catalog head-to-head trials.
-    """
-    if not table_path.exists():
-        return {}
-    text = table_path.read_text(encoding="utf-8")
-    out: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
-    methods = ["sbf_old", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
-    for line in text.splitlines():
-        if "&" not in line:
-            continue
-        match = re.match(r"\s*(IIWA|UR5|Panda)-(Easy|Medium|Hard)\s*&\s*(.*)\\\\", line)
-        if not match:
-            continue
-        robot = match.group(1).lower()
-        difficulty = match.group(2).lower()
-        values = [cell.strip() for cell in match.group(3).split("&")]
-        if len(values) < 13:
-            continue
-        # SBF/IRIS/PRM are Build, Query, Path; RRTConnect/BIT* are Query, Path.
-        offsets = {
-            "sbf_old": (0, 1, 2),
-            "iris_np_gcs": (3, 4, 5),
-            "prm": (6, 7, 8),
-            "rrtconnect": (None, 9, 10),
-            "bitstar": (None, 11, 12),
-        }
-        scenario: dict[str, dict[str, float]] = {}
-        for method, (build_index, query_index, path_index) in offsets.items():
-            build_s = 0.0 if build_index is None else as_float(values[build_index])
-            query_s = as_float(values[query_index])
-            path_len = as_float(values[path_index])
-            if math.isfinite(query_s) and math.isfinite(path_len):
-                scenario[method] = {
-                    "build_s": build_s,
-                    "query_s": query_s,
-                    "total_s": build_s + query_s,
-                    "path_length": path_len,
-                }
-        out[(robot, difficulty)] = scenario
-    return out
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyArrowPatch, FancyBboxPatch
+
+    fig, ax = plt.subplots(1, 1, figsize=(11.6, 3.15))
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.0)
+    ax.axis("off")
+
+    palette = {
+        "geom": "#e7f0f7",
+        "cache": "#edf3e8",
+        "scene": "#f7efe4",
+        "query": "#f1edf7",
+        "edge": "#38444f",
+        "muted": "#6a737d",
+    }
+
+    def add_box(
+        x: float,
+        y: float,
+        w: float,
+        h: float,
+        text: str,
+        *,
+        facecolor: str,
+        fontsize: float = 8.5,
+        weight: str = "normal",
+    ) -> None:
+        patch = FancyBboxPatch(
+            (x, y),
+            w,
+            h,
+            boxstyle="round,pad=0.012,rounding_size=0.012",
+            linewidth=0.85,
+            edgecolor=palette["edge"],
+            facecolor=facecolor,
+        )
+        ax.add_patch(patch)
+        ax.text(
+            x + w / 2.0,
+            y + h / 2.0,
+            text,
+            ha="center",
+            va="center",
+            fontsize=fontsize,
+            fontweight=weight,
+            color="#111827",
+            linespacing=1.08,
+        )
+
+    def arrow(
+        x1: float,
+        y1: float,
+        x2: float,
+        y2: float,
+        *,
+        style: str = "-|>",
+        rad: float = 0.0,
+        color: str | None = None,
+    ) -> None:
+        ax.add_patch(
+            FancyArrowPatch(
+                (x1, y1),
+                (x2, y2),
+                arrowstyle=style,
+                mutation_scale=10.5,
+                linewidth=0.9,
+                color=color or palette["edge"],
+                connectionstyle=f"arc3,rad={rad}",
+            )
+        )
+
+    ax.text(0.035, 0.92, "Geometric box-validation oracle", fontsize=9.3, fontweight="bold")
+    ax.text(0.545, 0.92, "Reusable planning layers", fontsize=9.3, fontweight="bold")
+
+    add_box(0.035, 0.66, 0.145, 0.17, "Joint box $I$\nrounded links", facecolor=palette["geom"])
+    add_box(0.215, 0.66, 0.165, 0.17, "Endpoint envelopes\n$E_a(I), E_b(I)$", facecolor=palette["geom"])
+    add_box(0.415, 0.66, 0.165, 0.17, "Link envelope\nconv$(E_a \\cup E_b)$ + r", facecolor=palette["geom"])
+    add_box(0.615, 0.66, 0.155, 0.17, "Scene validation\nvs. obstacles", facecolor=palette["scene"])
+    add_box(0.815, 0.66, 0.145, 0.17, "Accepted box\nor blocker set", facecolor=palette["scene"])
+
+    arrow(0.18, 0.745, 0.215, 0.745)
+    arrow(0.38, 0.745, 0.415, 0.745)
+    arrow(0.58, 0.745, 0.615, 0.745)
+    arrow(0.77, 0.745, 0.815, 0.745)
+
+    add_box(
+        0.235,
+        0.43,
+        0.330,
+        0.12,
+        "LECT evidence cache: kinematics-keyed endpoint/link records\n(no obstacle labels or imported free-space certificates)",
+        facecolor=palette["cache"],
+        fontsize=7.8,
+    )
+    arrow(0.315, 0.66, 0.315, 0.55, color=palette["muted"])
+    arrow(0.500, 0.55, 0.500, 0.66, color=palette["muted"])
+
+    add_box(0.075, 0.18, 0.165, 0.17, "Grow / refine\ncandidate boxes", facecolor=palette["scene"])
+    add_box(0.290, 0.18, 0.165, 0.17, "Scene-level\nbox forest", facecolor=palette["scene"])
+    add_box(0.505, 0.18, 0.165, 0.17, "Typed corridor graph\n$E_{\\cap}, E_s, E_\\pi$", facecolor=palette["scene"])
+    add_box(0.715, 0.18, 0.120, 0.17, "Query path\nretrieval", facecolor=palette["query"])
+    add_box(0.875, 0.18, 0.085, 0.17, "Strict\naudit", facecolor=palette["query"])
+
+    arrow(0.240, 0.265, 0.290, 0.265)
+    arrow(0.455, 0.265, 0.505, 0.265)
+    arrow(0.670, 0.265, 0.715, 0.265)
+    arrow(0.835, 0.265, 0.875, 0.265)
+
+    add_box(
+        0.645,
+        0.43,
+        0.315,
+        0.12,
+        "Obstacle edit: invalidate dirty boxes, promote cached blockers,\nthen refill locally under the same scene-validation policy",
+        facecolor="#f9f2dc",
+        fontsize=7.55,
+    )
+    arrow(0.725, 0.43, 0.590, 0.35, rad=0.05, color=palette["muted"])
+
+    ax.text(
+        0.035,
+        0.055,
+        "Certificate boundary: only paths contained in conservatively validated boxes inherit the box-corridor certificate; repair, segments, and smoothing require query validation.",
+        fontsize=7.4,
+        color="#333333",
+    )
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.015)
+    fig.savefig(png_path, dpi=240, bbox_inches="tight", pad_inches=0.015)
+    plt.close(fig)
 
 
 def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, dict[str, float]]]:
     out: dict[tuple[str, str], dict[str, dict[str, float]]] = {}
+    expected_queries: dict[tuple[str, str], float] = {}
     methods = sorted({
         str(row.get("method", ""))
         for row in rows
@@ -582,6 +762,15 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
         for row in rows
         if str(row.get("robot", "")) and str(row.get("difficulty", ""))
     })
+    for robot, difficulty in scenarios:
+        totals = [
+            as_float(row.get("total_queries", row.get("scenes")), 0.0)
+            for row in rows
+            if str(row.get("robot", "")).lower() == robot
+            and str(row.get("difficulty", "")).lower() == difficulty
+        ]
+        finite_totals = [value for value in totals if math.isfinite(value) and value > 0.0]
+        expected_queries[(robot, difficulty)] = max(finite_totals) if finite_totals else 0.0
     for robot, difficulty in scenarios:
         for method in methods:
             items = [
@@ -595,8 +784,18 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
                 success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
                 total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
                 plan = random_display_time(row)
+                query_s = online_query_time(row)
                 path_len = path_length_stat(row)
-                if total > 0 and success >= total and math.isfinite(plan) and math.isfinite(path_len):
+                if method == "prm" and not math.isfinite(query_s):
+                    continue
+                expected = expected_queries.get((robot, difficulty), 0.0)
+                if (
+                    total > 0
+                    and success >= total
+                    and (expected <= 0.0 or total >= expected)
+                    and math.isfinite(plan)
+                    and math.isfinite(path_len)
+                ):
                     full.append(row)
             if not full:
                 continue
@@ -665,6 +864,32 @@ def annotate_summary_rows_with_manifest_distributions(
     if not isinstance(manifest_rows, list) or not manifest_rows:
         return
 
+    def norm_text(value: Any) -> str:
+        return str(value or "").lower()
+
+    def norm_budget(value: Any) -> int | None:
+        raw = str(value or "")
+        if not raw or raw in {"0", "0.0"}:
+            return None
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            return None
+
+    exact_index: dict[tuple[str, str, str, str, int], list[dict[str, Any]]] = {}
+    loose_index: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for run in manifest_rows:
+        loose_key = (
+            norm_text(run.get("method")),
+            norm_text(run.get("robot")),
+            norm_text(run.get("difficulty")),
+            norm_text(run.get("stage_id")),
+        )
+        loose_index.setdefault(loose_key, []).append(run)
+        run_budget = norm_budget(run.get("deep_max_boxes"))
+        if run_budget is not None:
+            exact_index.setdefault((*loose_key, run_budget), []).append(run)
+
     def matches(summary: dict[str, Any], run: dict[str, Any]) -> bool:
         for field in ("method", "robot", "difficulty", "stage_id"):
             expected = str(summary.get(field, ""))
@@ -677,7 +902,20 @@ def annotate_summary_rows_with_manifest_distributions(
         return True
 
     for summary in summary_rows:
-        matched = [run for run in manifest_rows if matches(summary, run)]
+        loose_key = (
+            norm_text(summary.get("method")),
+            norm_text(summary.get("robot")),
+            norm_text(summary.get("difficulty")),
+            norm_text(summary.get("stage_id")),
+        )
+        summary_budget = norm_budget(summary.get("deep_max_boxes"))
+        if summary_budget is None:
+            candidates = loose_index.get(loose_key, [])
+        else:
+            candidates = exact_index.get((*loose_key, summary_budget), [])
+            if not candidates:
+                candidates = loose_index.get(loose_key, [])
+        matched = [run for run in candidates if matches(summary, run)]
         if not matched:
             continue
         build_values: list[float] = []
@@ -921,36 +1159,89 @@ def exp06_per_query_tradeoff_rows(
     return out
 
 
-def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, list[dict[str, float]]]]:
-    def sparse_bitstar_points(points: list[dict[str, float]]) -> list[dict[str, float]]:
+def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
+    def sparse_cumulative_prm_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Keep the PRM cumulative roadmap curve readable in Fig. 5.
+
+        The cumulative PRM runner emits many closely spaced build checkpoints
+        (often 50--100 per scenario).  Plotting every checkpoint makes the
+        selected trade-off unreadable and overstates the visual weight of PRM
+        relative to RBF/BIT*.  The table selection still sees the full data; the
+        figure keeps only a small set of Pareto-improving checkpoints sampled
+        on a log-time scale.
+        """
         if len(points) <= 8:
             return points
-        targets = [0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5]
-        out_points: list[dict[str, float]] = []
-        used: set[int] = set()
-        for target in targets:
-            candidates = [
-                (index, point)
-                for index, point in enumerate(points)
-                if index not in used and point["total_s"] >= target - 1e-9
-            ]
-            if not candidates:
-                candidates = [
-                    (index, point)
-                    for index, point in enumerate(points)
-                    if index not in used
-                ]
-            if not candidates:
+        sorted_points = sorted(points, key=lambda item: item["total_s"])
+        pareto: list[tuple[int, dict[str, Any]]] = []
+        best_path = math.inf
+        for index, point in enumerate(sorted_points):
+            path = as_float(point.get("path_length"))
+            if not math.isfinite(path):
                 continue
-            index, point = min(candidates, key=lambda item: abs(item[1]["total_s"] - target))
-            used.add(index)
-            out_points.append(point)
-        return sorted(out_points, key=lambda item: item["total_s"])
+            if not pareto or path < best_path * (1.0 - 1e-3):
+                pareto.append((index, point))
+                best_path = min(best_path, path)
+        source = pareto if len(pareto) >= 2 else list(enumerate(sorted_points))
+        if len(source) <= 8:
+            return [point for _index, point in source]
 
-    out: dict[tuple[str, str], dict[str, list[dict[str, float]]]] = {}
+        selected_indices: set[int] = set()
+
+        def add_nearest(target_s: float) -> None:
+            valid = [
+                (index, point)
+                for index, point in source
+                if index not in selected_indices and as_float(point.get("total_s")) > 0.0
+            ]
+            if not valid:
+                return
+            log_target = math.log(max(target_s, 1e-9))
+            index, _point = min(
+                valid,
+                key=lambda item: abs(math.log(max(as_float(item[1].get("total_s")), 1e-9)) - log_target),
+            )
+            selected_indices.add(index)
+
+        # Always show the first full-success checkpoint, the best path point,
+        # and the final/biggest-budget checkpoint on the cumulative curve.
+        selected_indices.add(source[0][0])
+        best_index, _best_point = min(
+            source,
+            key=lambda item: as_float(item[1].get("path_length"), math.inf),
+        )
+        selected_indices.add(best_index)
+        selected_indices.add(source[-1][0])
+
+        min_s = min(as_float(point.get("total_s")) for _index, point in source)
+        max_s = max(as_float(point.get("total_s")) for _index, point in source)
+        if math.isfinite(min_s) and math.isfinite(max_s) and min_s > 0.0 and max_s > min_s:
+            # Five interior samples plus the fixed endpoints above gives at
+            # most eight visible PRM markers per panel.
+            for step in range(1, 6):
+                fraction = step / 6.0
+                add_nearest(math.exp(math.log(min_s) * (1.0 - fraction) + math.log(max_s) * fraction))
+        return [
+            sorted_points[index]
+            for index in sorted(selected_indices, key=lambda item: sorted_points[item]["total_s"])
+        ]
+
+    out: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+    expected_queries: dict[tuple[str, str], float] = {}
+    for row in rows:
+        robot = str(row.get("robot", "")).lower()
+        difficulty = str(row.get("difficulty", "")).lower()
+        if not robot or not difficulty:
+            continue
+        total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
+        if math.isfinite(total) and total > 0.0:
+            key = (robot, difficulty)
+            expected_queries[key] = max(expected_queries.get(key, 0.0), total)
     for row in rows:
         method = str(row.get("method", ""))
         if method not in {"prm", "bitstar"}:
+            continue
+        if str(row.get("source", "")) == "per_query_seed_tradeoff_from_manifest":
             continue
         robot = str(row.get("robot", "")).lower()
         difficulty = str(row.get("difficulty", "")).lower()
@@ -959,20 +1250,49 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
         success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
         total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
         plan = random_display_time(row)
+        if method == "bitstar":
+            # BIT* rows in Exp.6 are anytime checkpoint envelopes.  The
+            # figure should show the checkpoint budget used to obtain that
+            # quality, not the median first-solution time of the queries that
+            # happened to solve before the checkpoint.  Using the latter
+            # collapses late checkpoints into a near-single x coordinate and
+            # makes the BIT* curve look like an isolated point.
+            checkpoint_s = as_float(row.get("budget_s"))
+            if math.isfinite(checkpoint_s) and checkpoint_s > 0.0:
+                plan = checkpoint_s
+        online = online_query_time(row)
+        if not math.isfinite(online):
+            online_values = finite_values(row.get("_online_solve_values"))
+            online = percentile_value(online_values, 0.50) if online_values else plan
+        if method == "prm" and not math.isfinite(online_query_time(row)):
+            continue
         path_len = path_length_stat(row)
-        if total <= 0 or success < total or not math.isfinite(plan) or not math.isfinite(path_len):
+        expected = expected_queries.get((robot, difficulty), 0.0)
+        if (
+            total <= 0
+            or success < total
+            or (expected > 0.0 and total < expected)
+            or not math.isfinite(plan)
+            or not math.isfinite(path_len)
+        ):
             continue
         out.setdefault((robot, difficulty), {}).setdefault(method, []).append(
             {
                 "total_s": plan,
+                "online_s": online,
                 "path_length": path_len,
                 "measured_time_s": plan,
+                "path_by_label": row.get("_path_by_label") or row.get("path_by_label") or {},
+                "path_values": row.get("_path_values") or row.get("path_values") or [],
             }
         )
     for scenario in out.values():
         for method, points in scenario.items():
             points = sorted(points, key=lambda item: item["total_s"])
-            scenario[method] = sparse_bitstar_points(points) if method == "bitstar" else points
+            if method == "prm":
+                scenario[method] = sparse_cumulative_prm_points(points)
+            else:
+                scenario[method] = points
     return out
 
 
@@ -1058,7 +1378,7 @@ def find_exp03_summary(out_dir: Path) -> Path | None:
 
 
 def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
-    selected_widths = {"0.02", "0.1", "0.10", "0.5", "0.50"}
+    selected_widths = {"0.02", "0.1", "0.10", "0.2", "0.20", "0.3", "0.30", "0.5", "0.50"}
     table_rows = [
         row for row in rows
         if str(row.get("width", "")).strip() in selected_widths
@@ -1067,25 +1387,34 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Endpoint envelope source study. Vol. is median envelope volume; Time is construction only; Neg. gap uses the sampling-union reference.}",
+        r"\captionof{table}{Endpoint sources; Cert. follows source contract.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.7pt}",
-        r"\renewcommand{\arraystretch}{0.90}",
+        r"\setlength{\tabcolsep}{1.2pt}",
+        r"\renewcommand{\arraystretch}{0.74}",
+        r"\resizebox{\linewidth}{!}{%",
         r"\begin{tabular}{llrrrr}",
         r"\toprule",
-        r"Width & Source & Safe & Vol. & Time ($\mu$s) & Neg. gap \\",
+        r"Width & Source & Cert. & Vol. & Time ($\mu$s) & Neg. gap \\",
         r"\midrule",
     ]
     for row in table_rows:
         safe = "Y" if str(row.get("safe", "")).lower() == "true" else "N"
         width = tex_num(row.get("width"), 2)
         source = str(row.get("source", "")).replace("_", r"\_")
-        volume = tex_sci(row.get("volume_m3_median"), 2)
+        volume = tex_fixed(row.get("volume_m3_median"), 6)
         time_us = tex_num(row.get("endpoint_us_median"), 2)
-        gap = tex_sci(row.get("max_negative_gap"), 1)
+        gap = tex_fixed(row.get("max_negative_gap"), 6)
         lines.append(f"{width} & {source} & {safe} & {volume} & {time_us} & {gap} \\\\")
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
+    lines.extend([
+        r"\bottomrule",
+        r"\end{tabular}%",
+        r"}",
+        r"\par\vspace{0.1ex}",
+        r"{\scriptsize\emph{Notes:} Neg. gap is only against the sampled-union diagnostic; it is not the certificate test for sources marked Y.\par}",
+        r"\par\endgroup",
+        "",
+    ])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -1094,11 +1423,11 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Link envelope representation study. Env. is construction time; Coll. is obstacle-collision time.}",
+        r"\captionof{table}{Link envelopes; Env. build, Coll. obstacle test.}",
         r"\label{tab:tro-link-envelope}",
-        r"\scriptsize",
+        r"\fontsize{7.0}{7.15}\selectfont",
         r"\setlength{\tabcolsep}{2.2pt}",
-        r"\renewcommand{\arraystretch}{0.92}",
+        r"\renewcommand{\arraystretch}{0.84}",
         r"\begin{tabular}{llrrrr}",
         r"\toprule",
         r"Width & Envelope & Splits & Vol. & Env. ($\mu$s) & Coll. ($\mu$s) \\",
@@ -1121,23 +1450,22 @@ def generate_exp03_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{LECT snapshot/cache operation costs on the persisted d23 snapshot.}",
+        rf"\captionof{{table}}{{LECT warm-cache cost (UR5 SupportHull snapshot; {EXP03_UR5_D20_CACHE_RECORDS} records, {EXP03_UR5_D20_CACHE_GIB}\,GiB).}}",
         r"\label{tab:tro-lect-performance}",
-        r"\scriptsize",
-        r"\setlength{\tabcolsep}{2.4pt}",
-        r"\renewcommand{\arraystretch}{0.92}",
-        r"\begin{tabular}{lrrrr}",
+        r"\fontsize{7.0}{7.15}\selectfont",
+        r"\setlength{\tabcolsep}{1.7pt}",
+        r"\renewcommand{\arraystretch}{0.84}",
+        r"\begin{tabular}{@{}lrr@{}}",
         r"\toprule",
-        r"Operation & Ops & Avg. ($\mu$s) & Nodes & Evidence \\",
+        r"Operation & Ops & Avg. ($\mu$s) \\",
         r"\midrule",
     ]
     for row in rows:
         operation = str(row.get("operation", "")).replace("_", r"\_")
-        ops = int(float(row.get("operations", 0) or 0))
         avg_us = tex_num(row.get("avg_us_per_op"), 3)
-        nodes = int(float(row.get("nodes", 0) or 0))
-        evidence = int(float(row.get("evidence", 0) or 0))
-        lines.append(f"{operation} & {ops} & {avg_us} & {nodes} & {evidence} \\\\")
+        lines.append(
+            f"{operation} & {tex_int_commas(row.get('operations'))} & {avg_us} \\\\"
+        )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -1328,12 +1656,8 @@ def find_exp06_manifest(out_dir: Path) -> Path | None:
 
 def find_exp06_rbf_registered_override_summary(out_dir: Path) -> Path | None:
     candidates = [
-        out_dir / "exp06_rbf_robot_tuned_profile_v3b" / "random_robot_summary.csv",
-        out_dir / "exp06" / "rbf_robot_tuned_profile_v3b" / "random_robot_summary.csv",
-        out_dir / "exp06_light_debug" / "rbf_ur5_panda_tuned_v3b_verify_20260612" / "random_robot_summary.csv",
-        out_dir / "exp06_rbf_robot_tuned_profile_v2" / "random_robot_summary.csv",
-        out_dir / "exp06" / "rbf_robot_tuned_profile_v2" / "random_robot_summary.csv",
-        out_dir / "exp06_rbf_robot_tuned_profile" / "random_robot_summary.csv",
+        out_dir / EXP06_REGISTERED_RBF_PROFILE_NAME / "random_robot_summary.csv",
+        out_dir / "exp06" / EXP06_REGISTERED_RBF_PROFILE_NAME / "random_robot_summary.csv",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -1343,12 +1667,8 @@ def find_exp06_rbf_registered_override_summary(out_dir: Path) -> Path | None:
 
 def find_exp06_rbf_registered_override_manifest(out_dir: Path) -> Path | None:
     candidates = [
-        out_dir / "exp06_rbf_robot_tuned_profile_v3b" / "random_robot_manifest.json",
-        out_dir / "exp06" / "rbf_robot_tuned_profile_v3b" / "random_robot_manifest.json",
-        out_dir / "exp06_light_debug" / "rbf_ur5_panda_tuned_v3b_verify_20260612" / "random_robot_manifest.json",
-        out_dir / "exp06_rbf_robot_tuned_profile_v2" / "random_robot_manifest.json",
-        out_dir / "exp06" / "rbf_robot_tuned_profile_v2" / "random_robot_manifest.json",
-        out_dir / "exp06_rbf_robot_tuned_profile" / "random_robot_manifest.json",
+        out_dir / EXP06_REGISTERED_RBF_PROFILE_NAME / "random_robot_manifest.json",
+        out_dir / "exp06" / EXP06_REGISTERED_RBF_PROFILE_NAME / "random_robot_manifest.json",
     ]
     for candidate in candidates:
         if candidate.exists():
@@ -1527,7 +1847,7 @@ def find_exp06_iris_summaries(out_dir: Path) -> list[Path]:
     return out
 
 
-def find_exp07_summary(out_dir: Path) -> Path | None:
+def find_dynamic_update_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "dynamic_update_summary.csv",
         out_dir / "exp07" / "dynamic_update_summary.csv",
@@ -1538,6 +1858,63 @@ def find_exp07_summary(out_dir: Path) -> Path | None:
             return candidate
     matches = sorted(out_dir.glob("**/dynamic_update_summary.csv"))
     return matches[0] if matches else None
+
+
+def attach_dynamic_update_raw_distributions(summary: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    event_path = summary.parent / "dynamic_update_events.csv"
+    build_path = summary.parent / "dynamic_update_builds.csv"
+    if not event_path.exists() or not build_path.exists():
+        return rows
+
+    events = read_csv_rows(event_path)
+    builds = read_csv_rows(build_path)
+    builds_by_robot: dict[str, list[dict[str, Any]]] = {}
+    target_build_by_robot_seed: dict[tuple[str, str], float] = {}
+    for build in builds:
+        robot = str(build.get("robot", ""))
+        seed = str(build.get("seed", ""))
+        builds_by_robot.setdefault(robot, []).append(build)
+        target_build = as_float(build.get("max_build_s"))
+        if math.isfinite(target_build):
+            target_build_by_robot_seed[(robot, seed)] = target_build
+
+    events_by_robot_op: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for event in events:
+        robot = str(event.get("robot", ""))
+        op = str(event.get("operation", ""))
+        events_by_robot_op.setdefault((robot, op), []).append(event)
+
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        robot = str(row.get("robot", ""))
+        robot_builds = builds_by_robot.get(robot, [])
+        item["_source_warm_values"] = [
+            as_float(build.get("initial_build_s"))
+            for build in robot_builds
+            if math.isfinite(as_float(build.get("initial_build_s")))
+        ]
+        item["_target_warm_values"] = [
+            as_float(build.get("max_build_s"))
+            for build in robot_builds
+            if math.isfinite(as_float(build.get("max_build_s")))
+        ]
+        for op in ("insert", "remove"):
+            op_events = events_by_robot_op.get((robot, op), [])
+            item[f"_{op}_values"] = [
+                as_float(event.get("time_s"))
+                for event in op_events
+                if math.isfinite(as_float(event.get("time_s")))
+            ]
+            speedups: list[float] = []
+            for event in op_events:
+                update_s = as_float(event.get("time_s"))
+                target_build_s = target_build_by_robot_seed.get((robot, str(event.get("seed", ""))), math.nan)
+                if math.isfinite(update_s) and update_s > 0.0 and math.isfinite(target_build_s):
+                    speedups.append(target_build_s / update_s)
+            item[f"_{op}_speedup_values"] = speedups
+        enriched.append(item)
+    return enriched
 
 
 def find_supporting_import_manifest(out_dir: Path) -> Path | None:
@@ -1555,6 +1932,25 @@ def find_supporting_import_manifest(out_dir: Path) -> Path | None:
 def load_json_file(path: Path | None) -> dict[str, Any]:
     if path is None or not path.exists():
         return {}
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    # Exp.6 cumulative PRM/BIT* traces intentionally keep per-query
+    # checkpoint data so Table IV/Fig.5 can use the same query-level
+    # L/L*_q references as RBF and RRTConnect.  Those manifests are large
+    # (currently about 1.4 GB), but silently skipping them falls back to
+    # scene-level scalar path means and makes the baseline path quality
+    # incomparable.  Keep a hard cap to avoid accidental multi-GB scratch
+    # files, but allow the registered trace manifest.
+    max_bytes = 2 * 1024 * 1024 * 1024
+    if size > max_bytes:
+        return {
+            "status": "skipped_large_manifest",
+            "_skipped_path": str(path),
+            "_skipped_bytes": size,
+            "_skip_reason": f"larger_than_{max_bytes}_bytes",
+        }
     import json
 
     return json.loads(path.read_text(encoding="utf-8"))
@@ -1943,36 +2339,6 @@ def rbf_single_query_stats_from_manifest(
     return stats, success, total, median(builds)
 
 
-def old_shelf_iris_query_stats() -> dict[str, dict[str, float]]:
-    old_table = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated/tab_tro_main_shelf_best_tradeoff.tex")
-    if not old_table.exists():
-        return {}
-    stats: dict[str, dict[str, float]] = {}
-    for line in old_table.read_text(encoding="utf-8").splitlines():
-        if r"\rightarrow" not in line or "&" not in line:
-            continue
-        cells = [cell.strip() for cell in line.rstrip("\\").split("&")]
-        if len(cells) < 5:
-            continue
-        raw_label = cells[0]
-        label = None
-        for key, display in QUERY_LABELS.items():
-            if display == raw_label:
-                label = key
-                break
-        if label is None:
-            continue
-        stats[label] = {
-            "query_s": as_float(cells[3]),
-            "query_s_values": finite_values(cells[3]),
-            "path": as_float(cells[4]),
-            "path_values": finite_values(cells[4]),
-            "segment": math.nan,
-            "segment_values": [],
-        }
-    return stats
-
-
 def format_method_header(
     label: str,
     build_s: Any | None = None,
@@ -2003,16 +2369,28 @@ def grouped_query_table(
     caption: str,
     label: str,
     methods: list[dict[str, Any]],
+    notes: str | None = None,
     include_segment: bool = False,
     time_unit: str = "s",
     normalize_path_by_query: bool = False,
     show_time_tail: bool = False,
     path_refs_override: dict[str, float] | None = None,
-) -> None:
+    tabcolsep: str = "1.55pt",
+    arraystretch: str = "0.96",
+    extrarowheight: str | None = None,
+    notes_font: str = r"\scriptsize",
+    notes_vspace: str = "0.25ex",
+    compact_time_path_cells: bool = False,
+    ) -> None:
     time_scale = 1000.0 if time_unit == "ms" else 1.0
-    per_method_cols = 3 if include_segment else 2
-    colspec = "@{}l" + ("rrr|" if include_segment else "rr|") * len(methods)
-    colspec = colspec.rstrip("|") + "@{}"
+    per_method_cols = 1 if compact_time_path_cells else (3 if include_segment else 2)
+    group_spec = "c" if compact_time_path_cells else ("rrr" if include_segment else "rr")
+    spaced_groups: list[str] = []
+    for method_index, _method in enumerate(methods):
+        if method_index:
+            spaced_groups.append(r"@{\hspace{0.6em}}")
+        spaced_groups.append(group_spec)
+    colspec = "@{}l" + "".join(spaced_groups) + "@{}"
     lines = [
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
@@ -2020,8 +2398,9 @@ def grouped_query_table(
         rf"\captionof{{table}}{{{caption}}}",
         rf"\label{{{label}}}",
         r"\footnotesize",
-        r"\setlength{\tabcolsep}{1.55pt}",
-        r"\renewcommand{\arraystretch}{0.96}",
+        rf"\setlength{{\tabcolsep}}{{{tabcolsep}}}",
+        rf"\renewcommand{{\arraystretch}}{{{arraystretch}}}",
+        rf"\setlength{{\extrarowheight}}{{{extrarowheight}}}" if extrarowheight else "",
         r"\resizebox{\textwidth}{!}{%",
         rf"\begin{{tabular}}{{{colspec}}}",
         r"\toprule",
@@ -2044,7 +2423,10 @@ def grouped_query_table(
     for method in methods:
         time_metric = str(method.get("time_metric_label") or default_time_metric)
         path_metric = r"$L/L^\star$" if normalize_path_by_query else "$L$"
-        metric_cols.append(f"{time_metric} & {path_metric} & Seg." if include_segment else f"{time_metric} & {path_metric}")
+        if compact_time_path_cells:
+            metric_cols.append(rf"\shortstack{{{time_metric}\\[-0.2ex]{path_metric}}}")
+        else:
+            metric_cols.append(f"{time_metric} & {path_metric} & Seg." if include_segment else f"{time_metric} & {path_metric}")
     lines.append("Query & " + " & ".join(metric_cols) + r" \\")
     lines.append(r"\midrule")
     path_refs: dict[str, float] = {}
@@ -2062,19 +2444,29 @@ def grouped_query_table(
             time_values = finite_values(stats.get("query_s_values"))
             if time_values:
                 scaled = [value * time_scale for value in time_values]
-                cells.append(tex_time_tail(scaled, 3) if show_time_tail else tex_iqr(scaled, 3))
+                time_cell = tex_time_tail(scaled, 3) if show_time_tail else tex_iqr(scaled, 3)
             else:
                 fallback_time = as_float(stats.get("query_s")) * time_scale
-                cells.append(tex_time_tail(fallback_time, 3) if show_time_tail else tex_iqr(fallback_time, 3))
+                time_cell = tex_time_tail(fallback_time, 3) if show_time_tail else tex_iqr(fallback_time, 3)
             path_values = stats.get("path_values", stats.get("path"))
             if normalize_path_by_query:
-                cells.append(tex_iqr(normalized_gap_values(path_values, path_refs.get(query_label, math.nan)), 2))
+                path_cell = tex_iqr(normalized_gap_values(path_values, path_refs.get(query_label, math.nan)), 2)
             else:
-                cells.append(tex_iqr(path_values, 2))
+                path_cell = tex_iqr(path_values, 2)
+            if compact_time_path_cells:
+                cells.append(rf"\shortstack{{{time_cell}\\[-0.2ex]{{\scriptsize {path_cell}}}}}")
+            else:
+                cells.extend([time_cell, path_cell])
             if include_segment:
                 cells.append(tex_iqr(stats.get("segment_values", stats.get("segment")), 2))
         lines.append(" & ".join(cells) + r" \\")
-    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\par\endgroup", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}"])
+    if notes:
+        lines.extend([
+            rf"\par\vspace{{{notes_vspace}}}",
+            rf"{{{notes_font}\emph{{Notes:}} {notes}\par}}",
+        ])
+    lines.extend([r"\par\endgroup", ""])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -2166,9 +2558,9 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
         "critsample_d23_cache": "CritSample d23",
         "no_cache_full_root_ts": "No-cache full-root",
-        "critsample_support_hull": "CritSample endpoints",
+        "critsample_support_hull": "CritSample",
         "critsample_support_hull_unsafe": "CritSample",
-        "no_external_lect": "No external LECT, HIFK-5",
+        "no_external_lect": "No LECT/HIFK-5",
         "support_hull_no_aabb": "SH w/o broadphase",
         "link_aabb": "Link AABB",
         "single_thread": "No LECT, 1 thread",
@@ -2221,12 +2613,12 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         if isinstance(path_by_label, dict) and path_by_label:
             gaps = normalized_gap_from_label_values(path_by_label, path_refs)
             if gaps:
-                return tex_iqr(gaps, 2)
-        return tex_iqr(normalized_gap_values(dist.get("path_values") or scalar_path, scalar_path_ref), 2)
+                return tex_iqr_stacked(gaps, 2)
+        return tex_iqr_stacked(normalized_gap_values(dist.get("path_values") or scalar_path, scalar_path_ref), 2)
 
     def cache_cell(row: dict[str, Any]) -> str:
         hits = as_float(row.get("external_reused_hits_median", row.get("external_hits_median")))
-        return "d23 excl." if math.isfinite(hits) and hits > 0.0 else "live incl."
+        return "d23 replay" if math.isfinite(hits) and hits > 0.0 else "live mat."
 
     def box_contained_cell(dist: dict[str, Any]) -> str:
         success = int(dist.get("box_contained_success", 0) or 0)
@@ -2250,26 +2642,34 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
     def audit_per_query_cell(dist: dict[str, Any], row: dict[str, Any]) -> str:
         values = finite_values(dist.get("audit_per_query_values"))
         if values:
-            return tex_iqr(values, 3)
+            return tex_iqr_stacked(values, 3)
         audit_s = as_float(row.get("audit_s_median"))
         queries = as_float(row.get("queries_per_scene"), 5.0)
         if math.isfinite(audit_s) and math.isfinite(queries) and queries > 0.0:
             return tex_num(audit_s / queries, 3)
         return "--"
 
+    replay_hit_values = [
+        value for value in (
+            as_float(row.get("external_reused_hits_median", row.get("external_hits_median")))
+            for row in table_rows
+        )
+        if math.isfinite(value) and value > 0.0
+    ]
+    replay_hit_note = tex_int_commas(percentile_value(replay_hit_values, 0.50)) if replay_hit_values else "--"
+
     lines = [
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        rf"\captionof{{table}}{{Shelf+IIWA RBF ablation at the selected b100 point. Numeric entries are median [Q1,Q3] and exclude the fixed 0.01\,s final simplification from timing columns. Cache marks whether Build excludes replay of the precomputed d23 LECT snapshot (d23 excl.) or includes live endpoint/evidence materialization (live incl.); the d23 snapshot used by warm-cache rows contains {EXP04_D23_CACHE_RECORDS} evidence records and occupies {EXP04_D23_CACHE_BYTES}\,B ({EXP04_D23_CACHE_GIB}\,GiB) on disk. $L/L^\star$ uses success-only aggregation and the query-level globally shortest strict-audited path found for the same shelf query across all available Exp.~4 ablation runs. BC is the number of strict-audited returned paths with zero recorded segment edges over all queries, used as a box-contained proxy rather than a conservative-only certificate. Boxes B/F gives build/final box-count medians. Seg. F/E gives raw segment fraction and final segment witness-edge count. Audit/q is strict audit time per query and is not charged to planning.}}",
+        r"\captionof{table}{Shelf+IIWA full-success RBF registered point and mechanism rows.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.2pt}",
-        r"\renewcommand{\arraystretch}{0.94}",
-        r"\resizebox{\textwidth}{!}{%",
-        r"\begin{tabular}{llcccccccc}",
+        r"\setlength{\tabcolsep}{1.25pt}",
+        r"\renewcommand{\arraystretch}{1.02}",
+        r"\begin{tabular}{@{}llccccc@{}}",
         r"\toprule",
-        r"Case & Cache & Build & Online/q & Amort@5 & $L/L^\star$ & BC & Boxes B/F & Seg. F/E & Audit/q \\",
+        r"Case & Cache & Build & Online/q & Amort@5 & $L/L^\star$ & Audit/q \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -2278,16 +2678,20 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         lines.append(
             f"{label} & "
             f"{cache_cell(row)} & "
-            f"{tex_time_tail(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
-            f"{tex_time_tail(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
-            f"{tex_time_tail(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
+            f"{tex_iqr_stacked(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
+            f"{tex_iqr_stacked(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
+            f"{tex_iqr_stacked(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
             f"{gap_cell(dist, path_length_stat(row))} & "
-            f"{box_contained_cell(dist)} & "
-            f"{boxes_cell(dist, row)} & "
-            f"{segment_witness_cell(dist, row)} & "
             f"{audit_per_query_cell(dist, row)} \\\\"
         )
-    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\par\endgroup", ""])
+    lines.extend([
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\par\vspace{0.25ex}",
+        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3] s; Online/q excludes simplification/audit; audit-complete = Online/q+0.010\,s+Audit/q. ``d23 replay'' excludes prewarm/load/RSS (registered artifact: {EXP04_D23_CACHE_RECORDS} rec., {EXP04_D23_CACHE_GIB}\,GiB, {EXP04_D23_PREWARM_S}\,s); ``live mat.'' charges materialization. $L/L^\star$ is query-level.\par}}",
+        r"\par\endgroup",
+        "",
+    ])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -2334,8 +2738,8 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
     grouped_query_table(
         path,
         caption=(
-            r"Shelf+IIWA RBF ablation rows from Fig.~\ref{fig:tro_shelf_tradeoff}, "
-            r"reported by query. Each ablation contributes the selected design point "
+            r"Shelf+IIWA RBF mechanism rows from Fig.~\ref{fig:tro_shelf_tradeoff}, "
+            r"reported by query. Each row contributes the selected design point "
             r"selected from its five-query amortized-time trade-off curve; the full curves remain the primary evidence. "
             r"Query path entries report success-only $L/L^\star$ intervals over fixed 0.01 joint-space strict-audit paths."
         ),
@@ -2444,6 +2848,7 @@ def generate_exp05_table(
             time_metric_label = r"$T$ (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
+            time_label = "Build"
         elif method == "iris_np_gcs":
             stage_id = str(row.get("stage_id", method))
             query_stats = query_stats_from_runs(
@@ -2452,8 +2857,6 @@ def generate_exp05_table(
                     str(run.get("method")) == "iris_np_gcs" and str(run.get("stage_id", "iris_np_gcs")) == stage_id
                 ),
             )
-            if not any(math.isfinite(as_float(value.get("path"))) for value in query_stats.values()):
-                query_stats = old_shelf_iris_query_stats()
             label = labels[method]
             build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         else:
@@ -2472,7 +2875,8 @@ def generate_exp05_table(
                 )
             label = labels[method]
             build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
-        time_label = "Build"
+        if method != "sbf_leaf_rrt":
+            time_label = "Build"
         methods.append({
             "label": label,
             "build_s": build_s,
@@ -2496,16 +2900,26 @@ def generate_exp05_table(
             global_path_refs[query_label] = ref
     grouped_query_table(
         path,
-        caption=(
-            r"Shelf+IIWA per-query cross-algorithm comparison. Rows are stratified by query. Numeric entries are median [Q1,Q3]; online solve time is in seconds and excludes the fixed 0.01\,s final simplification. $L/L^\star$ uses success-only aggregation and the query-level globally shortest strict-audited path found for the same query across all available methods and checkpoints. RBF uses the registered Exp.~4 profile, with time measured by independent single-query wall-clock reruns. PRM grows one cumulative shared roadmap for the five-query batch; registered endpoint milestones and cumulative construction are charged to Build. BIT* reports the best audited incumbent along a single cumulative checkpoint trace. Full curves appear in \Cref{fig:tro_shelf_cross_tradeoff}."
-        ),
+        caption=r"Shelf+IIWA strict-audited per-query cross-algorithm comparison.",
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
+        notes=(
+            r"Median [Q1, Q3] s; $T$ is Online/q excluding final simplification/audit; "
+            r"$L/L^\star$ is query-level strict-audited. Build terms: RBF excludes d23 "
+            r"prewarm/load/RSS, PRM is one five-query roadmap, and RRTConnect/BIT* have no reusable build. "
+            r"No Audit/q column; BIT* is post-hoc checkpoint context."
+        ),
         include_segment=False,
         time_unit="s",
         normalize_path_by_query=True,
         show_time_tail=True,
         path_refs_override=global_path_refs,
+        tabcolsep="1.9pt",
+        arraystretch="1.12",
+        extrarowheight="1.0pt",
+        notes_font=r"\scriptsize",
+        notes_vspace="0.05ex",
+        compact_time_path_cells=False,
     )
 
 
@@ -2539,7 +2953,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         else:
             selected_rows[method] = select_tradeoff_row(method_rows[method], budget_field="budget_s")
 
-    fig, axes = plt.subplots(1, 2, figsize=(5.25, 2.15))
+    fig, axes = plt.subplots(1, 2, figsize=(6.35, 2.08))
     ax = axes[0]
     path_ref = finite_min([
         path_length_stat(row)
@@ -2581,8 +2995,8 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 zorder=5,
             )
     ax.set_xscale("log")
-    ax.set_xlabel("amortized time / query @5 (s, log)")
-    ax.set_ylabel(r"path ratio $L/L^\star$")
+    ax.set_xlabel("Build/5+Online/q (s)")
+    ax.set_ylabel(r"path ratio $L/L^\star_q$")
     ax.set_title("(a) time / ratio", fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
@@ -2615,11 +3029,11 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     dedup: dict[str, Any] = {}
     for handle, label in zip(handles, labels):
         dedup.setdefault(label, handle)
-    fig.legend(dedup.values(), dedup.keys(), loc="upper center", bbox_to_anchor=(0.5, 1.02),
+    fig.legend(dedup.values(), dedup.keys(), loc="upper center", bbox_to_anchor=(0.5, 1.03),
                ncol=5, frameon=False, fontsize=LEGEND_FONTSIZE)
-    fig.subplots_adjust(left=0.12, right=0.985, top=0.86, bottom=0.20, wspace=0.34)
-    fig.savefig(pdf_path)
-    fig.savefig(png_path, dpi=220)
+    fig.subplots_adjust(left=0.105, right=0.99, top=0.835, bottom=0.22, wspace=0.25)
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.01)
+    fig.savefig(png_path, dpi=240, bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
 
@@ -2635,11 +3049,11 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
         ("critsample_support_hull", "Crit.", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
-        ("no_external_lect", "No LECT HIFK-5", "#ff7f0e", "D"),
+        ("no_external_lect", "No LECT/HIFK-5", "#ff7f0e", "D"),
         ("single_thread", "1T", "#9467bd", "^"),
     ]
     selected_rows: dict[str, dict[str, Any]] = {}
-    fig, ax = plt.subplots(1, 1, figsize=(3.25, 2.20))
+    fig, ax = plt.subplots(1, 1, figsize=(4.12, 2.16))
     allowed_cases = {case for case, _label, _color, _marker in case_order}
     path_ref = finite_min([
         path_length_stat(row)
@@ -2674,19 +3088,19 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 zorder=5,
             )
     ax.set_xscale("log")
-    ax.set_xlabel("amortized time / query @5 (s, log)")
-    ax.set_ylabel(r"path ratio $L/L^\star$")
+    ax.set_xlabel("Build/5+Online/q (s)")
+    ax.set_ylabel(r"path ratio $L/L^\star_q$")
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
     ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
     ax.yaxis.label.set_size(AXIS_LABEL_FONTSIZE)
     set_padded_linear_ylim(ax, path_values)
     handles, labels = ax.get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.02),
+    fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(0.5, 1.03),
                ncol=5, frameon=False, fontsize=LEGEND_FONTSIZE, handlelength=1.1)
-    fig.subplots_adjust(left=0.21, right=0.97, top=0.88, bottom=0.21)
-    fig.savefig(pdf_path)
-    fig.savefig(png_path, dpi=220)
+    fig.subplots_adjust(left=0.16, right=0.985, top=0.835, bottom=0.225)
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.01)
+    fig.savefig(png_path, dpi=240, bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
 
@@ -2893,7 +3307,7 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rbf_single_query_manifest=rbf_single_query_manifest_payload,
     )
     generate_exp05_figure(pdf_path, png_path, rows)
-    return {
+    source_payload = {
         "status": "generated",
         "summary": str(summary),
         "summary_sha256": file_sha256(summary),
@@ -2907,18 +3321,14 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "current_iris_summary_sha256": file_sha256(current_iris_summary) if current_iris_summary is not None else None,
         "current_iris_manifest": str(current_iris_manifest) if current_iris_manifest is not None else None,
         "current_iris_manifest_sha256": file_sha256(current_iris_manifest) if current_iris_manifest is not None else None,
-        "current_iris_context_policy": "legacy_shelf_context_restored_without_0p01_simplify_manifest_filter",
+        "current_iris_context_policy": "current_shelf_iris_manifest_context_with_strict_audit_status",
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_manifest": str(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
         "bitstar_trace_manifest_sha256": file_sha256(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
-        "registered_rrtconnect_summary": str(REGISTERED_EXP05_RRTCONNECT_SUMMARY) if registered_rrt_rows else None,
         "registered_rrtconnect_rows": len(registered_rrt_rows),
-        "registered_rrtconnect_manifest": str(REGISTERED_EXP05_RRTCONNECT_MANIFEST) if registered_rrt_manifest_rows else None,
         "registered_rrtconnect_manifest_rows": len(registered_rrt_manifest_rows),
         "rbf_manifest": str(rbf_manifest_path) if rbf_manifest_path is not None else None,
-        "rbf_query_manifest": str(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
-        "rbf_query_manifest_sha256": file_sha256(rbf_query_manifest_path) if rbf_query_manifest_path is not None else None,
         "rbf_single_query_summary": str(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
         "rbf_single_query_summary_sha256": file_sha256(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
         "rbf_single_query_manifest": str(rbf_single_query_manifest) if rbf_single_query_manifest is not None else None,
@@ -2929,6 +3339,24 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "figure_pdf": str(pdf_path),
         "figure_png": str(png_path),
     }
+    if registered_rrt_rows:
+        source_payload["registered_rrtconnect_summary"] = str(REGISTERED_EXP05_RRTCONNECT_SUMMARY)
+    else:
+        source_payload["registered_rrtconnect_summary_policy"] = (
+            "not_used_current_saved_baseline_rows_available"
+        )
+    if registered_rrt_manifest_rows:
+        source_payload["registered_rrtconnect_manifest"] = str(REGISTERED_EXP05_RRTCONNECT_MANIFEST)
+    else:
+        source_payload["registered_rrtconnect_manifest_policy"] = (
+            "not_used_current_saved_baseline_manifest_available"
+        )
+    if rbf_query_manifest_path is not None:
+        source_payload["rbf_query_manifest"] = str(rbf_query_manifest_path)
+        source_payload["rbf_query_manifest_sha256"] = file_sha256(rbf_query_manifest_path)
+    else:
+        source_payload["rbf_query_manifest_policy"] = "not_used_rbf_manifest_had_rows"
+    return source_payload
 
 
 def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str]) -> list[dict[str, Any]]:
@@ -2983,7 +3411,7 @@ def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str])
     return out
 
 
-def generate_sbf_budget_figure(pdf_path: Path,
+def generate_rbf_budget_figure(pdf_path: Path,
                                png_path: Path,
                                rows: list[dict[str, Any]],
                                title: str,
@@ -3050,13 +3478,14 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     }
     robot_order = ["iiwa", "ur5", "panda"]
     difficulty_order = ["medium", "hard"]
+    robot_labels = {"iiwa": "IIWA", "ur5": "UR5", "panda": "Panda"}
     scenario_items: list[tuple[str, str, str, dict[str, Any], dict[str, dict[str, Any]]]] = []
     for robot in robot_order:
         for difficulty in difficulty_order:
             row = selected_by_key.get((robot, difficulty))
             if row is None:
                 continue
-            scenario = f"{robot.upper()}-{difficulty.capitalize()}"
+            scenario = f"{robot_labels.get(robot, robot.upper())}-{difficulty.capitalize()}"
             scenario_items.append((scenario, robot, difficulty, row, context.get((robot, difficulty), {})))
 
     scenario_refs: dict[str, dict[str, float]] = {}
@@ -3105,30 +3534,31 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         if isinstance(path_by_label, dict):
             gaps = normalized_gap_from_label_values(path_by_label, refs)
             if gaps:
-                return tex_iqr(gaps, 2)
+                return tex_iqr_stacked(gaps, 2)
         values = path_values if finite_values(path_values) else scalar_path
-        return tex_iqr(normalized_gap_values(values, scenario_scalar_refs.get(scenario, math.nan)), 2)
+        return tex_iqr_stacked(
+            normalized_gap_values(values, scenario_scalar_refs.get(scenario, math.nan)),
+            2,
+        )
 
-    caption = (
-        r"\captionof{table}{Saved-catalog random-scene best trade-off points. "
-        r"Numeric entries are median [Q1,Q3] when distributions are available; online solve time is in seconds "
-        r"and excludes the fixed 0.01\,s final simplification. $L/L^\star$ uses success-only "
-        r"aggregation with a query-level globally shortest strict-audited reference when saved-query "
-        r"samples are available; summary-only imported context rows use a scenario-level reference. "
-        r"RBF and PRM are reusable planners and report Build/Online/q/$L/L^\star$; "
-        r"RRTConnect and BIT* are one-shot online baselines. PRM and BIT* entries select the "
-        r"fastest audited checkpoint within 1.08$\times$ of the best path independently for each "
-        r"query/seed, rather than charging one fixed checkpoint to all queries. Full curves "
-        r"appear in \Cref{fig:tro_random_tradeoff}.}"
+    caption = r"\captionof{table}{Saved-catalog random-scene selected trade-off context points.}"
+    path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
+    notes = (
+        r"RBF cells are selected full-success budget points under the fixed strict-audit policy; context columns use current full-success PRM/RRTConnect/BIT* points where available. "
+        r"Times in s; Online/q excludes final simplification/audit. "
+        r"RBF/PRM include Build; RRTConnect/BIT* are Online/q only. "
+        r"$L/L^\star_{\mathrm{q}}$ is success-only by saved query label. "
+        r"PRM uses one cumulative roadmap checkpoint per scenario; BIT* is "
+        r"a post-hoc checkpoint context; no Audit/q column."
     )
     if not has_current_baselines:
-        caption = (
-            r"\captionof{table}{Saved-catalog random-scene best trade-off points. "
-            r"Numeric entries are median [Q1,Q3] when distributions are available; online solve time is in seconds "
-            r"and excludes the fixed 0.01\,s final simplification. $L/L^\star$ uses success-only "
-            r"aggregation and a scenario-level strict-audited reference because current per-query OMPL "
-            r"baseline traces are unavailable. Full curves appear in "
-            r"\Cref{fig:tro_random_tradeoff}.}"
+        path_metric = r"$L/L^\star_{\mathrm{scn}}$"
+        notes = (
+            r"RBF cells are selected full-success budget points under the fixed strict-audit policy. "
+            r"Times in s; Online/q excludes final simplification/audit. "
+            r"$L/L^\star_{\mathrm{scn}}$ is success-only against a scenario-level strict-audited reference because current "
+            r"per-query OMPL baseline traces are unavailable; it is within-scenario context only. "
+        r"Fig.~\ref{fig:tro_random_tradeoff} plots Build/5+Online/q trade-offs and Build/$K$+Online/q amortization; no Audit/q column."
         )
 
     lines = [
@@ -3138,13 +3568,15 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         caption,
         r"\label{tab:tro-random-summary}",
         r"\scriptsize",
-        r"\setlength{\tabcolsep}{1.5pt}",
+        r"\setlength{\tabcolsep}{1.65pt}",
+        r"\renewcommand{\arraystretch}{1.10}",
+        r"\setlength{\extrarowheight}{0.8pt}",
         r"\resizebox{\textwidth}{!}{%",
-        r"\begin{tabular}{lccc|ccc|cc|cc}",
+        r"\begin{tabular}{lccc@{\hspace{0.8em}}ccc@{\hspace{0.8em}}cc@{\hspace{0.8em}}cc}",
         r"\toprule",
-        r"Scenario & \multicolumn{3}{c|}{RBF} & \multicolumn{3}{c|}{PRM} & \multicolumn{2}{c|}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
+        r"Scenario & \multicolumn{3}{c}{RBF} & \multicolumn{3}{c}{PRM} & \multicolumn{2}{c}{RRTConnect} & \multicolumn{2}{c}{BIT*} \\",
         r"\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}",
-        r" & Build & Online/q & $L/L^\star$ & Build & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ & Online/q & $L/L^\star$ \\",
+        rf" & Build & Online/q & {path_metric} & Build & Online/q & {path_metric} & Online/q & {path_metric} & Online/q & {path_metric} \\",
         r"\midrule",
     ]
     for scenario, _robot, _difficulty, row, scenario_context in scenario_items:
@@ -3153,25 +3585,33 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
             online_q = as_float(row.get("planning_s_median", row.get("measured_time_s_median")))
         cells = [
             scenario,
-            tex_iqr(row.get("_build_values", row.get("offline_build_s_median", row.get("build_s"))), 3),
-            tex_time_tail(row.get("_online_solve_values", online_q), 3),
+            tex_iqr_stacked(row.get("_build_values", row.get("offline_build_s_median", row.get("build_s"))), 3),
+            tex_iqr_stacked(row.get("_online_solve_values", online_q), 3),
             gap_cell(row.get("_path_by_label"), row.get("_path_values"), path_length_stat(row), scenario),
         ]
         for method in reusable_context_methods:
             item = scenario_context.get(method, {})
             cells.extend([
-                tex_iqr(item.get("build_values") or item.get("build_s"), 3),
-                tex_time_tail(item.get("query_values") or item.get("query_s"), 3),
+                tex_iqr_stacked(item.get("build_values") or item.get("build_s"), 3),
+                tex_iqr_stacked(item.get("query_values") or item.get("query_s"), 3),
                 gap_cell(item.get("path_by_label"), item.get("path_values"), item.get("path_length"), scenario),
             ])
         for method in online_context_methods:
             item = scenario_context.get(method, {})
             cells.extend([
-                tex_time_tail(item.get("query_values") or item.get("query_s"), 3),
+                tex_iqr_stacked(item.get("query_values") or item.get("query_s"), 3),
                 gap_cell(item.get("path_by_label"), item.get("path_values"), item.get("path_length"), scenario),
             ])
         lines.append(" & ".join(cells) + r" \\")
-    lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\par\endgroup", ""])
+    lines.extend([
+        r"\bottomrule",
+        r"\end{tabular}%",
+        r"}",
+        r"\par\vspace{0.1ex}",
+        rf"{{\scriptsize\emph{{Notes:}} Time and path-ratio cells stack median [Q1, Q3]. {notes}\par}}",
+        r"\par\endgroup",
+        "",
+    ])
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -3197,10 +3637,94 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         )
     }
 
+    def figure_time(row: dict[str, Any], k: int = 5) -> float:
+        """Primary Exp.6 figure time: fixed-K reusable amortization."""
+        reported = as_float(row.get(f"amortized_s_k{k}"))
+        if math.isfinite(reported):
+            return reported
+        return amortized_query_time(row, k)
+
+    def context_figure_time(item: dict[str, Any], k: int = 5) -> float:
+        """Primary Exp.6 figure time for merged baseline/context points."""
+        value = as_float(item.get("total_s", item.get("measured_time_s")))
+        if math.isfinite(value):
+            return value
+        build = as_float(item.get("build_s"), 0.0)
+        query = as_float(item.get("query_s", item.get("online_s", item.get("total_s"))))
+        if math.isfinite(query):
+            return max(0.0, build) / float(k) + query
+        return math.nan
+
+    def scenario_path_refs(
+        robot: str,
+        difficulty: str,
+        scenario_context: dict[str, dict[str, Any]],
+        scenario_curves: dict[str, list[dict[str, Any]]],
+    ) -> tuple[dict[str, float], float]:
+        """Build the same per-query path references used by the Exp.6 table."""
+        label_candidates: dict[str, list[float]] = {}
+        scalar_candidates: list[float] = []
+
+        def collect_refs(path_by_label: Any, path_values: Any, scalar_path: Any) -> None:
+            if isinstance(path_by_label, dict) and path_by_label:
+                for label, values in path_by_label.items():
+                    finite = [value for value in finite_values(values) if value > 0.0]
+                    if finite:
+                        label_candidates.setdefault(str(label), []).append(min(finite))
+            finite_path_values = finite_values(path_values)
+            positive_path_values = [value for value in finite_path_values if value > 0.0]
+            if positive_path_values:
+                scalar_candidates.append(min(positive_path_values))
+                return
+            scalar = as_float(scalar_path)
+            if math.isfinite(scalar) and scalar > 0.0:
+                scalar_candidates.append(scalar)
+
+        for candidate in rows:
+            if (
+                str(candidate.get("robot")).lower() == robot
+                and str(candidate.get("difficulty")).lower() == difficulty
+            ):
+                collect_refs(
+                    candidate.get("_path_by_label") or candidate.get("path_by_label"),
+                    candidate.get("_path_values") or candidate.get("path_values"),
+                    path_length_stat(candidate),
+                )
+        for item in scenario_context.values():
+            collect_refs(item.get("path_by_label"), item.get("path_values"), item.get("path_length"))
+        for method_points in scenario_curves.values():
+            for point in method_points:
+                collect_refs(point.get("path_by_label"), point.get("path_values"), point.get("path_length"))
+        refs = {
+            label: min(values)
+            for label, values in label_candidates.items()
+            if values
+        }
+        scalar_ref = min(scalar_candidates) if scalar_candidates else math.nan
+        return refs, scalar_ref
+
+    def figure_path_ratio(
+        path_by_label: Any,
+        path_values: Any,
+        scalar_path: Any,
+        refs: dict[str, float],
+        scalar_ref: float,
+    ) -> float:
+        """Single-point y value aligned with table L/L*_q median semantics."""
+        if isinstance(path_by_label, dict):
+            ratios = normalized_gap_from_label_values(path_by_label, refs)
+            if ratios:
+                return percentile_value(ratios, 0.50)
+        values = path_values if finite_values(path_values) else scalar_path
+        ratios = normalized_gap_values(values, scalar_ref)
+        if ratios:
+            return percentile_value(ratios, 0.50)
+        return ratio_to_ref(scalar_path, scalar_ref)
+
     fig, axes = plt.subplots(
         len(robot_order),
         len(difficulty_order) + 1,
-        figsize=(8.8, 6.9),
+        figsize=(15.4, 5.15),
     )
     for row_index, robot in enumerate(robot_order):
         for col_index, difficulty in enumerate(difficulty_order):
@@ -3217,29 +3741,20 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             )
             scenario_context = context.get((robot, difficulty), {})
             scenario_curves = current_curves.get((robot, difficulty), {})
-            path_ref = finite_min(
-                [path_length_stat(row) for row in items]
-                + [
-                    path_length_stat(row)
-                    for row in rows
-                    if str(row.get("robot")).lower() == robot
-                    and str(row.get("difficulty")).lower() == difficulty
-                ]
-                + [
-                    point["path_length"]
-                    for method_points in scenario_curves.values()
-                    for point in method_points
-                ]
-                + [
-                    item["path_length"]
-                    for item in scenario_context.values()
-                    if math.isfinite(item.get("path_length", math.nan))
-                ]
-            )
+            path_refs, scalar_path_ref = scenario_path_refs(robot, difficulty, scenario_context, scenario_curves)
             panel_path_values: list[float] = []
             if items:
-                xs = [method_time(row) for row in items]
-                ys = [ratio_to_ref(path_length_stat(row), path_ref) for row in items]
+                xs = [figure_time(row, 5) for row in items]
+                ys = [
+                    figure_path_ratio(
+                        row.get("_path_by_label"),
+                        row.get("_path_values"),
+                        path_length_stat(row),
+                        path_refs,
+                        scalar_path_ref,
+                    )
+                    for row in items
+                ]
                 panel_path_values.extend(ys)
                 axis.plot(xs, ys, "-", color=METHOD_STYLE["sbf_leaf_rrt"]["color"],
                           alpha=0.60, linewidth=LINE_WIDTH)
@@ -3248,8 +3763,16 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 first = first_full_success_row(items)
                 if first is not None:
                     axis.scatter(
-                        [method_time(first)],
-                        [ratio_to_ref(path_length_stat(first), path_ref)],
+                        [figure_time(first, 5)],
+                        [
+                            figure_path_ratio(
+                                first.get("_path_by_label"),
+                                first.get("_path_values"),
+                                path_length_stat(first),
+                                path_refs,
+                                scalar_path_ref,
+                            )
+                        ],
                         facecolors="none",
                         edgecolors="black",
                         linewidths=0.9,
@@ -3259,8 +3782,16 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 selected = rbf_selected.get((robot, difficulty))
                 if selected is not None:
                     axis.scatter(
-                        [method_time(selected)],
-                        [ratio_to_ref(path_length_stat(selected), path_ref)],
+                        [figure_time(selected, 5)],
+                        [
+                            figure_path_ratio(
+                                selected.get("_path_by_label"),
+                                selected.get("_path_values"),
+                                path_length_stat(selected),
+                                path_refs,
+                                scalar_path_ref,
+                            )
+                        ],
                         facecolors="none",
                         edgecolors="#d4a017",
                         linewidths=SELECTED_LINE_WIDTH,
@@ -3273,36 +3804,73 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     continue
                 style = METHOD_STYLE[method]
                 xs = [point["total_s"] for point in points]
-                ys = [ratio_to_ref(point["path_length"], path_ref) for point in points]
+                ys = [
+                    figure_path_ratio(
+                        point.get("path_by_label"),
+                        point.get("path_values"),
+                        point.get("path_length"),
+                        path_refs,
+                        scalar_path_ref,
+                    )
+                    for point in points
+                ]
                 panel_path_values.extend(ys)
-                axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
-                axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
-                axis.scatter(
-                    [xs[0]],
-                    [ys[0]],
-                    facecolors="none",
-                    edgecolors="black",
-                    linewidths=0.8,
-                    s=24,
-                    zorder=4,
-                )
+                if method == "bitstar":
+                    axis.plot(xs, ys, "-", color=style["color"], alpha=0.74, linewidth=LINE_WIDTH)
+                    marker_indices = sorted({
+                        0,
+                        *[
+                            min(range(len(xs)), key=lambda index: abs(xs[index] - target))
+                            for target in (0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0)
+                            if min(xs) <= target <= max(xs)
+                        ],
+                    })
+                    axis.scatter(
+                        [xs[index] for index in marker_indices],
+                        [ys[index] for index in marker_indices],
+                        marker=style["marker"],
+                        color=style["color"],
+                        s=POINT_SIZE,
+                        alpha=0.62,
+                    )
+                else:
+                    axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
+                    axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
+                if method != "bitstar":
+                    axis.scatter(
+                        [xs[0]],
+                        [ys[0]],
+                        facecolors="none",
+                        edgecolors="black",
+                        linewidths=0.8,
+                        s=24,
+                        zorder=4,
+                    )
             for method in ["prm", "rrtconnect", "bitstar"]:
                 item = scenario_context.get(method)
                 if not item:
                     continue
+                if scenario_curves.get(method):
+                    continue
                 style = METHOD_STYLE[method]
-                item_ratio = ratio_to_ref(item["path_length"], path_ref)
+                item_ratio = figure_path_ratio(
+                    item.get("path_by_label"),
+                    item.get("path_values"),
+                    item.get("path_length"),
+                    path_refs,
+                    scalar_path_ref,
+                )
                 panel_path_values.append(item_ratio)
-                context_x = item.get("query_s", item.get("total_s"))
+                context_x = context_figure_time(item, 5)
                 axis.scatter([context_x], [item_ratio],
                              marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.82)
             axis.set_xscale("log")
             use_compact_log_x_ticks(axis)
-            axis.set_xlabel("amortized time / query @5 (s, log)" if row_index == len(robot_order) - 1 else "")
+            axis.set_xlabel("Build/5+Online/q (s)" if row_index == len(robot_order) - 1 else "")
             if row_index == 0:
-                axis.set_title(difficulty.capitalize(), fontsize=PANEL_TITLE_FONTSIZE)
+                axis.set_title(f"{difficulty.capitalize()} (q-ref)", fontsize=PANEL_TITLE_FONTSIZE)
             if col_index == 0:
-                axis.set_ylabel(f"{robot_labels[robot]}\npath ratio $L/L^\\star$")
+                axis.set_ylabel(f"{robot_labels[robot]}\n$L/L^\\star_q$")
             axis.grid(True, which="both", alpha=0.22)
             axis.tick_params(labelsize=TICK_LABEL_FONTSIZE)
             axis.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
@@ -3362,7 +3930,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         plot_query_amortization_panel(
             amort_axis,
             amort_methods,
-            title="Amortization" if row_index == 0 else "",
+            title="Amortization (mean M/H)" if row_index == 0 else "",
             show_xlabel=row_index == len(robot_order) - 1,
             show_ylabel=False,
         )
@@ -3374,25 +3942,25 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         handles.append(
             plt.Line2D([0], [0], color=style["color"], marker=style["marker"],
                        linestyle="-" if method == "sbf_leaf_rrt" else "None",
-                       markersize=4, linewidth=LINE_WIDTH)
+                       markersize=4.4, linewidth=LINE_WIDTH)
         )
-        labels.append(style["label"])
+        labels.append("RRTConn." if method == "rrtconnect" else style["label"])
     fig.legend(
         handles,
         labels,
         loc="upper center",
-        bbox_to_anchor=(0.5, 1.0),
+        bbox_to_anchor=(0.5, 1.01),
         ncol=4,
         frameon=False,
-        fontsize=max(LEGEND_FONTSIZE, 7.2),
+        fontsize=max(LEGEND_FONTSIZE, 7.5),
         handlelength=2.4,
         handletextpad=0.4,
         columnspacing=0.85,
         labelspacing=0.45,
     )
-    fig.subplots_adjust(left=0.072, right=0.992, top=0.94, bottom=0.055, hspace=0.18, wspace=0.16)
-    fig.savefig(pdf_path)
-    fig.savefig(png_path, dpi=220)
+    fig.subplots_adjust(left=0.072, right=0.992, top=0.925, bottom=0.06, hspace=0.18, wspace=0.16)
+    fig.savefig(pdf_path, bbox_inches="tight", pad_inches=0.01)
+    fig.savefig(png_path, dpi=220, bbox_inches="tight", pad_inches=0.01)
     plt.close(fig)
 
 
@@ -3417,9 +3985,14 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             rbf_override_rows,
             rbf_override_manifest_payload,
         )
+        override_profile = (
+            rbf_override_summary.parent.name
+            if rbf_override_summary is not None
+            else EXP06_REGISTERED_RBF_PROFILE_NAME
+        )
         for row in rbf_override_rows:
-            row["paper_selected_profile"] = "exp06_rbf_robot_tuned_profile_v3b"
-            row["source"] = "exp06_rbf_robot_tuned_profile_v3b"
+            row["paper_selected_profile"] = override_profile
+            row["source"] = override_profile
         if rbf_override_rows:
             override_keys = {
                 (
@@ -3479,7 +4052,8 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             row for row in read_csv_rows(curve_summary)
             if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
         ]
-        tradeoff_methods = {"prm", "bitstar"} if combined_prm_bitstar_manifest else {"prm"}
+        annotate_summary_rows_with_manifest_distributions(curve_rows, curve_manifest_payload)
+        tradeoff_methods = {"bitstar"} if combined_prm_bitstar_manifest else set()
         per_query_tradeoff_rows.extend(
             exp06_per_query_tradeoff_rows(curve_manifest_payload, methods=tradeoff_methods)
         )
@@ -3494,9 +4068,6 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         if supplement_rows:
             accepted_curve_supplements.append(supplement_summary)
             curve_rows.extend(supplement_rows)
-            per_query_tradeoff_rows.extend(
-                exp06_per_query_tradeoff_rows(supplement_manifest_payload, methods={"prm"})
-            )
     bitstar_trace_manifest_payload = (
         curve_manifest_payload
         if combined_prm_bitstar_manifest else
@@ -3532,8 +4103,6 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             per_query_tradeoff_rows.extend(
                 exp06_per_query_tradeoff_rows(supplement_manifest_payload, methods={"bitstar"})
             )
-    if not per_query_tradeoff_rows:
-        per_query_tradeoff_rows = curve_rows + bitstar_rows
     if rbf_override_rows:
         figure_base_rows = [
             row for row in rows
@@ -3542,8 +4111,8 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         ]
     else:
         figure_base_rows = rows
-    table_rows = rows + baseline_rows + per_query_tradeoff_rows + iris_rows
-    figure_rows = figure_base_rows + baseline_rows + per_query_tradeoff_rows + iris_rows
+    table_rows = rows + baseline_rows + curve_rows + bitstar_rows + per_query_tradeoff_rows + iris_rows
+    figure_rows = figure_base_rows + baseline_rows + curve_rows + bitstar_rows + per_query_tradeoff_rows + iris_rows
     table_path = generated / "tab_tro_random_summary.tex"
     pdf_path = generated / "fig_tro_random_tradeoff.pdf"
     png_path = generated / "fig_tro_random_tradeoff.png"
@@ -3560,8 +4129,8 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             if isinstance(summary_manifest_payload, dict) else None
         ),
         "manifest_merge_policy": (
-            summary_manifest_payload.get("merge_policy")
-            if isinstance(summary_manifest_payload, dict) else None
+            summary_manifest_payload.get("merge_policy") or "none"
+            if isinstance(summary_manifest_payload, dict) else "not_available"
         ),
         "rbf_registered_override_summary": (
             str(rbf_override_summary) if rbf_override_summary is not None else None
@@ -3595,10 +4164,10 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "ompl_curve_summary": str(curve_summary) if curve_summary is not None else None,
         "ompl_curve_summary_sha256": file_sha256(curve_summary) if curve_summary is not None else None,
         "ompl_curve_manifest": str(curve_manifest) if curve_manifest is not None else None,
-        "ompl_curve_manifest_sha256": file_sha256(curve_manifest) if curve_manifest is not None else None,
+        "ompl_curve_manifest_sha256": file_sha256_if_reasonable(curve_manifest),
         "ompl_curve_supplements": [str(path) for path in accepted_curve_supplements],
         "ompl_curve_supplement_sha256": {str(path): file_sha256(path) for path in accepted_curve_supplements},
-        "ompl_per_query_tradeoff_policy": "per_query_seed_select_fastest_within_1p08x_best_path",
+        "ompl_per_query_tradeoff_policy": "bitstar_only_per_query_seed_select_fastest_within_1p08x_best_path_prm_uses_cumulative_scenario_checkpoint",
         "ompl_per_query_tradeoff_rows": len(per_query_tradeoff_rows),
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
@@ -3608,7 +4177,9 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "bitstar_trace_supplement_sha256": {str(path): file_sha256(path) for path in accepted_bitstar_trace_supplements},
         "ompl_curve_rows_100pct": len(curve_rows),
         "registered_baseline_context": not bool(baseline_rows or curve_rows or iris_rows),
-        "old_random_context_table": str(OLD_RANDOM_TABLE) if OLD_RANDOM_TABLE.exists() else None,
+        "registered_baseline_context_policy": (
+            "inline_registered_context_constants_used_only_when_current_baselines_are_absent"
+        ),
         "rows": len(table_rows),
         "figure_rows": len(figure_rows),
         "table": str(table_path),
@@ -3617,41 +4188,39 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     }
 
 
-def generate_exp07_table(path: Path, rows: list[dict[str, Any]]) -> None:
+def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> None:
     if rows and "source_warm_s_q1" in rows[0]:
         source_n = int(float(rows[0].get("source_obstacles", 10) or 10))
         target_n = int(float(rows[0].get("target_obstacles", 15) or 15))
         lines = [
-            r"\par\smallskip",
+            r"\par\vspace{0.1ex}",
             r"\noindent\begin{minipage}{\columnwidth}",
             r"\begingroup",
             r"\centering",
-            rf"\captionof{{table}}{{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Times are seconds shown as \([Q_1,Q_3]\) over saved ordered random scenes. Warm@{source_n} and Warm@{target_n} are fresh adaptive leaf-sweep builds; Insert and Remove are batched updates between the two obstacle counts. Speedup is Warm@{target_n}/Update.}}",
+            r"\captionof{table}{Adaptive leaf-sweep maintenance only, not end-to-end replanning.}",
             r"\label{tab:tro-dynamic-update}",
-            r"\scriptsize",
-            r"\setlength{\tabcolsep}{1.5pt}",
-            r"\resizebox{\columnwidth}{!}{%",
-            r"\begin{tabular}{rrrrrr}",
+            r"\footnotesize",
+            r"\setlength{\tabcolsep}{3.0pt}",
+            r"\begin{tabular}{@{}lcc@{}}",
             r"\toprule",
-            rf"Warm@{source_n} & Insert & Ins. sp. & Remove & Rem. sp. & Warm@{target_n} \\",
+            r"Operation & Time (s) & Speedup \\",
             r"\midrule",
         ]
         for row in rows:
-            lines.append(
-                f"{tex_qrange_s(row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & "
-                f"{tex_qrange_s(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
-                f"{tex_speedup_range(row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} & "
-                f"{tex_qrange_s(row.get('remove_s_q1'), row.get('remove_s_q3'))} & "
-                f"{tex_speedup_range(row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} & "
-                f"{tex_qrange_s(row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} \\\\"
-            )
+            lines.extend([
+                rf"Warm build ({source_n} obs.) & {tex_iqr_or_qrange_s(row.get('_source_warm_values'), row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & -- \\",
+                rf"Insert to {target_n} obs. & {tex_iqr_or_qrange_s(row.get('_insert_values'), row.get('insert_s_q1'), row.get('insert_s_q3'))} & {tex_speedup_iqr_or_range(row.get('_insert_speedup_values'), row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} \\",
+                rf"Remove from {target_n} obs. & {tex_iqr_or_qrange_s(row.get('_remove_values'), row.get('remove_s_q1'), row.get('remove_s_q3'))} & {tex_speedup_iqr_or_range(row.get('_remove_speedup_values'), row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} \\",
+                rf"Warm build ({target_n} obs.) & {tex_iqr_or_qrange_s(row.get('_target_warm_values'), row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} & -- \\",
+            ])
         lines.extend([
             r"\bottomrule",
-            r"\end{tabular}%",
-            r"}",
+            r"\end{tabular}",
+            r"\par\vspace{0.1ex}",
+            rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3]. Maintenance only: no query, connector, simplification, or audit timing. Speedup = 15-obs warm rebuild/update time.\par}}",
             r"\par\endgroup",
             r"\end{minipage}",
-            r"\par\smallskip",
+            r"\par\vspace{0.1ex}",
             "",
         ])
         path.write_text("\n".join(lines), encoding="utf-8")
@@ -3660,7 +4229,7 @@ def generate_exp07_table(path: Path, rows: list[dict[str, Any]]) -> None:
         lines = [
             r"\begin{table}[t]",
             r"\centering",
-            r"\caption{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Values are milliseconds shown as \([Q_1,Q_3]\) over saved ordered random scenes.}",
+            r"\caption{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Values are milliseconds shown as \([Q_1, Q_3]\) over saved ordered random scenes.}",
             r"\label{tab:tro-dynamic-update}",
             r"\footnotesize",
             r"\setlength{\tabcolsep}{3.0pt}",
@@ -3681,7 +4250,7 @@ def generate_exp07_table(path: Path, rows: list[dict[str, Any]]) -> None:
         lines = [
             r"\begin{table}[t]",
             r"\centering",
-            r"\caption{Obstacle-count dynamic-update cost for adaptive leaf sweep only. Insert reports the cost of adding the obstacle that makes the scene contain \(N\) obstacles; remove reports deleting one obstacle from an \(N\)-obstacle scene. Values are milliseconds shown as \([Q_1,Q_3]\) over random ordered scenes.}",
+            r"\caption{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Insert reports the cost of adding the obstacle that makes the scene contain \(N\) obstacles; remove reports deleting one obstacle from an \(N\)-obstacle scene. Values are milliseconds shown as \([Q_1, Q_3]\) over random ordered scenes.}",
             r"\label{tab:tro-dynamic-update}",
             r"\footnotesize",
             r"\setlength{\tabcolsep}{3.0pt}",
@@ -3714,7 +4283,7 @@ def generate_exp07_table(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Saved-catalog dynamic-update results. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}",
+        r"\caption{Saved-catalog adaptive leaf-sweep maintenance only, not end-to-end replanning. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}",
         r"\label{tab:tro-dynamic-update}",
         r"\footnotesize",
         r"\begin{tabular}{lrrrr}",
@@ -3732,17 +4301,24 @@ def generate_exp07_table(path: Path, rows: list[dict[str, Any]]) -> None:
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
-def generate_exp07_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
-    summary = find_exp07_summary(out_dir)
+def generate_dynamic_update_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
+    summary = find_dynamic_update_summary(out_dir)
     if summary is None:
         return {"status": "missing", "summary": None}
     rows = read_csv_rows(summary)
+    rows = attach_dynamic_update_raw_distributions(summary, rows)
     table_path = generated / "tab_tro_dynamic_update.tex"
-    generate_exp07_table(table_path, rows)
+    generate_dynamic_update_table(table_path, rows)
     return {
         "status": "generated",
         "summary": str(summary),
         "summary_sha256": file_sha256(summary),
+        "event_records": str(summary.parent / "dynamic_update_events.csv")
+        if (summary.parent / "dynamic_update_events.csv").exists()
+        else None,
+        "build_records": str(summary.parent / "dynamic_update_builds.csv")
+        if (summary.parent / "dynamic_update_builds.csv").exists()
+        else None,
         "rows": len(rows),
         "table": str(table_path),
     }
@@ -3759,6 +4335,15 @@ def main() -> int:
         "assets": {},
         "sources": {},
         "placeholder_mode": bool(args.allow_placeholders),
+    }
+    manifest["sources"]["exp04_d23_cache_artifact"] = {
+        "status": "found" if EXP04_D23_CACHE_ARTIFACT.exists() else "missing",
+        "path": str(EXP04_D23_CACHE_ARTIFACT),
+        "sha256": file_sha256(EXP04_D23_CACHE_ARTIFACT),
+        "records": EXP04_D23_CACHE_RECORDS,
+        "cache_bytes": EXP04_D23_CACHE_BYTES,
+        "cache_gib": EXP04_D23_CACHE_GIB,
+        "prewarm_s": EXP04_D23_PREWARM_S,
     }
     exp01_summary = find_exp01_summary(args.out_dir)
     if exp01_summary is not None:
@@ -3797,8 +4382,8 @@ def main() -> int:
         include_current_baselines=bool(args.include_exp06_current_baselines),
     )
     manifest["sources"]["exp06_random_robot"] = exp06
-    exp07 = generate_exp07_assets(generated, args.out_dir)
-    manifest["sources"]["exp07_dynamic_update"] = exp07
+    dynamic_update = generate_dynamic_update_assets(generated, args.out_dir)
+    manifest["sources"]["dynamic_update_maintenance"] = dynamic_update
     supporting_manifest_path = find_supporting_import_manifest(args.out_dir)
     supporting_payload = load_json_file(supporting_manifest_path)
     manifest["sources"]["supporting_table_imports"] = {
@@ -3825,12 +4410,17 @@ def main() -> int:
         generated_tables.add("tab_tro_shelf_cross_algorithm.tex")
     if exp06.get("status") == "generated":
         generated_tables.add("tab_tro_random_summary.tex")
-    if exp07.get("status") == "generated":
+    if dynamic_update.get("status") == "generated":
         generated_tables.add("tab_tro_dynamic_update.tex")
     for filename, caption in REQUIRED_TABLES.items():
         path = generated / filename
         label = "tab:" + filename.removesuffix(".tex").replace("_", "-")
         is_placeholder = filename not in generated_tables
+        if is_placeholder and not args.allow_placeholders:
+            raise RuntimeError(
+                f"required table {filename} was not generated from current sources; "
+                "rerun with --allow-placeholders only for draft builds"
+            )
         if args.allow_placeholders and is_placeholder:
             path.write_text(placeholder_table(caption, label), encoding="utf-8")
         manifest["assets"][filename] = {

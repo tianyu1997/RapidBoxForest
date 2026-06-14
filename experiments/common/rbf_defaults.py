@@ -12,6 +12,7 @@ RBF_DEFAULT_PROFILE_NAME = "exp04_partition_leaf13_d23_fixed800_online25ms"
 RBF_SHELF_PROFILE_NAME = "exp04_partition_leaf13_d23_fixed800_online25ms"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
+EXP06_REGISTERED_RBF_PROFILE_NAME = "exp06_rbf_robot_tuned_profile_v8_segment_trade"
 
 D23_CACHE_ROOT = REPO_ROOT / "outputs" / "new_experiments" / "exp04_full_root_d23" / "cache"
 D23_CACHE_LABEL = "iiwa_endpoint_only_p23_canonical_full_root"
@@ -63,6 +64,15 @@ DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET = 3
 DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS = 0
 DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS = 1600
 DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS = 0.0
+DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE = ""
+DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS = 0
+DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS = 0
+DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP = False
+DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES = 1
+DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO = 1.75
+DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE = 0.75
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT = False
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH = 0.0
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR = True
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP = 0.08
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS = 2
@@ -70,8 +80,11 @@ DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS = 24
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY = 1
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION = 0.0
 DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS = False
+DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED = False
 DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES = True
 DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE = True
+DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION = True
+DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE = 32
 DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS = False
 DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY = 2.0
 DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY = 2.0
@@ -95,6 +108,86 @@ DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES = "0,1,2,3,4"
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH = 14
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD = 0.05
 DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD = 0.0
+
+_EXP06_REGISTERED_RBF_BASE_SETTINGS: dict[str, Any] = {
+    # Keep the shallow offline cover fast, but allow endpoint/query FFB to
+    # certify isolated hard-scene endpoints beyond the historical d64 cap.
+    "rbf_max_depth": 80,
+    "leaf_max_depth": 10,
+    "deep_ffb_depth": 56,
+    "connector_pave_depth": 56,
+    "query_bridge_pave_depth": 56,
+    "query_endpoint_anchor_ffb_depth": 110,
+    "ffb_start_depth": 32,
+    "query_bridge_ffb_start_depth": -1,
+    "query_bridge_edge_cost_penalty": 5.0,
+    "query_bridge_rrt_fixed_iters": 10000,
+    "query_bridge_no_path_retry_attempts": 32,
+    "query_bridge_no_path_retry_stop_on_first_success": True,
+    "query_bridge_direct_segment_after_rrt": False,
+    "query_bridge_direct_segment_after_rrt_min_length": 0.0,
+    "query_bridge_direct_max_length": 15.0,
+    "query_bridge_waypoint_quality_retry": False,
+    "query_bridge_waypoint_quality_retry_attempts": 8,
+    "query_bridge_waypoint_quality_retry_iters": 0,
+    "query_bridge_waypoint_quality_max_ratio": 1.6,
+    "query_bridge_waypoint_quality_max_additive": 0.5,
+    "query_bridge_to_main_island": False,
+    "query_bridge_full_residual_overlay_when_connected": False,
+    "hipac_improved_leaf_sweep": False,
+    "hipac_online_connectivity": False,
+    "hipac_online_prebridge_portal": False,
+}
+
+# Paper-facing Exp.6 RBF profile.  Keep this table as the single source of
+# truth for the registered random-scene RBF trade-off point; experiments that
+# sweep parameters must opt out or pass explicit CLI overrides.
+EXP06_REGISTERED_RBF_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
+    ("iiwa", "medium"): {**_EXP06_REGISTERED_RBF_BASE_SETTINGS, "deep_max_boxes": 200},
+    ("iiwa", "hard"): {
+        **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        "rbf_max_depth": 110,
+        "deep_max_boxes": 400,
+    },
+    ("ur5", "medium"): {
+        **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        "leaf_max_depth": 8,
+        "deep_max_boxes": 400,
+        "query_endpoint_anchor_ffb_depth": 80,
+        "ffb_start_depth": 8,
+        "query_bridge_ffb_start_depth": 8,
+        "query_bridge_full_residual_overlay_when_connected": True,
+    },
+    ("ur5", "hard"): {
+        **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        "leaf_max_depth": 8,
+        "deep_max_boxes": 400,
+        "query_endpoint_anchor_ffb_depth": 80,
+        "ffb_start_depth": 8,
+        "query_bridge_ffb_start_depth": 8,
+        "query_bridge_full_residual_overlay_when_connected": True,
+    },
+    ("panda", "medium"): {
+        **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        "deep_max_boxes": 400,
+        "ffb_start_depth": 8,
+        "query_bridge_ffb_start_depth": 8,
+        "query_bridge_full_residual_overlay_when_connected": True,
+    },
+    ("panda", "hard"): {
+        **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        "rbf_max_depth": 110,
+        "deep_max_boxes": 400,
+        "ffb_start_depth": 8,
+        "query_bridge_ffb_start_depth": 8,
+        "query_bridge_direct_sample_step": 0.08,
+        "query_bridge_direct_segment_after_rrt": True,
+        "query_bridge_direct_segment_after_rrt_min_length": 8.0,
+        "query_bridge_full_residual_overlay_when_connected": True,
+        "query_bridge_rrt_fixed_iters": 40000,
+        "query_bridge_no_path_retry_attempts": 0,
+    },
+}
 
 
 def robot_joint_limit_tuples(robot: Any) -> list[tuple[float, float]]:
@@ -226,8 +319,15 @@ def default_rbf_profile() -> dict[str, Any]:
             "adaptive_repair_target_segment_fraction": (
                 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
             ),
+            "full_residual_overlay_when_connected": (
+                DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
+            ),
             "partition_neighbor_candidates": DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
             "direct_append_partition_immediate": DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+            "local_sample_assimilation": DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
+            "direct_partition_append_batch_size": (
+                DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE
+            ),
             "box_transition_line_deviation_penalty": DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
             "foreign_edge_cost_penalty": DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
             "query_bridge_edge_cost_penalty": DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,

@@ -3,6 +3,7 @@
 #include <sbf/core/joint_symmetry.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -875,6 +876,30 @@ std::vector<int> env_int_list_or_empty(const char* name) {
     return values;
 }
 
+std::vector<double> env_double_list_or_empty(const char* name) {
+    std::vector<double> values;
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return values;
+    }
+    std::stringstream stream(raw);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (item.empty()) {
+            continue;
+        }
+        char* end = nullptr;
+        const double value = std::strtod(item.c_str(), &end);
+        if (end != item.c_str() && std::isfinite(value)) {
+            values.push_back(value);
+        }
+    }
+    return values;
+}
+
 bool csv_index_list_contains(const std::string& csv, int value) {
     std::string compact = csv;
     compact.erase(std::remove_if(compact.begin(), compact.end(), [](unsigned char c) {
@@ -1034,6 +1059,28 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
     double best_length = std::numeric_limits<double>::infinity();
     const int safe_attempts = std::max(1, attempts);
     const double safe_total_ms = total_timeout_ms > 0.0 ? total_timeout_ms : base_config.timeout_ms;
+    const bool parallel_early_stop =
+        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
+    const int parallel_early_stop_min_successes =
+        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES", 1));
+    const double parallel_early_stop_ratio =
+        std::max(1.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO", 1.75));
+    const double parallel_early_stop_additive =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE", 0.75));
+    const double direct_distance = (goal - start).norm();
+    auto early_stop_path_good = [&](const std::vector<Eigen::VectorXd>& path) {
+        if (path.empty()) {
+            return false;
+        }
+        if (direct_distance <= 1e-9) {
+            return true;
+        }
+        const double length = path_length(path);
+        return length <= std::max(direct_distance * parallel_early_stop_ratio,
+                                  direct_distance + parallel_early_stop_additive);
+    };
+    context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
+                                    parallel_early_stop ? 1.0 : 0.0);
 
     if (context.executor().n_threads() > 1 && safe_attempts > 1) {
         const double per_attempt_ms =
@@ -1041,8 +1088,13 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                 ? std::max(1.0, safe_total_ms / static_cast<double>(safe_attempts))
                 : base_config.timeout_ms;
         std::vector<std::vector<Eigen::VectorXd>> audited_paths(static_cast<std::size_t>(safe_attempts));
+        std::shared_ptr<std::atomic<bool>> local_cancel =
+            parallel_early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                : context.native_cancel_flag();
+        std::atomic<int> early_successes{0};
         context.executor().parallel_for(0, safe_attempts, [&](int attempt) {
-            if (context.should_stop()) {
+            if (context.should_stop() ||
+                (local_cancel && local_cancel->load(std::memory_order_relaxed))) {
                 return;
             }
             RRTConnectConfig config =
@@ -1059,7 +1111,7 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                             robot,
                             config,
                             seed_base + attempt * std::max(1, seed_stride),
-                            context.native_cancel_flag());
+                            local_cancel);
             if (path.empty()) {
                 return;
             }
@@ -1067,6 +1119,13 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                 audit_waypoint_path(path, checker, audit_resolution, audit_segment_step);
             if (!audit.passed) {
                 return;
+            }
+            if (parallel_early_stop && early_stop_path_good(path)) {
+                const int successes =
+                    early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
+                if (successes >= parallel_early_stop_min_successes && local_cancel) {
+                    local_cancel->store(true, std::memory_order_relaxed);
+                }
             }
             audited_paths[static_cast<std::size_t>(attempt)] = std::move(path);
         });
@@ -1089,6 +1148,15 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                                           static_cast<double>(safe_attempts));
         context.diagnostics().add_counter("query_bridge.parallel_rrt_successes",
                                           static_cast<double>(audited_successes));
+        if (parallel_early_stop) {
+            context.diagnostics().add_counter("query_bridge.parallel_rrt_early_stop_successes",
+                                              static_cast<double>(early_successes.load(
+                                                  std::memory_order_relaxed)));
+            context.diagnostics().add_counter(
+                local_cancel && local_cancel->load(std::memory_order_relaxed)
+                    ? "query_bridge.parallel_rrt_early_stop_triggered"
+                    : "query_bridge.parallel_rrt_early_stop_not_triggered");
+        }
         return best;
     }
 
@@ -9356,6 +9424,23 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                            point,
                                            config_.query.adjacency_tolerance)) {
             context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail");
+            context.diagnostics().add_counter(
+                "query_bridge.endpoint_anchor_ffb_fail_code." +
+                std::to_string(result.fail_code));
+            context.diagnostics().set_value("query_bridge.endpoint_anchor_last_fail_code",
+                                            static_cast<double>(result.fail_code));
+            if (result.seed_collision) {
+                context.diagnostics().add_counter("query_bridge.endpoint_anchor_seed_collision");
+            }
+            if (result.hit_unknown_depth_cap) {
+                context.diagnostics().add_counter("query_bridge.endpoint_anchor_unknown_depth_cap");
+            }
+            if (result.hit_reserved_depth_cap) {
+                context.diagnostics().add_counter("query_bridge.endpoint_anchor_reserved_depth_cap");
+            }
+            if (result.deadline_reached) {
+                context.diagnostics().add_counter("query_bridge.endpoint_anchor_deadline");
+            }
             return -1;
         }
         context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_success");
@@ -9439,6 +9524,10 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_calls");
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_success", stats.ffb_success);
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail", stats.ffb_fail);
+    if (stats.ffb_fail > 0) {
+        context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail_code.unknown_legacy",
+                                          stats.ffb_fail);
+    }
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_commit_rejects", stats.commit_rejects);
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_domain_rejects", stats.domain_rejects);
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_contained_rejects", stats.contained_rejects);
@@ -9723,8 +9812,18 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         env_int_or_default("RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES", 0) != 0;
     const int bridge_edge_query_index =
         scene_reusable_query_bridge_edges ? -1 : query_index;
+    const bool direct_segment_after_rrt =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0;
+    const double direct_segment_after_rrt_min_length =
+        std::max(0.0,
+                 env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
+                                       0.0));
     context.diagnostics().set_value("query_bridge.scene_reusable_edges",
                                     scene_reusable_query_bridge_edges ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.direct_segment_after_rrt",
+                                    direct_segment_after_rrt ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_min_length",
+                                    direct_segment_after_rrt_min_length);
     struct QueryBridgePaveDiagnosticsFlush {
         BuildProfile& profile;
         StageContext& context;
@@ -9735,6 +9834,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
     } pave_diagnostics_flush{last_build_, context};
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    auto waypoint_length = [](const std::vector<Eigen::VectorXd>& path) {
+        double total = 0.0;
+        for (std::size_t i = 1; i < path.size(); ++i) {
+            total += (path[i] - path[i - 1]).norm();
+        }
+        return total;
+    };
+    const double bridge_waypoint_length = waypoint_length(waypoint_path);
+    const bool direct_segment_after_rrt_candidate =
+        direct_segment_after_rrt &&
+        bridge_waypoint_length >= direct_segment_after_rrt_min_length &&
+        config_.connector.segment_edges_enabled &&
+        config_.connector.rrt_segment_edges;
+    context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_candidate",
+                                    direct_segment_after_rrt_candidate ? 1.0 : 0.0);
     int direct_segment_edges_added = 0;
     int box_corridor_edges_added = 0;
     const bool defer_query_segment_edge = true;
@@ -9745,13 +9859,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (boxes_.size() > boxes_before) {
             append_adaptive_partition_boxes(boxes_before, &last_build_, prefix);
         }
-    };
-    auto waypoint_length = [](const std::vector<Eigen::VectorXd>& path) {
-        double total = 0.0;
-        for (std::size_t i = 1; i < path.size(); ++i) {
-            total += (path[i] - path[i - 1]).norm();
-        }
-        return total;
     };
     auto capped_ffb_depth = [&](int requested_depth) {
         const int max_tree_depth = std::max(1, config_.database.max_tree_depth);
@@ -9772,6 +9879,52 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             value);
     };
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
+    const bool bridge_waypoint_shortcut =
+        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT",
+                           direct_segment_after_rrt_candidate ? 1 : 0) != 0;
+    const double bridge_waypoint_shortcut_min_gain =
+        std::max(0.0,
+                 env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT_MIN_GAIN",
+                                       1e-6));
+    context.diagnostics().set_value("query_bridge.waypoint_shortcut_enabled",
+                                    bridge_waypoint_shortcut ? 1.0 : 0.0);
+    if (bridge_waypoint_shortcut && corridor_path.size() > 2) {
+        using Clock = std::chrono::steady_clock;
+        const auto shortcut_t0 = Clock::now();
+        const double before_length = waypoint_length(corridor_path);
+        std::vector<Eigen::VectorXd> shortened =
+            collision_shortcut_path(corridor_path,
+                                    checker,
+                                    collision_shortcut_resolution(config_.query));
+        const double after_length = waypoint_length(shortened);
+        context.diagnostics().add_counter("query_bridge.waypoint_shortcut_attempts");
+        set_query_bridge_task_value("waypoint_shortcut_before_length", before_length);
+        set_query_bridge_task_value("waypoint_shortcut_after_length", after_length);
+        if (!shortened.empty() &&
+            after_length + bridge_waypoint_shortcut_min_gain < before_length) {
+            const PathAuditCheck shortcut_audit =
+                audit_waypoint_path(shortened,
+                                    checker,
+                                    config_.query.audit_resolution,
+                                    config_.query.audit_segment_step);
+            if (shortcut_audit.passed) {
+                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_accepts");
+                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_delta",
+                                                  before_length - after_length);
+                set_query_bridge_task_value("waypoint_shortcut_accepted", 1.0);
+                set_query_bridge_task_value("waypoint_shortcut_delta",
+                                            before_length - after_length);
+                corridor_path = std::move(shortened);
+            } else {
+                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_audit_rejects");
+                set_query_bridge_task_value("waypoint_shortcut_audit_reject", 1.0);
+            }
+        }
+        context.diagnostics().record_timing(
+            "query_bridge.waypoint_shortcut_ms_total",
+            std::chrono::duration<double, std::milli>(Clock::now() -
+                                                      shortcut_t0).count());
+    }
     auto locate_box_linear = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
         for (const auto& box : boxes_) {
             if (intervals_contain_point_local(box.joint_intervals,
@@ -9863,7 +10016,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return locate_query_boxes();
     };
     const bool bridge_internal_simplify =
-        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY", 0) != 0;
+        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY",
+                           direct_segment_after_rrt_candidate ? 1 : 0) != 0;
     context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
                                     bridge_internal_simplify ? 1.0 : 0.0);
     if (bridge_internal_simplify &&
@@ -9926,6 +10080,47 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     int dense_repair_added = 0;
     bool dense_repair_attempted = false;
     const double audited_bridge_length = waypoint_length(corridor_path);
+    context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_final_length",
+                                    audited_bridge_length);
+    if (direct_segment_after_rrt_candidate) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_segment_after_rrt_final_attempts");
+        context.diagnostics().add_counter(
+            "query_bridge.direct_segment_after_rrt_shortening_delta",
+            std::max(0.0, bridge_waypoint_length - audited_bridge_length));
+        const PathAuditCheck segment_audit =
+            audit_waypoint_path(corridor_path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (!segment_audit.passed) {
+            context.diagnostics().add_counter(
+                "query_bridge.direct_segment_after_rrt_audit_rejects");
+        } else {
+            const int edge_id = add_segment_edge_partition_first(
+                start_box_id,
+                goal_box_id,
+                corridor_path,
+                SegmentEdgeType::QueryBridge,
+                bridge_rrt.segment_resolution,
+                SegmentEdgeValidation::CollisionChecked,
+                true,
+                bridge_edge_query_index);
+            if (edge_id >= 0) {
+                direct_segment_edges_added += 1;
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_segment_after_rrt_edges");
+                invalidate_query_cache();
+                sync_adaptive_partition_segment_edges(
+                    &last_build_,
+                    "query_bridge.direct_segment_after_rrt");
+                refresh_adaptive_partition_diagnostics(&last_build_);
+                return finish_bridge(direct_segment_edges_added);
+            }
+            context.diagnostics().add_counter(
+                "query_bridge.direct_segment_after_rrt_add_fail");
+        }
+    }
     const double dense_box_corridor_max_length =
         std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH", 6.5));
     const bool dense_box_corridor_candidate =
@@ -9984,6 +10179,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         const bool immediate_partition_append =
             use_partition_cover_index &&
             env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE", 0) != 0;
+        const int partition_append_batch_size = immediate_partition_append
+            ? std::max(1,
+                       env_int_or_default(
+                           "RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE",
+                           32))
+            : 0;
         const bool detailed_direct_timing =
             env_int_or_default("RBF_QUERY_BRIDGE_DETAILED_TIMING", 0) != 0;
         context.diagnostics().set_value(
@@ -9992,6 +10193,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         context.diagnostics().set_value(
             "query_bridge.direct_corridor_immediate_partition_append_enabled",
             immediate_partition_append ? 1.0 : 0.0);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_partition_append_batch_size",
+            static_cast<double>(partition_append_batch_size));
         context.diagnostics().set_value(
             "query_bridge.direct_corridor_detailed_timing_enabled",
             detailed_direct_timing ? 1.0 : 0.0);
@@ -10007,8 +10211,44 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             }
         }
         std::vector<int> corridor_new_box_indices;
+        std::size_t direct_partition_append_base = boxes_.size();
         std::vector<std::vector<int>> sample_layers(samples.size());
         std::vector<bool> covered(samples.size(), false);
+        struct ResidualMilestone {
+            double param = 0.0;
+            Eigen::VectorXd point;
+            int box_index = -1;
+        };
+        std::vector<ResidualMilestone> repair_milestones;
+        repair_milestones.reserve(samples.size());
+        auto seed_path_param = [&](const Eigen::VectorXd& seed, int transition_hint) {
+            if (samples.empty()) {
+                return 0.0;
+            }
+            if (transition_hint >= 0 &&
+                transition_hint + 1 < static_cast<int>(samples.size())) {
+                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition_hint)];
+                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition_hint + 1)];
+                const Eigen::VectorXd delta = b - a;
+                const double denom = delta.squaredNorm();
+                double u = 0.5;
+                if (denom > 1e-18) {
+                    u = (seed - a).dot(delta) / denom;
+                    u = std::min(1.0, std::max(0.0, u));
+                }
+                return static_cast<double>(transition_hint) + u;
+            }
+            double best_distance = std::numeric_limits<double>::infinity();
+            std::size_t best_index = 0;
+            for (std::size_t index = 0; index < samples.size(); ++index) {
+                const double distance = (seed - samples[index]).squaredNorm();
+                if (distance < best_distance) {
+                    best_distance = distance;
+                    best_index = index;
+                }
+            }
+            return static_cast<double>(best_index);
+        };
         auto mark_from_index = [&](std::size_t from_index) {
             const auto mark_t0 = Clock::now();
             int changed = 0;
@@ -10140,6 +10380,46 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int assimilate_coverage_span_max = 0;
         double assimilate_coverage_span_sum = 0.0;
         int segment_insert_calls = 0;
+        int direct_partition_append_calls = 0;
+        int direct_partition_append_boxes = 0;
+        const bool local_assimilate_sample_scan =
+            env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION", 1) != 0;
+        int assimilate_local_hits = 0;
+        int assimilate_full_scan_fallbacks = 0;
+        int assimilate_local_sample_tests = 0;
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_local_sample_assimilation_enabled",
+            local_assimilate_sample_scan ? 1.0 : 0.0);
+        auto append_direct_partition_batch = [&](bool force) {
+            if (!immediate_partition_append ||
+                !adaptive_partition_ ||
+                direct_partition_append_base >= boxes_.size()) {
+                return 0;
+            }
+            const std::size_t pending = boxes_.size() - direct_partition_append_base;
+            if (!force && pending < static_cast<std::size_t>(partition_append_batch_size)) {
+                return 0;
+            }
+            const auto partition_append_t0 =
+                detailed_direct_timing ? Clock::now() : Clock::time_point{};
+            const int appended = adaptive_partition_->append_boxes(
+                boxes_,
+                direct_partition_append_base,
+                config_.query.adjacency_tolerance);
+            if (detailed_direct_timing) {
+                commit_partition_append_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              partition_append_t0).count();
+            }
+            direct_partition_append_calls += 1;
+            direct_partition_append_boxes += std::max(0, appended);
+            context.diagnostics().add_counter(
+                appended > 0
+                    ? "query_bridge.direct_corridor_batched_partition_appends"
+                    : "query_bridge.direct_corridor_batched_partition_append_rejects");
+            direct_partition_append_base = boxes_.size();
+            return appended;
+        };
         auto transition_connected = [&](int transition) {
             const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
             auto finish = [&](bool value) {
@@ -10315,12 +10595,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             int last_covered_sample = -1;
             int covered_sample_count = 0;
             const auto sample_scan_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-                if (!intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
-                                                   samples[sample_index],
-                                                   config_.query.adjacency_tolerance)) {
-                    continue;
-                }
+            const auto& box_intervals = boxes_[static_cast<std::size_t>(box_index)].joint_intervals;
+            auto record_sample_coverage = [&](std::size_t sample_index) {
                 const int sample_index_int = static_cast<int>(sample_index);
                 first_covered_sample = std::min(first_covered_sample, sample_index_int);
                 last_covered_sample = std::max(last_covered_sample, sample_index_int);
@@ -10333,6 +10609,62 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     layer.push_back(box_index);
                 }
                 covered[sample_index] = true;
+            };
+            auto sample_in_box = [&](int sample_index) {
+                if (sample_index < 0 || sample_index >= static_cast<int>(samples.size())) {
+                    return false;
+                }
+                assimilate_local_sample_tests += 1;
+                return intervals_contain_point_local(
+                    box_intervals,
+                    samples[static_cast<std::size_t>(sample_index)],
+                    config_.query.adjacency_tolerance);
+            };
+            bool used_full_sample_scan = true;
+            if (local_assimilate_sample_scan && !samples.empty()) {
+                used_full_sample_scan = false;
+                int anchor = -1;
+                const std::array<int, 5> anchors = {
+                    transition_hint,
+                    transition_hint + 1,
+                    transition_hint - 1,
+                    transition_hint + 2,
+                    transition_hint - 2,
+                };
+                for (int candidate_anchor : anchors) {
+                    if (sample_in_box(candidate_anchor)) {
+                        anchor = candidate_anchor;
+                        break;
+                    }
+                }
+                if (anchor >= 0) {
+                    int left = anchor;
+                    int right = anchor;
+                    while (left > 0 && sample_in_box(left - 1)) {
+                        --left;
+                    }
+                    while (right + 1 < static_cast<int>(samples.size()) &&
+                           sample_in_box(right + 1)) {
+                        ++right;
+                    }
+                    for (int sample_index = left; sample_index <= right; ++sample_index) {
+                        record_sample_coverage(static_cast<std::size_t>(sample_index));
+                    }
+                    assimilate_local_hits += 1;
+                } else {
+                    used_full_sample_scan = true;
+                    assimilate_full_scan_fallbacks += 1;
+                }
+            }
+            if (used_full_sample_scan) {
+                for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+                    if (!intervals_contain_point_local(box_intervals,
+                                                       samples[sample_index],
+                                                       config_.query.adjacency_tolerance)) {
+                        continue;
+                    }
+                    record_sample_coverage(sample_index);
+                }
             }
             if (covered_sample_count > 0) {
                 const int span = last_covered_sample - first_covered_sample + 1;
@@ -10428,6 +10760,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context.diagnostics().record_timing(
                 "query_bridge.direct_corridor_assimilate_ms",
                 std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
+            return covered_sample_count;
         };
         bool adopt_certified_subchain_attempted = false;
         auto try_adopt_certified_subchain = [&](int source_box_id,
@@ -10788,7 +11121,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             const int duplicate_index = find_duplicate_box_index(result.node,
                                                                  result.intervals);
             if (duplicate_index >= 0) {
-                assimilate_box(duplicate_index, transition_hint);
+                const int covered_count = assimilate_box(duplicate_index, transition_hint);
+                if (covered_count == 0) {
+                    repair_milestones.push_back(
+                        {seed_path_param(seed, transition_hint), seed, duplicate_index});
+                }
                 return finish(duplicate_index);
             }
             const auto dynamic_policy_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
@@ -10823,27 +11160,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 node_to_box_index.emplace(result.node, box_index);
             }
             if (use_partition_cover_index) {
-                if (immediate_partition_append && adaptive_partition_) {
-                    const auto partition_append_t0 =
-                        detailed_direct_timing ? Clock::now() : Clock::time_point{};
-                    const bool appended = adaptive_partition_->append_box(
-                        boxes_.back(),
-                        config_.query.adjacency_tolerance);
-                    if (detailed_direct_timing) {
-                        commit_partition_append_ms +=
-                            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                      partition_append_t0).count();
-                    }
-                    context.diagnostics().add_counter(
-                        appended
-                            ? "query_bridge.direct_corridor_immediate_partition_appends"
-                            : "query_bridge.direct_corridor_immediate_partition_append_rejects");
-                    if (!appended) {
-                        corridor_new_box_indices.push_back(box_index);
-                    }
-                } else {
-                    corridor_new_box_indices.push_back(box_index);
-                }
+                corridor_new_box_indices.push_back(box_index);
+                append_direct_partition_batch(false);
             } else {
                 direct_box_index.add_box(boxes_.back(),
                                          box_index,
@@ -10853,7 +11171,11 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 box_id_to_index[box.id] = box_index;
             }
             dsu.add();
-            assimilate_box(box_index, transition_hint);
+            const int covered_count = assimilate_box(box_index, transition_hint);
+            if (covered_count == 0) {
+                repair_milestones.push_back(
+                    {seed_path_param(seed, transition_hint), seed, box_index});
+            }
             return finish(box_index);
         };
         auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
@@ -11541,6 +11863,125 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             for (auto it = gap_groups.rbegin(); it != gap_groups.rend(); ++it) {
                 pending_gap_groups.push_back(*it);
             }
+            const bool residual_milestone_segments =
+                env_int_or_default("RBF_QUERY_BRIDGE_RESIDUAL_MILESTONE_SEGMENTS", 0) != 0;
+            context.diagnostics().set_value(
+                "query_bridge.direct_corridor_residual_milestone_segments",
+                residual_milestone_segments ? 1.0 : 0.0);
+            context.diagnostics().set_value(
+                "query_bridge.direct_corridor_repair_milestones",
+                static_cast<double>(repair_milestones.size()));
+            auto insert_residual_segment = [&](int lhs_index,
+                                               int rhs_index,
+                                               Eigen::VectorXd lhs_point,
+                                               Eigen::VectorXd rhs_point,
+                                               int sample_gap) {
+                if (lhs_index < 0 || rhs_index < 0 ||
+                    lhs_index >= static_cast<int>(boxes_.size()) ||
+                    rhs_index >= static_cast<int>(boxes_.size())) {
+                    return false;
+                }
+                if (dsu.find(lhs_index) == dsu.find(rhs_index)) {
+                    return false;
+                }
+                std::vector<Eigen::VectorXd> gap_path{std::move(lhs_point), std::move(rhs_point)};
+                const auto segment_audit_t0 = Clock::now();
+                const PathAuditCheck gap_audit =
+                    audit_waypoint_path(gap_path,
+                                        checker,
+                                        config_.query.audit_resolution,
+                                        config_.query.audit_segment_step);
+                residual_segment_audit_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() -
+                                                              segment_audit_t0).count();
+                if (!gap_audit.passed) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_segment_audit_rejects");
+                    return false;
+                }
+                const auto segment_insert_t0 =
+                    detailed_direct_timing ? Clock::now() : Clock::time_point{};
+                const int edge_id = add_segment_edge_partition_first(
+                    boxes_[static_cast<std::size_t>(lhs_index)].id,
+                    boxes_[static_cast<std::size_t>(rhs_index)].id,
+                    std::move(gap_path),
+                    SegmentEdgeType::QueryBridge,
+                    bridge_rrt.segment_resolution,
+                    SegmentEdgeValidation::CollisionChecked,
+                    true,
+                    bridge_edge_query_index);
+                if (detailed_direct_timing) {
+                    segment_insert_ms +=
+                        std::chrono::duration<double, std::milli>(Clock::now() - segment_insert_t0).count();
+                    segment_insert_calls += 1;
+                }
+                if (edge_id >= 0) {
+                    local_segment_edges_added += 1;
+                    local_segment_gap_samples_max =
+                        std::max(local_segment_gap_samples_max, sample_gap);
+                    dsu.unite(lhs_index, rhs_index);
+                    return true;
+                }
+                return false;
+            };
+            if (residual_milestone_segments) {
+                std::vector<ResidualMilestone> milestones;
+                milestones.reserve(samples.size() + repair_milestones.size());
+                for (std::size_t sample_index = 0; sample_index < sample_layers.size(); ++sample_index) {
+                    const auto& layer = sample_layers[sample_index];
+                    if (!layer.empty()) {
+                        milestones.push_back(
+                            {static_cast<double>(sample_index),
+                             samples[sample_index],
+                             layer.front()});
+                    }
+                }
+                for (const auto& milestone : repair_milestones) {
+                    if (milestone.box_index >= 0 &&
+                        milestone.box_index < static_cast<int>(boxes_.size())) {
+                        milestones.push_back(milestone);
+                    }
+                }
+                std::stable_sort(milestones.begin(),
+                                 milestones.end(),
+                                 [](const ResidualMilestone& lhs,
+                                    const ResidualMilestone& rhs) {
+                                     if (std::abs(lhs.param - rhs.param) > 1e-9) {
+                                         return lhs.param < rhs.param;
+                                     }
+                                     return lhs.box_index < rhs.box_index;
+                                 });
+                std::vector<ResidualMilestone> compact;
+                compact.reserve(milestones.size());
+                for (const auto& milestone : milestones) {
+                    if (milestone.box_index < 0) {
+                        continue;
+                    }
+                    if (!compact.empty() &&
+                        std::abs(compact.back().param - milestone.param) <= 1e-9 &&
+                        dsu.find(compact.back().box_index) == dsu.find(milestone.box_index)) {
+                        continue;
+                    }
+                    compact.push_back(milestone);
+                }
+                context.diagnostics().set_value(
+                    "query_bridge.direct_corridor_residual_milestones",
+                    static_cast<double>(compact.size()));
+                for (std::size_t index = 0; index + 1 < compact.size(); ++index) {
+                    const auto& lhs = compact[index];
+                    const auto& rhs = compact[index + 1];
+                    if (rhs.param <= lhs.param + 1e-9) {
+                        continue;
+                    }
+                    const int sample_gap = static_cast<int>(
+                        std::ceil(std::max(0.0, rhs.param - lhs.param)));
+                    insert_residual_segment(lhs.box_index,
+                                            rhs.box_index,
+                                            lhs.point,
+                                            rhs.point,
+                                            sample_gap);
+                }
+            } else {
             while (!pending_gap_groups.empty()) {
                 const auto gap_group = pending_gap_groups.back();
                 pending_gap_groups.pop_back();
@@ -11558,26 +11999,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
                 const int lhs_index = lhs_layer.front();
                 const int rhs_index = rhs_layer.front();
-                if (lhs_index < 0 || rhs_index < 0 ||
-                    lhs_index >= static_cast<int>(boxes_.size()) ||
-                    rhs_index >= static_cast<int>(boxes_.size())) {
-                    continue;
-                }
-                std::vector<Eigen::VectorXd> gap_path{
-                    samples[static_cast<std::size_t>(lhs_sample)],
-                    samples[static_cast<std::size_t>(rhs_sample)]};
-                const auto segment_audit_t0 = Clock::now();
-                const PathAuditCheck gap_audit =
-                    audit_waypoint_path(gap_path,
-                                        checker,
-                                        config_.query.audit_resolution,
-                                        config_.query.audit_segment_step);
-                residual_segment_audit_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              segment_audit_t0).count();
-                if (!gap_audit.passed) {
-                    context.diagnostics().add_counter(
-                        "query_bridge.direct_corridor_segment_audit_rejects");
+                const auto lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
+                const auto rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
+                const bool inserted = insert_residual_segment(lhs_index,
+                                                              rhs_index,
+                                                              lhs_point,
+                                                              rhs_point,
+                                                              rhs_sample - lhs_sample);
+                if (!inserted) {
                     if (group_residual_gaps && gap_group.first < gap_group.second) {
                         const int mid = (gap_group.first + gap_group.second) / 2;
                         pending_gap_groups.emplace_back(mid + 1, gap_group.second);
@@ -11587,27 +12016,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     }
                     continue;
                 }
-                const auto segment_insert_t0 =
-                    detailed_direct_timing ? Clock::now() : Clock::time_point{};
-                const int edge_id = add_segment_edge_partition_first(                                                     boxes_[static_cast<std::size_t>(lhs_index)].id,
-                                                     boxes_[static_cast<std::size_t>(rhs_index)].id,
-                                                     std::move(gap_path),
-                                                     SegmentEdgeType::QueryBridge,
-                                                     bridge_rrt.segment_resolution,
-                                                     SegmentEdgeValidation::CollisionChecked,
-                                                     true,
-                                                     bridge_edge_query_index);
-                if (detailed_direct_timing) {
-                    segment_insert_ms +=
-                        std::chrono::duration<double, std::milli>(Clock::now() - segment_insert_t0).count();
-                    segment_insert_calls += 1;
-                }
-                if (edge_id >= 0) {
-                    local_segment_edges_added += 1;
-                    local_segment_gap_samples_max =
-                        std::max(local_segment_gap_samples_max,
-                                 rhs_sample - lhs_sample);
-                }
+            }
             }
             if (detailed_direct_timing) {
                 residual_segment_loop_ms =
@@ -11736,10 +12145,20 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                               commit_dynamic_policy_ms);
             context.diagnostics().add_counter("query_bridge.direct_corridor_commit_partition_append_ms",
                                               commit_partition_append_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_partition_append_calls",
+                                              static_cast<double>(direct_partition_append_calls));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_partition_append_boxes",
+                                              static_cast<double>(direct_partition_append_boxes));
             context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_calls",
                                               static_cast<double>(assimilate_calls));
             context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_sample_scan_ms",
                                               assimilate_sample_scan_ms);
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_local_hits",
+                                              static_cast<double>(assimilate_local_hits));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_full_scan_fallbacks",
+                                              static_cast<double>(assimilate_full_scan_fallbacks));
+            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_local_sample_tests",
+                                              static_cast<double>(assimilate_local_sample_tests));
             context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_candidate_build_ms",
                                               assimilate_candidate_build_ms);
             context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_adjacency_ms",
@@ -11790,10 +12209,20 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                         commit_dynamic_policy_ms);
             set_query_bridge_task_value("direct_corridor_commit_partition_append_ms",
                                         commit_partition_append_ms);
+            set_query_bridge_task_value("direct_corridor_partition_append_calls",
+                                        static_cast<double>(direct_partition_append_calls));
+            set_query_bridge_task_value("direct_corridor_partition_append_boxes",
+                                        static_cast<double>(direct_partition_append_boxes));
             set_query_bridge_task_value("direct_corridor_assimilate_calls",
                                         static_cast<double>(assimilate_calls));
             set_query_bridge_task_value("direct_corridor_assimilate_sample_scan_ms",
                                         assimilate_sample_scan_ms);
+            set_query_bridge_task_value("direct_corridor_assimilate_local_hits",
+                                        static_cast<double>(assimilate_local_hits));
+            set_query_bridge_task_value("direct_corridor_assimilate_full_scan_fallbacks",
+                                        static_cast<double>(assimilate_full_scan_fallbacks));
+            set_query_bridge_task_value("direct_corridor_assimilate_local_sample_tests",
+                                        static_cast<double>(assimilate_local_sample_tests));
             set_query_bridge_task_value("direct_corridor_assimilate_candidate_build_ms",
                                         assimilate_candidate_build_ms);
             set_query_bridge_task_value("direct_corridor_assimilate_adjacency_ms",
@@ -11925,11 +12354,46 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             set_query_bridge_task_value("direct_corridor_local_residual_overlay_connected",
                                         locally_overlay_connected ? 1.0 : 0.0);
             if (locally_overlay_connected) {
+                const bool add_full_residual_overlay_when_connected =
+                    env_int_or_default(
+                        "RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
+                        0) != 0;
+                int full_edge_id = -1;
+                if (add_full_residual_overlay_when_connected) {
+                    const PathAuditCheck full_residual_audit =
+                        audit_waypoint_path(corridor_path,
+                                            checker,
+                                            config_.query.audit_resolution,
+                                            config_.query.audit_segment_step);
+                    if (full_residual_audit.passed) {
+                        full_edge_id = add_segment_edge_partition_first(
+                            source_box_id,
+                            target_box_id,
+                            corridor_path,
+                            SegmentEdgeType::QueryBridge,
+                            bridge_rrt.segment_resolution,
+                            SegmentEdgeValidation::CollisionChecked,
+                            true,
+                            bridge_edge_query_index);
+                        if (full_edge_id >= 0) {
+                            context.diagnostics().add_counter(
+                                "query_bridge.direct_corridor_full_residual_edges");
+                            context.diagnostics().add_counter(
+                                "query_bridge.direct_corridor_full_residual_edges_with_local_overlay");
+                            set_query_bridge_task_value("direct_corridor_full_residual_edge",
+                                                        1.0);
+                        }
+                    } else {
+                        context.diagnostics().add_counter(
+                            "query_bridge.direct_corridor_full_residual_audit_rejects");
+                    }
+                }
                 try_adopt_certified_subchain(source_box_id,
                                              target_box_id,
                                              "local_residual_overlay");
                 invalidate_query_cache();
-                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
+                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added +
+                                              (full_edge_id >= 0 ? 1 : 0));
             }
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_full_residual_without_local_overlay");
@@ -12320,6 +12784,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::vector<RRTConnectConfig> short_local_profiles;
         int attempts = 1;
         std::vector<Eigen::VectorXd> waypoint_path;
+        std::vector<std::vector<Eigen::VectorXd>> waypoint_fallback_paths;
         bool waypoint_path_from_partition_query = false;
         std::vector<Eigen::VectorXd> hipac_candidate_path;
         bool hipac_online_satisfied = false;
@@ -12373,6 +12838,31 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             return -1;
         }
         return locate_box_partition_first(point, config_.query.nearest_if_outside);
+    };
+    auto box_id_contains_query_point = [&](int box_id,
+                                           const Eigen::Ref<const Eigen::VectorXd>& point) {
+        if (box_id < 0) {
+            return false;
+        }
+        const BoxNode* box = find_box_by_id(boxes_, box_id);
+        return box != nullptr &&
+               intervals_contain_point_local(box->joint_intervals,
+                                             point,
+                                             config_.query.adjacency_tolerance);
+    };
+    auto refresh_located_or_keep_anchor = [&](int anchor_box_id,
+                                              const Eigen::Ref<const Eigen::VectorXd>& point,
+                                              const char* endpoint_name) {
+        const int located = locate_existing_box_for_query_bridge(point);
+        if (located >= 0) {
+            return located;
+        }
+        if (box_id_contains_query_point(anchor_box_id, point)) {
+            last_build_.diagnostics[std::string("query_bridge.endpoint_anchor_keep_after_lookup_miss.") +
+                                    endpoint_name] += 1.0;
+            return anchor_box_id;
+        }
+        return -1;
     };
     auto catch_up_query_bridge_partition = [&](const char* diagnostic_prefix) {
         if (partition_native_mode() &&
@@ -12441,10 +12931,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         catch_up_query_bridge_partition("query_bridge.endpoint_anchor");
         if (start_box_id >= 0) {
-            start_box_id = locate_existing_box_for_query_bridge(starts[index]);
+            start_box_id = refresh_located_or_keep_anchor(start_box_id,
+                                                          starts[index],
+                                                          "start");
         }
         if (goal_box_id >= 0) {
-            goal_box_id = locate_existing_box_for_query_bridge(goals[index]);
+            goal_box_id = refresh_located_or_keep_anchor(goal_box_id,
+                                                         goals[index],
+                                                         "goal");
         }
         if (goal_box_id < 0 || goal_box_id == start_box_id) {
             mark_task_skip(goal_box_id < 0 ? 3.0 : 4.0,
@@ -12654,10 +13148,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             "query_bridge.direct_corridor_commit_dynamic_policy_ms");
         add("direct_corridor_commit_partition_append_ms",
             "query_bridge.direct_corridor_commit_partition_append_ms");
+        add("direct_corridor_partition_append_calls",
+            "query_bridge.direct_corridor_partition_append_calls");
+        add("direct_corridor_partition_append_boxes",
+            "query_bridge.direct_corridor_partition_append_boxes");
         add("direct_corridor_assimilate_calls",
             "query_bridge.direct_corridor_assimilate_calls");
         add("direct_corridor_assimilate_sample_scan_ms",
             "query_bridge.direct_corridor_assimilate_sample_scan_ms");
+        add("direct_corridor_assimilate_local_hits",
+            "query_bridge.direct_corridor_assimilate_local_hits");
+        add("direct_corridor_assimilate_full_scan_fallbacks",
+            "query_bridge.direct_corridor_assimilate_full_scan_fallbacks");
+        add("direct_corridor_assimilate_local_sample_tests",
+            "query_bridge.direct_corridor_assimilate_local_sample_tests");
         add("direct_corridor_assimilate_candidate_build_ms",
             "query_bridge.direct_corridor_assimilate_candidate_build_ms");
         add("direct_corridor_assimilate_adjacency_ms",
@@ -13318,12 +13822,27 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
     const double query_bridge_rrt_fixed_timeout_ms =
         std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
+    const std::vector<double> local_radius_schedule =
+        env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
+    const int query_bridge_rrt_optimize_after_first_iters =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
+    const int query_bridge_attempt_fallback_paths =
+        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS", 0));
     batch_context.diagnostics().set_value(
         "query_bridge.rrt_fixed_iters",
         static_cast<double>(query_bridge_rrt_fixed_iters));
     batch_context.diagnostics().set_value(
         "query_bridge.rrt_fixed_timeout_ms",
         query_bridge_rrt_fixed_timeout_ms);
+    batch_context.diagnostics().set_value(
+        "query_bridge.local_radius_schedule_size",
+        static_cast<double>(local_radius_schedule.size()));
+    batch_context.diagnostics().set_value(
+        "query_bridge.rrt_optimize_after_first_iters",
+        static_cast<double>(query_bridge_rrt_optimize_after_first_iters));
+    batch_context.diagnostics().set_value(
+        "query_bridge.attempt_fallback_paths",
+        static_cast<double>(query_bridge_attempt_fallback_paths));
     const std::vector<int> no_path_retry_budget_iters =
         env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
     const std::vector<int> no_path_retry_budget_attempts =
@@ -13345,6 +13864,29 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         env_int_or_default("RBF_QUERY_BRIDGE_POST_RRT_SKIP_FORCED", 0) != 0;
     batch_context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
                                           post_rrt_skip_forced ? 1.0 : 0.0);
+    const bool parallel_rrt_early_stop =
+        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
+    const int parallel_rrt_early_stop_min_successes =
+        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES", 1));
+    const double parallel_rrt_early_stop_ratio =
+        std::max(1.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO", 1.75));
+    const double parallel_rrt_early_stop_additive =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE", 0.75));
+    batch_context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
+                                          parallel_rrt_early_stop ? 1.0 : 0.0);
+    auto rrt_path_good_enough_for_task = [&](const BridgeSearchTask& task,
+                                             const std::vector<Eigen::VectorXd>& path) {
+        if (path.empty()) {
+            return false;
+        }
+        const double direct = (task.goal - task.start).norm();
+        if (direct <= 1e-9) {
+            return true;
+        }
+        const double length = path_length(path);
+        return length <= std::max(direct * parallel_rrt_early_stop_ratio,
+                                  direct + parallel_rrt_early_stop_additive);
+    };
     auto query_bridge_forced = [&](const BridgeSearchTask& task) {
         return query_bridge_forced_index(task.index);
     };
@@ -13362,7 +13904,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     };
     auto run_task_attempt = [&](const BridgeSearchTask& task,
                                 int attempt,
-                                int override_fixed_iters) {
+                                int override_fixed_iters,
+                                std::shared_ptr<std::atomic<bool>> cancel_override =
+                                    std::shared_ptr<std::atomic<bool>>{}) {
         const int scheduled_attempt = attempt + query_bridge_attempt_offset;
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
@@ -13370,6 +13914,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 ? task.bridge_rrt
                 : task.short_local_profiles[
                       static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
+        if (!local_radius_schedule.empty()) {
+            const double scheduled_radius =
+                local_radius_schedule[static_cast<std::size_t>(attempt) % local_radius_schedule.size()];
+            if (scheduled_radius >= 0.0) {
+                config.local_sampling_radius = scheduled_radius;
+            }
+        }
+        config.optimize_after_first_iters = query_bridge_rrt_optimize_after_first_iters;
         const int effective_fixed_iters =
             override_fixed_iters > 0 ? override_fixed_iters : query_bridge_rrt_fixed_iters;
         if (effective_fixed_iters > 0) {
@@ -13384,12 +13936,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             checker,
             audit_robot_,
             config,
-            derived_planner_seed(config_.grower.rng_seed,
-                                 kSeedBatchBridgeOffset,
-                                 scheduled_attempt,
-                                 task.query_index,
-                                 task.short_local_bridge ? 0 : kSeedAttemptStride),
-            batch_context.native_cancel_flag());
+                derived_planner_seed(config_.grower.rng_seed,
+                                     kSeedBatchBridgeOffset,
+                                     scheduled_attempt,
+                                     task.query_index,
+                                     task.short_local_bridge ? 0 : kSeedAttemptStride),
+            cancel_override ? cancel_override : batch_context.native_cancel_flag());
         if (path.empty()) {
             return std::vector<Eigen::VectorXd>{};
         }
@@ -13590,6 +14142,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const int waypoint_quality_retry_attempts = std::max(
         0,
         env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS", 4));
+    const int waypoint_quality_retry_iters = std::max(
+        0,
+        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ITERS", 0));
     const double waypoint_quality_max_ratio = std::max(
         1.0,
         env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO", 2.0));
@@ -13599,7 +14154,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.waypoint_quality_retry",
         waypoint_quality_retry ? 1.0 : 0.0);
-	    auto improve_waypoint_if_needed = [&](const BridgeSearchTask& task,
+	    auto improve_waypoint_if_needed = [&](BridgeSearchTask& task,
 	                                          int attempts_already_used,
 	                                          double& best_length,
 	                                          std::vector<Eigen::VectorXd>& waypoint_path) {
@@ -13618,20 +14173,49 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             "query_bridge.waypoint_quality_retry_tasks");
         const auto retry_t0 = Clock::now();
         int retry_successes = 0;
-        for (int retry = 0; retry < waypoint_quality_retry_attempts; ++retry) {
-            auto retry_path = run_task_attempt(task, attempts_already_used + retry, 0);
+        std::vector<std::vector<Eigen::VectorXd>> retry_paths(
+            static_cast<std::size_t>(waypoint_quality_retry_attempts));
+        if (batch_context.executor().n_threads() > 1 &&
+            waypoint_quality_retry_attempts > 1) {
+            batch_context.executor().parallel_for(
+                0,
+                waypoint_quality_retry_attempts,
+                [&](int retry) {
+                    retry_paths[static_cast<std::size_t>(retry)] =
+                        run_task_attempt(task,
+                                         attempts_already_used + retry,
+                                         waypoint_quality_retry_iters);
+                });
+        } else {
+            for (int retry = 0; retry < waypoint_quality_retry_attempts; ++retry) {
+                retry_paths[static_cast<std::size_t>(retry)] =
+                    run_task_attempt(task,
+                                     attempts_already_used + retry,
+                                     waypoint_quality_retry_iters);
+            }
+        }
+        for (auto& retry_path : retry_paths) {
             if (retry_path.empty()) {
                 continue;
             }
             retry_successes += 1;
             const double length = path_length(retry_path);
             if (length < best_length) {
+                if (!waypoint_path.empty() &&
+                    task.waypoint_fallback_paths.size() < 4) {
+                    task.waypoint_fallback_paths.push_back(waypoint_path);
+                }
                 best_length = length;
                 waypoint_path = std::move(retry_path);
             }
             if (best_length <= limit) {
                 break;
             }
+        }
+        if (batch_context.executor().n_threads() > 1 &&
+            waypoint_quality_retry_attempts > 1) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.waypoint_quality_retry_parallel_batches");
         }
         batch_context.diagnostics().add_counter(
             "query_bridge.waypoint_quality_retry_attempts",
@@ -13647,6 +14231,62 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            "query_bridge.waypoint_quality_retry_ms_total",
 	            elapsed_ms_since(retry_t0));
 	    };
+    auto select_attempt_paths = [&](BridgeSearchTask& task,
+                                    std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
+                                    double& best_length) {
+        std::vector<std::pair<double, std::size_t>> valid_paths;
+        valid_paths.reserve(attempt_paths.size());
+        for (std::size_t index = 0; index < attempt_paths.size(); ++index) {
+            if (attempt_paths[index].empty()) {
+                continue;
+            }
+            const double length = path_length(attempt_paths[index]);
+            if (!std::isfinite(length)) {
+                continue;
+            }
+            valid_paths.emplace_back(length, index);
+        }
+        if (valid_paths.empty()) {
+            return;
+        }
+        std::sort(valid_paths.begin(), valid_paths.end(),
+                  [](const auto& lhs, const auto& rhs) {
+                      if (std::abs(lhs.first - rhs.first) > 1e-12) {
+                          return lhs.first < rhs.first;
+                      }
+                      return lhs.second < rhs.second;
+                  });
+        std::size_t selected_index = std::numeric_limits<std::size_t>::max();
+        if (task.waypoint_path.empty() || valid_paths.front().first < best_length) {
+            selected_index = valid_paths.front().second;
+            if (!task.waypoint_path.empty() &&
+                query_bridge_attempt_fallback_paths > 0 &&
+                task.waypoint_fallback_paths.size() <
+                    static_cast<std::size_t>(query_bridge_attempt_fallback_paths)) {
+                task.waypoint_fallback_paths.push_back(std::move(task.waypoint_path));
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.attempt_fallback_paths_stored");
+            }
+            best_length = valid_paths.front().first;
+            task.waypoint_path = std::move(attempt_paths[selected_index]);
+        }
+        for (const auto& [length, index] : valid_paths) {
+            (void)length;
+            if (index == selected_index || attempt_paths[index].empty()) {
+                continue;
+            }
+            if (query_bridge_attempt_fallback_paths <= 0 ||
+                task.waypoint_fallback_paths.size() >=
+                    static_cast<std::size_t>(query_bridge_attempt_fallback_paths)) {
+                break;
+            }
+            task.waypoint_fallback_paths.push_back(std::move(attempt_paths[index]));
+            batch_context.diagnostics().add_counter(
+                "query_bridge.attempt_fallback_paths_stored");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "attempt_fallback_paths_stored"));
+        }
+    };
 	    if (last_adaptive_partition_config_.hipac_online_connectivity &&
 	        last_adaptive_partition_config_.hipac_online_before_query_bridge) {
 	        for (auto& task : tasks) {
@@ -13659,6 +14299,63 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            }
 	        }
 	    }
+
+    auto bridge_query_with_waypoint_fallbacks =
+        [&](BridgeSearchTask& task,
+            int& added_accumulator) -> int {
+        std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
+        if (!task.waypoint_path.empty()) {
+            candidate_paths.push_back(&task.waypoint_path);
+        }
+        for (const auto& fallback : task.waypoint_fallback_paths) {
+            if (!fallback.empty()) {
+                candidate_paths.push_back(&fallback);
+            }
+        }
+        int total_added = 0;
+        for (std::size_t candidate_index = 0;
+             candidate_index < candidate_paths.size();
+             ++candidate_index) {
+            const auto& candidate_path = *candidate_paths[candidate_index];
+            if (candidate_path.empty()) {
+                continue;
+            }
+            if (candidate_index > 0) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.waypoint_quality_fallback_attempts");
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "waypoint_quality_fallback_attempts"));
+            }
+            const int bridge_added =
+                bridge_query_with_waypoint_path(task.start,
+                                                task.goal,
+                                                candidate_path,
+                                                task.short_local_bridge,
+                                                task.bridge_rrt,
+                                                task.query_index);
+            total_added += bridge_added;
+            added_accumulator += bridge_added;
+            maybe_promote_query_repair(task, bridge_added);
+            accumulate_task_direct_corridor_totals(task.index);
+            if (candidate_index > 0) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.waypoint_quality_fallback_added",
+                    static_cast<double>(bridge_added));
+            }
+            if (current_query_good(task, false)) {
+                if (candidate_index > 0) {
+                    batch_context.diagnostics().add_counter(
+                        "query_bridge.waypoint_quality_fallback_successes");
+                    batch_context.diagnostics().set_value(
+                        task_key(task.index, "waypoint_quality_fallback_success"),
+                        1.0);
+                    task.waypoint_path = candidate_path;
+                }
+                break;
+            }
+        }
+        return total_added;
+    };
 
 	    const bool parallel_task_rrt =
 	        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
@@ -13733,13 +14430,41 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && jobs.size() > 1) {
+            std::shared_ptr<std::atomic<bool>> local_cancel =
+                parallel_rrt_early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                        : batch_context.native_cancel_flag();
+            std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0,
                                                   static_cast<int>(jobs.size()),
                                                   [&](int job_index) {
+                if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
+                    return;
+                }
                 const PreparedJob& job = jobs[static_cast<std::size_t>(job_index)];
+                auto path = run_task_attempt(tasks[job.task_offset],
+                                             job.attempt,
+                                             0,
+                                             local_cancel);
+                if (parallel_rrt_early_stop &&
+                    rrt_path_good_enough_for_task(tasks[job.task_offset], path)) {
+                    const int successes =
+                        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (successes >= parallel_rrt_early_stop_min_successes && local_cancel) {
+                        local_cancel->store(true, std::memory_order_relaxed);
+                    }
+                }
                 attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
-                    run_task_attempt(tasks[job.task_offset], job.attempt, 0);
+                    std::move(path);
             });
+            if (parallel_rrt_early_stop) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.parallel_rrt_early_stop_successes",
+                    static_cast<double>(early_successes.load(std::memory_order_relaxed)));
+                batch_context.diagnostics().add_counter(
+                    local_cancel && local_cancel->load(std::memory_order_relaxed)
+                        ? "query_bridge.parallel_rrt_early_stop_triggered"
+                        : "query_bridge.parallel_rrt_early_stop_not_triggered");
+            }
         } else {
             for (const PreparedJob& job : jobs) {
                 attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
@@ -13773,16 +14498,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     task_key(task.index, "waypoint_from_partition_path"),
                     1.0);
             }
-            for (auto& path : attempt_paths[task_offset]) {
-                if (path.empty()) {
-                    continue;
-                }
-                const double length = path_length(path);
-                if (length < best_length) {
-                    best_length = length;
-                    task.waypoint_path = std::move(path);
-                }
-            }
+            select_attempt_paths(task, attempt_paths[task_offset], best_length);
             if (task.waypoint_path.empty()) {
                 auto direct_path = direct_line_fallback_path(task);
                 if (!direct_path.empty()) {
@@ -13864,17 +14580,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 }
             }
             const auto pave_t0 = Clock::now();
-	            const int bridge_added =
-	                bridge_query_with_waypoint_path(task.start,
-	                                                task.goal,
-	                                                task.waypoint_path,
-	                                                task.short_local_bridge,
-	                                                task.bridge_rrt,
-	                                                task.query_index);
-	            added_by_query[task.index] += bridge_added;
-	            maybe_promote_query_repair(task, bridge_added);
-	            accumulate_task_direct_corridor_totals(task.index);
-	            const double pave_ms = elapsed_ms_since(pave_t0);
+            bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
+            const double pave_ms = elapsed_ms_since(pave_t0);
             batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                                       pave_ms);
             batch_context.diagnostics().set_value(task_key(task.index, "pave_ms"),
@@ -13940,9 +14647,34 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(effective_attempts));
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
+            std::shared_ptr<std::atomic<bool>> local_cancel =
+                parallel_rrt_early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                        : batch_context.native_cancel_flag();
+            std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
-                attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt, 0);
+                if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
+                    return;
+                }
+                auto path = run_task_attempt(task, attempt, 0, local_cancel);
+                if (parallel_rrt_early_stop &&
+                    rrt_path_good_enough_for_task(task, path)) {
+                    const int successes =
+                        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (successes >= parallel_rrt_early_stop_min_successes && local_cancel) {
+                        local_cancel->store(true, std::memory_order_relaxed);
+                    }
+                }
+                attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
             });
+            if (parallel_rrt_early_stop) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.parallel_rrt_early_stop_successes",
+                    static_cast<double>(early_successes.load(std::memory_order_relaxed)));
+                batch_context.diagnostics().add_counter(
+                    local_cancel && local_cancel->load(std::memory_order_relaxed)
+                        ? "query_bridge.parallel_rrt_early_stop_triggered"
+                        : "query_bridge.parallel_rrt_early_stop_not_triggered");
+            }
         } else {
             for (int attempt = 0; attempt < effective_attempts; ++attempt) {
                 attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt, 0);
@@ -13957,16 +14689,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
             best_length = path_length(task.waypoint_path);
         }
-        for (auto& path : attempt_paths) {
-            if (path.empty()) {
-                continue;
-            }
-            const double length = path_length(path);
-            if (length < best_length) {
-                best_length = length;
-                task.waypoint_path = std::move(path);
-            }
-        }
+        select_attempt_paths(task, attempt_paths, best_length);
         if (task.waypoint_path.empty()) {
             auto direct_path = direct_line_fallback_path(task);
             if (!direct_path.empty()) {
@@ -14214,16 +14937,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             continue;
         }
         const auto pave_t0 = Clock::now();
-	        const int bridge_added =
-	            bridge_query_with_waypoint_path(task.start,
-	                                            task.goal,
-	                                            task.waypoint_path,
-	                                            task.short_local_bridge,
-	                                            task.bridge_rrt,
-	                                            task.query_index);
-	        added_by_query[task.index] += bridge_added;
-	        maybe_promote_query_repair(task, bridge_added);
-	        accumulate_task_direct_corridor_totals(task.index);
+        bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
         const double pave_ms = elapsed_ms_since(pave_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                                   pave_ms);

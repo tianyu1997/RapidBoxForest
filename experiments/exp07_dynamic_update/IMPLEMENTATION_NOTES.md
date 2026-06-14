@@ -43,6 +43,26 @@ Only adaptive leaf sweep and partition update are measured. Query bridge,
 connector repair, residual segments, OMPL simplification, and final path audit
 are intentionally excluded.
 
+## Update-and-Replan Diagnostic
+
+`run_update_replan_diagnostic.py` is a separate reviewer-risk diagnostic, not
+the source of the main dynamic-update table. It reuses the saved ordered
+obstacle catalog, samples queries that are free in the target scene, then
+compares:
+
+1. the source fresh build plus query,
+2. insert update plus post-update query,
+3. target fresh rebuild plus query,
+4. remove update plus post-update query.
+
+With the paper table's matched maintenance profile
+(`deep_max_boxes=1600`, `leaf_max_depth=12`, `adaptive_target_depth=16`,
+`deep_ffb_depth=62`, no virtual topology), the 8-seed/1-query diagnostic at
+`outputs/new_experiments/tro2026/exp07_update_replan_diagnostic_matched/`
+returned 0/8 audited paths for both updated and freshly rebuilt
+maintenance-only forests. This confirms that Exp.7 should be reported only as
+scene-cache maintenance; it is not evidence for end-to-end dynamic replanning.
+
 ## Outputs
 
 - `ordered_obstacle_catalog.json`: saved deterministic scenes.

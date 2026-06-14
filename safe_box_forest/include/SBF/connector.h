@@ -33,6 +33,7 @@ struct RRTConnectConfig {
 	double segment_step = 0.0;
 	double local_sampling_radius = 0.0;
 	bool shortcut_path = true;
+	int optimize_after_first_iters = 0;
 	double domain_tolerance = 1e-3;
 	std::vector<Interval> domain_intervals;
 };

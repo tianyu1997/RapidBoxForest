@@ -34,7 +34,10 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
+    DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
+    DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -43,8 +46,17 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
+    DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP,
+    DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE,
+    DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES,
+    DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
+    DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
+    DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
+    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
     DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
@@ -232,6 +244,10 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.parallel_task_rrt_jobs",
         "query_bridge.rrt_fixed_iters",
         "query_bridge.rrt_fixed_timeout_ms",
+        "query_bridge.local_radius_schedule_size",
+        "query_bridge.rrt_optimize_after_first_iters",
+        "query_bridge.attempt_fallback_paths",
+        "query_bridge.attempt_fallback_paths_stored",
         "query_bridge.no_path_retry_budget_stages",
         "query_bridge.oracle_node_validations",
         "query_bridge.oracle_validation_cache_hits",
@@ -264,6 +280,11 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.detour_on_no_path_rejects",
         "query_bridge.detour_candidate_selected",
         "query_bridge.detour_candidate_not_shorter",
+        "query_bridge.direct_segment_after_rrt",
+        "query_bridge.direct_segment_after_rrt_min_length",
+        "query_bridge.direct_segment_after_rrt_edges",
+        "query_bridge.direct_segment_after_rrt_audit_rejects",
+        "query_bridge.direct_segment_after_rrt_add_fail",
         "query_bridge.waypoint_quality_retry",
         "query_bridge.waypoint_quality_retry_tasks",
         "query_bridge.waypoint_quality_retry_attempts",
@@ -311,8 +332,13 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.direct_corridor_commit_calls",
         "query_bridge.direct_corridor_commit_dynamic_policy_ms",
         "query_bridge.direct_corridor_commit_partition_append_ms",
+        "query_bridge.direct_corridor_partition_append_calls",
+        "query_bridge.direct_corridor_partition_append_boxes",
         "query_bridge.direct_corridor_assimilate_calls",
         "query_bridge.direct_corridor_assimilate_sample_scan_ms",
+        "query_bridge.direct_corridor_assimilate_local_hits",
+        "query_bridge.direct_corridor_assimilate_full_scan_fallbacks",
+        "query_bridge.direct_corridor_assimilate_local_sample_tests",
         "query_bridge.direct_corridor_assimilate_candidate_build_ms",
         "query_bridge.direct_corridor_assimilate_adjacency_ms",
         "query_bridge.direct_corridor_segment_insert_ms",
@@ -421,6 +447,11 @@ def _query_bridge_diagnostic_fields(
             "direct_corridor_adaptive_repair_added",
             "direct_corridor_bad_initial",
             "direct_corridor_bad_final",
+            "direct_corridor_partition_append_calls",
+            "direct_corridor_partition_append_boxes",
+            "direct_corridor_assimilate_local_hits",
+            "direct_corridor_assimilate_full_scan_fallbacks",
+            "direct_corridor_assimilate_local_sample_tests",
             "direct_corridor_segment_edges",
             "direct_corridor_local_connected",
             "direct_corridor_full_residual_edge",
@@ -570,6 +601,7 @@ class RBFLeafRRTOptions:
     connector_rrt_timeout_ms: float = DEFAULT_RBF_CONNECTOR_RRT_TIMEOUT_MS
     connector_rrt_step_size: float = DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE
     connector_rrt_goal_bias: float = DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS
+    connector_rrt_local_sampling_radius: float = 0.0
     connector_segment_resolution: int = DEFAULT_RBF_CONNECTOR_SEGMENT_RESOLUTION
     connector_pave_max_chain: int = DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN
     connector_pave_steps: int = DEFAULT_RBF_CONNECTOR_PAVE_STEPS
@@ -617,10 +649,28 @@ class RBFLeafRRTOptions:
     query_bridge_no_path_retry_budget_attempts: str = ""
     query_bridge_waypoint_quality_retry: bool = False
     query_bridge_waypoint_quality_retry_attempts: int = 4
+    query_bridge_waypoint_quality_retry_iters: int = 0
     query_bridge_waypoint_quality_max_ratio: float = 2.0
     query_bridge_waypoint_quality_max_additive: float = 0.75
     query_bridge_rrt_fixed_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS
     query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
+    query_bridge_local_radius_schedule: str = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE
+    query_bridge_rrt_optimize_after_first_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS
+    query_bridge_attempt_fallback_paths: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS
+    query_bridge_parallel_rrt_early_stop: bool = DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP
+    query_bridge_parallel_rrt_early_stop_min_successes: int = (
+        DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES
+    )
+    query_bridge_parallel_rrt_early_stop_ratio: float = (
+        DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO
+    )
+    query_bridge_parallel_rrt_early_stop_additive: float = (
+        DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE
+    )
+    query_bridge_direct_segment_after_rrt: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT
+    query_bridge_direct_segment_after_rrt_min_length: float = (
+        DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH
+    )
     query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
     query_bridge_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS
     query_bridge_adaptive_step_repair: bool = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR
@@ -632,8 +682,15 @@ class RBFLeafRRTOptions:
         DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
     )
     query_bridge_group_residual_gaps: bool = DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS
+    query_bridge_full_residual_overlay_when_connected: bool = (
+        DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
+    )
     query_bridge_partition_neighbor_candidates: bool = DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES
     query_bridge_direct_append_partition_immediate: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE
+    query_bridge_local_sample_assimilation: bool = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION
+    query_bridge_direct_partition_append_batch_size: int = (
+        DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE
+    )
     query_box_transition_line_deviation_penalty: float = DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY
     query_foreign_edge_cost_penalty: float = DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY
     query_bridge_edge_cost_penalty: float = DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY
@@ -1210,6 +1267,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.connector.rrt.timeout_ms = float(options.connector_rrt_timeout_ms)
     cfg.connector.rrt.step_size = float(options.connector_rrt_step_size)
     cfg.connector.rrt.goal_bias = float(options.connector_rrt_goal_bias)
+    if hasattr(cfg.connector.rrt, "local_sampling_radius"):
+        cfg.connector.rrt.local_sampling_radius = float(options.connector_rrt_local_sampling_radius)
     cfg.connector.rrt.segment_resolution = int(options.connector_segment_resolution)
     if hasattr(cfg.connector.rrt, "segment_step"):
         cfg.connector.rrt.segment_step = float(options.audit_segment_step)
@@ -1846,6 +1905,9 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS"] = str(
             int(getattr(options, "query_bridge_waypoint_quality_retry_attempts", 4))
         )
+        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ITERS"] = str(
+            int(getattr(options, "query_bridge_waypoint_quality_retry_iters", 0))
+        )
         env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO"] = str(
             float(getattr(options, "query_bridge_waypoint_quality_max_ratio", 2.0))
         )
@@ -1857,6 +1919,37 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS"] = str(
             float(getattr(options, "query_bridge_rrt_fixed_timeout_ms", 0.0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE"] = (
+            str(getattr(options, "query_bridge_local_radius_schedule", "") or "")
+        )
+        env_updates["RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS"] = str(
+            int(getattr(options, "query_bridge_rrt_optimize_after_first_iters", 0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS"] = str(
+            int(getattr(options, "query_bridge_attempt_fallback_paths", 0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES"] = str(
+            int(getattr(options, "query_bridge_parallel_rrt_early_stop_min_successes", 1))
+        )
+        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO"] = str(
+            float(getattr(options, "query_bridge_parallel_rrt_early_stop_ratio", 1.75))
+        )
+        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE"] = str(
+            float(getattr(options, "query_bridge_parallel_rrt_early_stop_additive", 0.75))
+        )
+        env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_direct_segment_after_rrt", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH"] = str(
+            float(getattr(options, "query_bridge_direct_segment_after_rrt_min_length", 0.0))
         )
         if float(options.query_bridge_direct_sample_step) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
@@ -1888,11 +1981,22 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS"] = (
             "1" if bool(getattr(options, "query_bridge_group_residual_gaps", False)) else "0"
         )
+        env_updates["RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_full_residual_overlay_when_connected", False))
+            else "0"
+        )
         env_updates["RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES"] = (
             "1" if bool(getattr(options, "query_bridge_partition_neighbor_candidates", False)) else "0"
         )
         env_updates["RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE"] = (
             "1" if bool(getattr(options, "query_bridge_direct_append_partition_immediate", False)) else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION"] = (
+            "1" if bool(getattr(options, "query_bridge_local_sample_assimilation", True)) else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE"] = str(
+            int(getattr(options, "query_bridge_direct_partition_append_batch_size", 32))
         )
         if float(options.query_bridge_direct_max_length) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
@@ -2297,6 +2401,17 @@ def run_leaf_rrt(
         "query_bridge_sequential_reuse": bool(options.query_bridge_sequential_reuse),
         "query_bridge_scene_reusable_edges": bool(options.query_bridge_scene_reusable_edges),
         "query_bridge_reuse_scope": "scene_seed_local" if bool(options.query_bridge_scene_reusable_edges) else "query_index_local",
+        "query_bridge_full_residual_overlay_when_connected": bool(
+            options.query_bridge_full_residual_overlay_when_connected
+        ),
+        "query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
+        "query_bridge_direct_segment_after_rrt_min_length": float(
+            options.query_bridge_direct_segment_after_rrt_min_length
+        ),
+        "query_bridge_local_sample_assimilation": bool(options.query_bridge_local_sample_assimilation),
+        "query_bridge_direct_partition_append_batch_size": int(
+            options.query_bridge_direct_partition_append_batch_size
+        ),
         "planning_s": offline_build_s + query_s,
         "planning_total_s": offline_build_s + query_total_s,
         "build_s": offline_build_s,
