@@ -55,10 +55,15 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
+    DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
     DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
@@ -459,6 +464,11 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_direct_segment_after_rrt=bool(args.query_bridge_direct_segment_after_rrt),
         query_bridge_direct_segment_after_rrt_min_length=float(args.query_bridge_direct_segment_after_rrt_min_length),
         query_bridge_fast_direct_segment_after_rrt=bool(args.query_bridge_fast_direct_segment_after_rrt),
+        query_bridge_fast_direct_random_shortcut_iters=int(args.query_bridge_fast_direct_random_shortcut_iters),
+        query_bridge_hybridize_attempt_paths=bool(args.query_bridge_hybridize_attempt_paths),
+        query_bridge_hybrid_max_paths=int(args.query_bridge_hybrid_max_paths),
+        query_bridge_hybrid_max_vertices=int(args.query_bridge_hybrid_max_vertices),
+        query_bridge_hybrid_max_cross_checks=int(args.query_bridge_hybrid_max_cross_checks),
         query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
         query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
         query_bridge_to_main_box_corridor=bool(args.query_bridge_to_main_box_corridor),
@@ -679,6 +689,21 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         ),
         "option.query_bridge_fast_direct_segment_after_rrt": bool(
             getattr(options, "query_bridge_fast_direct_segment_after_rrt", False)
+        ),
+        "option.query_bridge_fast_direct_random_shortcut_iters": int(
+            getattr(options, "query_bridge_fast_direct_random_shortcut_iters", 0)
+        ),
+        "option.query_bridge_hybridize_attempt_paths": bool(
+            getattr(options, "query_bridge_hybridize_attempt_paths", False)
+        ),
+        "option.query_bridge_hybrid_max_paths": int(
+            getattr(options, "query_bridge_hybrid_max_paths", 8)
+        ),
+        "option.query_bridge_hybrid_max_vertices": int(
+            getattr(options, "query_bridge_hybrid_max_vertices", 128)
+        ),
+        "option.query_bridge_hybrid_max_cross_checks": int(
+            getattr(options, "query_bridge_hybrid_max_cross_checks", 4096)
         ),
         "option.query_bridge_to_main_island": bool(options.query_bridge_to_main_island),
         "option.query_bridge_to_main_direct_segment_max_length": float(options.query_bridge_to_main_direct_segment_max_length),
@@ -1512,7 +1537,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--seeds", default="0,1,2,3,4,5,6,7")
     parser.add_argument("--box-budgets", default=str(DEFAULT_RBF_SHELF_BOX_BUDGET))
-    parser.add_argument("--only", default="baseline_d23_aafk_support_hull_8t,critsample_support_hull,no_external_lect,support_hull_no_aabb,link_aabb")
+    parser.add_argument("--only", default="baseline_d23_aafk_support_hull_8t,critsample_d23_cache,no_external_lect,support_hull_no_aabb,link_aabb")
     parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--timeout-ms", type=float, default=8000.0)
     parser.add_argument("--rbf-max-depth", type=int, default=60)
@@ -1670,6 +1695,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
     parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
+    parser.add_argument("--query-bridge-hybridize-attempt-paths", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS)
+    parser.add_argument("--query-bridge-hybrid-max-paths", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS)
+    parser.add_argument("--query-bridge-hybrid-max-vertices", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES)
+    parser.add_argument("--query-bridge-hybrid-max-cross-checks", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS)
     parser.add_argument("--query-bridge-adaptive-step-repair", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP)
     parser.add_argument("--query-bridge-adaptive-max-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS)
@@ -1695,6 +1724,7 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=False,
     )
+    parser.add_argument("--query-bridge-fast-direct-random-shortcut-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS)
     parser.add_argument("--query-box-transition-line-deviation-penalty", type=float, default=DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY)
     parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
@@ -1933,6 +1963,10 @@ def main() -> int:
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
             "query_bridge_attempt_offset": int(args.query_bridge_attempt_offset),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
+            "query_bridge_hybridize_attempt_paths": bool(args.query_bridge_hybridize_attempt_paths),
+            "query_bridge_hybrid_max_paths": int(args.query_bridge_hybrid_max_paths),
+            "query_bridge_hybrid_max_vertices": int(args.query_bridge_hybrid_max_vertices),
+            "query_bridge_hybrid_max_cross_checks": int(args.query_bridge_hybrid_max_cross_checks),
             "query_bridge_adaptive_step_repair": bool(args.query_bridge_adaptive_step_repair),
             "query_bridge_adaptive_fine_step": float(args.query_bridge_adaptive_fine_step),
             "query_bridge_adaptive_max_repair_subdivisions": int(args.query_bridge_adaptive_max_repair_subdivisions),
@@ -1950,6 +1984,7 @@ def main() -> int:
                 args.query_bridge_direct_segment_after_rrt_min_length
             ),
             "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
+            "query_bridge_fast_direct_random_shortcut_iters": int(args.query_bridge_fast_direct_random_shortcut_iters),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
             "query_bridge_to_main_box_corridor": bool(args.query_bridge_to_main_box_corridor),
@@ -1988,12 +2023,17 @@ def main() -> int:
             "query_bridge_force_indices": str(args.query_bridge_force_indices),
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
+            "query_bridge_hybridize_attempt_paths": bool(args.query_bridge_hybridize_attempt_paths),
+            "query_bridge_hybrid_max_paths": int(args.query_bridge_hybrid_max_paths),
+            "query_bridge_hybrid_max_vertices": int(args.query_bridge_hybrid_max_vertices),
+            "query_bridge_hybrid_max_cross_checks": int(args.query_bridge_hybrid_max_cross_checks),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
             "query_bridge_direct_segment_after_rrt_min_length": float(
                 args.query_bridge_direct_segment_after_rrt_min_length
             ),
             "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
+            "query_bridge_fast_direct_random_shortcut_iters": int(args.query_bridge_fast_direct_random_shortcut_iters),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
             "query_bridge_to_main_box_corridor": bool(args.query_bridge_to_main_box_corridor),
@@ -2014,7 +2054,7 @@ def main() -> int:
             "collision_overlap_prune_min_depth": int(args.collision_overlap_prune_min_depth),
             "collision_overlap_prune_threshold": float(args.collision_overlap_prune_threshold),
             "collision_overlap_prune_ratio_threshold": float(args.collision_overlap_prune_ratio_threshold),
-            "critical_sample_row": "critsample_support_hull changes only the endpoint source to CritSample. The planner uses the same envelope-collision free rule and final strict audit as baseline; theoretically CritSample envelopes are not conservative-complete.",
+            "critical_sample_row": "critsample_d23_cache changes only the endpoint source to CritSample and replays the matching depth-23 CritSample LECT cache. The planner uses the same envelope-collision free rule and final strict audit as baseline; theoretically CritSample envelopes are not conservative-complete.",
         },
         "config_audit": config_audit,
         "planned_rows": manifest_rows,

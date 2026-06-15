@@ -6,7 +6,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "bef01ae93a1a317fa8d5fb20473722bcedb47f1591b2a3a99af779847771b9b4"
+      "sha256": "4eca0b8cf92a34084a8b8bec3812e099d092a6f6dced44c4fa703f2c01f64933"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
@@ -20,83 +20,83 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "8656a96f5e6c53cf7e6e93d3bad589be4751f8cc1790cd9b9a1172c37a4a6f5a"
+      "sha256": "297cd6a469da8fb7298d1032766e1bd7834ea2bd3ac91f80dc11c574eec2d5fa"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
       "placeholder": false,
-      "sha256": "ae41333be3051fda696ddcaf79ca76bb41991721dad042ff6586a4ff89773ad4"
+      "sha256": "63c58f8a647940bb44fc50d9ad2bcd4f6b77b96241ff07f4594bc7aac8640c7e"
     },
     "fig_tro_shelf_tradeoff.pdf": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "97a9fcd39b21f4df8aa12bbf0bd1c5ff6e50ab65ad5efc2e6e1ffd4da7e2fb99"
+      "sha256": "6b44b65f10d1c5c7a78e9b0122d7951727d5af2be1dbc04e7a76b536e1878ee7"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.png",
       "placeholder": false,
-      "sha256": "1cbcf98c971417c9eae9ec4f9a227ccfe468151f95e822c2fdd3859295a00d38"
+      "sha256": "139b629b1ab1ed5c23dfddc3974c4ce7fd03db69dd09a49a078ebda8ba7ec5d9"
     },
     "tab_tro_dynamic_update.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_dynamic_update.tex",
       "placeholder": false,
-      "sha256": "9b8f858c174e7707231cfb95554f5d0c12bf8bf7c9f1a8bc10c74ae4c4d18188"
+      "sha256": "12377973d56659b27fcdd0c52296e902a82b70ea5e2364d0462bc34da99ab854"
     },
     "tab_tro_endpoint_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_endpoint_envelope.tex",
       "placeholder": false,
-      "sha256": "14a144ff623b46bd225828b341d9faba4d058b0a53571afd433c16f6ada7b254"
+      "sha256": "a05e8ee4e0448b44341ec773085352ffea2af4751210ae077de3d2e29f2d9e19"
     },
     "tab_tro_lect_performance.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_lect_performance.tex",
       "placeholder": false,
-      "sha256": "63d510072779e0046272de19ddbeb1f7ea6483b121e91985aecfe770a6e8573e"
+      "sha256": "7e83bfded5fc4173487f295f54c913357272305669cbb89118a436cc90cb224c"
     },
     "tab_tro_link_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_link_envelope.tex",
       "placeholder": false,
-      "sha256": "f5a1ab1b44bf6f43f167a2c31d257e7376ecbb4da67bc712fecdd901f3c666fd"
+      "sha256": "14616fc962c6a768a0130eec54657502c51f5cd96b6b24afdb354792d8fa2b20"
     },
     "tab_tro_random_summary.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "1095c76213dc5ad680ce743007b5c9733ada84833102f71418808f5603d84622"
+      "sha256": "5f351f115cb9a29038ca8371d7119a8cb788836039d8259ddd64262c1f4f0a25"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "e032e32fe38761a0e26228397a06fec7fad7da1b86f33f33d127b5805c98e9cf"
+      "sha256": "f2282bc9409e495405312b94c269b5a1f2145886cde487d67006776fe545aa1e"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "f782c45df814128634dc019487d7f922a63a20b3f4114ec979a3a8d46f6f315e"
+      "sha256": "1c69d1f079c904b9856f45563a5502bf9aacf71c2c48d549f9ef64d16bcb710b"
     }
   },
   "environment": {
     "cwd": "/home/tian/\u684c\u9762/RBF/RapidBoxForest",
-    "git_sha": "1868ebc8a708",
+    "git_sha": "fc229db4bda4",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 20116,
-      "VmHWM_kb": 30892,
-      "VmRSS_kb": 30892,
-      "VmSize_kb": 34812
+      "VmData_kb": 21728,
+      "VmHWM_kb": 31504,
+      "VmRSS_kb": 31504,
+      "VmSize_kb": 36424
     },
     "processor": "x86_64",
     "python": "3.10.19",
@@ -112,7 +112,7 @@
       "rows": 1,
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp07/dynamic_update_summary.csv",
-      "summary_sha256": "499513a158d81ff37f56a6812e66f02979001ddf78ccde543f4e91bceb15b3e4",
+      "summary_sha256": "dff2c861c6c2f603d3de41e9bd9b7505813520534a5d2a4357e454f77463fdf2",
       "table": "paper/generated/tab_tro_dynamic_update.tex"
     },
     "exp01_endpoint_envelope": {
@@ -145,11 +145,18 @@
     "exp04_shelf_leaf_rrt": {
       "figure_pdf": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "figure_png": "paper/generated/fig_tro_shelf_tradeoff.png",
+      "global_path_refs": {
+        "AS->TS": 1.679785836384812,
+        "CS->LB": 2.5006513530738586,
+        "LB->RB": 3.037052087248678,
+        "RB->AS": 1.805891649335177,
+        "TS->CS": 1.615136036268885
+      },
       "manifest": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
       "rows": 5,
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_summary.csv",
-      "summary_sha256": "f535e6272b2b02c41fe60250a404d2f821e6c25cc32ef4acdeace57af742a32a",
+      "summary_sha256": "43a7bd8bd5d150b8bb41eb483386a8ebd34b8b3bee3e5796cf16e6c232f1ad64",
       "table": "paper/generated/tab_tro_shelf_ablation.tex"
     },
     "exp05_shelf_cross_algorithm": {
@@ -172,6 +179,8 @@
       "prm_optimized_summary": "/home/tian/\u684c\u9762/RBF/RapidBoxForest/outputs/tro2026_current_improve/exp05/current_prm_optimized/shelf_cross_algorithm_summary.csv",
       "prm_optimized_summary_sha256": "62db6698b5e3bad82e87fd1e41654774b25d6a46dfd2112e90afec18666b4e3e",
       "rbf_manifest": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_manifest.json",
+      "rbf_manifest_for_table": "outputs/new_experiments/tro2026/exp04/shelf_leaf_rrt_manifest.json",
+      "rbf_manifest_policy": "current_exp04_registered_profile",
       "rbf_query_manifest_policy": "not_used_rbf_manifest_had_rows",
       "rbf_single_query_manifest": "outputs/new_experiments/tro2026/exp05/rbf_single_query_online/shelf_rbf_single_query_online_manifest.json",
       "rbf_single_query_manifest_sha256": "12222f8f78c378727253101535da9b14d2ced7420bc34e504afa4dfe414e1a3a",
@@ -185,7 +194,30 @@
       "status": "generated",
       "summary": "outputs/new_experiments/tro2026/exp05/shelf_cross_algorithm_summary.csv",
       "summary_sha256": "42186736813fc788699faf29473e74ddb415acef7908bfcb2e23822bffb3b7ab",
-      "table": "paper/generated/tab_tro_shelf_cross_algorithm.tex"
+      "table": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
+      "table_bitstar_selected_stages": {
+        "AS->TS": "batch100_rw5_trace10s_t4s",
+        "CS->LB": "batch100_rw5_trace10s_t7.5s",
+        "LB->RB": "batch100_rw5_trace10s_t1.65s",
+        "RB->AS": "batch100_rw5_trace10s_t0.2s",
+        "TS->CS": "batch100_rw5_trace10s_t10s"
+      },
+      "table_bitstar_success": 40,
+      "table_bitstar_total": 40,
+      "table_bitstar_tradeoff_path_slack": 1.01,
+      "table_bitstar_tradeoff_policy": "per_query_fastest_full_seed_checkpoint_within_1p01x_best_query_path_mean",
+      "table_prm_selected_stages": {
+        "AS->TS": "prm_cumulative_build20s_k128_q1s_preload1",
+        "CS->LB": "prm_cumulative_build20s_k128_q1s_preload1",
+        "LB->RB": "prm_cumulative_build20s_k128_q1s_preload1",
+        "RB->AS": "prm_cumulative_build20s_k128_q1s_preload1",
+        "TS->CS": "prm_cumulative_build20s_k128_q1s_preload1"
+      },
+      "table_prm_success": 40,
+      "table_prm_total": 40,
+      "table_prm_tradeoff_path_slack": 1.01,
+      "table_prm_tradeoff_policy": "per_query_fastest_full_seed_checkpoint_within_1p01x_best_query_path_mean",
+      "table_rbf_time_policy": "per_query_diag_query_bridge_task_total_ms_from_current_exp04_registered_profile"
     },
     "exp06_random_robot": {
       "bitstar_trace_manifest": "outputs/new_experiments/tro2026/exp06/ompl_prm_bitstar_60s_quality_stall_v2/random_robot_manifest.json",

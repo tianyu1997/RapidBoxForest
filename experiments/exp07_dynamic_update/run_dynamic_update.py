@@ -590,7 +590,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        rf"\caption{{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Times are seconds shown as \([Q_1,Q_3]\) over saved ordered random scenes. Warm@{source_n} and Warm@{target_n} are fresh adaptive leaf-sweep builds; Insert and Remove are batched updates between the two obstacle counts. Speedup is Warm@{target_n}/Update.}}",
+        rf"\caption{{Adaptive leaf-sweep maintenance only, not end-to-end replanning. Times are milliseconds shown as \([Q_1,Q_3]\) over saved ordered random scenes. Warm@{source_n} and Warm@{target_n} are fresh adaptive leaf-sweep builds; Insert and Remove are batched updates between the two obstacle counts. Speedup is Warm@{target_n}/Update.}}",
         r"\label{tab:tro-dynamic-update}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{1.5pt}",
@@ -602,12 +602,12 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     for row in rows:
         lines.append(
-            f"{tex_qrange_s(row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & "
-            f"{tex_qrange_s(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
+            f"{tex_qrange_ms(row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & "
+            f"{tex_qrange_ms(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
             f"{tex_speedup_range(row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} & "
-            f"{tex_qrange_s(row.get('remove_s_q1'), row.get('remove_s_q3'))} & "
+            f"{tex_qrange_ms(row.get('remove_s_q1'), row.get('remove_s_q3'))} & "
             f"{tex_speedup_range(row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} & "
-            f"{tex_qrange_s(row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} \\\\"
+            f"{tex_qrange_ms(row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}%", r"}", r"\end{table}", ""])
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -62,7 +62,7 @@ GOLD_POINT_RELATIVE_PATH_IMPROVEMENT_THRESHOLD = 0.01
 
 METHOD_STYLE = {
     "sbf_leaf_rrt": {"label": "RBF", "color": "#1f77b4", "marker": "o"},
-    "iris_np_gcs": {"label": "IRIS-NP+GCS", "color": "#ff7f0e", "marker": "D"},
+    "iris_np_gcs": {"label": "IRIS-NP/GCS", "color": "#ff7f0e", "marker": "D"},
     "prm": {"label": "PRM", "color": "#2ca02c", "marker": "s"},
     "rrtconnect": {"label": "RRTConnect", "color": "#d62728", "marker": "x"},
     "bitstar": {"label": "BIT*", "color": "#9467bd", "marker": "^"},
@@ -237,6 +237,13 @@ def tex_iqr_or_qrange_s(values: Any, lo_s: Any, hi_s: Any) -> str:
     if vals:
         return tex_iqr(vals, 3)
     return tex_qrange_s(lo_s, hi_s)
+
+
+def tex_iqr_or_qrange_ms(values: Any, lo_s: Any, hi_s: Any) -> str:
+    vals = finite_values(values)
+    if vals:
+        return tex_iqr([1000.0 * value for value in vals], 2)
+    return tex_qrange_ms(lo_s, hi_s)
 
 
 def tex_int_commas(value: Any) -> str:
@@ -1720,7 +1727,14 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     for row in table_rows:
         width = tex_num(row.get("width"), 2)
-        source = str(row.get("source", "")).replace("_", r"\_")
+        source = str(row.get("source", ""))
+        source = (
+            source
+            .replace("IFK_AA", "IFK-AA")
+            .replace("HIFK_3", "HIFK-3")
+            .replace("HIFK_5", "HIFK-5")
+            .replace("CritSample", "Critical sample")
+        ).replace("_", r"\_")
         volume = tex_fixed(row.get("volume_m3_median"), 6)
         time_us = tex_num(row.get("endpoint_us_median"), 2)
         gap = tex_fixed(row.get("max_negative_gap"), 6)
@@ -1729,7 +1743,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} IFK/HIFK rows are certificate-backed; CritSample, Analytical, and MC are diagnostic/reference sources only. Neg. gap is only against the sampled-union diagnostic.\par}",
+        r"{\scriptsize\emph{Notes:} IFK/HIFK are certificate-backed. Critical sample, Analytical, and Monte Carlo (MC) are diagnostics only; Neg. gap uses the sampled-union diagnostic.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1753,7 +1767,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
     ]
     for row in rows:
         width = tex_num(row.get("width"), 2)
-        envelope = str(row.get("envelope", "")).replace("_", r"\_")
+        envelope = str(row.get("envelope", "")).replace("LinkIAABB", "Link AABB").replace("_", r"\_")
         splits = int(float(row.get("split_count", 0) or 0))
         volume = tex_num(row.get("volume_m3_median"), 3)
         env_us = tex_num(row.get("envelope_us_median"), 3)
@@ -1768,7 +1782,7 @@ def generate_exp03_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        rf"\captionof{{table}}{{LECT warm-cache cost (UR5 SupportHull snapshot; {EXP03_UR5_D20_CACHE_RECORDS} records, {EXP03_UR5_D20_CACHE_GIB}\,GiB).}}",
+        rf"\captionof{{table}}{{LECT warm-cache cost (Universal Robots UR5 SupportHull snapshot; {EXP03_UR5_D20_CACHE_RECORDS} records, {EXP03_UR5_D20_CACHE_GIB}\,GiB).}}",
         r"\label{tab:tro-lect-performance}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{1.7pt}",
@@ -2278,6 +2292,47 @@ def load_json_file(path: Path | None) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def collect_shelf_query_path_refs(
+    out_dir: Path,
+    *,
+    extra_manifests: list[dict[str, Any]] | None = None,
+) -> dict[str, float]:
+    """Collect query-level Shelf+IIWA path references across available methods."""
+    refs: dict[str, float] = {}
+
+    def merge_manifest(manifest: dict[str, Any] | None) -> None:
+        if not isinstance(manifest, dict):
+            return
+        manifest_refs = query_path_refs_from_runs(manifest.get("rows", []))
+        for query_label, ref in manifest_refs.items():
+            update_min_ref(refs, query_label, ref)
+
+    for manifest in extra_manifests or []:
+        merge_manifest(manifest)
+
+    candidate_paths = [
+        find_exp04_manifest(out_dir),
+        find_exp05_manifest(out_dir),
+        find_exp05_current_baseline_manifest(out_dir),
+        find_exp05_prm_optimized_manifest(out_dir),
+        find_exp05_current_iris_manifest(out_dir),
+        find_exp05_bitstar_trace_manifest(out_dir),
+        find_exp05_rbf_single_query_manifest(out_dir),
+        REGISTERED_EXP05_RRTCONNECT_MANIFEST if REGISTERED_EXP05_RRTCONNECT_MANIFEST.exists() else None,
+        REGISTERED_EXP04_QUERY_MANIFEST if REGISTERED_EXP04_QUERY_MANIFEST.exists() else None,
+    ]
+    seen: set[Path] = set()
+    for path in candidate_paths:
+        if path is None:
+            continue
+        resolved = path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        merge_manifest(load_json_file(path))
+    return refs
+
+
 def manifest_ompl_simplify_time_s(manifest: dict[str, Any]) -> float:
     """Return the declared OMPL final-simplify budget when an artifact records it."""
     if not isinstance(manifest, dict):
@@ -2575,6 +2630,134 @@ def bitstar_first_full_success_query_stats(
             success_total += selected_total
             run_total += selected_total
     return stats, success_total, run_total
+
+
+def ompl_per_query_tradeoff_stats(
+    run_rows: list[dict[str, Any]],
+    *,
+    method: str,
+    path_slack: float = 1.01,
+) -> tuple[dict[str, dict[str, float]], int, int]:
+    """Select an OMPL checkpoint independently for each shelf query.
+
+    PRM and BIT* converge at different rates on the five shelf queries.  A
+    single global checkpoint can therefore misrepresent both online time and
+    path quality.  For Table III, select the fastest full-seed-success
+    checkpoint for each query whose mean path is within ``path_slack`` of that
+    query's best full-success checkpoint.
+    """
+    method_rows = [
+        row for row in run_rows
+        if str(row.get("method")) == method and row.get("queries")
+    ]
+    by_stage: dict[str, list[dict[str, Any]]] = {}
+    for row in method_rows:
+        by_stage.setdefault(str(row.get("stage_id", "")), []).append(row)
+
+    def stage_time(stage_id: str, rows: list[dict[str, Any]]) -> float:
+        values = [as_float(row.get("budget_s", row.get("planning_s"))) for row in rows]
+        finite = [value for value in values if math.isfinite(value)]
+        if finite:
+            return median(finite)
+        match = re.search(r"_t([0-9.]+)s", stage_id)
+        return float(match.group(1)) if match else math.inf
+
+    stats: dict[str, dict[str, float]] = {}
+    success_total = 0
+    run_total = 0
+    ordered_stages = sorted(by_stage.items(), key=lambda item: stage_time(item[0], item[1]))
+    for label in QUERY_ORDER:
+        candidates: list[dict[str, Any]] = []
+        for stage_id, rows in ordered_stages:
+            query_s: list[float] = []
+            paths: list[float] = []
+            segments: list[float] = []
+            builds: list[float] = []
+            ok = 0
+            total = 0
+            for row in rows:
+                build_s = as_float(row.get("offline_build_s", row.get("build_s")))
+                if math.isfinite(build_s):
+                    builds.append(build_s)
+                for query in row.get("queries", []):
+                    if str(query.get("label", "")) != label:
+                        continue
+                    total += 1
+                    if not (bool(query.get("success")) and bool(query.get("audit_passed", True))):
+                        continue
+                    ok += 1
+                    solve_ms = as_float(query.get("solve_ms"))
+                    if not math.isfinite(solve_ms):
+                        solve_ms = as_float(query.get("query_ms")) - as_float(query.get("simplify_ms"), 0.0)
+                    query_s.append(solve_ms / 1000.0)
+                    paths.append(as_float(query.get("path_length")))
+                    segments.append(as_float(query.get("segment_fraction")))
+            if total > 0 and ok == total and finite_values(paths):
+                candidates.append({
+                    "stage_id": stage_id,
+                    "budget_s": stage_time(stage_id, rows),
+                    "build_s": median(builds),
+                    "total": total,
+                    "query_s": median(query_s),
+                    "query_s_values": query_s,
+                    "path": median(paths),
+                    "path_mean": mean(paths),
+                    "path_values": paths,
+                    "segment": median(segments),
+                    "segment_values": segments,
+                })
+        if not candidates:
+            stats[label] = {"query_s": math.nan, "path": math.nan, "segment": math.nan}
+            continue
+        best_path = min(
+            candidate["path_mean"]
+            for candidate in candidates
+            if math.isfinite(as_float(candidate.get("path_mean")))
+        )
+        eligible = [
+            candidate for candidate in candidates
+            if math.isfinite(as_float(candidate.get("path_mean")))
+            and as_float(candidate.get("path_mean")) <= float(path_slack) * best_path
+        ] or candidates
+        selected = sorted(
+            eligible,
+            key=lambda candidate: (
+                as_float(candidate.get("query_s"), math.inf),
+                as_float(candidate.get("path_mean"), math.inf),
+                as_float(candidate.get("budget_s"), math.inf),
+            ),
+        )[0]
+        stats[label] = {
+            "query_s": selected["query_s"],
+            "query_s_values": selected["query_s_values"],
+            "path": selected["path"],
+            "path_mean": selected["path_mean"],
+            "path_values": selected["path_values"],
+            "segment": selected["segment"],
+            "segment_values": selected["segment_values"],
+            "selected_stage_id": selected["stage_id"],
+            "selected_budget_s": selected["budget_s"],
+            "selected_build_s": selected["build_s"],
+        }
+        success_total += int(selected.get("total", 0) or 0)
+        run_total += int(selected.get("total", 0) or 0)
+    return stats, success_total, run_total
+
+
+def bitstar_per_query_tradeoff_stats(
+    run_rows: list[dict[str, Any]],
+    *,
+    path_slack: float = 1.01,
+) -> tuple[dict[str, dict[str, float]], int, int]:
+    return ompl_per_query_tradeoff_stats(run_rows, method="bitstar", path_slack=path_slack)
+
+
+def prm_per_query_tradeoff_stats(
+    run_rows: list[dict[str, Any]],
+    *,
+    path_slack: float = 1.01,
+) -> tuple[dict[str, dict[str, float]], int, int]:
+    return ompl_per_query_tradeoff_stats(run_rows, method="prm", path_slack=path_slack)
 
 
 def rbf_single_query_stats_from_summary(
@@ -2875,15 +3058,21 @@ def exp04_case_distributions(
     }
 
 
-def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payload: dict[str, Any] | None = None) -> None:
+def generate_exp04_table(
+    path: Path,
+    rows: list[dict[str, Any]],
+    manifest_payload: dict[str, Any] | None = None,
+    *,
+    global_path_refs: dict[str, float] | None = None,
+) -> None:
     labels = {
         "baseline_d23_aafk_support_hull_8t": "RBF-SH d23",
-        "critsample_d23_cache": "CritSample d23",
+        "critsample_d23_cache": "Critical sample d23",
         "no_cache_full_root_ts": "No-cache full-root",
-        "critsample_support_hull": "CritSample",
-        "critsample_support_hull_unsafe": "CritSample",
+        "critsample_support_hull": "Critical sample",
+        "critsample_support_hull_unsafe": "Critical sample",
         "no_external_lect": "No LECT/HIFK-5",
-        "support_hull_no_aabb": "SH w/o broadphase",
+        "support_hull_no_aabb": "SupportHull only",
         "link_aabb": "Link AABB",
         "single_thread": "No LECT, 1 thread",
     }
@@ -2908,15 +3097,16 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
             deep_boxes=deep_boxes,
         )
 
-    path_refs = query_path_refs_from_runs(
+    path_refs = dict(global_path_refs or {})
+    local_path_refs = query_path_refs_from_runs(
         (manifest_payload or {}).get("rows", []) if isinstance(manifest_payload, dict) else [],
         lambda run: str(run.get("case", "")) in labels,
     )
-    if not path_refs:
-        path_refs = {}
-        for dist in distributions.values():
-            for query_label, values in dist.get("path_by_label", {}).items():
-                update_min_ref(path_refs, str(query_label), values)
+    for query_label, value in local_path_refs.items():
+        update_min_ref(path_refs, query_label, value)
+    for dist in distributions.values():
+        for query_label, values in dist.get("path_by_label", {}).items():
+            update_min_ref(path_refs, str(query_label), values)
     scalar_path_ref = min(
         [
             path_length_stat(row)
@@ -2991,7 +3181,7 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         r"\renewcommand{\arraystretch}{1.02}",
         r"\begin{tabular}{@{}lcccc@{}}",
         r"\toprule",
-        r"Case & Build & Online/q & Amort@5 & $L/L^\star$ \\",
+        r"Case & Build & Online/q & Amort. 5q & $L/L^\star$ \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -3008,7 +3198,7 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.25ex}",
-        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3] shown inline; times are seconds. Online/q excludes final simplification/audit; audit time is not tabulated. RBF-SH d23, Link AABB, and SH w/o broadphase use d23 replay excluding prewarm/load/RSS (registered artifact: {EXP04_D23_CACHE_RECORDS} rec., {EXP04_D23_CACHE_GIB}\,GiB, {EXP04_D23_PREWARM_S}\,s); CritSample and No LECT/HIFK-5 charge live materialization. $L/L^\star$ is query-level.\par}}",
+        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3], s. Online/q excludes final simplification/audit; Amort. 5q = Build/5 + Online/q. SH=SupportHull; d23=depth-23 LECT; $L/L^\star$ uses the query-level strict-audited reference. d23 rows replay matching endpoint-source caches excluding prewarm/load/RSS ({EXP04_D23_CACHE_RECORDS} rec., {EXP04_D23_CACHE_GIB}\,GiB, {EXP04_D23_PREWARM_S}\,s); No LECT/HIFK-5 materializes live.\par}}",
         r"\par\endgroup",
         "",
     ])
@@ -3018,14 +3208,16 @@ def generate_exp04_table(path: Path, rows: list[dict[str, Any]], manifest_payloa
 def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest: dict[str, Any]) -> None:
     labels = {
         "baseline_d23_aafk_support_hull_8t": "RBF-SH",
-        "critsample_support_hull": "CritSample",
-        "critsample_support_hull_unsafe": "CritSample",
+        "critsample_d23_cache": "Critical sample d23",
+        "critsample_support_hull": "Critical sample",
+        "critsample_support_hull_unsafe": "Critical sample",
         "link_aabb": "Link AABB",
         "no_external_lect": "No external LECT, HIFK-5",
         "single_thread": "1 thread",
     }
     order = [
         "baseline_d23_aafk_support_hull_8t",
+        "critsample_d23_cache",
         "critsample_support_hull_unsafe",
         "critsample_support_hull",
         "link_aabb",
@@ -3126,7 +3318,7 @@ def generate_exp05_table(
         row_by_method["sbf_leaf_rrt"] = selected_rbf
     labels = {
         "sbf_leaf_rrt": "RBF",
-        "iris_np_gcs": "IRIS-NP+GCS",
+        "iris_np_gcs": "IRIS-NP/GCS",
         "prm": "PRM",
         "rrtconnect": "RRTConnect",
         "bitstar": "BIT*",
@@ -3143,28 +3335,16 @@ def generate_exp05_table(
         time_metric_label = None
         if method == "sbf_leaf_rrt":
             deep_boxes = int(float(row.get("deep_max_boxes", 0) or 0))
-            single_query_rows = [
-                item for item in (rbf_single_query_summary_rows or [])
-                if int(float(item.get("deep_max_boxes", deep_boxes) or deep_boxes)) == deep_boxes
-            ]
-            if isinstance(rbf_single_query_manifest, dict) and rbf_single_query_manifest.get("rows"):
-                query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_manifest(
-                    rbf_single_query_manifest,
-                    deep_boxes=deep_boxes,
-                )
-            elif single_query_rows:
-                query_stats, success, runs, _single_build_s = rbf_single_query_stats_from_summary(single_query_rows)
-            else:
-                query_stats = rbf_registered_per_query_online_stats(
-                    rbf_runs,
-                    lambda run, deep_boxes=deep_boxes: (
-                        (
-                            str(run.get("case")) == "baseline_d23_aafk_support_hull_8t"
-                            or str(run.get("method")) == "sbf_leaf_rrt"
-                        )
-                        and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
-                    ),
-                )
+            query_stats = rbf_registered_per_query_online_stats(
+                rbf_runs,
+                lambda run, deep_boxes=deep_boxes: (
+                    (
+                        str(run.get("case")) == "baseline_d23_aafk_support_hull_8t"
+                        or str(run.get("method")) == "sbf_leaf_rrt"
+                    )
+                    and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
+                ),
+            )
             time_metric_label = r"$T$ (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
@@ -3180,12 +3360,25 @@ def generate_exp05_table(
             label = labels[method]
             build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         else:
+            build_s = math.nan
             stage_id = str(row.get("stage_id", method))
             if method == "bitstar":
-                query_stats, bitstar_success, bitstar_total = bitstar_first_full_success_query_stats(baseline_runs)
+                query_stats, bitstar_success, bitstar_total = bitstar_per_query_tradeoff_stats(baseline_runs)
                 if bitstar_total > 0:
                     success = bitstar_success
                     runs = bitstar_total
+            elif method == "prm":
+                query_stats, prm_success, prm_total = prm_per_query_tradeoff_stats(baseline_runs)
+                if prm_total > 0:
+                    success = prm_success
+                    runs = prm_total
+                    selected_builds = [
+                        as_float(stats.get("selected_build_s"))
+                        for stats in query_stats.values()
+                        if math.isfinite(as_float(stats.get("selected_build_s")))
+                    ]
+                    if selected_builds:
+                        build_s = median(selected_builds)
             else:
                 query_stats = query_stats_from_runs(
                     baseline_runs,
@@ -3194,7 +3387,8 @@ def generate_exp05_table(
                     ),
                 )
             label = labels[method]
-            build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
+            if method != "prm" or not math.isfinite(as_float(build_s)):
+                build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         if method != "sbf_leaf_rrt":
             time_label = "Build"
         methods.append({
@@ -3224,10 +3418,12 @@ def generate_exp05_table(
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
-            r"Median [Q1, Q3] s; $T$ is Online/q excluding final simplification/audit; "
-            r"$L/L^\star$ is query-level strict-audited. Build terms: RBF excludes d23 "
-            r"prewarm/load/RSS, PRM is one five-query roadmap, and RRTConnect/BIT* have no reusable build. "
-            r"No Audit/q column; BIT* is post-hoc checkpoint context."
+            r"Median [Q1, Q3], s. $T$=Online/q excluding final simplification/audit; "
+            r"$L/L^\star$ uses the query-level strict-audited reference. "
+            r"b100=100-box RBF; IRIS-NP precedes GCS. "
+            r"RBF build excludes d23 prewarm/load/RSS; PRM build is the median selected roadmap checkpoint; "
+            r"RRTConnect/BIT* have no reusable build; PRM/BIT* select the fastest per-query checkpoint "
+            r"within $1.01\times$ that query's best strict-audited mean path; no Audit/q."
         ),
         include_segment=False,
         time_unit="s",
@@ -3357,7 +3553,14 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     plt.close(fig)
 
 
-def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, Any]]) -> None:
+def generate_exp04_figure(
+    pdf_path: Path,
+    png_path: Path,
+    rows: list[dict[str, Any]],
+    manifest_payload: dict[str, Any] | None = None,
+    *,
+    global_path_refs: dict[str, float] | None = None,
+) -> None:
     os.environ.setdefault("MPLCONFIGDIR", str(Path("/tmp") / "rbf_matplotlib"))
     import matplotlib
 
@@ -3366,6 +3569,7 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
 
     case_order = [
         ("baseline_d23_aafk_support_hull_8t", "RBF-SH", "#1f77b4", "o"),
+        ("critsample_d23_cache", "Crit. d23", "#17becf", "v"),
         ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
         ("critsample_support_hull", "Crit.", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
@@ -3375,12 +3579,38 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     selected_rows: dict[str, dict[str, Any]] = {}
     fig, ax = plt.subplots(1, 1, figsize=(4.12, 2.16))
     allowed_cases = {case for case, _label, _color, _marker in case_order}
-    path_ref = finite_min([
+    path_refs = dict(global_path_refs or {})
+    local_path_refs = query_path_refs_from_runs(
+        (manifest_payload or {}).get("rows", []) if isinstance(manifest_payload, dict) else [],
+        lambda run: str(run.get("case", "")) in allowed_cases,
+    )
+    for query_label, value in local_path_refs.items():
+        update_min_ref(path_refs, query_label, value)
+    scalar_path_ref = finite_min([
         path_length_stat(row)
         for row in rows
         if str(row.get("case")) in allowed_cases and full_success(row)
     ])
     path_values: list[float] = []
+
+    def row_path_ratio(row: dict[str, Any]) -> float:
+        case = str(row.get("case"))
+        deep_boxes = int(float(row.get("deep_max_boxes", DEFAULT_RBF_SHELF_BOX_BUDGET) or DEFAULT_RBF_SHELF_BOX_BUDGET))
+        dist = exp04_case_distributions(
+            manifest_payload or {},
+            case=case,
+            deep_boxes=deep_boxes,
+        )
+        path_by_label = dist.get("path_by_label", {})
+        if isinstance(path_by_label, dict) and path_by_label and path_refs:
+            ratios = normalized_gap_from_label_values(path_by_label, path_refs)
+            if ratios:
+                return percentile_value(ratios, 0.50)
+        ratios = normalized_gap_values(dist.get("path_values") or path_length_stat(row), scalar_path_ref)
+        if ratios:
+            return percentile_value(ratios, 0.50)
+        return ratio_to_ref(path_length_stat(row), scalar_path_ref)
+
     for case, label, color, marker in case_order:
         items = sorted(
             [row for row in rows if str(row.get("case")) == case and full_success(row)],
@@ -3392,15 +3622,15 @@ def generate_exp04_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         if selected is not None:
             selected_rows[case] = selected
         xs = [method_time(row) for row in items]
-        ys = [ratio_to_ref(path_length_stat(row), path_ref) for row in items]
+        ys = [row_path_ratio(row) for row in items]
         path_values.extend(ys)
         ax.plot(xs, ys, "-", color=color, alpha=0.62, linewidth=LINE_WIDTH)
         ax.scatter(xs, ys, marker=marker, color=color, s=POINT_SIZE, alpha=0.78, label=label)
-        selected_path = None if selected is None else path_length_stat(selected)
-        if selected is not None and math.isfinite(selected_path):
+        selected_ratio = math.nan if selected is None else row_path_ratio(selected)
+        if selected is not None and math.isfinite(selected_ratio):
             ax.scatter(
                 [method_time(selected)],
-                [ratio_to_ref(selected_path, path_ref)],
+                [selected_ratio],
                 facecolors="none",
                 edgecolors="#d4a017",
                 linewidths=SELECTED_LINE_WIDTH,
@@ -3431,20 +3661,24 @@ def generate_exp04_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     rows = read_csv_rows(summary)
     manifest_path = find_exp04_manifest(out_dir)
     manifest = load_json_file(manifest_path)
+    global_path_refs = collect_shelf_query_path_refs(out_dir, extra_manifests=[manifest])
     table_path = generated / "tab_tro_shelf_ablation.tex"
     pdf_path = generated / "fig_tro_shelf_tradeoff.pdf"
     png_path = generated / "fig_tro_shelf_tradeoff.png"
-    generate_exp04_table(table_path, rows, manifest)
+    generate_exp04_table(table_path, rows, manifest, global_path_refs=global_path_refs)
     generate_exp04_figure(
         pdf_path,
         png_path,
         rows,
+        manifest,
+        global_path_refs=global_path_refs,
     )
     return {
         "status": "generated",
         "summary": str(summary),
         "summary_sha256": file_sha256(summary),
         "manifest": str(manifest_path) if manifest_path is not None else None,
+        "global_path_refs": global_path_refs,
         "rows": len(rows),
         "table": str(table_path),
         "figure_pdf": str(pdf_path),
@@ -3576,6 +3810,8 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
             ] if isinstance(registered_rrt_manifest, dict) else []
             manifest_rows.extend(registered_rrt_manifest_rows)
     exp04_summary = find_exp04_summary(out_dir)
+    exp04_manifest_path = find_exp04_manifest(out_dir)
+    exp04_manifest_payload = load_json_file(exp04_manifest_path)
     if exp04_summary is not None:
         exp04_rows = [
             row for row in read_csv_rows(exp04_summary)
@@ -3621,12 +3857,35 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
     generate_exp05_table(
         table_path,
         rows,
-        rbf_manifest=rbf_manifest,
+        rbf_manifest=exp04_manifest_payload if exp04_summary is not None else rbf_manifest,
         baseline_manifest=baseline_manifest,
-        rbf_single_query_summary_rows=rbf_single_query_rows,
-        rbf_single_query_manifest=rbf_single_query_manifest_payload,
+        rbf_single_query_summary_rows=[],
+        rbf_single_query_manifest={},
     )
     generate_exp05_figure(pdf_path, png_path, rows)
+    bitstar_table_stats: dict[str, dict[str, float]] = {}
+    bitstar_table_success = 0
+    bitstar_table_total = 0
+    prm_table_stats: dict[str, dict[str, float]] = {}
+    prm_table_success = 0
+    prm_table_total = 0
+    if isinstance(baseline_manifest, dict):
+        prm_table_stats, prm_table_success, prm_table_total = (
+            prm_per_query_tradeoff_stats(baseline_manifest.get("rows", []))
+        )
+        bitstar_table_stats, bitstar_table_success, bitstar_table_total = (
+            bitstar_per_query_tradeoff_stats(baseline_manifest.get("rows", []))
+        )
+    prm_selected_stages = {
+        label: str(stats.get("selected_stage_id", ""))
+        for label, stats in prm_table_stats.items()
+        if stats.get("selected_stage_id")
+    }
+    bitstar_selected_stages = {
+        label: str(stats.get("selected_stage_id", ""))
+        for label, stats in bitstar_table_stats.items()
+        if stats.get("selected_stage_id")
+    }
     source_payload = {
         "status": "generated",
         "summary": str(summary),
@@ -3649,6 +3908,19 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "registered_rrtconnect_rows": len(registered_rrt_rows),
         "registered_rrtconnect_manifest_rows": len(registered_rrt_manifest_rows),
         "rbf_manifest": str(rbf_manifest_path) if rbf_manifest_path is not None else None,
+        "rbf_manifest_for_table": str(exp04_manifest_path) if exp04_summary is not None else str(rbf_manifest_path) if rbf_manifest_path is not None else None,
+        "rbf_manifest_policy": "current_exp04_registered_profile",
+        "table_rbf_time_policy": "per_query_diag_query_bridge_task_total_ms_from_current_exp04_registered_profile",
+        "table_prm_tradeoff_policy": "per_query_fastest_full_seed_checkpoint_within_1p01x_best_query_path_mean",
+        "table_prm_tradeoff_path_slack": 1.01,
+        "table_prm_success": prm_table_success,
+        "table_prm_total": prm_table_total,
+        "table_prm_selected_stages": prm_selected_stages,
+        "table_bitstar_tradeoff_policy": "per_query_fastest_full_seed_checkpoint_within_1p01x_best_query_path_mean",
+        "table_bitstar_tradeoff_path_slack": 1.01,
+        "table_bitstar_success": bitstar_table_success,
+        "table_bitstar_total": bitstar_table_total,
+        "table_bitstar_selected_stages": bitstar_selected_stages,
         "rbf_single_query_summary": str(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
         "rbf_single_query_summary_sha256": file_sha256(rbf_single_query_summary) if rbf_single_query_summary is not None else None,
         "rbf_single_query_manifest": str(rbf_single_query_manifest) if rbf_single_query_manifest is not None else None,
@@ -3853,23 +4125,15 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     caption = r"\captionof{table}{Saved-catalog random-scene selected trade-off context points.}"
     path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
     notes = (
-        r"Selected cells start at the first full-success checkpoint and advance only while the next checkpoint improves path ratio by at least 1\%; time breaks ties. "
-        r"Context columns use current full-success PRM/RRTConnect/BIT* points where available. "
-        r"Times in s; Online/q excludes final simplification/audit. "
-        r"RBF/PRM include Build; RRTConnect/BIT* are Online/q only. "
-        r"$L/L^\star_{\mathrm{q}}$ is success-only by saved query label. "
-        r"PRM uses measured cumulative roadmap checkpoints and may remain "
-        r"improving at the largest PRM budget; BIT* is a post-hoc anytime "
-        r"checkpoint context; no Audit/q column."
+        r"Online/q excludes final simplification/audit; RBF/PRM include Build, "
+        r"RRTConnect/BIT* are online only. Cells are selected full-success checkpoints; "
+        r"$L/L^\star_{\mathrm{q}}$ uses saved query-label references; no Audit/q."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"
         notes = (
-            r"RBF cells start at the first full-success checkpoint and advance only while the next checkpoint improves path ratio by at least 1\%; time breaks ties. "
-            r"Times in s; Online/q excludes final simplification/audit. "
-            r"$L/L^\star_{\mathrm{scn}}$ is success-only against a scenario-level strict-audited reference because current "
-            r"per-query OMPL baseline traces are unavailable; it is within-scenario context only. "
-        r"Fig.~\ref{fig:tro_random_tradeoff} plots Build/5+Online/q trade-offs and Build/$K$+Online/q amortization; no Audit/q column."
+            r"Online/q excludes final simplification/audit. Cells are selected full-success checkpoints; "
+            r"$L/L^\star_{\mathrm{scn}}$ uses a scenario-level strict-audited reference; no Audit/q."
         )
 
     lines = [
@@ -3919,7 +4183,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}%",
         r"}",
         r"\par\vspace{0.1ex}",
-        rf"{{\scriptsize\emph{{Notes:}} Time and path-ratio cells stack median [Q1, Q3]. {notes}\par}}",
+        rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3], s. {notes}\par}}",
         r"\par\endgroup",
         "",
     ])
@@ -4618,21 +4882,21 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
             r"\setlength{\tabcolsep}{3.0pt}",
             r"\begin{tabular}{@{}lcc@{}}",
             r"\toprule",
-            r"Operation & Time (s) & Speedup \\",
+            r"Operation & Time (ms) & Speedup \\",
             r"\midrule",
         ]
         for row in rows:
             lines.extend([
-                rf"Warm build ({source_n} obs.) & {tex_iqr_or_qrange_s(row.get('_source_warm_values'), row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & -- \\",
-                rf"Insert to {target_n} obs. & {tex_iqr_or_qrange_s(row.get('_insert_values'), row.get('insert_s_q1'), row.get('insert_s_q3'))} & {tex_speedup_iqr_or_range(row.get('_insert_speedup_values'), row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} \\",
-                rf"Remove from {target_n} obs. & {tex_iqr_or_qrange_s(row.get('_remove_values'), row.get('remove_s_q1'), row.get('remove_s_q3'))} & {tex_speedup_iqr_or_range(row.get('_remove_speedup_values'), row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} \\",
-                rf"Warm build ({target_n} obs.) & {tex_iqr_or_qrange_s(row.get('_target_warm_values'), row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} & -- \\",
+                rf"Warm build ({source_n} obstacles) & {tex_iqr_or_qrange_ms(row.get('_source_warm_values'), row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & -- \\",
+                rf"Insert to {target_n} obstacles & {tex_iqr_or_qrange_ms(row.get('_insert_values'), row.get('insert_s_q1'), row.get('insert_s_q3'))} & {tex_speedup_range(row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} \\",
+                rf"Remove from {target_n} obstacles & {tex_iqr_or_qrange_ms(row.get('_remove_values'), row.get('remove_s_q1'), row.get('remove_s_q3'))} & {tex_speedup_range(row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} \\",
+                rf"Warm build ({target_n} obstacles) & {tex_iqr_or_qrange_ms(row.get('_target_warm_values'), row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} & -- \\",
             ])
         lines.extend([
             r"\bottomrule",
             r"\end{tabular}",
             r"\par\vspace{0.1ex}",
-            rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3]. Maintenance only: no query, connector, simplification, or audit timing. Speedup = 15-obs warm rebuild/update time.\par}}",
+            rf"{{\scriptsize\emph{{Notes:}} Median [Q1, Q3]. Maintenance only; Speedup = {target_n}-obstacle warm build / update time.\par}}",
             r"\par\endgroup",
             r"\end{minipage}",
             r"\par\vspace{0.1ex}",

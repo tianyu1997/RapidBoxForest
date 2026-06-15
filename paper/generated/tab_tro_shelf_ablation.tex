@@ -8,15 +8,15 @@
 \renewcommand{\arraystretch}{1.02}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
-Case & Build & Online/q & Amort@5 & $L/L^\star$ \\
+Case & Build & Online/q & Amort. 5q & $L/L^\star$ \\
 \midrule
-RBF-SH d23 & 0.168 [0.167, 0.170] & 0.015 [0.015, 0.016] & 0.049 [0.048, 0.049] & 1.10 [1.02, 1.25] \\
-CritSample & 0.401 [0.401, 0.409] & 0.015 [0.015, 0.015] & 0.096 [0.095, 0.096] & 1.10 [1.02, 1.25] \\
-Link AABB & 0.152 [0.148, 0.154] & 0.018 [0.017, 0.019] & 0.048 [0.048, 0.049] & 1.10 [1.02, 1.25] \\
-No LECT/HIFK-5 & 6.978 [6.873, 7.113] & 0.015 [0.015, 0.017] & 1.411 [1.389, 1.441] & 1.10 [1.02, 1.25] \\
-SH w/o broadphase & 0.341 [0.337, 0.359] & 0.020 [0.019, 0.021] & 0.088 [0.086, 0.093] & 1.10 [1.02, 1.25] \\
+RBF-SH d23 & 0.166 [0.163, 0.170] & 0.033 [0.032, 0.035] & 0.067 [0.065, 0.067] & 1.16 [1.08, 1.38] \\
+Critical sample d23 & 0.282 [0.280, 0.285] & 0.035 [0.033, 0.036] & 0.091 [0.090, 0.093] & 1.14 [1.08, 1.38] \\
+Link AABB & 0.141 [0.139, 0.143] & 0.032 [0.031, 0.034] & 0.061 [0.059, 0.064] & 1.19 [1.08, 1.47] \\
+No LECT/HIFK-5 & 7.006 [6.947, 7.068] & 0.064 [0.061, 0.068] & 1.460 [1.456, 1.473] & 1.14 [1.08, 1.39] \\
+SupportHull only & 0.349 [0.287, 0.363] & 0.062 [0.057, 0.068] & 0.131 [0.117, 0.141] & 1.16 [1.08, 1.38] \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.25ex}
-{\scriptsize\emph{Notes:} Median [Q1, Q3] shown inline; times are seconds. Online/q excludes final simplification/audit; audit time is not tabulated. RBF-SH d23, Link AABB, and SH w/o broadphase use d23 replay excluding prewarm/load/RSS (registered artifact: 16,777,215 rec., 12.75\,GiB, 958.079\,s); CritSample and No LECT/HIFK-5 charge live materialization. $L/L^\star$ is query-level.\par}
+{\scriptsize\emph{Notes:} Median [Q1, Q3], s. Online/q excludes final simplification/audit; Amort. 5q = Build/5 + Online/q. SH=SupportHull; d23=depth-23 LECT; $L/L^\star$ uses the query-level strict-audited reference. d23 rows replay matching endpoint-source caches excluding prewarm/load/RSS (16,777,215 rec., 12.75\,GiB, 958.079\,s); No LECT/HIFK-5 materializes live.\par}
 \par\endgroup

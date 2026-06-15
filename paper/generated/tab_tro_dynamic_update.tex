@@ -8,16 +8,16 @@
 \setlength{\tabcolsep}{3.0pt}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-Operation & Time (s) & Speedup \\
+Operation & Time (ms) & Speedup \\
 \midrule
-Warm build (10 obs.) & 1.454 [1.356, 1.626] & -- \\
-Insert to 15 obs. & 0.044 [0.031, 0.050] & 39.0 [35.9, 55.9]$\times$ \\
-Remove from 15 obs. & 0.052 [0.034, 0.071] & 35.0 [24.5, 47.7]$\times$ \\
-Warm build (15 obs.) & 1.694 [1.571, 1.800] & -- \\
+Warm build (10 obstacles) & 210.35 [208.64, 212.29] & -- \\
+Insert to 15 obstacles & 0.04 [0.04, 0.05] & 4295.7--5155.2$\times$ \\
+Remove from 15 obstacles & 9.11 [9.02, 9.23] & 22.8--23.2$\times$ \\
+Warm build (15 obstacles) & 210.21 [209.45, 210.75] & -- \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} Median [Q1, Q3]. Maintenance only: no query, connector, simplification, or audit timing. Speedup = 15-obs warm rebuild/update time.\par}
+{\scriptsize\emph{Notes:} Median [Q1, Q3]. Maintenance only; Speedup = 15-obstacle warm build / update time.\par}
 \par\endgroup
 \end{minipage}
 \par\vspace{0.1ex}
