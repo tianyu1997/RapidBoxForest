@@ -3,6 +3,8 @@
 #include <sbf/core/joint_symmetry.h>
 #include <sbf/envelope/envelope_collision.h>
 
+#include <Eigen/Eigenvalues>
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -153,17 +155,69 @@ struct ObbLinkZonotopeHull {
 struct ObbPortalValidationStats {
     int joint_limit_rejects = 0;
     int degenerate_rejects = 0;
+    int candidates = 0;
+    int validations = 0;
+    int valid_candidates = 0;
+    int grow_attempts = 0;
     int aabb_tests = 0;
     int aabb_rejects = 0;
     int gjk_tests = 0;
     int gjk_rejects = 0;
     int gjk_iterations = 0;
     int maybe_pairs = 0;
+    int sampled_support_attempts = 0;
+    int sampled_support_success = 0;
+    int sampled_support_fail = 0;
+    int sampled_support_samples = 0;
+    int clearance_support_attempts = 0;
+    int clearance_support_success = 0;
+    int clearance_support_fail = 0;
+    int clearance_support_samples = 0;
     int active_links = 0;
     int variables = 0;
     double longitudinal_radius = 0.0;
     double lateral_radius = 0.0;
+    double sampled_support_error_radius = 0.0;
+    double clearance_support_min_margin = std::numeric_limits<double>::infinity();
+    double clearance_support_error_radius = 0.0;
+    double region_volume_sum = 0.0;
+    double region_volume_max = 0.0;
+    double region_log_volume_sum = 0.0;
+    int region_volume_count = 0;
 };
+
+struct ObbPortalCandidate {
+    Eigen::VectorXd center_q;
+    Eigen::VectorXd center_y;
+    Eigen::MatrixXd basis_y;
+    Eigen::VectorXd radii_y;
+    Eigen::MatrixXd generators_q;
+    double score = -std::numeric_limits<double>::infinity();
+};
+
+bool obb_sampled_support_enabled() {
+    const char* value = std::getenv("RBF_OBB_SAMPLED_SUPPORT");
+    return value != nullptr && value[0] == '1';
+}
+
+Eigen::MatrixXd obb_compress_generator_columns(const Eigen::MatrixXd& generators,
+                                               double column_norm_tol = 1e-12) {
+    if (generators.rows() <= 0 || generators.cols() <= 0) {
+        return Eigen::MatrixXd::Zero(generators.rows(), 0);
+    }
+    std::vector<int> active;
+    active.reserve(static_cast<std::size_t>(generators.cols()));
+    for (int col = 0; col < generators.cols(); ++col) {
+        if (generators.col(col).lpNorm<1>() > column_norm_tol) {
+            active.push_back(col);
+        }
+    }
+    Eigen::MatrixXd compressed(generators.rows(), static_cast<int>(active.size()));
+    for (int out = 0; out < static_cast<int>(active.size()); ++out) {
+        compressed.col(out) = generators.col(active[static_cast<std::size_t>(out)]);
+    }
+    return compressed;
+}
 
 void obb_affine_zero(ObbPortalAffineScalar& scalar) {
     scalar.ctr = 0.0;
@@ -454,11 +508,24 @@ detail::Vec3 obb_support_link(const ObbLinkZonotopeHull& link,
     return detail::dot(prox, dir) >= detail::dot(dist, dir) ? prox : dist;
 }
 
+detail::Vec3 obb_support_capsule_link(const ObbLinkZonotopeHull& link,
+                                      const detail::Vec3& dir,
+                                      float radius) {
+    detail::Vec3 support = obb_support_link(link, dir);
+    const float norm_sq = detail::norm_sq(dir);
+    if (radius > 0.0f && norm_sq > detail::kCollisionEps) {
+        const float inv_norm = 1.0f / std::sqrt(norm_sq);
+        support = support + dir * (radius * inv_norm);
+    }
+    return support;
+}
+
 detail::Vec3 obb_support_minkowski_link_vs_obstacle(const ObbLinkZonotopeHull& link,
                                                     const float* obstacle,
-                                                    float xyz_pad,
+                                                    float radius,
                                                     const detail::Vec3& dir) {
-    return obb_support_link(link, dir) - detail::support_aabb(obstacle, -dir, xyz_pad);
+    return obb_support_capsule_link(link, dir, radius) -
+           detail::support_aabb(obstacle, -dir, 0.0f);
 }
 
 bool obb_zonotope_link_separates_obstacle(const ObbLinkZonotopeHull& link,
@@ -479,8 +546,8 @@ bool obb_zonotope_link_separates_obstacle(const ObbLinkZonotopeHull& link,
     }
 
     detail::Simplex simplex;
-    const float xyz_pad = static_cast<float>(std::max(0.0, link.radius + pad));
-    simplex.push_front(obb_support_minkowski_link_vs_obstacle(link, obstacle, xyz_pad, direction));
+    const float capsule_radius = static_cast<float>(std::max(0.0, link.radius + pad));
+    simplex.push_front(obb_support_minkowski_link_vs_obstacle(link, obstacle, capsule_radius, direction));
     direction = -simplex.points[0];
     stats.gjk_tests += 1;
     if (detail::norm_sq(direction) <= detail::kCollisionEps) {
@@ -492,7 +559,7 @@ bool obb_zonotope_link_separates_obstacle(const ObbLinkZonotopeHull& link,
     for (int iter = 0; iter < kMaxIterations; ++iter) {
         stats.gjk_iterations += 1;
         const detail::Vec3 support =
-            obb_support_minkowski_link_vs_obstacle(link, obstacle, xyz_pad, direction);
+            obb_support_minkowski_link_vs_obstacle(link, obstacle, capsule_radius, direction);
         if (detail::dot(support, direction) < 0.0f) {
             stats.gjk_rejects += 1;
             return true;
@@ -507,19 +574,1076 @@ bool obb_zonotope_link_separates_obstacle(const ObbLinkZonotopeHull& link,
     return false;
 }
 
-bool obb_build_basis_from_path(const std::vector<Eigen::VectorXd>& path,
-                               Eigen::VectorXd& center,
-                               Eigen::MatrixXd& basis,
-                               Eigen::VectorXd& radii,
-                               double lateral_radius,
-                               double longitudinal_margin,
-                               ObbPortalValidationStats& stats) {
-    if (path.size() < 2U) {
+struct ObbSampledEndpointHull {
+    std::vector<detail::Vec3> samples;
+    float error_radius = 0.0f;
+};
+
+struct ObbSampledLinkHull {
+    ObbSampledEndpointHull proximal;
+    ObbSampledEndpointHull distal;
+    double radius = 0.0;
+    float aabb[6] = {};
+};
+
+double obb_transform_translation_bound(const Robot& robot, int transform_index) {
+    if (transform_index < robot.n_joints()) {
+        const auto& dh = robot.dh_params()[static_cast<std::size_t>(transform_index)];
+        return std::hypot(dh.a, dh.d);
+    }
+    if (transform_index == robot.n_joints() && robot.has_tool()) {
+        const auto& tool = *robot.tool_frame();
+        return std::hypot(tool.a, tool.d);
+    }
+    return 0.0;
+}
+
+double obb_endpoint_lipschitz_error(const Robot& robot,
+                                    int frame_index,
+                                    const std::vector<double>& joint_deviation) {
+    const int n = robot.n_joints();
+    const int clamped_frame = std::clamp(frame_index, 0, n + (robot.has_tool() ? 1 : 0));
+    double error = 0.0;
+    for (int joint = 0; joint < n && joint < static_cast<int>(joint_deviation.size()); ++joint) {
+        if (joint >= clamped_frame) {
+            continue;
+        }
+        const auto& dh = robot.dh_params()[static_cast<std::size_t>(joint)];
+        if (dh.joint_type == 1) {
+            error += std::abs(joint_deviation[static_cast<std::size_t>(joint)]);
+            continue;
+        }
+        double reach = 1e-9;
+        for (int transform = joint; transform < clamped_frame; ++transform) {
+            reach += obb_transform_translation_bound(robot, transform);
+        }
+        error += reach * std::abs(joint_deviation[static_cast<std::size_t>(joint)]);
+    }
+    return error;
+}
+
+std::vector<detail::Vec3> obb_sample_frame_positions(const Robot& robot,
+                                                     const Eigen::VectorXd& q) {
+    const int n = robot.n_joints();
+    const int n_tf = n + 1 + (robot.has_tool() ? 1 : 0);
+    std::vector<detail::Vec3> frames(static_cast<std::size_t>(n_tf));
+    double T[16] = {};
+    T[0] = 1.0;
+    T[5] = 1.0;
+    T[10] = 1.0;
+    T[15] = 1.0;
+    frames[0] = detail::make_vec3(0.0f, 0.0f, 0.0f);
+
+    auto multiply_dh = [&](const DHParam& dh, double q_value) {
+        const double d_val = dh.joint_type == 1 ? q_value + dh.d : dh.d;
+        const double angle = dh.joint_type == 0 ? q_value + dh.theta : dh.theta;
+        const double ct = std::cos(angle);
+        const double st = std::sin(angle);
+        const double ca = std::cos(dh.alpha);
+        const double sa = std::sin(dh.alpha);
+        const double A[16] = {
+            ct,       -st,      0.0, dh.a,
+            st * ca,   ct * ca, -sa, -d_val * sa,
+            st * sa,   ct * sa,  ca,  d_val * ca,
+            0.0,       0.0,     0.0, 1.0
+        };
+        double R[16] = {};
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                R[row * 4 + col] =
+                    T[row * 4 + 0] * A[0 * 4 + col] +
+                    T[row * 4 + 1] * A[1 * 4 + col] +
+                    T[row * 4 + 2] * A[2 * 4 + col] +
+                    T[row * 4 + 3] * A[3 * 4 + col];
+            }
+        }
+        R[12] = 0.0;
+        R[13] = 0.0;
+        R[14] = 0.0;
+        R[15] = 1.0;
+        std::copy(std::begin(R), std::end(R), std::begin(T));
+    };
+
+    for (int joint = 0; joint < n; ++joint) {
+        multiply_dh(robot.dh_params()[static_cast<std::size_t>(joint)], q[joint]);
+        frames[static_cast<std::size_t>(joint + 1)] =
+            detail::make_vec3(static_cast<float>(T[3]),
+                              static_cast<float>(T[7]),
+                              static_cast<float>(T[11]));
+    }
+    if (robot.has_tool()) {
+        multiply_dh(*robot.tool_frame(), 0.0);
+        frames[static_cast<std::size_t>(n + 1)] =
+            detail::make_vec3(static_cast<float>(T[3]),
+                              static_cast<float>(T[7]),
+                              static_cast<float>(T[11]));
+    }
+    return frames;
+}
+
+detail::Vec3 obb_support_sampled_endpoint(const ObbSampledEndpointHull& endpoint,
+                                          const detail::Vec3& dir) {
+    if (endpoint.samples.empty()) {
+        return detail::make_vec3(0.0f, 0.0f, 0.0f);
+    }
+    detail::Vec3 support = endpoint.samples.front();
+    float best = detail::dot(support, dir);
+    for (const auto& sample : endpoint.samples) {
+        const float value = detail::dot(sample, dir);
+        if (value > best) {
+            best = value;
+            support = sample;
+        }
+    }
+    const float norm_sq = detail::norm_sq(dir);
+    if (endpoint.error_radius > 0.0f && norm_sq > detail::kCollisionEps) {
+        support = support + dir * (endpoint.error_radius / std::sqrt(norm_sq));
+    }
+    return support;
+}
+
+void obb_sampled_link_aabb(ObbSampledLinkHull& link, double pad) {
+    const float p = static_cast<float>(std::max(0.0, link.radius + pad));
+    const float prox_error = std::max(0.0f, link.proximal.error_radius);
+    const float dist_error = std::max(0.0f, link.distal.error_radius);
+    for (int axis = 0; axis < 3; ++axis) {
+        link.aabb[axis] = std::numeric_limits<float>::infinity();
+        link.aabb[axis + 3] = -std::numeric_limits<float>::infinity();
+    }
+    auto expand = [&](const std::vector<detail::Vec3>& samples, float error) {
+        for (const auto& sample : samples) {
+            const float values[3] = {sample.x, sample.y, sample.z};
+            for (int axis = 0; axis < 3; ++axis) {
+                link.aabb[axis] = std::min(link.aabb[axis], values[axis] - error - p);
+                link.aabb[axis + 3] = std::max(link.aabb[axis + 3], values[axis] + error + p);
+            }
+        }
+    };
+    expand(link.proximal.samples, prox_error);
+    expand(link.distal.samples, dist_error);
+}
+
+detail::Vec3 obb_support_sampled_link(const ObbSampledLinkHull& link,
+                                      const detail::Vec3& dir) {
+    const detail::Vec3 prox = obb_support_sampled_endpoint(link.proximal, dir);
+    const detail::Vec3 dist = obb_support_sampled_endpoint(link.distal, dir);
+    return detail::dot(prox, dir) >= detail::dot(dist, dir) ? prox : dist;
+}
+
+detail::Vec3 obb_support_sampled_capsule_link(const ObbSampledLinkHull& link,
+                                              const detail::Vec3& dir,
+                                              float radius) {
+    detail::Vec3 support = obb_support_sampled_link(link, dir);
+    const float norm_sq = detail::norm_sq(dir);
+    if (radius > 0.0f && norm_sq > detail::kCollisionEps) {
+        support = support + dir * (radius / std::sqrt(norm_sq));
+    }
+    return support;
+}
+
+detail::Vec3 obb_support_minkowski_sampled_link_vs_obstacle(const ObbSampledLinkHull& link,
+                                                            const float* obstacle,
+                                                            float radius,
+                                                            const detail::Vec3& dir) {
+    return obb_support_sampled_capsule_link(link, dir, radius) -
+           detail::support_aabb(obstacle, -dir, 0.0f);
+}
+
+bool obb_sampled_link_separates_obstacle(const ObbSampledLinkHull& link,
+                                         const float* obstacle,
+                                         double pad,
+                                         ObbPortalValidationStats& stats) {
+    stats.aabb_tests += 1;
+    if (!detail::aabb_overlap_padded(link.aabb, obstacle, 0.0f)) {
+        stats.aabb_rejects += 1;
+        return true;
+    }
+    detail::Vec3 link_center = detail::make_vec3(0.0f, 0.0f, 0.0f);
+    int count = 0;
+    for (const auto& sample : link.proximal.samples) {
+        link_center = link_center + sample;
+        ++count;
+    }
+    for (const auto& sample : link.distal.samples) {
+        link_center = link_center + sample;
+        ++count;
+    }
+    if (count > 0) {
+        link_center = link_center * (1.0f / static_cast<float>(count));
+    }
+    detail::Vec3 direction = detail::obstacle_center(obstacle) - link_center;
+    if (detail::norm_sq(direction) <= detail::kCollisionEps) {
+        direction = detail::make_vec3(1.0f, 0.0f, 0.0f);
+    }
+
+    detail::Simplex simplex;
+    const float capsule_radius = static_cast<float>(std::max(0.0, link.radius + pad));
+    simplex.push_front(obb_support_minkowski_sampled_link_vs_obstacle(link, obstacle, capsule_radius, direction));
+    direction = -simplex.points[0];
+    stats.gjk_tests += 1;
+    if (detail::norm_sq(direction) <= detail::kCollisionEps) {
+        stats.maybe_pairs += 1;
+        return false;
+    }
+
+    constexpr int kMaxIterations = 32;
+    for (int iter = 0; iter < kMaxIterations; ++iter) {
+        stats.gjk_iterations += 1;
+        const detail::Vec3 support =
+            obb_support_minkowski_sampled_link_vs_obstacle(link, obstacle, capsule_radius, direction);
+        if (detail::dot(support, direction) < 0.0f) {
+            stats.gjk_rejects += 1;
+            return true;
+        }
+        simplex.push_front(support);
+        if (detail::update_simplex(simplex, direction)) {
+            stats.maybe_pairs += 1;
+            return false;
+        }
+    }
+    stats.maybe_pairs += 1;
+    return false;
+}
+
+bool validate_obb_sampled_support_candidate(const Robot& robot,
+                                            const Scene& scene,
+                                            const ObbPortalCandidate& candidate,
+                                            double safety_epsilon,
+                                            ObbPortalValidationStats& stats) {
+    ++stats.sampled_support_attempts;
+    const int dims = static_cast<int>(candidate.center_q.size());
+    if (dims <= 0 || candidate.generators_q.rows() != dims || candidate.generators_q.cols() <= 0) {
+        ++stats.sampled_support_fail;
+        return false;
+    }
+    int line_col = -1;
+    double best_col_norm = 0.0;
+    for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+        const double norm = candidate.generators_q.col(col).norm();
+        if (norm > best_col_norm) {
+            best_col_norm = norm;
+            line_col = col;
+        }
+    }
+    if (line_col < 0 || best_col_norm <= 1e-12) {
+        ++stats.sampled_support_fail;
+        return false;
+    }
+
+    std::vector<double> joint_deviation(static_cast<std::size_t>(dims), 0.0);
+    double lateral_joint_radius = 0.0;
+    for (int joint = 0; joint < dims; ++joint) {
+        for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+            if (col != line_col) {
+                lateral_joint_radius += std::abs(candidate.generators_q(joint, col));
+            }
+        }
+    }
+    if (lateral_joint_radius > 1e-3) {
+        ++stats.sampled_support_fail;
+        return false;
+    }
+    const int kSamples = lateral_joint_radius <= 1e-8 ? 65 : 33;
+    stats.sampled_support_samples += kSamples;
+    const double xi_half_step = 1.0 / static_cast<double>(kSamples - 1);
+    for (int joint = 0; joint < dims; ++joint) {
+        joint_deviation[static_cast<std::size_t>(joint)] +=
+            std::abs(candidate.generators_q(joint, line_col)) * xi_half_step;
+        for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+            if (col != line_col) {
+                joint_deviation[static_cast<std::size_t>(joint)] +=
+                    std::abs(candidate.generators_q(joint, col));
+            }
+        }
+    }
+
+    const int n_active_links = robot.n_active_links();
+    const int* active_link_map = robot.active_link_map();
+    const double* radii = robot.active_link_radii();
+    std::vector<ObbSampledLinkHull> links(static_cast<std::size_t>(n_active_links));
+    for (int active = 0; active < n_active_links; ++active) {
+        auto& link = links[static_cast<std::size_t>(active)];
+        const int link_idx = active_link_map[active];
+        link.proximal.samples.reserve(kSamples);
+        link.distal.samples.reserve(kSamples);
+        link.proximal.error_radius = static_cast<float>(
+            std::max(0.0, obb_endpoint_lipschitz_error(robot, link_idx, joint_deviation)));
+        link.distal.error_radius = static_cast<float>(
+            std::max(0.0, obb_endpoint_lipschitz_error(robot, link_idx + 1, joint_deviation)));
+        stats.sampled_support_error_radius = std::max(
+            stats.sampled_support_error_radius,
+            static_cast<double>(std::max(link.proximal.error_radius, link.distal.error_radius)));
+    }
+
+    for (int sample = 0; sample < kSamples; ++sample) {
+        const double xi = -1.0 + 2.0 * static_cast<double>(sample) /
+            static_cast<double>(kSamples - 1);
+        Eigen::VectorXd q = candidate.center_q + candidate.generators_q.col(line_col) * xi;
+        const auto frames = obb_sample_frame_positions(robot, q);
+        for (int active = 0; active < n_active_links; ++active) {
+            const int link_idx = active_link_map[active];
+            if (link_idx < 0 ||
+                link_idx + 1 >= static_cast<int>(frames.size())) {
+                ++stats.sampled_support_fail;
+                return false;
+            }
+            auto& link = links[static_cast<std::size_t>(active)];
+            link.proximal.samples.push_back(frames[static_cast<std::size_t>(link_idx)]);
+            link.distal.samples.push_back(frames[static_cast<std::size_t>(link_idx + 1)]);
+            link.radius = radii != nullptr ? radii[active] : 0.0;
+        }
+    }
+
+    for (auto& link : links) {
+        obb_sampled_link_aabb(link, safety_epsilon);
+    }
+    const auto& obstacles = scene.obstacles();
+    for (const auto& obstacle : obstacles) {
+        const float* bounds = obstacle.bounds;
+        for (const auto& link : links) {
+            if (!obb_sampled_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
+                ++stats.sampled_support_fail;
+                return false;
+            }
+        }
+    }
+    ++stats.sampled_support_success;
+    return true;
+}
+
+double obb_point_aabb_distance_sq_at_t(const detail::Vec3& origin,
+                                       const detail::Vec3& dir,
+                                       const float* obstacle,
+                                       double t) {
+    const double px = static_cast<double>(origin.x) + static_cast<double>(dir.x) * t;
+    const double py = static_cast<double>(origin.y) + static_cast<double>(dir.y) * t;
+    const double pz = static_cast<double>(origin.z) + static_cast<double>(dir.z) * t;
+    double distance_sq = 0.0;
+    const double values[3] = {px, py, pz};
+    for (int axis = 0; axis < 3; ++axis) {
+        const double lo = static_cast<double>(obstacle[axis]);
+        const double hi = static_cast<double>(obstacle[axis + 3]);
+        double delta = 0.0;
+        if (values[axis] < lo) {
+            delta = lo - values[axis];
+        } else if (values[axis] > hi) {
+            delta = values[axis] - hi;
+        }
+        distance_sq += delta * delta;
+    }
+    return distance_sq;
+}
+
+double obb_segment_aabb_distance_sq(const detail::Vec3& origin,
+                                    const detail::Vec3& end,
+                                    const float* obstacle) {
+    const detail::Vec3 dir = end - origin;
+    double best = std::min(obb_point_aabb_distance_sq_at_t(origin, dir, obstacle, 0.0),
+                           obb_point_aabb_distance_sq_at_t(origin, dir, obstacle, 1.0));
+    const double d[3] = {
+        static_cast<double>(dir.x),
+        static_cast<double>(dir.y),
+        static_cast<double>(dir.z)
+    };
+    const double o[3] = {
+        static_cast<double>(origin.x),
+        static_cast<double>(origin.y),
+        static_cast<double>(origin.z)
+    };
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::abs(d[axis]) <= 1e-14) {
+            continue;
+        }
+        for (int side = 0; side < 2; ++side) {
+            const double plane =
+                static_cast<double>(obstacle[axis + (side == 0 ? 0 : 3)]);
+            const double t = (plane - o[axis]) / d[axis];
+            if (t > 0.0 && t < 1.0) {
+                best = std::min(best,
+                                obb_point_aabb_distance_sq_at_t(origin,
+                                                                dir,
+                                                                obstacle,
+                                                                std::clamp(t, 0.0, 1.0)));
+            }
+        }
+    }
+    return best;
+}
+
+bool obb_clearance_sampled_enabled() {
+    const char* value = std::getenv("RBF_OBB_CLEARANCE_SAMPLED_SUPPORT");
+    return value == nullptr || value[0] != '0';
+}
+
+int obb_env_int(const char* name, int fallback) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') {
+        return fallback;
+    }
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+double obb_env_double(const char* name, double fallback) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') {
+        return fallback;
+    }
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return fallback;
+    }
+}
+
+bool validate_obb_clearance_sampled_candidate(const Robot& robot,
+                                              const Scene& scene,
+                                              const ObbPortalCandidate& candidate,
+                                              double safety_epsilon,
+                                              ObbPortalValidationStats& stats) {
+    if (!obb_clearance_sampled_enabled()) {
+        return false;
+    }
+    ++stats.clearance_support_attempts;
+    const int dims = static_cast<int>(candidate.center_q.size());
+    if (dims <= 0 ||
+        candidate.generators_q.rows() != dims ||
+        candidate.generators_q.cols() <= 0) {
+        ++stats.clearance_support_fail;
+        return false;
+    }
+
+    int line_col = -1;
+    double best_col_norm = 0.0;
+    for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+        const double norm = candidate.generators_q.col(col).norm();
+        if (norm > best_col_norm) {
+            best_col_norm = norm;
+            line_col = col;
+        }
+    }
+    if (line_col < 0 || best_col_norm <= 1e-12) {
+        ++stats.clearance_support_fail;
+        return false;
+    }
+
+    double lateral_l1 = 0.0;
+    for (int joint = 0; joint < dims; ++joint) {
+        for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+            if (col != line_col) {
+                lateral_l1 += std::abs(candidate.generators_q(joint, col));
+            }
+        }
+    }
+    // The pointwise clearance proof is designed for thin bridge tubes.  Large
+    // transverse OBBs should use the affine support-hull validator instead.
+    if (lateral_l1 > obb_env_double("RBF_OBB_CLEARANCE_LATERAL_L1_MAX", 5e-3)) {
+        ++stats.clearance_support_fail;
+        return false;
+    }
+
+    const double line_l1 = candidate.generators_q.col(line_col).lpNorm<1>();
+    int samples = obb_env_int("RBF_OBB_CLEARANCE_SAMPLES", 17);
+    const double dense_line_l1_threshold =
+        obb_env_double("RBF_OBB_CLEARANCE_DENSE_LINE_L1_THRESHOLD", 0.03);
+    const int dense_samples = obb_env_int("RBF_OBB_CLEARANCE_DENSE_SAMPLES", 17);
+    if (dense_line_l1_threshold > 0.0 &&
+        line_l1 > dense_line_l1_threshold) {
+        samples = std::max(samples, dense_samples);
+    }
+    samples = std::clamp(samples, 9, 257);
+    const int fast_samples = std::clamp(
+        obb_env_int("RBF_OBB_CLEARANCE_FAST_SAMPLES", 0),
+        0,
+        257);
+    std::vector<int> sample_schedule;
+    if (fast_samples >= 9 && fast_samples < samples) {
+        sample_schedule.push_back(fast_samples);
+    }
+    sample_schedule.push_back(samples);
+
+    const int n_active_links = robot.n_active_links();
+    const int* active_link_map = robot.active_link_map();
+    const double* radii = robot.active_link_radii();
+    const auto& obstacles = scene.obstacles();
+    bool any_failed = false;
+    double best_min_margin = std::numeric_limits<double>::infinity();
+
+    auto run_sample_count = [&](int sample_count, double& min_margin) {
+        stats.clearance_support_samples += sample_count;
+        const double xi_half_step = 1.0 / static_cast<double>(sample_count - 1);
+
+        std::vector<double> joint_deviation(static_cast<std::size_t>(dims), 0.0);
+        for (int joint = 0; joint < dims; ++joint) {
+            joint_deviation[static_cast<std::size_t>(joint)] +=
+                std::abs(candidate.generators_q(joint, line_col)) * xi_half_step;
+            for (int col = 0; col < candidate.generators_q.cols(); ++col) {
+                if (col != line_col) {
+                    joint_deviation[static_cast<std::size_t>(joint)] +=
+                        std::abs(candidate.generators_q(joint, col));
+                }
+            }
+        }
+
+        std::vector<double> frame_error(static_cast<std::size_t>(robot.n_joints() + 2), 0.0);
+        for (int frame = 0; frame < static_cast<int>(frame_error.size()); ++frame) {
+            frame_error[static_cast<std::size_t>(frame)] =
+                std::max(0.0, obb_endpoint_lipschitz_error(robot, frame, joint_deviation));
+            stats.clearance_support_error_radius =
+                std::max(stats.clearance_support_error_radius,
+                         frame_error[static_cast<std::size_t>(frame)]);
+        }
+
+        min_margin = std::numeric_limits<double>::infinity();
+        for (int sample = 0; sample < sample_count; ++sample) {
+            const double xi = -1.0 + 2.0 * static_cast<double>(sample) /
+                static_cast<double>(sample_count - 1);
+            Eigen::VectorXd q = candidate.center_q + candidate.generators_q.col(line_col) * xi;
+            const auto frames = obb_sample_frame_positions(robot, q);
+            for (int active = 0; active < n_active_links; ++active) {
+                const int link_idx = active_link_map[active];
+                if (link_idx < 0 ||
+                    link_idx + 1 >= static_cast<int>(frames.size())) {
+                    return false;
+                }
+                const double link_radius = radii != nullptr ? radii[active] : 0.0;
+                const double motion_error = std::max(
+                    frame_error[static_cast<std::size_t>(link_idx)],
+                    frame_error[static_cast<std::size_t>(link_idx + 1)]);
+                for (const auto& obstacle : obstacles) {
+                    const double distance = std::sqrt(std::max(
+                        0.0,
+                        obb_segment_aabb_distance_sq(frames[static_cast<std::size_t>(link_idx)],
+                                                     frames[static_cast<std::size_t>(link_idx + 1)],
+                                                     obstacle.bounds)));
+                    const double margin = distance - link_radius - motion_error - safety_epsilon;
+                    min_margin = std::min(min_margin, margin);
+                    if (!(margin > 1e-10)) {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    };
+
+    for (int sample_count : sample_schedule) {
+        double min_margin = std::numeric_limits<double>::infinity();
+        if (run_sample_count(sample_count, min_margin)) {
+            stats.clearance_support_min_margin =
+                std::min(stats.clearance_support_min_margin, min_margin);
+            ++stats.clearance_support_success;
+            return true;
+        }
+        any_failed = true;
+        best_min_margin = std::min(best_min_margin, min_margin);
+    }
+    if (any_failed) {
+        stats.clearance_support_min_margin =
+            std::min(stats.clearance_support_min_margin, best_min_margin);
+    }
+    ++stats.clearance_support_fail;
+    return false;
+}
+
+bool obb_generators_within_domain(const Eigen::VectorXd& center,
+                                  const Eigen::MatrixXd& generators,
+                                  const std::vector<Interval>& domain,
+                                  double tol) {
+    const int dims = static_cast<int>(center.size());
+    if (static_cast<int>(domain.size()) != dims || generators.rows() != dims) {
+        return false;
+    }
+    for (int dim = 0; dim < dims; ++dim) {
+        double radius = 0.0;
+        for (int var = 0; var < generators.cols(); ++var) {
+            radius += std::abs(generators(dim, var));
+        }
+        if (center[dim] - radius < domain[static_cast<std::size_t>(dim)].lo - tol ||
+            center[dim] + radius > domain[static_cast<std::size_t>(dim)].hi + tol) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Eigen::VectorXd obb_domain_reference(const std::vector<Interval>& domain) {
+    Eigen::VectorXd ref(static_cast<int>(domain.size()));
+    for (int dim = 0; dim < ref.size(); ++dim) {
+        ref[dim] = domain[static_cast<std::size_t>(dim)].center();
+    }
+    return ref;
+}
+
+Eigen::VectorXd obb_joint_scales(const std::vector<Interval>& domain) {
+    Eigen::VectorXd scales(static_cast<int>(domain.size()));
+    for (int dim = 0; dim < scales.size(); ++dim) {
+        const double width = domain[static_cast<std::size_t>(dim)].width();
+        scales[dim] = width > 1e-12 ? 1.0 / width : 1.0;
+    }
+    return scales;
+}
+
+Eigen::VectorXd obb_to_scaled(const Eigen::VectorXd& q,
+                              const Eigen::VectorXd& ref,
+                              const Eigen::VectorXd& scales) {
+    return (q - ref).cwiseProduct(scales);
+}
+
+bool obb_orthonormalize_columns(Eigen::MatrixXd& matrix) {
+    const int dims = static_cast<int>(matrix.rows());
+    int cols = 0;
+    for (int input = 0; input < matrix.cols() && cols < dims; ++input) {
+        Eigen::VectorXd candidate = matrix.col(input);
+        for (int col = 0; col < cols; ++col) {
+            candidate -= matrix.col(col) * matrix.col(col).dot(candidate);
+        }
+        const double norm = candidate.norm();
+        if (norm > 1e-10) {
+            matrix.col(cols++) = candidate / norm;
+        }
+    }
+    for (int dim = 0; dim < dims && cols < dims; ++dim) {
+        Eigen::VectorXd candidate = Eigen::VectorXd::Zero(dims);
+        candidate[dim] = 1.0;
+        for (int col = 0; col < cols; ++col) {
+            candidate -= matrix.col(col) * matrix.col(col).dot(candidate);
+        }
+        const double norm = candidate.norm();
+        if (norm > 1e-10) {
+            matrix.col(cols++) = candidate / norm;
+        }
+    }
+    return cols == dims;
+}
+
+std::vector<int> obb_low_risk_joint_order(const Robot& robot, int dims) {
+    std::vector<std::pair<double, int>> scored;
+    scored.reserve(static_cast<std::size_t>(dims));
+    for (int joint = 0; joint < dims; ++joint) {
+        double sensitivity = 1e-6;
+        for (int link = joint; link < robot.n_joints(); ++link) {
+            const auto& dh = robot.dh_params()[static_cast<std::size_t>(link)];
+            sensitivity += std::abs(dh.a) + 0.25 * std::abs(dh.d) + 1e-3;
+        }
+        scored.emplace_back(sensitivity, joint);
+    }
+    std::sort(scored.begin(), scored.end());
+    std::vector<int> order;
+    order.reserve(scored.size());
+    for (const auto& item : scored) {
+        order.push_back(item.second);
+    }
+    return order;
+}
+
+bool obb_make_candidate_from_scaled(const Eigen::VectorXd& center_y,
+                                    const Eigen::MatrixXd& basis_y,
+                                    const Eigen::VectorXd& radii_y,
+                                    const std::vector<Interval>& domain,
+                                    ObbPortalCandidate& candidate) {
+    const int dims = static_cast<int>(center_y.size());
+    if (dims <= 0 ||
+        basis_y.rows() != dims ||
+        basis_y.cols() != dims ||
+        radii_y.size() != dims) {
+        return false;
+    }
+    const Eigen::VectorXd ref = obb_domain_reference(domain);
+    const Eigen::VectorXd scales = obb_joint_scales(domain);
+    candidate.center_y = center_y;
+    candidate.basis_y = basis_y;
+    candidate.radii_y = radii_y;
+    candidate.center_q.resize(dims);
+    for (int dim = 0; dim < dims; ++dim) {
+        candidate.center_q[dim] = ref[dim] + center_y[dim] / scales[dim];
+    }
+    candidate.generators_q = Eigen::MatrixXd::Zero(dims, dims);
+    for (int row = 0; row < dims; ++row) {
+        for (int col = 0; col < dims; ++col) {
+            candidate.generators_q(row, col) = basis_y(row, col) * radii_y[col] / scales[row];
+        }
+    }
+    if (!obb_generators_within_domain(candidate.center_q,
+                                      candidate.generators_q,
+                                      domain,
+                                      1e-10)) {
+        return false;
+    }
+    double score = 0.0;
+    for (int col = 0; col < dims; ++col) {
+        score += std::log(std::max(1e-14, radii_y[col]));
+    }
+    candidate.score = score;
+    return true;
+}
+
+bool obb_fit_scaled_path_with_basis(const std::vector<Eigen::VectorXd>& path,
+                                    const std::vector<Interval>& domain,
+                                    const Eigen::MatrixXd& basis_y,
+                                    double lateral_radius,
+                                    double longitudinal_margin,
+                                    ObbPortalCandidate& candidate,
+                                    ObbPortalValidationStats& stats) {
+    const int dims = static_cast<int>(path.front().size());
+    const Eigen::VectorXd ref = obb_domain_reference(domain);
+    const Eigen::VectorXd scales = obb_joint_scales(domain);
+    std::vector<Eigen::VectorXd> scaled_path;
+    scaled_path.reserve(path.size());
+    for (const auto& waypoint : path) {
+        if (waypoint.size() != dims) {
+            ++stats.degenerate_rejects;
+            return false;
+        }
+        scaled_path.push_back(obb_to_scaled(waypoint, ref, scales));
+    }
+    Eigen::VectorXd min_proj = Eigen::VectorXd::Constant(dims, std::numeric_limits<double>::infinity());
+    Eigen::VectorXd max_proj = Eigen::VectorXd::Constant(dims, -std::numeric_limits<double>::infinity());
+    for (const auto& y : scaled_path) {
+        const Eigen::VectorXd z = basis_y.transpose() * y;
+        for (int col = 0; col < dims; ++col) {
+            min_proj[col] = std::min(min_proj[col], z[col]);
+            max_proj[col] = std::max(max_proj[col], z[col]);
+        }
+    }
+    Eigen::VectorXd center_proj = 0.5 * (min_proj + max_proj);
+    Eigen::VectorXd radii_y = 0.5 * (max_proj - min_proj);
+    radii_y[0] += std::max(0.0, longitudinal_margin);
+    const double lateral = std::max(0.0, lateral_radius);
+    for (int col = 1; col < dims; ++col) {
+        radii_y[col] += lateral;
+    }
+    for (int col = 0; col < dims; ++col) {
+        const double min_radius = (col == 0 || lateral > 0.0) ? 1e-8 : 0.0;
+        radii_y[col] = std::max(radii_y[col], min_radius);
+    }
+    const Eigen::VectorXd center_y = basis_y * center_proj;
+    if (!obb_make_candidate_from_scaled(center_y, basis_y, radii_y, domain, candidate)) {
+        ++stats.joint_limit_rejects;
+        return false;
+    }
+    stats.longitudinal_radius = std::max(stats.longitudinal_radius, radii_y[0]);
+    stats.lateral_radius = std::max(stats.lateral_radius, lateral);
+    stats.variables = dims;
+    return true;
+}
+
+std::vector<Eigen::MatrixXd> obb_orientation_candidates(const Robot& robot,
+                                                        const std::vector<Eigen::VectorXd>& path,
+                                                        const std::vector<Interval>& domain,
+                                                        ObbPortalValidationStats& stats,
+                                                        bool primary_only = false) {
+    std::vector<Eigen::MatrixXd> candidates;
+    const int dims = static_cast<int>(path.front().size());
+    const Eigen::VectorXd ref = obb_domain_reference(domain);
+    const Eigen::VectorXd scales = obb_joint_scales(domain);
+    std::vector<Eigen::VectorXd> scaled_path;
+    scaled_path.reserve(path.size());
+    for (const auto& waypoint : path) {
+        scaled_path.push_back(obb_to_scaled(waypoint, ref, scales));
+    }
+
+    Eigen::VectorXd tangent = scaled_path.back() - scaled_path.front();
+    if (tangent.norm() <= 1e-12) {
+        ++stats.degenerate_rejects;
+        return candidates;
+    }
+    tangent.normalize();
+
+    {
+        Eigen::MatrixXd basis = Eigen::MatrixXd::Zero(dims, dims);
+        basis.col(0) = tangent;
+        const auto risk_order = obb_low_risk_joint_order(robot, dims);
+        int col = 1;
+        for (int joint : risk_order) {
+            if (col >= dims) {
+                break;
+            }
+            basis.col(col) = Eigen::VectorXd::Unit(dims, joint);
+            ++col;
+        }
+        if (obb_orthonormalize_columns(basis)) {
+            candidates.push_back(basis);
+        }
+    }
+    if (primary_only) {
+        stats.candidates += static_cast<int>(candidates.size());
+        return candidates;
+    }
+
+    for (int preferred_axis = 0; preferred_axis < dims; ++preferred_axis) {
+        Eigen::MatrixXd basis = Eigen::MatrixXd::Zero(dims, dims);
+        basis.col(0) = tangent;
+        int col = 1;
+        basis.col(col++) = Eigen::VectorXd::Unit(dims, preferred_axis);
+        for (int axis = 0; axis < dims && col < dims; ++axis) {
+            if (axis == preferred_axis) {
+                continue;
+            }
+            basis.col(col++) = Eigen::VectorXd::Unit(dims, axis);
+        }
+        if (obb_orthonormalize_columns(basis)) {
+            candidates.push_back(basis);
+        }
+    }
+
+    if (path.size() >= 3U) {
+        Eigen::VectorXd mean = Eigen::VectorXd::Zero(dims);
+        for (const auto& y : scaled_path) {
+            mean += y;
+        }
+        mean /= static_cast<double>(scaled_path.size());
+        Eigen::MatrixXd cov = Eigen::MatrixXd::Zero(dims, dims);
+        for (const auto& y : scaled_path) {
+            const Eigen::VectorXd d = y - mean;
+            cov.noalias() += d * d.transpose();
+        }
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(cov);
+        if (solver.info() == Eigen::Success) {
+            Eigen::MatrixXd basis = Eigen::MatrixXd::Zero(dims, dims);
+            for (int col = 0; col < dims; ++col) {
+                basis.col(col) = solver.eigenvectors().col(dims - 1 - col);
+            }
+            if (basis.col(0).dot(tangent) < 0.0) {
+                basis.col(0) *= -1.0;
+            }
+            if (obb_orthonormalize_columns(basis)) {
+                candidates.push_back(basis);
+            }
+        }
+    }
+
+    {
+        Eigen::MatrixXd basis = Eigen::MatrixXd::Identity(dims, dims);
+        candidates.push_back(basis);
+    }
+    stats.candidates += static_cast<int>(candidates.size());
+    return candidates;
+}
+
+bool validate_obb_zonotope_candidate(const Robot& robot,
+                                     const Scene& scene,
+                                     const ObbPortalCandidate& candidate,
+                                     double safety_epsilon,
+                                     ObbPortalValidationStats& stats) {
+    ++stats.validations;
+    const bool clearance_first =
+        obb_env_int("RBF_OBB_CLEARANCE_FIRST", 0) != 0;
+    bool clearance_attempted = false;
+    if (clearance_first) {
+        clearance_attempted = true;
+        if (validate_obb_clearance_sampled_candidate(robot,
+                                                     scene,
+                                                     candidate,
+                                                     safety_epsilon,
+                                                     stats)) {
+            return true;
+        }
+    }
+    const Eigen::MatrixXd compressed_generators =
+        obb_compress_generator_columns(candidate.generators_q);
+    stats.variables = std::max(stats.variables, static_cast<int>(compressed_generators.cols()));
+    std::vector<ObbLinkZonotopeHull> links =
+        obb_compute_link_zonotopes(robot,
+                                   candidate.center_q,
+                                   compressed_generators,
+                                   compressed_generators.cols());
+    stats.active_links = static_cast<int>(links.size());
+    for (auto& link : links) {
+        obb_compute_link_aabb(link, safety_epsilon);
+    }
+
+    const auto& obstacles = scene.obstacles();
+    bool affine_maybe = false;
+    for (const auto& obstacle : obstacles) {
+        const float* bounds = obstacle.bounds;
+        for (const auto& link : links) {
+            if (!obb_zonotope_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
+                affine_maybe = true;
+                break;
+            }
+        }
+        if (affine_maybe) {
+            break;
+        }
+    }
+    if (!affine_maybe) {
+        return true;
+    }
+    if (!clearance_attempted &&
+        validate_obb_clearance_sampled_candidate(robot,
+                                                 scene,
+                                                 candidate,
+                                                 safety_epsilon,
+                                                 stats)) {
+        return true;
+    }
+    if (!obb_sampled_support_enabled()) {
+        return false;
+    }
+    return validate_obb_sampled_support_candidate(robot,
+                                                  scene,
+                                                  candidate,
+                                                  safety_epsilon,
+                                                  stats);
+}
+
+bool obb_try_candidate_with_radii(const Robot& robot,
+                                  const Scene& scene,
+                                  const std::vector<Interval>& domain,
+                                  const ObbPortalCandidate& base,
+                                  const Eigen::VectorXd& radii_y,
+                                  double safety_epsilon,
+                                  ObbPortalCandidate& out,
+                                  ObbPortalValidationStats& stats) {
+    ObbPortalCandidate candidate;
+    if (!obb_make_candidate_from_scaled(base.center_y,
+                                        base.basis_y,
+                                        radii_y,
+                                        domain,
+                                        candidate)) {
+        ++stats.joint_limit_rejects;
+        return false;
+    }
+    if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats)) {
+        return false;
+    }
+    out = std::move(candidate);
+    ++stats.valid_candidates;
+    return true;
+}
+
+ObbPortalCandidate obb_grow_candidate(const Robot& robot,
+                                      const Scene& scene,
+                                      const std::vector<Interval>& domain,
+                                      const ObbPortalCandidate& seed,
+                                      double safety_epsilon,
+                                      int grow_iterations,
+                                      int binary_iterations,
+                                      int max_validations,
+                                      ObbPortalValidationStats& stats) {
+    ObbPortalCandidate good = seed;
+    const int dims = static_cast<int>(seed.radii_y.size());
+    const int grow_cap = std::max(0, grow_iterations);
+    const int binary_cap = std::max(0, binary_iterations);
+    constexpr double kGrow = 1.7;
+    auto budget_exhausted = [&]() {
+        return max_validations > 0 && stats.validations >= max_validations;
+    };
+
+    auto grow_radii = [&](const Eigen::VectorXd& base, int axis) {
+        Eigen::VectorXd radii = base;
+        if (axis < 0) {
+            for (int col = 1; col < dims; ++col) {
+                radii[col] *= kGrow;
+            }
+        } else {
+            radii[axis] *= kGrow;
+        }
+        return radii;
+    };
+
+    auto refine_between = [&](const Eigen::VectorXd& lo, const Eigen::VectorXd& hi) {
+        Eigen::VectorXd good_r = lo;
+        Eigen::VectorXd bad_r = hi;
+        for (int iter = 0; iter < binary_cap; ++iter) {
+            if (budget_exhausted()) {
+                break;
+            }
+            Eigen::VectorXd mid = 0.5 * (good_r + bad_r);
+            ObbPortalCandidate mid_candidate;
+            ++stats.grow_attempts;
+            if (obb_try_candidate_with_radii(robot,
+                                            scene,
+                                            domain,
+                                            seed,
+                                            mid,
+                                            safety_epsilon,
+                                            mid_candidate,
+                                            stats)) {
+                good = std::move(mid_candidate);
+                good_r = mid;
+            } else {
+                bad_r = mid;
+            }
+        }
+    };
+
+    Eigen::VectorXd current = good.radii_y;
+    for (int iter = 0; iter < grow_cap; ++iter) {
+        if (budget_exhausted()) {
+            break;
+        }
+        const Eigen::VectorXd next = grow_radii(current, -1);
+        ObbPortalCandidate next_candidate;
+        ++stats.grow_attempts;
+        if (obb_try_candidate_with_radii(robot,
+                                        scene,
+                                        domain,
+                                        seed,
+                                        next,
+                                        safety_epsilon,
+                                        next_candidate,
+                                        stats)) {
+            good = std::move(next_candidate);
+            current = next;
+        } else {
+            refine_between(current, next);
+            current = good.radii_y;
+            break;
+        }
+    }
+
+    for (int axis = 1; axis < dims; ++axis) {
+        current = good.radii_y;
+        for (int iter = 0; iter < grow_cap; ++iter) {
+            if (budget_exhausted()) {
+                break;
+            }
+            const Eigen::VectorXd next = grow_radii(current, axis);
+            ObbPortalCandidate next_candidate;
+            ++stats.grow_attempts;
+            if (obb_try_candidate_with_radii(robot,
+                                            scene,
+                                            domain,
+                                            seed,
+                                            next,
+                                            safety_epsilon,
+                                            next_candidate,
+                                            stats)) {
+                good = std::move(next_candidate);
+                current = next;
+            } else {
+                refine_between(current, next);
+                break;
+            }
+        }
+    }
+    return good;
+}
+
+bool validate_obb_zonotope_portal(const Robot& robot,
+                                  const Scene& scene,
+                                  const std::vector<Interval>& domain,
+                                  const std::vector<Eigen::VectorXd>& path,
+                                  double lateral_radius,
+                                  double longitudinal_margin,
+                                  double safety_epsilon,
+                                  int grow_iterations,
+                                  int binary_iterations,
+                                  int max_validations,
+                                  ObbPortalValidationStats& stats,
+                                  Eigen::VectorXd* out_center = nullptr,
+                                  Eigen::MatrixXd* out_generators = nullptr) {
+    if (path.size() < 2U || path.front().size() <= 0 || path.front().size() > MAX_JOINTS) {
         ++stats.degenerate_rejects;
         return false;
     }
     const int dims = static_cast<int>(path.front().size());
-    if (dims <= 0 || dims > MAX_JOINTS) {
+    if (static_cast<int>(domain.size()) != dims) {
         ++stats.degenerate_rejects;
         return false;
     }
@@ -530,123 +1654,597 @@ bool obb_build_basis_from_path(const std::vector<Eigen::VectorXd>& path,
         }
     }
 
-    center = 0.5 * (path.front() + path.back());
-    Eigen::VectorXd axis0 = path.back() - path.front();
-    const double length = axis0.norm();
-    if (length <= 1e-12) {
-        ++stats.degenerate_rejects;
-        return false;
-    }
-    axis0 /= length;
-
-    basis = Eigen::MatrixXd::Zero(dims, dims);
-    int cols = 0;
-    basis.col(cols++) = axis0;
-    for (int dim = 0; dim < dims && cols < dims; ++dim) {
-        Eigen::VectorXd candidate = Eigen::VectorXd::Zero(dims);
-        candidate[dim] = 1.0;
-        for (int col = 0; col < cols; ++col) {
-            candidate -= basis.col(col) * basis.col(col).dot(candidate);
+    auto obb_env_flag = [](const char* name, int fallback) {
+        const char* value = std::getenv(name);
+        if (value == nullptr || value[0] == '\0') {
+            return fallback != 0;
         }
-        const double norm = candidate.norm();
-        if (norm > 1e-10) {
-            basis.col(cols++) = candidate / norm;
+        char* end = nullptr;
+        const long parsed = std::strtol(value, &end, 10);
+        if (end != value) {
+            return parsed != 0;
         }
-    }
-    if (cols != dims) {
-        ++stats.degenerate_rejects;
-        return false;
-    }
+        return value[0] == 't' || value[0] == 'T' ||
+               value[0] == 'y' || value[0] == 'Y';
+    };
+    const bool fast_primary_orientation =
+        obb_env_flag("RBF_OBB_FAST_PRIMARY_ORIENTATION", 1);
+    const bool fallback_orientations_on_fail =
+        obb_env_flag("RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL", 0);
+    const bool primary_only =
+        fast_primary_orientation && !fallback_orientations_on_fail;
+    const auto orientations = obb_orientation_candidates(robot,
+                                                         path,
+                                                         domain,
+                                                         stats,
+                                                         primary_only);
+    bool found = false;
+    ObbPortalCandidate best;
 
-    radii = Eigen::VectorXd::Zero(dims);
-    for (const auto& waypoint : path) {
-        const Eigen::VectorXd delta = waypoint - center;
-        for (int col = 0; col < dims; ++col) {
-            radii[col] = std::max(radii[col], std::abs(basis.col(col).dot(delta)));
-        }
-    }
-    radii[0] += std::max(0.0, longitudinal_margin);
-    const double lateral = std::max(0.0, lateral_radius);
-    for (int col = 1; col < dims; ++col) {
-        radii[col] += lateral;
-    }
-    stats.longitudinal_radius = radii[0];
-    stats.lateral_radius = lateral;
-    stats.variables = dims;
-    return true;
-}
-
-bool obb_region_within_domain(const Eigen::VectorXd& center,
-                              const Eigen::MatrixXd& basis,
-                              const Eigen::VectorXd& radii,
-                              const std::vector<Interval>& domain,
-                              double tol) {
-    const int dims = static_cast<int>(center.size());
-    if (static_cast<int>(domain.size()) != dims ||
-        basis.rows() != dims ||
-        basis.cols() != dims ||
-        radii.size() != dims) {
-        return false;
-    }
-    for (int dim = 0; dim < dims; ++dim) {
-        double radius = 0.0;
-        for (int var = 0; var < dims; ++var) {
-            radius += std::abs(basis(dim, var) * radii[var]);
-        }
-        if (center[dim] - radius < domain[static_cast<std::size_t>(dim)].lo - tol ||
-            center[dim] + radius > domain[static_cast<std::size_t>(dim)].hi + tol) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool validate_obb_zonotope_portal(const Robot& robot,
-                                  const Scene& scene,
-                                  const std::vector<Interval>& domain,
-                                  const std::vector<Eigen::VectorXd>& path,
-                                  double lateral_radius,
-                                  double longitudinal_margin,
-                                  double safety_epsilon,
-                                  ObbPortalValidationStats& stats) {
-    Eigen::VectorXd center;
-    Eigen::MatrixXd basis;
-    Eigen::VectorXd radii;
-    if (!obb_build_basis_from_path(path,
-                                   center,
-                                   basis,
-                                   radii,
-                                   lateral_radius,
-                                   longitudinal_margin,
-                                   stats)) {
-        return false;
-    }
-    if (!obb_region_within_domain(center, basis, radii, domain, 1e-10)) {
-        ++stats.joint_limit_rejects;
-        return false;
-    }
-
-    Eigen::MatrixXd generators = basis;
-    for (int col = 0; col < generators.cols(); ++col) {
-        generators.col(col) *= radii[col];
-    }
-    std::vector<ObbLinkZonotopeHull> links =
-        obb_compute_link_zonotopes(robot, center, generators, static_cast<int>(center.size()));
-    stats.active_links = static_cast<int>(links.size());
-    for (auto& link : links) {
-        obb_compute_link_aabb(link, safety_epsilon);
-    }
-
-    const auto& obstacles = scene.obstacles();
-    for (const auto& obstacle : obstacles) {
-        const float* bounds = obstacle.bounds;
-        for (const auto& link : links) {
-            if (!obb_zonotope_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
-                return false;
+    auto try_orientation_range = [&](std::size_t begin, std::size_t end) {
+        for (std::size_t index = begin; index < end && index < orientations.size(); ++index) {
+            if (max_validations > 0 && stats.validations >= max_validations) {
+                break;
+            }
+            const auto& basis_y = orientations[index];
+            ObbPortalCandidate candidate;
+            if (!obb_fit_scaled_path_with_basis(path,
+                                                domain,
+                                                basis_y,
+                                                lateral_radius,
+                                                longitudinal_margin,
+                                                candidate,
+                                                stats)) {
+                continue;
+            }
+            if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats)) {
+                continue;
+            }
+            ++stats.valid_candidates;
+            if (!found || candidate.score > best.score) {
+                best = std::move(candidate);
+                found = true;
             }
         }
+    };
+
+    const std::size_t primary_end =
+        fast_primary_orientation ? std::min<std::size_t>(orientations.size(), 1U) : orientations.size();
+    try_orientation_range(0U, primary_end);
+    if (!found && fast_primary_orientation && fallback_orientations_on_fail &&
+        primary_end < orientations.size()) {
+        if (max_validations > 0 && stats.validations >= max_validations) {
+            return false;
+        }
+        try_orientation_range(primary_end, orientations.size());
+    }
+    if (!found) {
+        return false;
+    }
+    if (grow_iterations > 0 &&
+        (max_validations <= 0 || stats.validations < max_validations)) {
+        best = obb_grow_candidate(robot,
+                                  scene,
+                                  domain,
+                                  best,
+                                  safety_epsilon,
+                                  grow_iterations,
+                                  binary_iterations,
+                                  max_validations,
+                                  stats);
+    }
+    if (out_center != nullptr) {
+        *out_center = best.center_q;
+    }
+    if (out_generators != nullptr) {
+        *out_generators = best.generators_q;
+    }
+    stats.longitudinal_radius = best.radii_y.size() > 0 ? best.radii_y[0] : stats.longitudinal_radius;
+    if (best.radii_y.size() > 1) {
+        double max_lateral = 0.0;
+        for (int col = 1; col < best.radii_y.size(); ++col) {
+            max_lateral = std::max(max_lateral, best.radii_y[col]);
+        }
+        stats.lateral_radius = max_lateral;
     }
     return true;
+}
+
+struct ObbPathCoverRegion {
+    std::size_t begin = 0;
+    std::size_t end = 0;
+    Eigen::VectorXd center;
+    Eigen::MatrixXd generators;
+};
+
+struct ObbPathCoverResult {
+    bool success = false;
+    std::vector<ObbPathCoverRegion> regions;
+    ObbPortalValidationStats stats;
+    double covered_length = 0.0;
+    int windows_attempted = 0;
+    int windows_success = 0;
+    int recursive_splits = 0;
+    int failed_leaf_windows = 0;
+    double failed_leaf_length_sum = 0.0;
+    double failed_leaf_length_max = 0.0;
+    bool has_first_failed_leaf = false;
+    Eigen::VectorXd first_failed_leaf_a;
+    Eigen::VectorXd first_failed_leaf_b;
+};
+
+double obb_generator_parallelotope_log_volume(const Eigen::MatrixXd& generators) {
+    const int rows = generators.rows();
+    const int cols = generators.cols();
+    if (rows <= 0 || cols < rows) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    Eigen::MatrixXd gram = generators * generators.transpose();
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(gram, Eigen::EigenvaluesOnly);
+    if (solver.info() != Eigen::Success) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    double log_volume = static_cast<double>(rows) * std::log(2.0);
+    for (int dim = 0; dim < rows; ++dim) {
+        const double eig = solver.eigenvalues()[dim];
+        if (!(eig > 0.0) || !std::isfinite(eig)) {
+            return -std::numeric_limits<double>::infinity();
+        }
+        log_volume += 0.5 * std::log(eig);
+    }
+    return log_volume;
+}
+
+double obb_generator_parallelotope_volume(const Eigen::MatrixXd& generators) {
+    const double log_volume = obb_generator_parallelotope_log_volume(generators);
+    if (!std::isfinite(log_volume)) {
+        return 0.0;
+    }
+    if (log_volume > std::log(std::numeric_limits<double>::max())) {
+        return std::numeric_limits<double>::infinity();
+    }
+    if (log_volume < std::log(std::numeric_limits<double>::min())) {
+        return 0.0;
+    }
+    return std::exp(log_volume);
+}
+
+void obb_record_region_volume(ObbPortalValidationStats& stats,
+                              const Eigen::MatrixXd& generators) {
+    const double volume = obb_generator_parallelotope_volume(generators);
+    const double log_volume = obb_generator_parallelotope_log_volume(generators);
+    stats.region_volume_sum += volume;
+    stats.region_volume_max = std::max(stats.region_volume_max, volume);
+    if (std::isfinite(log_volume)) {
+        stats.region_log_volume_sum += log_volume;
+    }
+    stats.region_volume_count += 1;
+}
+
+void obb_accumulate_stats(ObbPortalValidationStats& dst,
+                          const ObbPortalValidationStats& src) {
+    dst.joint_limit_rejects += src.joint_limit_rejects;
+    dst.degenerate_rejects += src.degenerate_rejects;
+    dst.candidates += src.candidates;
+    dst.validations += src.validations;
+    dst.valid_candidates += src.valid_candidates;
+    dst.grow_attempts += src.grow_attempts;
+    dst.aabb_tests += src.aabb_tests;
+    dst.aabb_rejects += src.aabb_rejects;
+    dst.gjk_tests += src.gjk_tests;
+    dst.gjk_rejects += src.gjk_rejects;
+    dst.gjk_iterations += src.gjk_iterations;
+    dst.maybe_pairs += src.maybe_pairs;
+    dst.sampled_support_attempts += src.sampled_support_attempts;
+    dst.sampled_support_success += src.sampled_support_success;
+    dst.sampled_support_fail += src.sampled_support_fail;
+    dst.sampled_support_samples += src.sampled_support_samples;
+    dst.clearance_support_attempts += src.clearance_support_attempts;
+    dst.clearance_support_success += src.clearance_support_success;
+    dst.clearance_support_fail += src.clearance_support_fail;
+    dst.clearance_support_samples += src.clearance_support_samples;
+    dst.active_links = std::max(dst.active_links, src.active_links);
+    dst.variables = std::max(dst.variables, src.variables);
+    dst.longitudinal_radius = std::max(dst.longitudinal_radius, src.longitudinal_radius);
+    dst.lateral_radius = std::max(dst.lateral_radius, src.lateral_radius);
+    dst.sampled_support_error_radius =
+        std::max(dst.sampled_support_error_radius, src.sampled_support_error_radius);
+    dst.clearance_support_error_radius =
+        std::max(dst.clearance_support_error_radius, src.clearance_support_error_radius);
+    dst.clearance_support_min_margin =
+        std::min(dst.clearance_support_min_margin, src.clearance_support_min_margin);
+    dst.region_volume_sum += src.region_volume_sum;
+    dst.region_volume_max = std::max(dst.region_volume_max, src.region_volume_max);
+    dst.region_log_volume_sum += src.region_log_volume_sum;
+    dst.region_volume_count += src.region_volume_count;
+}
+
+std::vector<Eigen::VectorXd> obb_path_slice(const std::vector<Eigen::VectorXd>& path,
+                                            std::size_t begin,
+                                            std::size_t end) {
+    std::vector<Eigen::VectorXd> out;
+    if (path.empty() || begin >= path.size() || end >= path.size() || begin >= end) {
+        return out;
+    }
+    out.reserve(end - begin + 1U);
+    for (std::size_t index = begin; index <= end; ++index) {
+        out.push_back(path[index]);
+    }
+    return out;
+}
+
+bool obb_validate_path_window(const Robot& robot,
+                              const Scene& scene,
+                              const std::vector<Interval>& domain,
+                              const std::vector<Eigen::VectorXd>& path,
+                              std::size_t begin,
+                              std::size_t end,
+                              double lateral_radius,
+                              double longitudinal_margin,
+                              double safety_epsilon,
+                              int grow_iterations,
+                              int binary_iterations,
+                              int max_validations,
+                              ObbPathCoverResult& result,
+                              Eigen::VectorXd& center,
+                              Eigen::MatrixXd& generators) {
+    ++result.windows_attempted;
+    std::vector<Eigen::VectorXd> window = obb_path_slice(path, begin, end);
+    ObbPortalValidationStats local_stats;
+    const bool ok = validate_obb_zonotope_portal(robot,
+                                                 scene,
+                                                 domain,
+                                                 window,
+                                                 lateral_radius,
+                                                 longitudinal_margin,
+                                                 safety_epsilon,
+                                                 grow_iterations,
+                                                 binary_iterations,
+                                                 max_validations,
+                                                 local_stats,
+                                                 &center,
+                                                 &generators);
+    obb_accumulate_stats(result.stats, local_stats);
+    if (ok) {
+        ++result.windows_success;
+    }
+    return ok;
+}
+
+bool obb_cover_segment_recursive(const Robot& robot,
+                                 const Scene& scene,
+                                 const std::vector<Interval>& domain,
+                                 const Eigen::VectorXd& a,
+                                 const Eigen::VectorXd& b,
+                                 int depth_remaining,
+                                 double lateral_radius,
+                                 double longitudinal_margin,
+                                 double safety_epsilon,
+                                 int grow_iterations,
+                                 int binary_iterations,
+                                 int max_validations,
+                                 ObbPathCoverResult& result,
+                                 std::vector<Eigen::VectorXd>& centerline) {
+    std::vector<Eigen::VectorXd> segment_path{a, b};
+    Eigen::VectorXd center;
+    Eigen::MatrixXd generators;
+    if (obb_validate_path_window(robot,
+                                 scene,
+                                 domain,
+                                 segment_path,
+                                 0,
+                                 1,
+                                 lateral_radius,
+                                 longitudinal_margin,
+                                 safety_epsilon,
+                                 grow_iterations,
+                                 binary_iterations,
+                                 max_validations,
+                                 result,
+                                 center,
+                                 generators)) {
+        ObbPathCoverRegion region;
+        region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
+        region.end = region.begin + 1U;
+        region.center = std::move(center);
+        region.generators = std::move(generators);
+        obb_record_region_volume(result.stats, region.generators);
+        result.regions.push_back(std::move(region));
+        result.covered_length += (b - a).norm();
+        if (centerline.empty()) {
+            centerline.push_back(a);
+        }
+        if ((centerline.back() - b).norm() > 1e-12) {
+            centerline.push_back(b);
+        }
+        return true;
+    }
+    if (depth_remaining <= 0) {
+        std::vector<Eigen::VectorXd> segment_path{a, b};
+        Eigen::VectorXd fallback_center;
+        Eigen::MatrixXd fallback_generators;
+        const int fallback_budget = max_validations > 0 ? std::max(max_validations, 16) : 16;
+        if (obb_validate_path_window(robot,
+                                     scene,
+                                     domain,
+                                     segment_path,
+                                     0,
+                                     1,
+                                     0.0,
+                                     0.0,
+                                     safety_epsilon,
+                                     0,
+                                     0,
+                                     fallback_budget,
+                                     result,
+                                     fallback_center,
+                                     fallback_generators)) {
+            Eigen::VectorXd best_center = fallback_center;
+            Eigen::MatrixXd best_generators = fallback_generators;
+            double lo = 0.0;
+            double hi = std::max(0.0, lateral_radius);
+            for (int iter = 0; iter < std::max(0, binary_iterations) && hi > 0.0; ++iter) {
+                const double mid = 0.5 * (lo + hi);
+                Eigen::VectorXd mid_center;
+                Eigen::MatrixXd mid_generators;
+                if (obb_validate_path_window(robot,
+                                             scene,
+                                             domain,
+                                             segment_path,
+                                             0,
+                                             1,
+                                             mid,
+                                             0.0,
+                                             safety_epsilon,
+                                             0,
+                                             0,
+                                             fallback_budget,
+                                             result,
+                                             mid_center,
+                                             mid_generators)) {
+                    lo = mid;
+                    best_center = std::move(mid_center);
+                    best_generators = std::move(mid_generators);
+                } else {
+                    hi = mid;
+                }
+            }
+            ObbPathCoverRegion region;
+            region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
+            region.end = region.begin + 1U;
+            region.center = std::move(best_center);
+            region.generators = std::move(best_generators);
+            obb_record_region_volume(result.stats, region.generators);
+            result.regions.push_back(std::move(region));
+            result.covered_length += (b - a).norm();
+            if (centerline.empty()) {
+                centerline.push_back(a);
+            }
+            if ((centerline.back() - b).norm() > 1e-12) {
+                centerline.push_back(b);
+            }
+            return true;
+        }
+        ++result.failed_leaf_windows;
+        const double failed_length = (b - a).norm();
+        result.failed_leaf_length_sum += failed_length;
+        result.failed_leaf_length_max = std::max(result.failed_leaf_length_max, failed_length);
+        if (!result.has_first_failed_leaf) {
+            result.has_first_failed_leaf = true;
+            result.first_failed_leaf_a = a;
+            result.first_failed_leaf_b = b;
+        }
+        if (centerline.empty()) {
+            centerline.push_back(a);
+        }
+        if ((centerline.back() - b).norm() > 1e-12) {
+            centerline.push_back(b);
+        }
+        return false;
+    }
+    ++result.recursive_splits;
+    const Eigen::VectorXd mid = 0.5 * (a + b);
+    const bool left_ok = obb_cover_segment_recursive(robot,
+                                                     scene,
+                                                     domain,
+                                                     a,
+                                                     mid,
+                                                     depth_remaining - 1,
+                                                     lateral_radius,
+                                                     longitudinal_margin,
+                                                     safety_epsilon,
+                                                     grow_iterations,
+                                                     binary_iterations,
+                                                     max_validations,
+                                                     result,
+                                                     centerline);
+    const bool right_ok = obb_cover_segment_recursive(robot,
+                                                      scene,
+                                                      domain,
+                                                      mid,
+                                                      b,
+                                                      depth_remaining - 1,
+                                                      lateral_radius,
+                                                      longitudinal_margin,
+                                                      safety_epsilon,
+                                                      grow_iterations,
+                                                      binary_iterations,
+                                                      max_validations,
+                                                      result,
+                                                      centerline);
+    return left_ok && right_ok;
+}
+
+ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
+    const Robot& robot,
+    const Scene& scene,
+    const std::vector<Interval>& domain,
+    const std::vector<Eigen::VectorXd>& path,
+    bool greedy_bridge_cover,
+    int segment_split_depth,
+    int max_window_segments,
+    double lateral_radius,
+    double longitudinal_margin,
+    double safety_epsilon,
+    int grow_iterations,
+    int binary_iterations,
+    int max_validations,
+    std::vector<Eigen::VectorXd>& out_centerline) {
+    ObbPathCoverResult result;
+    out_centerline.clear();
+    if (path.size() < 2U) {
+        ++result.stats.degenerate_rejects;
+        return result;
+    }
+    if (!greedy_bridge_cover || path.size() == 2U) {
+        result.success = obb_cover_segment_recursive(robot,
+                                                     scene,
+                                                     domain,
+                                                     path.front(),
+                                                     path.back(),
+                                                     std::max(0, segment_split_depth),
+                                                     lateral_radius,
+                                                     longitudinal_margin,
+                                                     safety_epsilon,
+                                                     grow_iterations,
+                                                     binary_iterations,
+                                                     max_validations,
+                                                     result,
+                                                     out_centerline);
+        return result;
+    }
+
+    out_centerline.push_back(path.front());
+    const std::size_t last = path.size() - 1U;
+    const int window_cap = std::max(1, max_window_segments);
+    std::size_t begin = 0;
+    while (begin < last) {
+        const std::size_t max_end =
+            std::min(last, begin + static_cast<std::size_t>(window_cap));
+        std::size_t good_end = begin;
+        Eigen::VectorXd good_center;
+        Eigen::MatrixXd good_generators;
+        std::size_t step = 1;
+        std::size_t first_fail = 0;
+        while (begin + step <= max_end) {
+            Eigen::VectorXd center;
+            Eigen::MatrixXd generators;
+            const std::size_t end = begin + step;
+            if (obb_validate_path_window(robot,
+                                         scene,
+                                         domain,
+                                         path,
+                                         begin,
+                                         end,
+                                         lateral_radius,
+                                         longitudinal_margin,
+                                         safety_epsilon,
+                                         grow_iterations,
+                                         binary_iterations,
+                                         max_validations,
+                                         result,
+                                         center,
+                                         generators)) {
+                good_end = end;
+                good_center = std::move(center);
+                good_generators = std::move(generators);
+                step *= 2U;
+            } else {
+                first_fail = end;
+                break;
+            }
+        }
+        if (good_end == max_end) {
+            first_fail = 0;
+        } else if (first_fail == 0 && begin + step > max_end) {
+            first_fail = max_end + 1U;
+        }
+        if (first_fail > good_end + 1U && good_end > begin) {
+            std::size_t lo = good_end + 1U;
+            std::size_t hi = std::min(first_fail - 1U, max_end);
+            while (lo <= hi) {
+                const std::size_t mid = lo + (hi - lo) / 2U;
+                Eigen::VectorXd center;
+                Eigen::MatrixXd generators;
+                if (obb_validate_path_window(robot,
+                                             scene,
+                                             domain,
+                                             path,
+                                             begin,
+                                             mid,
+                                             lateral_radius,
+                                             longitudinal_margin,
+                                             safety_epsilon,
+                                             grow_iterations,
+                                             binary_iterations,
+                                             max_validations,
+                                             result,
+                                             center,
+                                             generators)) {
+                    good_end = mid;
+                    good_center = std::move(center);
+                    good_generators = std::move(generators);
+                    lo = mid + 1U;
+                } else {
+                    if (mid == 0U) {
+                        break;
+                    }
+                    hi = mid - 1U;
+                }
+            }
+        }
+        if (good_end <= begin) {
+            std::vector<Eigen::VectorXd> split_line;
+            const bool split_ok = obb_cover_segment_recursive(robot,
+                                                              scene,
+                                                              domain,
+                                                              path[begin],
+                                                              path[begin + 1U],
+                                                              std::max(0, segment_split_depth),
+                                                              lateral_radius,
+                                                              longitudinal_margin,
+                                                              safety_epsilon,
+                                                              grow_iterations,
+                                                              binary_iterations,
+                                                              max_validations,
+                                                              result,
+                                                              split_line);
+            for (const auto& waypoint : split_line) {
+                if (out_centerline.empty() || (out_centerline.back() - waypoint).norm() > 1e-12) {
+                    out_centerline.push_back(waypoint);
+                }
+            }
+            if (!split_ok) {
+                for (std::size_t index = begin + 1U; index <= last; ++index) {
+                    if ((out_centerline.back() - path[index]).norm() > 1e-12) {
+                        out_centerline.push_back(path[index]);
+                    }
+                }
+                result.success = false;
+                return result;
+            }
+            begin += 1U;
+            continue;
+        }
+        ObbPathCoverRegion region;
+        region.begin = begin;
+        region.end = good_end;
+        region.center = std::move(good_center);
+        region.generators = std::move(good_generators);
+        obb_record_region_volume(result.stats, region.generators);
+        result.regions.push_back(std::move(region));
+        for (std::size_t index = begin + 1U; index <= good_end; ++index) {
+            result.covered_length += (path[index] - path[index - 1U]).norm();
+        }
+        if ((out_centerline.back() - path[good_end]).norm() > 1e-12) {
+            out_centerline.push_back(path[good_end]);
+        }
+        begin = good_end;
+    }
+    result.success = !result.regions.empty() &&
+                     !out_centerline.empty() &&
+                     (out_centerline.back() - path.back()).norm() <= 1e-10;
+    return result;
 }
 
 void record_oracle_cache_counter_snapshot(std::unordered_map<std::string, double>& diagnostics,
@@ -856,6 +2454,284 @@ std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::Ve
     return reversed;
 }
 
+std::vector<Eigen::VectorXd> hybridize_collision_free_paths(
+    const std::vector<std::vector<Eigen::VectorXd>>& paths,
+    const CollisionChecker& checker,
+    int segment_resolution,
+    int max_paths,
+    int max_vertices,
+    int max_cross_checks) {
+    if (paths.empty() || max_paths <= 1 || max_vertices < 2 || max_cross_checks <= 0) {
+        return {};
+    }
+    const int safe_resolution = std::max(1, segment_resolution);
+    std::vector<const std::vector<Eigen::VectorXd>*> usable;
+    usable.reserve(paths.size());
+    for (const auto& path : paths) {
+        if (path.size() >= 2U) {
+            usable.push_back(&path);
+        }
+    }
+    if (usable.size() < 2U) {
+        return {};
+    }
+    std::sort(usable.begin(), usable.end(), [](const auto* lhs, const auto* rhs) {
+        return path_length(*lhs) < path_length(*rhs);
+    });
+    if (usable.size() > static_cast<std::size_t>(max_paths)) {
+        usable.resize(static_cast<std::size_t>(max_paths));
+    }
+
+    std::vector<Eigen::VectorXd> vertices;
+    vertices.reserve(static_cast<std::size_t>(max_vertices));
+    auto append_vertex = [&](const Eigen::VectorXd& point) -> int {
+        for (std::size_t index = 0; index < vertices.size(); ++index) {
+            if (vertices[index].size() == point.size() &&
+                (vertices[index] - point).norm() <= 1e-10) {
+                return static_cast<int>(index);
+            }
+        }
+        if (vertices.size() >= static_cast<std::size_t>(max_vertices)) {
+            return -1;
+        }
+        vertices.push_back(point);
+        return static_cast<int>(vertices.size() - 1U);
+    };
+
+    struct Edge {
+        int to = -1;
+        double cost = 0.0;
+    };
+    std::vector<std::vector<Edge>> graph(static_cast<std::size_t>(max_vertices));
+    auto add_edge = [&](int lhs, int rhs) {
+        if (lhs < 0 || rhs < 0 || lhs == rhs) {
+            return;
+        }
+        const double cost = (vertices[static_cast<std::size_t>(lhs)] -
+                             vertices[static_cast<std::size_t>(rhs)])
+                                .norm();
+        auto append_one = [&](int from, int to) {
+            auto& edges = graph[static_cast<std::size_t>(from)];
+            auto it = std::find_if(edges.begin(), edges.end(), [&](const Edge& edge) {
+                return edge.to == to;
+            });
+            if (it == edges.end()) {
+                edges.push_back({to, cost});
+            } else if (cost < it->cost) {
+                it->cost = cost;
+            }
+        };
+        append_one(lhs, rhs);
+        append_one(rhs, lhs);
+    };
+
+    int start_id = -1;
+    int goal_id = -1;
+    for (const auto* path_ptr : usable) {
+        const auto& path = *path_ptr;
+        int prev = -1;
+        for (std::size_t index = 0; index < path.size(); ++index) {
+            const int id = append_vertex(path[index]);
+            if (id < 0) {
+                return {};
+            }
+            if (index == 0U) {
+                if (start_id < 0) {
+                    start_id = id;
+                }
+            }
+            if (index + 1U == path.size()) {
+                if (goal_id < 0) {
+                    goal_id = id;
+                }
+            }
+            if (prev >= 0) {
+                add_edge(prev, id);
+            }
+            prev = id;
+        }
+    }
+    if (start_id < 0 || goal_id < 0 || start_id == goal_id) {
+        return {};
+    }
+
+    struct PairCandidate {
+        double saving = 0.0;
+        int lhs = -1;
+        int rhs = -1;
+    };
+    std::vector<PairCandidate> pair_candidates;
+    pair_candidates.reserve(vertices.size() * vertices.size() / 2U);
+    for (std::size_t lhs = 0; lhs < vertices.size(); ++lhs) {
+        for (std::size_t rhs = lhs + 1U; rhs < vertices.size(); ++rhs) {
+            const double distance = (vertices[lhs] - vertices[rhs]).norm();
+            if (!(distance > 1e-9)) {
+                continue;
+            }
+            // Prefer long-range cross-path connections; adjacent path edges
+            // already exist in the graph.
+            pair_candidates.push_back({-distance, static_cast<int>(lhs), static_cast<int>(rhs)});
+        }
+    }
+    std::sort(pair_candidates.begin(), pair_candidates.end(),
+              [](const PairCandidate& lhs, const PairCandidate& rhs) {
+                  return lhs.saving < rhs.saving;
+              });
+    int checks = 0;
+    for (const auto& candidate : pair_candidates) {
+        if (checks >= max_cross_checks) {
+            break;
+        }
+        const int lhs = candidate.lhs;
+        const int rhs = candidate.rhs;
+        bool already_connected = false;
+        for (const auto& edge : graph[static_cast<std::size_t>(lhs)]) {
+            if (edge.to == rhs) {
+                already_connected = true;
+                break;
+            }
+        }
+        if (already_connected) {
+            continue;
+        }
+        ++checks;
+        if (checker.check_segment(vertices[static_cast<std::size_t>(lhs)],
+                                  vertices[static_cast<std::size_t>(rhs)],
+                                  safe_resolution)) {
+            continue;
+        }
+        add_edge(lhs, rhs);
+    }
+
+    const std::size_t n = vertices.size();
+    std::vector<double> dist(n, std::numeric_limits<double>::infinity());
+    std::vector<int> parent(n, -1);
+    using QueueItem = std::pair<double, int>;
+    std::priority_queue<QueueItem, std::vector<QueueItem>, std::greater<QueueItem>> queue;
+    dist[static_cast<std::size_t>(start_id)] = 0.0;
+    queue.emplace(0.0, start_id);
+    while (!queue.empty()) {
+        const auto [current_dist, current] = queue.top();
+        queue.pop();
+        if (current_dist > dist[static_cast<std::size_t>(current)] + 1e-12) {
+            continue;
+        }
+        if (current == goal_id) {
+            break;
+        }
+        for (const Edge& edge : graph[static_cast<std::size_t>(current)]) {
+            const double candidate = current_dist + edge.cost;
+            if (candidate + 1e-12 < dist[static_cast<std::size_t>(edge.to)]) {
+                dist[static_cast<std::size_t>(edge.to)] = candidate;
+                parent[static_cast<std::size_t>(edge.to)] = current;
+                queue.emplace(candidate, edge.to);
+            }
+        }
+    }
+    if (parent[static_cast<std::size_t>(goal_id)] < 0) {
+        return {};
+    }
+    std::vector<Eigen::VectorXd> reversed;
+    for (int at = goal_id; at >= 0; at = parent[static_cast<std::size_t>(at)]) {
+        reversed.push_back(vertices[static_cast<std::size_t>(at)]);
+        if (at == start_id) {
+            break;
+        }
+    }
+    if (reversed.empty() ||
+        (reversed.back() - vertices[static_cast<std::size_t>(start_id)]).norm() > 1e-10) {
+        return {};
+    }
+    std::reverse(reversed.begin(), reversed.end());
+    return reversed;
+}
+
+std::vector<Eigen::VectorXd> random_collision_shortcut_path(std::vector<Eigen::VectorXd> path,
+                                                            const CollisionChecker& checker,
+                                                            int segment_resolution,
+                                                            int iterations,
+                                                            std::uint32_t seed) {
+    if (path.size() <= 2U || iterations <= 0) {
+        return path;
+    }
+    const int safe_resolution = std::max(1, segment_resolution);
+    std::mt19937 rng(seed);
+    auto append_if_new = [](std::vector<Eigen::VectorXd>& out,
+                            const Eigen::VectorXd& point) {
+        if (out.empty() || (out.back() - point).norm() > 1e-12) {
+            out.push_back(point);
+        }
+    };
+    auto interpolate = [](const std::vector<Eigen::VectorXd>& current,
+                          const std::vector<double>& cumulative,
+                          double s,
+                          std::size_t& segment_index) {
+        const auto upper = std::upper_bound(cumulative.begin(), cumulative.end(), s);
+        std::size_t index = upper == cumulative.begin()
+                                ? 0U
+                                : static_cast<std::size_t>(std::distance(cumulative.begin(), upper) - 1);
+        index = std::min(index, current.size() - 2U);
+        const double lo = cumulative[index];
+        const double hi = cumulative[index + 1U];
+        const double alpha = hi > lo ? std::clamp((s - lo) / (hi - lo), 0.0, 1.0) : 0.0;
+        segment_index = index;
+        return (1.0 - alpha) * current[index] + alpha * current[index + 1U];
+    };
+
+    for (int iter = 0; iter < iterations; ++iter) {
+        if (path.size() <= 2U) {
+            break;
+        }
+        std::vector<double> cumulative(path.size(), 0.0);
+        for (std::size_t index = 1; index < path.size(); ++index) {
+            cumulative[index] =
+                cumulative[index - 1U] + (path[index] - path[index - 1U]).norm();
+        }
+        const double total = cumulative.back();
+        if (!(total > 1e-9)) {
+            break;
+        }
+        std::uniform_real_distribution<double> dist(0.0, total);
+        double s0 = dist(rng);
+        double s1 = dist(rng);
+        if (s1 < s0) {
+            std::swap(s0, s1);
+        }
+        if (s1 - s0 < std::max(1e-6, 0.02 * total)) {
+            continue;
+        }
+        std::size_t i0 = 0;
+        std::size_t i1 = 0;
+        const Eigen::VectorXd q0 = interpolate(path, cumulative, s0, i0);
+        const Eigen::VectorXd q1 = interpolate(path, cumulative, s1, i1);
+        if (i1 <= i0) {
+            continue;
+        }
+        const double replacement_length = (q1 - q0).norm();
+        const double original_length = s1 - s0;
+        if (!(replacement_length + 1e-9 < original_length)) {
+            continue;
+        }
+        if (checker.check_segment(q0, q1, safe_resolution)) {
+            continue;
+        }
+        std::vector<Eigen::VectorXd> candidate;
+        candidate.reserve(path.size() - (i1 - i0) + 2U);
+        for (std::size_t index = 0; index <= i0; ++index) {
+            append_if_new(candidate, path[index]);
+        }
+        append_if_new(candidate, q0);
+        append_if_new(candidate, q1);
+        for (std::size_t index = i1 + 1U; index < path.size(); ++index) {
+            append_if_new(candidate, path[index]);
+        }
+        if (candidate.size() >= 2U && path_length(candidate) + 1e-9 < path_length(path)) {
+            path = std::move(candidate);
+        }
+    }
+    return path;
+}
+
 int collision_shortcut_resolution(const QueryConfig& config) {
     int resolution = std::max(1, config.collision_shortcut_resolution);
     if (config.strict_path_audit) {
@@ -979,6 +2855,23 @@ std::unordered_set<std::uint64_t> partition_segment_pair_set_local(const Segment
 
 Robot make_sbf_audit_robot(Robot robot) {
     return robot;
+}
+
+Robot make_sbf_clearance_robot(const Robot& robot, double clearance) {
+    if (!(clearance > 0.0) || !std::isfinite(clearance) || robot.link_radii().empty()) {
+        return robot;
+    }
+    std::vector<double> radii = robot.link_radii();
+    for (double& radius : radii) {
+        if (radius > 0.0) {
+            radius += clearance;
+        }
+    }
+    return Robot(robot.name(),
+                 robot.dh_params(),
+                 robot.joint_limits(),
+                 robot.tool_frame(),
+                 std::move(radii));
 }
 
 CollisionChecker make_audit_checker(const Robot& robot, const Scene& scene, const QueryConfig& query_config) {
@@ -1273,6 +3166,9 @@ double uncovered_segment_edge_length(const SegmentEdge& edge,
         const double covered =
             certified_box_covered_segment_length(a, b, boxes, tolerance);
         uncovered += std::max(0.0, segment_length - covered);
+    }
+    if (edge.obb_covered_length > 0.0) {
+        uncovered = std::max(0.0, uncovered - edge.obb_covered_length);
     }
     return uncovered;
 }
@@ -4325,6 +6221,9 @@ void summarize_query_path(QueryResult& result,
     }
     result.segment_edge_length = 0.0;
     result.segment_edges_used = 0;
+    result.obb_edges_used = 0;
+    result.obb_regions_used = 0;
+    result.obb_edge_length = 0.0;
     for (int edge_id : result.segment_edge_sequence) {
         if (edge_id < 0) {
             continue;
@@ -4334,6 +6233,13 @@ void summarize_query_path(QueryResult& result,
                 result.segment_edges_used += 1;
                 result.segment_edge_length +=
                     uncovered_segment_edge_length(*edge, boxes);
+            }
+            if (!edge->obb_centers.empty()) {
+                result.obb_edges_used += 1;
+                result.obb_regions_used += static_cast<int>(edge->obb_centers.size());
+                result.obb_edge_length += edge->obb_covered_length > 0.0
+                    ? edge->obb_covered_length
+                    : edge->length;
             }
         }
     }
@@ -4345,6 +6251,12 @@ void summarize_query_path(QueryResult& result,
         }
     }
     const double box_path_length = std::max(0.0, result.path_length - result.segment_edge_length);
+    const double residual_denominator =
+        result.raw_path_length > 1e-12 ? result.raw_path_length : result.path_length;
+    result.residual_segment_fraction =
+        residual_denominator > 1e-12
+            ? result.segment_edge_length / residual_denominator
+            : 0.0;
     if (provisional_or_unknown_boxes == 0) {
         result.certified_box_length = box_path_length;
         result.provisional_audited_length = 0.0;
@@ -9952,8 +11864,37 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                      std::max(1, requested_anchor_depth));
     }
     options.reject_seed_collision = false;
+    std::vector<int> anchor_depth_schedule =
+        env_int_list_or_empty("RBF_QUERY_ENDPOINT_ANCHOR_FFB_DEPTHS");
+    const int max_tree_depth = std::max(1, config_.database.max_tree_depth);
+    auto normalize_depth = [&](int depth) {
+        return std::min(max_tree_depth, std::max(1, depth));
+    };
+    std::vector<int> normalized_depths;
+    normalized_depths.reserve(anchor_depth_schedule.size() + 1U);
+    for (int depth : anchor_depth_schedule) {
+        if (depth <= 0) {
+            continue;
+        }
+        const int normalized = normalize_depth(depth);
+        if (std::find(normalized_depths.begin(), normalized_depths.end(), normalized) ==
+            normalized_depths.end()) {
+            normalized_depths.push_back(normalized);
+        }
+    }
+    if (normalized_depths.empty()) {
+        normalized_depths.push_back(normalize_depth(options.max_depth));
+    } else {
+        const int final_depth = normalize_depth(options.max_depth);
+        if (std::find(normalized_depths.begin(), normalized_depths.end(), final_depth) ==
+            normalized_depths.end()) {
+            normalized_depths.push_back(final_depth);
+        }
+    }
     context.diagnostics().set_value("query_bridge.endpoint_anchor_ffb_depth",
-                                    static_cast<double>(options.max_depth));
+                                    static_cast<double>(normalized_depths.back()));
+    context.diagnostics().set_value("query_bridge.endpoint_anchor_ffb_depth_schedule_size",
+                                    static_cast<double>(normalized_depths.size()));
 
     BoxNode root_domain;
     root_domain.id = -1;
@@ -9961,6 +11902,54 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     root_domain.compute_volume();
 
     if (partition_native_mode()) {
+        const bool endpoint_point_anchor =
+            env_int_or_default("RBF_QUERY_ENDPOINT_POINT_ANCHOR", 0) != 0;
+        context.diagnostics().set_value("query_bridge.endpoint_point_anchor_enabled",
+                                        endpoint_point_anchor ? 1.0 : 0.0);
+        if (endpoint_point_anchor) {
+            bool in_domain = static_cast<int>(root_domain.joint_intervals.size()) == point.size();
+            if (in_domain) {
+                for (int dim = 0; dim < point.size(); ++dim) {
+                    if (!root_domain.joint_intervals[static_cast<std::size_t>(dim)].contains(point[dim], 0.0)) {
+                        in_domain = false;
+                        break;
+                    }
+                }
+            }
+            if (!in_domain) {
+                context.diagnostics().add_counter("query_bridge.endpoint_point_anchor_domain_rejects");
+            } else {
+                context.diagnostics().add_counter("query_bridge.endpoint_point_anchor_attempts");
+                CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+                if (!checker.check_config(point)) {
+                    const std::size_t boxes_before_anchor = boxes_.size();
+                    BoxNode box;
+                    box.id = next_box_id();
+                    box.joint_intervals.reserve(static_cast<std::size_t>(point.size()));
+                    for (int dim = 0; dim < point.size(); ++dim) {
+                        box.joint_intervals.push_back(Interval{point[dim], point[dim]});
+                    }
+                    box.seed_config = point;
+                    box.tree_id = kInvalidOracleNodeId;
+                    box.parent_box_id = -1;
+                    box.root_id = box.id;
+                    box.safety_status = BoxSafetyStatus::CertifiedFree;
+                    box.strict_audit_required = false;
+                    box.compute_volume();
+                    const int new_id = box.id;
+                    boxes_.push_back(box);
+                    raw_boxes_.push_back(box);
+                    context.diagnostics().add_counter("query_bridge.endpoint_point_anchor_success");
+                    context.diagnostics().add_counter("query_bridge.endpoint_anchor_boxes_added");
+                    append_adaptive_partition_boxes(boxes_before_anchor,
+                                                    &last_build_,
+                                                    "query_bridge.endpoint_point_anchor");
+                    invalidate_query_cache();
+                    return new_id;
+                }
+                context.diagnostics().add_counter("query_bridge.endpoint_point_anchor_collision_rejects");
+            }
+        }
         const std::size_t boxes_before_anchor = boxes_.size();
         StageContext local_context = context;
         FindFreeBoxOptions anchor_options = options;
@@ -10270,6 +12259,44 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    const bool direct_start_goal_segment =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_START_GOAL_SEGMENT", 1) != 0 &&
+        config_.connector.segment_edges_enabled &&
+        config_.connector.rrt_segment_edges;
+    context.diagnostics().set_value("query_bridge.direct_start_goal_segment",
+                                    direct_start_goal_segment ? 1.0 : 0.0);
+    if (direct_start_goal_segment) {
+        std::vector<Eigen::VectorXd> direct_path{start, goal};
+        context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_attempts");
+        const PathAuditCheck audit =
+            audit_waypoint_path(direct_path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (audit.passed) {
+            const int edge_id = add_segment_edge_partition_first(
+                start_box_id,
+                goal_box_id,
+                direct_path,
+                SegmentEdgeType::QueryBridge,
+                config_.query.audit_resolution,
+                SegmentEdgeValidation::CollisionChecked,
+                true,
+                -1);
+            if (edge_id >= 0) {
+                context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_edges");
+                invalidate_query_cache();
+                sync_adaptive_partition_segment_edges(&last_build_,
+                                                       "query_bridge.direct_start_goal_segment");
+                refresh_adaptive_partition_diagnostics(&last_build_);
+                return 1;
+            }
+            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_add_fail");
+        } else {
+            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_audit_rejects");
+        }
+    }
     RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
     bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
     const double bridge_distance = (goal - start).norm();
@@ -10310,10 +12337,18 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
     context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
     context.diagnostics().set_value("query_bridge.seed_base", static_cast<double>(bridge_seed_base));
+    const double bridge_rrt_clearance =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+    Robot bridge_rrt_robot = make_sbf_clearance_robot(audit_robot_, bridge_rrt_clearance);
+    CollisionChecker bridge_rrt_checker =
+        bridge_rrt_clearance > 0.0
+            ? CollisionChecker(bridge_rrt_robot, scene_)
+            : checker;
+    context.diagnostics().set_value("query_bridge.rrt_clearance", bridge_rrt_clearance);
     auto waypoint_path = best_audited_rrt_bridge_path(start,
                                                       goal,
-                                                      checker,
-                                                      audit_robot_,
+                                                      bridge_rrt_checker,
+                                                      bridge_rrt_robot,
                                                       context,
                                                       bridge_rrt,
                                                       bridge_attempts,
@@ -13340,6 +15375,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         bool waypoint_path_from_partition_query = false;
         std::vector<Eigen::VectorXd> hipac_candidate_path;
         bool hipac_online_satisfied = false;
+        bool direct_start_goal_satisfied = false;
         int hipac_prebridge_resolves_used = 0;
         int hipac_transition_resolves_used = 0;
         int hipac_online_resolves_used = 0;
@@ -13619,6 +15655,253 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     };
     auto edge_query_index_for = [&](const BridgeSearchTask& task) {
         return scene_reusable_query_bridge_edges ? -1 : task.query_index;
+    };
+    const bool direct_start_goal_segment =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_START_GOAL_SEGMENT", 1) != 0 &&
+        config_.connector.segment_edges_enabled &&
+        config_.connector.rrt_segment_edges;
+    const bool fast_direct_segment_after_rrt =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        config_.connector.segment_edges_enabled &&
+        config_.connector.rrt_segment_edges;
+    const double fast_direct_segment_after_rrt_min_length =
+        std::max(0.0,
+                 env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
+                                       0.0));
+    batch_context.diagnostics().set_value(
+        "query_bridge.direct_start_goal_segment",
+        direct_start_goal_segment ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.fast_direct_segment_after_rrt",
+        fast_direct_segment_after_rrt ? 1.0 : 0.0);
+    auto try_direct_start_goal_segment = [&](BridgeSearchTask& task) -> int {
+        if (!direct_start_goal_segment || task.direct_start_goal_satisfied) {
+            return 0;
+        }
+        const int source_box_id =
+            locate_existing_box_for_query_bridge(task.start);
+        const int target_box_id =
+            locate_existing_box_for_query_bridge(task.goal);
+        if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.direct_start_goal_segment_missing_endpoint");
+            return 0;
+        }
+        std::vector<Eigen::VectorXd> direct_path{task.start, task.goal};
+        batch_context.diagnostics().add_counter(
+            "query_bridge.direct_start_goal_segment_attempts");
+        batch_context.diagnostics().add_counter(
+            task_key(task.index, "direct_start_goal_segment_attempts"));
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        const PathAuditCheck audit =
+            audit_waypoint_path(direct_path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (!audit.passed) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.direct_start_goal_segment_audit_rejects");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "direct_start_goal_segment_audit_rejects"));
+            return 0;
+        }
+        const int edge_id = add_segment_edge_partition_first(
+            source_box_id,
+            target_box_id,
+            direct_path,
+            SegmentEdgeType::QueryBridge,
+            config_.query.audit_resolution,
+            SegmentEdgeValidation::CollisionChecked,
+            true,
+            edge_query_index_for(task));
+        if (edge_id < 0) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.direct_start_goal_segment_add_fail");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "direct_start_goal_segment_add_fail"));
+            return 0;
+        }
+        task.direct_start_goal_satisfied = true;
+        batch_context.diagnostics().add_counter(
+            "query_bridge.direct_start_goal_segment_edges");
+        batch_context.diagnostics().add_counter(
+            task_key(task.index, "direct_start_goal_segment_edges"));
+        invalidate_query_cache();
+        sync_adaptive_partition_segment_edges(&last_build_,
+                                               "query_bridge.direct_start_goal_segment");
+        refresh_adaptive_partition_diagnostics(&last_build_);
+        return 1;
+    };
+    auto try_fast_direct_segment_after_rrt = [&](BridgeSearchTask& task) -> int {
+        if (!fast_direct_segment_after_rrt || task.waypoint_path.empty()) {
+            return 0;
+        }
+        std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
+        candidate_paths.push_back(task.waypoint_path);
+        const bool fast_direct_shortcut =
+            env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SHORTCUT", 1) != 0;
+        if (fast_direct_shortcut && task.waypoint_path.size() > 2) {
+            const double before_length = path_length(task.waypoint_path);
+            CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+            std::vector<Eigen::VectorXd> shortened =
+                collision_shortcut_path(task.waypoint_path,
+                                        checker,
+                                        collision_shortcut_resolution(config_.query));
+            const double after_length = path_length(shortened);
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_shortcut_attempts");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "fast_direct_segment_after_rrt_shortcut_attempts"));
+            if (!shortened.empty() && after_length + 1e-12 < before_length) {
+                candidate_paths.push_back(std::move(shortened));
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_shortcut_accepts");
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_shortcut_delta",
+                    before_length - after_length);
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "fast_direct_segment_after_rrt_shortcut_accepts"));
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "fast_direct_segment_after_rrt_shortcut_delta"),
+                    before_length - after_length);
+            }
+            const int random_shortcut_iters = std::max(
+                0,
+                env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS", 0));
+            const auto& random_source = candidate_paths.back();
+            if (random_shortcut_iters > 0 && random_source.size() > 2U) {
+                const double random_before_length = path_length(random_source);
+                const std::uint32_t shortcut_seed =
+                    static_cast<std::uint32_t>(0x9e3779b9U ^
+                                               ((static_cast<std::uint32_t>(task.query_index) + 1U) * 2654435761U) ^
+                                               (static_cast<std::uint32_t>(task.index + 1U) * 2246822519U) ^
+                                               static_cast<std::uint32_t>(random_source.size()));
+                std::vector<Eigen::VectorXd> random_shortened =
+                    random_collision_shortcut_path(random_source,
+                                                   checker,
+                                                   collision_shortcut_resolution(config_.query),
+                                                   random_shortcut_iters,
+                                                   shortcut_seed);
+                const double random_after_length = path_length(random_shortened);
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_attempts");
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_attempts"));
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_iters",
+                    static_cast<double>(random_shortcut_iters));
+                if (!random_shortened.empty() &&
+                    random_after_length + 1e-12 < random_before_length) {
+                    candidate_paths.push_back(std::move(random_shortened));
+                    batch_context.diagnostics().add_counter(
+                        "query_bridge.fast_direct_segment_after_rrt_random_shortcut_accepts");
+                    batch_context.diagnostics().add_counter(
+                        "query_bridge.fast_direct_segment_after_rrt_random_shortcut_delta",
+                        random_before_length - random_after_length);
+                    batch_context.diagnostics().add_counter(
+                        task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_accepts"));
+                    batch_context.diagnostics().add_counter(
+                        task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_delta"),
+                        random_before_length - random_after_length);
+                }
+            }
+        }
+        std::sort(candidate_paths.begin(),
+                  candidate_paths.end(),
+                  [](const auto& lhs, const auto& rhs) {
+                      return path_length(lhs) < path_length(rhs);
+                  });
+        candidate_paths.erase(std::unique(candidate_paths.begin(),
+                                          candidate_paths.end(),
+                                          [](const auto& lhs, const auto& rhs) {
+                                              if (lhs.size() != rhs.size()) {
+                                                  return false;
+                                              }
+                                              for (std::size_t index = 0; index < lhs.size(); ++index) {
+                                                  if ((lhs[index] - rhs[index]).norm() > 1e-12) {
+                                                      return false;
+                                                  }
+                                              }
+                                              return true;
+                                          }),
+                              candidate_paths.end());
+        if (candidate_paths.empty() ||
+            !(path_length(candidate_paths.front()) >= fast_direct_segment_after_rrt_min_length)) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_length_rejects");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "fast_direct_segment_after_rrt_length_rejects"));
+            return 0;
+        }
+        const int source_box_id = locate_existing_box_for_query_bridge(task.start);
+        const int target_box_id = locate_existing_box_for_query_bridge(task.goal);
+        if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_missing_endpoint");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "fast_direct_segment_after_rrt_missing_endpoint"));
+            return 0;
+        }
+        CollisionChecker strict_checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        int edge_id = -1;
+        double added_length = std::numeric_limits<double>::infinity();
+        for (std::size_t candidate_index = 0; candidate_index < candidate_paths.size(); ++candidate_index) {
+            const auto& candidate_path = candidate_paths[candidate_index];
+            if (path_length(candidate_path) + 1e-12 < fast_direct_segment_after_rrt_min_length) {
+                continue;
+            }
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_add_candidates");
+            const PathAuditCheck candidate_audit =
+                audit_waypoint_path(candidate_path,
+                                    strict_checker,
+                                    config_.query.audit_resolution,
+                                    config_.query.audit_segment_step);
+            if (!candidate_audit.passed) {
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_candidate_audit_rejects");
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "fast_direct_segment_after_rrt_candidate_audit_rejects"));
+                continue;
+            }
+            edge_id = add_segment_edge_partition_first(
+                source_box_id,
+                target_box_id,
+                candidate_path,
+                SegmentEdgeType::QueryBridge,
+                task.bridge_rrt.segment_resolution,
+                SegmentEdgeValidation::CollisionChecked,
+                true,
+                edge_query_index_for(task));
+            if (edge_id >= 0) {
+                added_length = path_length(candidate_path);
+                if (candidate_index > 0) {
+                    batch_context.diagnostics().add_counter(
+                        "query_bridge.fast_direct_segment_after_rrt_fallback_candidate_success");
+                }
+                break;
+            }
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_add_candidate_fail");
+        }
+        if (edge_id < 0) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_add_fail");
+            batch_context.diagnostics().add_counter(
+                task_key(task.index, "fast_direct_segment_after_rrt_add_fail"));
+            return 0;
+        }
+        invalidate_query_cache();
+        batch_context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_edges");
+        batch_context.diagnostics().add_counter(
+            task_key(task.index, "fast_direct_segment_after_rrt_edges"));
+        batch_context.diagnostics().set_value(
+            task_key(task.index, "fast_direct_segment_after_rrt_length"),
+            added_length);
+        return 1;
     };
 	    auto accumulate_task_direct_corridor_totals = [&](std::size_t index) {
 	        auto add = [&](const std::string& suffix, const std::string& total_key) {
@@ -14325,6 +16608,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	    };
 	    batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
 	                                          static_cast<double>(tasks.size()));
+    if (direct_start_goal_segment) {
+        for (auto& task : tasks) {
+            const int added = try_direct_start_goal_segment(task);
+            if (added > 0) {
+                added_by_query[task.index] += added;
+            }
+        }
+    }
     const bool skip_deferred_short_edges =
         env_int_or_default("RBF_QUERY_BRIDGE_SKIP_DEFERRED_SHORT", 1) != 0;
     batch_context.diagnostics().set_value(
@@ -14374,8 +16665,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
     const double query_bridge_rrt_fixed_timeout_ms =
         std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
+    const double query_bridge_rrt_clearance =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
     const std::vector<double> local_radius_schedule =
         env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
+    const bool local_radius_append_unrestricted_attempt =
+        env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_RADIUS_APPEND_UNRESTRICTED_ATTEMPT", 1) != 0;
     const int query_bridge_rrt_optimize_after_first_iters =
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
     const int query_bridge_attempt_fallback_paths =
@@ -14387,8 +16682,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         "query_bridge.rrt_fixed_timeout_ms",
         query_bridge_rrt_fixed_timeout_ms);
     batch_context.diagnostics().set_value(
+        "query_bridge.rrt_clearance",
+        query_bridge_rrt_clearance);
+    batch_context.diagnostics().set_value(
         "query_bridge.local_radius_schedule_size",
         static_cast<double>(local_radius_schedule.size()));
+    batch_context.diagnostics().set_value(
+        "query_bridge.local_radius_append_unrestricted_attempt",
+        local_radius_append_unrestricted_attempt ? 1.0 : 0.0);
     batch_context.diagnostics().set_value(
         "query_bridge.rrt_optimize_after_first_iters",
         static_cast<double>(query_bridge_rrt_optimize_after_first_iters));
@@ -14460,15 +16761,21 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                 std::shared_ptr<std::atomic<bool>> cancel_override =
                                     std::shared_ptr<std::atomic<bool>>{}) {
         const int scheduled_attempt = attempt + query_bridge_attempt_offset;
-        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        Robot bridge_robot = make_sbf_clearance_robot(audit_robot_, query_bridge_rrt_clearance);
+        CollisionChecker checker =
+            query_bridge_rrt_clearance > 0.0
+                ? CollisionChecker(bridge_robot, scene_)
+                : make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
             task.short_local_profiles.empty()
                 ? task.bridge_rrt
                 : task.short_local_profiles[
                       static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
-        if (!local_radius_schedule.empty()) {
+        if (!local_radius_schedule.empty() &&
+            attempt >= 0 &&
+            static_cast<std::size_t>(attempt) < local_radius_schedule.size()) {
             const double scheduled_radius =
-                local_radius_schedule[static_cast<std::size_t>(attempt) % local_radius_schedule.size()];
+                local_radius_schedule[static_cast<std::size_t>(attempt)];
             if (scheduled_radius >= 0.0) {
                 config.local_sampling_radius = scheduled_radius;
             }
@@ -14486,7 +16793,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             task.start,
             task.goal,
             checker,
-            audit_robot_,
+            bridge_robot,
             config,
                 derived_planner_seed(config_.grower.rng_seed,
                                      kSeedBatchBridgeOffset,
@@ -14580,6 +16887,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const int max_candidates = std::max(
             1,
             env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MAX_CANDIDATES", 32));
+        const bool multi_axis_detour =
+            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MULTI_AXIS", 0) != 0;
+        const int random_candidates = std::max(
+            0,
+            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_RANDOM_CANDIDATES", 0));
         const double base_offset = std::max(
             1e-4,
             env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_OFFSET", 0.35));
@@ -14655,6 +16967,101 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     if (candidates >= max_candidates) {
                         break;
                     }
+                }
+            }
+        }
+        if (multi_axis_detour && dim_limit >= 2) {
+            for (int first_item = 0; first_item < dim_limit && candidates < max_candidates; ++first_item) {
+                const int first_dim = dims[static_cast<std::size_t>(first_item)];
+                const double first_width = domain[static_cast<std::size_t>(first_dim)].width();
+                for (int second_item = first_item + 1;
+                     second_item < dim_limit && candidates < max_candidates;
+                     ++second_item) {
+                    const int second_dim = dims[static_cast<std::size_t>(second_item)];
+                    const double second_width = domain[static_cast<std::size_t>(second_dim)].width();
+                    for (int round = 1; round <= rounds && candidates < max_candidates; ++round) {
+                        const double first_mag = std::min(0.35 * std::max(0.0, first_width),
+                                                          base_offset * static_cast<double>(round));
+                        const double second_mag = std::min(0.35 * std::max(0.0, second_width),
+                                                           base_offset * static_cast<double>(round));
+                        if (first_mag <= 1e-9 || second_mag <= 1e-9) {
+                            continue;
+                        }
+                        for (double first_sign : {1.0, -1.0}) {
+                            for (double second_sign : {1.0, -1.0}) {
+                                Eigen::VectorXd single = mid;
+                                single[first_dim] += first_sign * first_mag;
+                                single[second_dim] += second_sign * second_mag;
+                                single = clamp_to_domain(std::move(single));
+                                if ((single - mid).norm() > 1e-9) {
+                                    try_path({task.start, single, task.goal});
+                                }
+                                if (candidates >= max_candidates) {
+                                    break;
+                                }
+                                Eigen::VectorXd first = task.start + two_bend_alpha * delta;
+                                Eigen::VectorXd second = task.start + (1.0 - two_bend_alpha) * delta;
+                                first[first_dim] += first_sign * first_mag;
+                                first[second_dim] += second_sign * second_mag;
+                                second[first_dim] += first_sign * first_mag;
+                                second[second_dim] += second_sign * second_mag;
+                                first = clamp_to_domain(std::move(first));
+                                second = clamp_to_domain(std::move(second));
+                                try_path({task.start, first, second, task.goal});
+                                if (candidates >= max_candidates) {
+                                    break;
+                                }
+                            }
+                            if (candidates >= max_candidates) {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (random_candidates > 0 && dim_limit > 0 && candidates < max_candidates) {
+            const int random_budget = std::min(random_candidates, max_candidates - candidates);
+            std::mt19937 rng(static_cast<std::uint32_t>(
+                derived_planner_seed(config_.grower.rng_seed,
+                                     kSeedBatchBridgeOffset,
+                                     task.index,
+                                     task.query_index,
+                                     41443)));
+            std::uniform_int_distribution<int> dim_pick(0, dim_limit - 1);
+            std::uniform_real_distribution<double> unit(-1.0, 1.0);
+            const double max_scale = std::max(1.0, static_cast<double>(rounds));
+            for (int sample = 0; sample < random_budget && candidates < max_candidates; ++sample) {
+                const int first_dim = dims[static_cast<std::size_t>(dim_pick(rng))];
+                int second_dim = first_dim;
+                if (dim_limit > 1) {
+                    for (int guard = 0; guard < 4 && second_dim == first_dim; ++guard) {
+                        second_dim = dims[static_cast<std::size_t>(dim_pick(rng))];
+                    }
+                }
+                Eigen::VectorXd offset = Eigen::VectorXd::Zero(task.start.size());
+                auto apply_random_dim = [&](int dim) {
+                    const double width = domain[static_cast<std::size_t>(dim)].width();
+                    const double limit = std::min(0.35 * std::max(0.0, width),
+                                                  base_offset * max_scale);
+                    if (limit > 1e-9) {
+                        offset[dim] += unit(rng) * limit;
+                    }
+                };
+                apply_random_dim(first_dim);
+                if (second_dim != first_dim) {
+                    apply_random_dim(second_dim);
+                }
+                if (offset.norm() <= 1e-9) {
+                    continue;
+                }
+                if ((sample & 1) == 0) {
+                    Eigen::VectorXd single = clamp_to_domain(mid + offset);
+                    try_path({task.start, single, task.goal});
+                } else {
+                    Eigen::VectorXd first = clamp_to_domain(task.start + two_bend_alpha * delta + offset);
+                    Eigen::VectorXd second = clamp_to_domain(task.start + (1.0 - two_bend_alpha) * delta + offset);
+                    try_path({task.start, first, second, task.goal});
                 }
             }
         }
@@ -14801,6 +17208,66 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (valid_paths.empty()) {
             return;
         }
+        const bool hybridize_attempt_paths =
+            env_int_or_default("RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS", 0) != 0;
+        if (hybridize_attempt_paths && valid_paths.size() >= 2U) {
+            const int hybrid_max_paths = std::max(
+                2,
+                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS", 8));
+            const int hybrid_max_vertices = std::max(
+                8,
+                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES", 128));
+            const int hybrid_max_cross_checks = std::max(
+                1,
+                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS", 4096));
+            CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+            const double best_input_length =
+                std::min(best_length,
+                         std::min_element(valid_paths.begin(),
+                                          valid_paths.end(),
+                                          [](const auto& lhs, const auto& rhs) {
+                                              return lhs.first < rhs.first;
+                                          })
+                             ->first);
+            std::vector<Eigen::VectorXd> hybrid =
+                hybridize_collision_free_paths(attempt_paths,
+                                               checker,
+                                               collision_shortcut_resolution(config_.query),
+                                               hybrid_max_paths,
+                                               hybrid_max_vertices,
+                                               hybrid_max_cross_checks);
+            batch_context.diagnostics().add_counter(
+                "query_bridge.hybridize_attempt_paths_tasks");
+            if (!hybrid.empty()) {
+                const double hybrid_length = path_length(hybrid);
+                batch_context.diagnostics().add_counter(
+                    "query_bridge.hybridize_attempt_paths_candidates");
+                batch_context.diagnostics().add_counter(
+                    task_key(task.index, "hybridize_attempt_paths_candidates"));
+                if (hybrid_length + 1e-12 < best_input_length) {
+                    const PathAuditCheck audit =
+                        audit_waypoint_path(hybrid,
+                                            checker,
+                                            config_.query.audit_resolution,
+                                            config_.query.audit_segment_step);
+                    if (audit.passed) {
+                        const std::size_t index = attempt_paths.size();
+                        attempt_paths.push_back(std::move(hybrid));
+                        valid_paths.emplace_back(hybrid_length, index);
+                        batch_context.diagnostics().add_counter(
+                            "query_bridge.hybridize_attempt_paths_accepts");
+                        batch_context.diagnostics().add_counter(
+                            "query_bridge.hybridize_attempt_paths_delta",
+                            best_input_length - hybrid_length);
+                        batch_context.diagnostics().add_counter(
+                            task_key(task.index, "hybridize_attempt_paths_accepts"));
+                    } else {
+                        batch_context.diagnostics().add_counter(
+                            "query_bridge.hybridize_attempt_paths_audit_rejects");
+                    }
+                }
+            }
+        }
         std::sort(valid_paths.begin(), valid_paths.end(),
                   [](const auto& lhs, const auto& rhs) {
                       if (std::abs(lhs.first - rhs.first) > 1e-12) {
@@ -14855,6 +17322,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     auto bridge_query_with_waypoint_fallbacks =
         [&](BridgeSearchTask& task,
             int& added_accumulator) -> int {
+        const bool evaluate_all_fallback_paths =
+            env_int_or_default("RBF_QUERY_BRIDGE_EVALUATE_ALL_FALLBACK_PATHS", 0) != 0;
+        batch_context.diagnostics().set_value(
+            "query_bridge.evaluate_all_fallback_paths",
+            evaluate_all_fallback_paths ? 1.0 : 0.0);
         std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
         if (!task.waypoint_path.empty()) {
             candidate_paths.push_back(&task.waypoint_path);
@@ -14903,7 +17375,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                         1.0);
                     task.waypoint_path = candidate_path;
                 }
-                break;
+                if (!evaluate_all_fallback_paths) {
+                    break;
+                }
             }
         }
         return total_added;
@@ -14936,7 +17410,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            auto& task = tasks[task_offset];
 	            prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
 	            const auto probe_t0 = Clock::now();
-	            if (task.hipac_online_satisfied || current_query_good(task, true)) {
+	            if (task.hipac_online_satisfied ||
+                    task.direct_start_goal_satisfied ||
+                    current_query_good(task, true)) {
 	                prepared[task_offset].skipped = true;
 	                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
 	                batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
@@ -14947,6 +17423,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                    batch_context.diagnostics().set_value(task_key(task.index, "skipped_by_hipac_online"),
 	                                                          1.0);
 	                }
+                    if (task.direct_start_goal_satisfied) {
+                        batch_context.diagnostics().set_value(
+                            task_key(task.index, "skipped_by_direct_start_goal_segment"),
+                            1.0);
+                    }
 	                continue;
 	            }
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
@@ -14963,6 +17444,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 batch_context.diagnostics().set_value(
                     task_key(task.index, "partition_path_first"),
                     1.0);
+            }
+            if (prepared[task_offset].attempts > 0 &&
+                !local_radius_schedule.empty() &&
+                local_radius_append_unrestricted_attempt) {
+                prepared[task_offset].attempts = std::max(
+                    prepared[task_offset].attempts,
+                    static_cast<int>(local_radius_schedule.size()) + 1);
             }
             if (prepared[task_offset].forced) {
                 batch_context.diagnostics().set_value(task_key(task.index, "forced"),
@@ -15131,6 +17619,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     continue;
                 }
             }
+            const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
+            if (fast_direct_added > 0) {
+                added_by_query[task.index] += fast_direct_added;
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "fast_direct_segment_after_rrt"),
+                    1.0);
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "added"),
+                    static_cast<double>(added_by_query[task.index]));
+                batch_context.diagnostics().set_value(
+                    task_key(task.index, "total_ms"),
+                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+                continue;
+            }
             const auto pave_t0 = Clock::now();
             bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
             const double pave_ms = elapsed_ms_since(pave_t0);
@@ -15153,7 +17655,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	    for (auto& task : tasks) {
 	        const auto task_t0 = Clock::now();
 	        const auto probe_t0 = Clock::now();
-	        if (task.hipac_online_satisfied || current_query_good(task, true)) {
+	        if (task.hipac_online_satisfied ||
+                task.direct_start_goal_satisfied ||
+                current_query_good(task, true)) {
 	            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
 	            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
 	                                                      elapsed_ms_since(probe_t0));
@@ -15163,6 +17667,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                batch_context.diagnostics().set_value(task_key(task.index, "skipped_by_hipac_online"),
 	                                                      1.0);
 	            }
+                if (task.direct_start_goal_satisfied) {
+                    batch_context.diagnostics().set_value(
+                        task_key(task.index, "skipped_by_direct_start_goal_segment"),
+                        1.0);
+                }
 	            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
 	                                                  elapsed_ms_since(task_t0));
 	            continue;
@@ -15174,10 +17683,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const int attempts = forced_task
             ? std::max(std::max(1, task.attempts), forced_query_attempts)
             : std::max(1, task.attempts);
-        const int effective_attempts =
+        int effective_attempts =
             task.waypoint_path_from_partition_query && !task.waypoint_path.empty()
                 ? 0
                 : attempts;
+        if (effective_attempts > 0 &&
+            !local_radius_schedule.empty() &&
+            local_radius_append_unrestricted_attempt) {
+            effective_attempts = std::max(
+                effective_attempts,
+                static_cast<int>(local_radius_schedule.size()) + 1);
+        }
         if (forced_task) {
             batch_context.diagnostics().set_value(task_key(task.index, "forced"),
                                                   1.0);
@@ -15452,6 +17968,18 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                       elapsed_ms_since(task_t0));
                 continue;
             }
+        }
+        const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
+        if (fast_direct_added > 0) {
+            added_by_query[task.index] += fast_direct_added;
+            batch_context.diagnostics().set_value(
+                task_key(task.index, "fast_direct_segment_after_rrt"),
+                1.0);
+            batch_context.diagnostics().set_value(task_key(task.index, "added"),
+                                                  static_cast<double>(added_by_query[task.index]));
+            batch_context.diagnostics().set_value(task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
+            continue;
         }
         if (segment_only_task) {
             const int source_box_id = locate_box_partition_first(task.start,
@@ -17420,9 +19948,10 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
 
         ObbPortalValidationStats obb_stats;
         const double obb_safety_epsilon =
-            std::max(config_.query.audit_collision_tolerance,
-                     std::max(0.0, last_adaptive_partition_config_.hipac_transition_obb_safety_epsilon));
+            std::max(0.0, last_adaptive_partition_config_.hipac_transition_obb_safety_epsilon);
         diagnostics[prefix + ".obb_zonotope_attempts"] += 1.0;
+        Eigen::VectorXd obb_center;
+        Eigen::MatrixXd obb_generators;
         const bool obb_ok = validate_obb_zonotope_portal(
             robot_,
             scene_,
@@ -17431,7 +19960,12 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
             last_adaptive_partition_config_.hipac_transition_obb_lateral_radius,
             last_adaptive_partition_config_.hipac_transition_obb_longitudinal_margin,
             obb_safety_epsilon,
-            obb_stats);
+            last_adaptive_partition_config_.segment_edge_obb_grow_iterations,
+            last_adaptive_partition_config_.segment_edge_obb_binary_iterations,
+            last_adaptive_partition_config_.obb_max_validations_per_window,
+            obb_stats,
+            &obb_center,
+            &obb_generators);
         diagnostics[prefix + ".obb_zonotope_variables"] =
             static_cast<double>(obb_stats.variables);
         diagnostics[prefix + ".obb_zonotope_active_links"] =
@@ -17469,7 +20003,10 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
                 std::move(obb_path),
                 SegmentEdgeValidation::ConservativeObbZonotope,
                 -1,
-                query_index);
+                query_index,
+                &obb_center,
+                &obb_generators,
+                SegmentEdgeType::TransitionOBBCorridor);
             if (edge_id >= 0) {
                 const std::string edge_prefix = prefix + ".partition_native_obb_zonotope_portal";
                 sync_adaptive_partition_segment_edges(out_profile, edge_prefix.c_str());
@@ -17964,6 +20501,477 @@ int RBFPlanningForest::add_segment_edge_partition_first(
     BuildProfile* profile,
     const char* diagnostic_prefix) {
     const bool use_partition_overlay = partition_native_mode();
+    BuildProfile* out_profile = profile != nullptr ? profile : &last_build_;
+    const std::string prefix =
+        (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
+            ? std::string(diagnostic_prefix)
+            : std::string("partition_segment_edge");
+    auto& diagnostics = out_profile->diagnostics;
+
+    const bool path_is_rrt_bridge_like =
+        type == SegmentEdgeType::RRTConnector || waypoints.size() > 2U;
+    std::vector<Eigen::VectorXd> partial_obb_centers;
+    std::vector<Eigen::MatrixXd> partial_obb_generators;
+    double partial_obb_covered_length = 0.0;
+    std::string partial_obb_diag;
+    const bool eligible_for_obb_cover =
+        (last_adaptive_partition_config_.segment_edge_obb_cover ||
+         (path_is_rrt_bridge_like && last_adaptive_partition_config_.rrt_bridge_obb_cover)) &&
+        validation == SegmentEdgeValidation::CollisionChecked &&
+        counts_as_segment_edge(type) &&
+        waypoints.size() >= 2U &&
+        oracle_ != nullptr;
+    const bool strict_obb_bridge_cover =
+        eligible_for_obb_cover && last_adaptive_partition_config_.strict_obb_bridge_cover;
+    const bool obb_metadata_only =
+        eligible_for_obb_cover &&
+        !strict_obb_bridge_cover &&
+        env_int_or_default("RBF_OBB_METADATA_ONLY", 0) != 0;
+    const bool obb_metadata_require_cover =
+        obb_metadata_only &&
+        env_int_or_default("RBF_OBB_METADATA_ONLY_REQUIRE_COVER", 0) != 0;
+    if (eligible_for_obb_cover) {
+        const bool greedy_bridge_cover =
+            path_is_rrt_bridge_like &&
+            (last_adaptive_partition_config_.rrt_bridge_obb_cover ||
+             last_adaptive_partition_config_.segment_edge_obb_cover);
+        const std::string obb_diag = greedy_bridge_cover
+            ? std::string("rrt_bridge_obb_cover")
+            : std::string("segment_obb_cover");
+        diagnostics[prefix + "." + obb_diag + "_attempts"] += 1.0;
+        const BoxNode* source_ptr = find_box_by_id(boxes_, source_box_id);
+        const BoxNode* target_ptr = find_box_by_id(boxes_, target_box_id);
+        if (source_ptr != nullptr && target_ptr != nullptr) {
+            std::optional<CollisionChecker> obb_audit_checker;
+            auto audit_obb_edge_path = [&](const std::vector<Eigen::VectorXd>& candidate_path,
+                                           const char* label) -> bool {
+                diagnostics[prefix + "." + obb_diag + "_centerline_audit_attempts"] += 1.0;
+                if (candidate_path.size() < 2U) {
+                    diagnostics[prefix + "." + obb_diag + "_centerline_audit_empty"] += 1.0;
+                    return false;
+                }
+                const auto audit_t0 = std::chrono::steady_clock::now();
+                if (!obb_audit_checker.has_value()) {
+                    obb_audit_checker.emplace(make_audit_checker(audit_robot_, scene_, config_.query));
+                }
+                const PathAuditCheck centerline_audit =
+                    audit_waypoint_path(candidate_path,
+                                        *obb_audit_checker,
+                                        config_.query.audit_resolution,
+                                        config_.query.audit_segment_step);
+                diagnostics[prefix + "." + obb_diag + "_centerline_audit_ms"] +=
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - audit_t0).count();
+                if (!centerline_audit.passed) {
+                    diagnostics[prefix + "." + obb_diag + "_centerline_audit_rejects"] += 1.0;
+                    diagnostics[prefix + "." + obb_diag + "_centerline_audit_failed_segment"] =
+                        static_cast<double>(centerline_audit.failed_segment_index);
+                    if (label != nullptr && label[0] != '\0') {
+                        diagnostics[prefix + "." + obb_diag + "_centerline_audit_reject_" +
+                                    std::string(label)] += 1.0;
+                    }
+                    return false;
+                }
+                diagnostics[prefix + "." + obb_diag + "_centerline_audit_pass"] += 1.0;
+                return true;
+            };
+            auto obb_t0 = std::chrono::steady_clock::now();
+            const double obb_safety_epsilon =
+                std::max(0.0, last_adaptive_partition_config_.segment_edge_obb_safety_epsilon);
+            std::vector<Eigen::VectorXd> obb_centerline;
+            ObbPathCoverResult cover = cover_segment_or_bridge_path_with_obbs(
+                robot_,
+                scene_,
+                oracle_->planning_intervals(),
+                waypoints,
+                greedy_bridge_cover,
+                last_adaptive_partition_config_.segment_edge_obb_split_depth,
+                last_adaptive_partition_config_.obb_max_window_segments,
+                last_adaptive_partition_config_.segment_edge_obb_lateral_radius,
+                last_adaptive_partition_config_.segment_edge_obb_longitudinal_margin,
+                obb_safety_epsilon,
+                last_adaptive_partition_config_.segment_edge_obb_grow_iterations,
+                last_adaptive_partition_config_.segment_edge_obb_binary_iterations,
+                last_adaptive_partition_config_.obb_max_validations_per_window,
+                obb_centerline);
+            const ObbPortalValidationStats& obb_stats = cover.stats;
+            diagnostics[prefix + "." + obb_diag + "_windows_attempted"] +=
+                static_cast<double>(cover.windows_attempted);
+            diagnostics[prefix + "." + obb_diag + "_windows_success"] +=
+                static_cast<double>(cover.windows_success);
+            diagnostics[prefix + "." + obb_diag + "_regions"] +=
+                static_cast<double>(cover.regions.size());
+            diagnostics[prefix + "." + obb_diag + "_recursive_splits"] +=
+                static_cast<double>(cover.recursive_splits);
+            diagnostics[prefix + "." + obb_diag + "_failed_leaf_windows"] +=
+                static_cast<double>(cover.failed_leaf_windows);
+            diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_sum"] +=
+                cover.failed_leaf_length_sum;
+            diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_max"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_max"],
+                         cover.failed_leaf_length_max);
+            if ((cover.has_first_failed_leaf || cover.failed_leaf_windows > 0) &&
+                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_recorded"] <= 0.0) {
+                const Eigen::VectorXd& failed_a =
+                    cover.has_first_failed_leaf ? cover.first_failed_leaf_a : waypoints.front();
+                const Eigen::VectorXd& failed_b =
+                    cover.has_first_failed_leaf ? cover.first_failed_leaf_b : waypoints.back();
+                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_recorded"] = 1.0;
+                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_length"] =
+                    (failed_b - failed_a).norm();
+                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_exact"] =
+                    cover.has_first_failed_leaf ? 1.0 : 0.0;
+                const int dims = static_cast<int>(failed_a.size());
+                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_dims"] =
+                    static_cast<double>(dims);
+                for (int dim = 0; dim < dims; ++dim) {
+                    diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_a_" + std::to_string(dim)] =
+                        failed_a[dim];
+                    diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_b_" + std::to_string(dim)] =
+                        failed_b[dim];
+                }
+            }
+            diagnostics[prefix + "." + obb_diag + "_candidates"] +=
+                static_cast<double>(obb_stats.candidates);
+            diagnostics[prefix + "." + obb_diag + "_validations"] +=
+                static_cast<double>(obb_stats.validations);
+            diagnostics[prefix + "." + obb_diag + "_valid_candidates"] +=
+                static_cast<double>(obb_stats.valid_candidates);
+            diagnostics[prefix + "." + obb_diag + "_grow_attempts"] +=
+                static_cast<double>(obb_stats.grow_attempts);
+            diagnostics[prefix + "." + obb_diag + "_joint_limit_rejects"] +=
+                static_cast<double>(obb_stats.joint_limit_rejects);
+            diagnostics[prefix + "." + obb_diag + "_gjk_tests"] +=
+                static_cast<double>(obb_stats.gjk_tests);
+            diagnostics[prefix + "." + obb_diag + "_maybe_pairs"] +=
+                static_cast<double>(obb_stats.maybe_pairs);
+            diagnostics[prefix + "." + obb_diag + "_sampled_support_attempts"] +=
+                static_cast<double>(obb_stats.sampled_support_attempts);
+            diagnostics[prefix + "." + obb_diag + "_sampled_support_success"] +=
+                static_cast<double>(obb_stats.sampled_support_success);
+            diagnostics[prefix + "." + obb_diag + "_sampled_support_fail"] +=
+                static_cast<double>(obb_stats.sampled_support_fail);
+            diagnostics[prefix + "." + obb_diag + "_sampled_support_samples"] +=
+                static_cast<double>(obb_stats.sampled_support_samples);
+            diagnostics[prefix + "." + obb_diag + "_sampled_support_error_radius"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_sampled_support_error_radius"],
+                         obb_stats.sampled_support_error_radius);
+            diagnostics[prefix + "." + obb_diag + "_clearance_support_attempts"] +=
+                static_cast<double>(obb_stats.clearance_support_attempts);
+            diagnostics[prefix + "." + obb_diag + "_clearance_support_success"] +=
+                static_cast<double>(obb_stats.clearance_support_success);
+            diagnostics[prefix + "." + obb_diag + "_clearance_support_fail"] +=
+                static_cast<double>(obb_stats.clearance_support_fail);
+            diagnostics[prefix + "." + obb_diag + "_clearance_support_samples"] +=
+                static_cast<double>(obb_stats.clearance_support_samples);
+            diagnostics[prefix + "." + obb_diag + "_clearance_support_error_radius"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_clearance_support_error_radius"],
+                         obb_stats.clearance_support_error_radius);
+            if (std::isfinite(obb_stats.clearance_support_min_margin)) {
+                const std::string margin_key =
+                    prefix + "." + obb_diag + "_clearance_support_min_margin";
+                const auto margin_it = diagnostics.find(margin_key);
+                diagnostics[margin_key] =
+                    margin_it == diagnostics.end()
+                        ? obb_stats.clearance_support_min_margin
+                        : std::min(margin_it->second, obb_stats.clearance_support_min_margin);
+            }
+            diagnostics[prefix + "." + obb_diag + "_longitudinal_radius"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_longitudinal_radius"],
+                         obb_stats.longitudinal_radius);
+            diagnostics[prefix + "." + obb_diag + "_lateral_radius"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_lateral_radius"],
+                         obb_stats.lateral_radius);
+            diagnostics[prefix + "." + obb_diag + "_region_volume_sum"] +=
+                obb_stats.region_volume_sum;
+            diagnostics[prefix + "." + obb_diag + "_region_volume_max"] =
+                std::max(diagnostics[prefix + "." + obb_diag + "_region_volume_max"],
+                         obb_stats.region_volume_max);
+            diagnostics[prefix + "." + obb_diag + "_region_log_volume_sum"] +=
+                obb_stats.region_log_volume_sum;
+            diagnostics[prefix + "." + obb_diag + "_region_volume_count"] +=
+                static_cast<double>(obb_stats.region_volume_count);
+            diagnostics[prefix + "." + obb_diag + "_ms"] +=
+                std::chrono::duration<double, std::milli>(
+                    std::chrono::steady_clock::now() - obb_t0).count();
+            auto try_clearance_retry_obb_edge = [&]() -> int {
+                if (!greedy_bridge_cover || !strict_obb_bridge_cover || waypoints.size() < 2U) {
+                    return -1;
+                }
+                const int retry_attempts =
+                    std::max(0, env_int_or_default("RBF_OBB_CLEARANCE_RETRY_ATTEMPTS", 0));
+                if (retry_attempts <= 0) {
+                    return -1;
+                }
+                std::vector<double> clearances =
+                    env_double_list_or_empty("RBF_OBB_CLEARANCE_RETRY_VALUES");
+                if (clearances.empty()) {
+                    const double fallback_clearance =
+                        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+                    if (fallback_clearance > 0.0) {
+                        clearances.push_back(fallback_clearance);
+                    }
+                }
+                if (clearances.empty()) {
+                    return -1;
+                }
+                CollisionChecker final_checker = make_audit_checker(audit_robot_, scene_, config_.query);
+                RRTConnectConfig retry_config = config_.connector.rrt;
+                retry_config.segment_resolution =
+                    std::max(retry_config.segment_resolution, config_.query.audit_resolution);
+                retry_config.segment_step = config_.query.audit_segment_step;
+                retry_config.max_iters = std::max(
+                    1,
+                    env_int_or_default("RBF_OBB_CLEARANCE_RETRY_ITERS",
+                                       std::max(1, retry_config.max_iters)));
+                retry_config.timeout_ms = std::max(
+                    0.0,
+                    env_double_or_default("RBF_OBB_CLEARANCE_RETRY_TIMEOUT_MS",
+                                          retry_config.timeout_ms));
+                diagnostics[prefix + "." + obb_diag + "_clearance_retry_attempt_budget"] +=
+                    static_cast<double>(retry_attempts);
+                for (int attempt = 0; attempt < retry_attempts; ++attempt) {
+                    const double clearance =
+                        std::max(0.0, clearances[static_cast<std::size_t>(attempt) %
+                                                  clearances.size()]);
+                    if (!(clearance > 0.0)) {
+                        continue;
+                    }
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_attempts"] += 1.0;
+                    Robot clearance_robot = make_sbf_clearance_robot(audit_robot_, clearance);
+                    CollisionChecker clearance_checker(clearance_robot, scene_);
+                    const int retry_seed = derived_planner_seed(
+                        config_.grower.rng_seed,
+                        kSeedQueryBridgeOffset,
+                        attempt,
+                        query_index < 0 ? 0 : query_index,
+                        17017);
+                    std::vector<Eigen::VectorXd> retry_path = rrt_connect(
+                        waypoints.front(),
+                        waypoints.back(),
+                        clearance_checker,
+                        clearance_robot,
+                        retry_config,
+                        retry_seed);
+                    if (retry_path.empty()) {
+                        diagnostics[prefix + "." + obb_diag + "_clearance_retry_no_path"] += 1.0;
+                        continue;
+                    }
+                    const PathAuditCheck retry_audit =
+                        audit_waypoint_path(retry_path,
+                                            final_checker,
+                                            config_.query.audit_resolution,
+                                            config_.query.audit_segment_step);
+                    if (!retry_audit.passed) {
+                        diagnostics[prefix + "." + obb_diag + "_clearance_retry_audit_fail"] += 1.0;
+                        continue;
+                    }
+                    std::vector<Eigen::VectorXd> retry_centerline;
+                    ObbPathCoverResult retry_cover = cover_segment_or_bridge_path_with_obbs(
+                        robot_,
+                        scene_,
+                        oracle_->planning_intervals(),
+                        retry_path,
+                        true,
+                        last_adaptive_partition_config_.segment_edge_obb_split_depth,
+                        last_adaptive_partition_config_.obb_max_window_segments,
+                        last_adaptive_partition_config_.segment_edge_obb_lateral_radius,
+                        last_adaptive_partition_config_.segment_edge_obb_longitudinal_margin,
+                        obb_safety_epsilon,
+                        last_adaptive_partition_config_.segment_edge_obb_grow_iterations,
+                        last_adaptive_partition_config_.segment_edge_obb_binary_iterations,
+                        last_adaptive_partition_config_.obb_max_validations_per_window,
+                        retry_centerline);
+                    obb_accumulate_stats(cover.stats, retry_cover.stats);
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_windows_attempted"] +=
+                        static_cast<double>(retry_cover.windows_attempted);
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_windows_success"] +=
+                        static_cast<double>(retry_cover.windows_success);
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_failed_leaf_windows"] +=
+                        static_cast<double>(retry_cover.failed_leaf_windows);
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_failed_leaf_length_max"] =
+                        std::max(diagnostics[prefix + "." + obb_diag +
+                                             "_clearance_retry_failed_leaf_length_max"],
+                                 retry_cover.failed_leaf_length_max);
+                    if (!retry_cover.success || retry_cover.regions.empty()) {
+                        diagnostics[prefix + "." + obb_diag + "_clearance_retry_cover_fail"] += 1.0;
+                        continue;
+                    }
+                    std::vector<Eigen::VectorXd> obb_centers;
+                    std::vector<Eigen::MatrixXd> obb_generators;
+                    obb_centers.reserve(retry_cover.regions.size());
+                    obb_generators.reserve(retry_cover.regions.size());
+                    for (const auto& region : retry_cover.regions) {
+                        obb_centers.push_back(region.center);
+                        obb_generators.push_back(region.generators);
+                    }
+                    const std::vector<Eigen::VectorXd>& retry_edge_path =
+                        retry_centerline.empty() ? retry_path : retry_centerline;
+                    if (!audit_obb_edge_path(retry_edge_path, "clearance_retry")) {
+                        diagnostics[prefix + "." + obb_diag +
+                                    "_clearance_retry_centerline_audit_fail"] += 1.0;
+                        continue;
+                    }
+                    const int retry_edge_id = append_certified_portal_corridor_edge(
+                        segment_edges_,
+                        *source_ptr,
+                        *target_ptr,
+                        retry_edge_path,
+                        SegmentEdgeValidation::ConservativeObbZonotope,
+                        -1,
+                        query_index,
+                        nullptr,
+                        nullptr,
+                        SegmentEdgeType::RRTBridgeOBBCorridor,
+                        &obb_centers,
+                        &obb_generators);
+                    if (retry_edge_id >= 0) {
+                        diagnostics[prefix + "." + obb_diag + "_clearance_retry_success"] += 1.0;
+                        diagnostics[prefix + "." + obb_diag + "_success"] += 1.0;
+                        diagnostics[prefix + "." + obb_diag + "_replaced_segments"] +=
+                            static_cast<double>(std::max<std::size_t>(1U, retry_path.size() - 1U));
+                        if (use_partition_overlay) {
+                            sync_adaptive_partition_segment_edges(out_profile, prefix.c_str());
+                        } else {
+                            auto append_unique = [&](int a, int b) {
+                                auto& neighbors = adjacency_[a];
+                                if (std::find(neighbors.begin(), neighbors.end(), b) == neighbors.end()) {
+                                    neighbors.push_back(b);
+                                }
+                            };
+                            append_unique(source_box_id, target_box_id);
+                            append_unique(target_box_id, source_box_id);
+                            invalidate_query_cache();
+                        }
+                        return retry_edge_id;
+                    }
+                    diagnostics[prefix + "." + obb_diag + "_clearance_retry_edge_fail"] += 1.0;
+                }
+                return -1;
+            };
+            if (cover.success && !cover.regions.empty()) {
+                std::vector<Eigen::VectorXd> obb_centers;
+                std::vector<Eigen::MatrixXd> obb_generators;
+                obb_centers.reserve(cover.regions.size());
+                obb_generators.reserve(cover.regions.size());
+                for (const auto& region : cover.regions) {
+                    obb_centers.push_back(region.center);
+                    obb_generators.push_back(region.generators);
+                }
+                const SegmentEdgeType obb_edge_type = greedy_bridge_cover
+                    ? SegmentEdgeType::RRTBridgeOBBCorridor
+                    : SegmentEdgeType::SegmentOBBCorridor;
+                if (obb_metadata_only) {
+                    partial_obb_diag = obb_diag;
+                    partial_obb_covered_length = cover.covered_length;
+                    partial_obb_centers = std::move(obb_centers);
+                    partial_obb_generators = std::move(obb_generators);
+                    diagnostics[prefix + "." + obb_diag + "_success"] += 1.0;
+                    diagnostics[prefix + "." + obb_diag + "_metadata_only"] += 1.0;
+                    diagnostics[prefix + "." + obb_diag + "_metadata_only_segments"] +=
+                        static_cast<double>(std::max<std::size_t>(1U, waypoints.size() - 1U));
+                } else {
+                const std::vector<Eigen::VectorXd>& obb_edge_path =
+                    obb_centerline.empty() ? waypoints : obb_centerline;
+                if (!audit_obb_edge_path(obb_edge_path, "primary")) {
+                    diagnostics[prefix + "." + obb_diag + "_centerline_audit_fail"] += 1.0;
+                    if (strict_obb_bridge_cover) {
+                        const int retry_edge_id = try_clearance_retry_obb_edge();
+                        if (retry_edge_id >= 0) {
+                            return retry_edge_id;
+                        }
+                        diagnostics[prefix + "." + obb_diag + "_strict_reject"] += 1.0;
+                        return -1;
+                    }
+                } else {
+                const int obb_edge_id = append_certified_portal_corridor_edge(
+                    segment_edges_,
+                    *source_ptr,
+                    *target_ptr,
+                    obb_edge_path,
+                    SegmentEdgeValidation::ConservativeObbZonotope,
+                    -1,
+                    query_index,
+                    nullptr,
+                    nullptr,
+                    obb_edge_type,
+                    &obb_centers,
+                    &obb_generators);
+                if (obb_edge_id >= 0) {
+                    diagnostics[prefix + "." + obb_diag + "_success"] += 1.0;
+                    diagnostics[prefix + "." + obb_diag + "_replaced_segments"] +=
+                        static_cast<double>(std::max<std::size_t>(1U, waypoints.size() - 1U));
+                    if (use_partition_overlay) {
+                        sync_adaptive_partition_segment_edges(out_profile, prefix.c_str());
+                    } else {
+                        auto append_unique = [&](int a, int b) {
+                            auto& neighbors = adjacency_[a];
+                            if (std::find(neighbors.begin(), neighbors.end(), b) == neighbors.end()) {
+                                neighbors.push_back(b);
+                            }
+                        };
+                        append_unique(source_box_id, target_box_id);
+                        append_unique(target_box_id, source_box_id);
+                        invalidate_query_cache();
+                    }
+                    return obb_edge_id;
+                }
+                diagnostics[prefix + "." + obb_diag + "_edge_fail"] += 1.0;
+                if (strict_obb_bridge_cover) {
+                    const int retry_edge_id = try_clearance_retry_obb_edge();
+                    if (retry_edge_id >= 0) {
+                        return retry_edge_id;
+                    }
+                    diagnostics[prefix + "." + obb_diag + "_strict_reject"] += 1.0;
+                    return -1;
+                }
+                }
+                }
+            } else {
+                diagnostics[prefix + "." + obb_diag + "_fail"] += 1.0;
+                if (obb_metadata_require_cover) {
+                    diagnostics[prefix + "." + obb_diag +
+                                "_metadata_require_cover_reject"] += 1.0;
+                    return -1;
+                }
+                if (!cover.regions.empty() && cover.covered_length > 0.0) {
+                    partial_obb_diag = obb_diag;
+                    partial_obb_covered_length = cover.covered_length;
+                    partial_obb_centers.reserve(cover.regions.size());
+                    partial_obb_generators.reserve(cover.regions.size());
+                    for (const auto& region : cover.regions) {
+                        partial_obb_centers.push_back(region.center);
+                        partial_obb_generators.push_back(region.generators);
+                    }
+                    diagnostics[prefix + "." + obb_diag + "_partial_edges"] += 1.0;
+                    diagnostics[prefix + "." + obb_diag + "_partial_regions"] +=
+                        static_cast<double>(partial_obb_centers.size());
+                    diagnostics[prefix + "." + obb_diag + "_partial_covered_length"] +=
+                        partial_obb_covered_length;
+                }
+                if (strict_obb_bridge_cover) {
+                    const int retry_edge_id = try_clearance_retry_obb_edge();
+                    if (retry_edge_id >= 0) {
+                        return retry_edge_id;
+                    }
+                    diagnostics[prefix + "." + obb_diag + "_strict_reject"] += 1.0;
+                    return -1;
+                }
+            }
+        } else {
+            diagnostics[prefix + "." + obb_diag + "_missing_box"] += 1.0;
+            if (obb_metadata_require_cover) {
+                diagnostics[prefix + "." + obb_diag +
+                            "_metadata_require_cover_reject"] += 1.0;
+                return -1;
+            }
+            if (strict_obb_bridge_cover) {
+                diagnostics[prefix + "." + obb_diag + "_strict_reject"] += 1.0;
+                return -1;
+            }
+        }
+    }
+
     const int edge_id = use_partition_overlay
         ? append_segment_edge(segment_edges_,
                               source_box_id,
@@ -17987,10 +20995,24 @@ int RBFPlanningForest::add_segment_edge_partition_first(
     if (edge_id < 0) {
         return -1;
     }
+    if (!partial_obb_centers.empty() && partial_obb_centers.size() == partial_obb_generators.size()) {
+        auto edge_it = std::find_if(segment_edges_.begin(),
+                                    segment_edges_.end(),
+                                    [&](const SegmentEdge& edge) {
+                                        return edge.id == edge_id;
+                                    });
+        if (edge_it != segment_edges_.end()) {
+            edge_it->obb_centers = std::move(partial_obb_centers);
+            edge_it->obb_generators = std::move(partial_obb_generators);
+            edge_it->obb_covered_length =
+                std::min(edge_it->length, std::max(0.0, partial_obb_covered_length));
+            if (!partial_obb_diag.empty()) {
+                diagnostics[prefix + "." + partial_obb_diag + "_partial_committed"] += 1.0;
+            }
+        }
+    }
     if (use_partition_overlay) {
-        sync_adaptive_partition_segment_edges(profile != nullptr ? profile : &last_build_,
-                                              diagnostic_prefix != nullptr ? diagnostic_prefix
-                                                                           : "partition_segment_edge");
+        sync_adaptive_partition_segment_edges(out_profile, prefix.c_str());
     } else {
         invalidate_query_cache();
     }

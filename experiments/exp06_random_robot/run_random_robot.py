@@ -65,6 +65,10 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     ROBOT_LECTDB_CACHE_ROOT,
@@ -339,15 +343,33 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_direct_sample_step": "--query-bridge-direct-sample-step",
         "query_bridge_direct_segment_after_rrt": "--query-bridge-direct-segment-after-rrt",
         "query_bridge_direct_segment_after_rrt_min_length": "--query-bridge-direct-segment-after-rrt-min-length",
+        "query_bridge_fast_direct_segment_after_rrt": "--query-bridge-fast-direct-segment-after-rrt",
+        "query_bridge_fast_direct_random_shortcut_iters": "--query-bridge-fast-direct-random-shortcut-iters",
+        "query_bridge_force_selected": "--query-bridge-force-selected",
+        "query_endpoint_point_anchor": "--query-endpoint-point-anchor",
         "query_bridge_full_residual_overlay_when_connected": "--query-bridge-full-residual-overlay-when-connected",
         "query_bridge_segment_only_indices": "--query-bridge-segment-only-indices",
+        "query_bridge_accept_segment_fraction": "--query-bridge-accept-segment-fraction",
+        "query_bridge_accept_path_ratio": "--query-bridge-accept-path-ratio",
+        "query_bridge_accept_path_additive": "--query-bridge-accept-path-additive",
         "query_bridge_forced_attempts": "--query-bridge-forced-attempts",
+        "query_bridge_attempt_offset": "--query-bridge-attempt-offset",
         "query_bridge_rrt_fixed_iters": "--query-bridge-rrt-fixed-iters",
         "query_bridge_local_radius_schedule": "--query-bridge-local-radius-schedule",
         "query_bridge_rrt_optimize_after_first_iters": "--query-bridge-rrt-optimize-after-first-iters",
         "query_bridge_attempt_fallback_paths": "--query-bridge-attempt-fallback-paths",
+        "query_bridge_hybridize_attempt_paths": "--query-bridge-hybridize-attempt-paths",
+        "query_bridge_hybrid_max_paths": "--query-bridge-hybrid-max-paths",
+        "query_bridge_hybrid_max_vertices": "--query-bridge-hybrid-max-vertices",
+        "query_bridge_hybrid_max_cross_checks": "--query-bridge-hybrid-max-cross-checks",
+        "query_bridge_parallel_rrt_early_stop": "--query-bridge-parallel-rrt-early-stop",
+        "query_bridge_parallel_rrt_early_stop_min_successes": "--query-bridge-parallel-rrt-early-stop-min-successes",
+        "query_bridge_parallel_rrt_early_stop_ratio": "--query-bridge-parallel-rrt-early-stop-ratio",
+        "query_bridge_parallel_rrt_early_stop_additive": "--query-bridge-parallel-rrt-early-stop-additive",
         "query_bridge_no_path_retry_attempts": "--query-bridge-no-path-retry-attempts",
         "query_bridge_no_path_retry_stop_on_first_success": "--query-bridge-no-path-retry-stop-on-first-success",
+        "query_bridge_no_path_retry_budget_iters": "--query-bridge-no-path-retry-budget-iters",
+        "query_bridge_no_path_retry_budget_attempts": "--query-bridge-no-path-retry-budget-attempts",
         "query_bridge_sequential_reuse": "--query-bridge-sequential-reuse",
         "query_bridge_scene_reusable_edges": "--query-bridge-scene-reusable-edges",
         "query_bridge_direct_max_length": "--query-bridge-direct-max-length",
@@ -357,9 +379,23 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_waypoint_quality_max_ratio": "--query-bridge-waypoint-quality-max-ratio",
         "query_bridge_waypoint_quality_max_additive": "--query-bridge-waypoint-quality-max-additive",
         "query_bridge_to_main_island": "--query-bridge-to-main-island",
+        "query_bridge_failure_fallback_to_main": "--query-bridge-failure-fallback-to-main",
         "hipac_improved_leaf_sweep": "--hipac-improved-leaf-sweep",
         "hipac_online_connectivity": "--hipac-online-connectivity",
         "hipac_online_prebridge_portal": "--hipac-online-prebridge-portal",
+        "segment_edge_obb_cover": "--segment-edge-obb-cover",
+        "rrt_bridge_obb_cover": "--rrt-bridge-obb-cover",
+        "strict_obb_bridge_cover": "--strict-obb-bridge-cover",
+        "segment_edge_obb_metadata_only": "--segment-edge-obb-metadata-only",
+        "segment_edge_obb_metadata_require_cover": "--segment-edge-obb-metadata-require-cover",
+        "segment_edge_obb_lateral_radius": "--segment-edge-obb-lateral-radius",
+        "segment_edge_obb_grow_iterations": "--segment-edge-obb-grow-iterations",
+        "segment_edge_obb_binary_iterations": "--segment-edge-obb-binary-iterations",
+        "segment_edge_obb_split_depth": "--segment-edge-obb-split-depth",
+        "obb_max_window_segments": "--obb-max-window-segments",
+        "obb_max_validations_per_window": "--obb-max-validations-per-window",
+        "obb_fast_primary_orientation": "--obb-fast-primary-orientation",
+        "obb_fallback_orientations_on_primary_fail": "--obb-fallback-orientations-on-primary-fail",
     }
     for attr, flag in field_flags.items():
         if attr == "leaf_max_depth":
@@ -367,6 +403,25 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         if attr in settings:
             set_if_implicit(attr, flag, settings[attr])
     return tuned
+
+
+def apply_exp06_rbf_profiles(args: argparse.Namespace,
+                             robot_name: str,
+                             difficulty: str) -> argparse.Namespace:
+    """Apply generic coverage defaults, then more specific robot tuning.
+
+    The offline coverage profile is intentionally broad.  Exp.6 registered
+    rows also carry robot/difficulty-specific online bridge settings, which
+    must win over broad defaults when both profiles are active.
+    """
+    tuned = copy.copy(args)
+    apply_offline_coverage_profile(tuned, getattr(args, "_argv", []))
+    return apply_exp06_robot_tuned_rbf_profile(
+        tuned,
+        robot_name,
+        difficulty,
+        getattr(args, "_argv", []),
+    )
 
 
 def normalize_adaptive_depth_cap(args: argparse.Namespace, argv: list[str]) -> None:
@@ -520,6 +575,10 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["box_transition_line_deviation_penalty"] = float(args.box_transition_line_deviation_penalty)
     profile["query_bridge"]["foreign_edge_cost_penalty"] = float(args.query_foreign_edge_cost_penalty)
     profile["query_bridge"]["query_bridge_edge_cost_penalty"] = float(args.query_bridge_edge_cost_penalty)
+    profile["query_bridge"]["force_selected"] = bool(args.query_bridge_force_selected)
+    profile["query_bridge"]["accept_segment_fraction"] = float(args.query_bridge_accept_segment_fraction)
+    profile["query_bridge"]["accept_path_ratio"] = float(args.query_bridge_accept_path_ratio)
+    profile["query_bridge"]["accept_path_additive"] = float(args.query_bridge_accept_path_additive)
     profile["query_bridge"]["forced_attempts"] = int(args.query_bridge_forced_attempts)
     profile["query_bridge"]["attempt_offset"] = int(args.query_bridge_attempt_offset)
     profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
@@ -529,6 +588,10 @@ def effective_rbf_profile(args: argparse.Namespace,
         args.query_bridge_rrt_optimize_after_first_iters
     )
     profile["query_bridge"]["attempt_fallback_paths"] = int(args.query_bridge_attempt_fallback_paths)
+    profile["query_bridge"]["hybridize_attempt_paths"] = bool(args.query_bridge_hybridize_attempt_paths)
+    profile["query_bridge"]["hybrid_max_paths"] = int(args.query_bridge_hybrid_max_paths)
+    profile["query_bridge"]["hybrid_max_vertices"] = int(args.query_bridge_hybrid_max_vertices)
+    profile["query_bridge"]["hybrid_max_cross_checks"] = int(args.query_bridge_hybrid_max_cross_checks)
     profile["query_bridge"]["parallel_rrt_early_stop"] = bool(args.query_bridge_parallel_rrt_early_stop)
     profile["query_bridge"]["parallel_rrt_early_stop_min_successes"] = int(
         args.query_bridge_parallel_rrt_early_stop_min_successes
@@ -543,6 +606,13 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["direct_segment_after_rrt_min_length"] = float(
         args.query_bridge_direct_segment_after_rrt_min_length
     )
+    profile["query_bridge"]["fast_direct_segment_after_rrt"] = bool(
+        args.query_bridge_fast_direct_segment_after_rrt
+    )
+    profile["query_bridge"]["fast_direct_random_shortcut_iters"] = int(
+        args.query_bridge_fast_direct_random_shortcut_iters
+    )
+    profile["query_bridge"]["endpoint_point_anchor"] = bool(args.query_endpoint_point_anchor)
     profile["query_bridge"]["no_path_retry_attempts"] = int(args.query_bridge_no_path_retry_attempts)
     profile["query_bridge"]["no_path_retry_stop_on_first_success"] = bool(
         args.query_bridge_no_path_retry_stop_on_first_success
@@ -573,6 +643,21 @@ def effective_rbf_profile(args: argparse.Namespace,
         "online_prebridge_portal": bool(args.hipac_online_prebridge_portal),
         "online_transition_portal": bool(args.hipac_online_transition_portal),
         "promote_transition_slices": bool(args.hipac_promote_transition_slices),
+    }
+    profile["obb"] = {
+        "segment_edge_cover": bool(args.segment_edge_obb_cover),
+        "rrt_bridge_cover": bool(args.rrt_bridge_obb_cover),
+        "strict_bridge_cover": bool(args.strict_obb_bridge_cover),
+        "lateral_radius": float(args.segment_edge_obb_lateral_radius),
+        "longitudinal_margin": float(args.segment_edge_obb_longitudinal_margin),
+        "safety_epsilon": float(args.segment_edge_obb_safety_epsilon),
+        "grow_iterations": int(args.segment_edge_obb_grow_iterations),
+        "binary_iterations": int(args.segment_edge_obb_binary_iterations),
+        "split_depth": int(args.segment_edge_obb_split_depth),
+        "max_window_segments": int(args.obb_max_window_segments),
+        "max_validations_per_window": int(args.obb_max_validations_per_window),
+        "fast_primary_orientation": bool(args.obb_fast_primary_orientation),
+        "fallback_orientations_on_primary_fail": bool(args.obb_fallback_orientations_on_primary_fail),
     }
     profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
     profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)
@@ -791,6 +876,41 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     )
+    parser.add_argument(
+        "--query-bridge-fast-direct-segment-after-rrt",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
+    parser.add_argument(
+        "--query-bridge-fast-direct-random-shortcut-iters",
+        type=int,
+        default=0,
+    )
+    parser.add_argument(
+        "--query-bridge-hybridize-attempt-paths",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
+    )
+    parser.add_argument(
+        "--query-bridge-hybrid-max-paths",
+        type=int,
+        default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
+    )
+    parser.add_argument(
+        "--query-bridge-hybrid-max-vertices",
+        type=int,
+        default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
+    )
+    parser.add_argument(
+        "--query-bridge-hybrid-max-cross-checks",
+        type=int,
+        default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
+    )
+    parser.add_argument(
+        "--query-endpoint-point-anchor",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument("--query-bridge-no-path-retry-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS)
     parser.add_argument("--query-bridge-no-path-retry-stop-on-first-success",
                         action=argparse.BooleanOptionalAction,
@@ -862,6 +982,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
     parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)
     parser.add_argument("--hipac-transition-obb-safety-epsilon", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--rrt-bridge-obb-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--strict-obb-bridge-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--segment-edge-obb-metadata-only", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--segment-edge-obb-metadata-require-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--segment-edge-obb-lateral-radius", type=float, default=0.01)
+    parser.add_argument("--segment-edge-obb-longitudinal-margin", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-safety-epsilon", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-grow-iterations", type=int, default=5)
+    parser.add_argument("--segment-edge-obb-binary-iterations", type=int, default=5)
+    parser.add_argument("--segment-edge-obb-split-depth", type=int, default=1)
+    parser.add_argument("--obb-max-window-segments", type=int, default=16)
+    parser.add_argument("--obb-max-validations-per-window", type=int, default=96)
+    parser.add_argument("--obb-fast-primary-orientation", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--obb-fallback-orientations-on-primary-fail", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-promote-transition-target-query-indices", default="")
     parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
@@ -1117,13 +1252,7 @@ def simplify_path_if_requested(
 
 
 def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
-    args = apply_exp06_robot_tuned_rbf_profile(
-        args,
-        robot_name,
-        difficulty,
-        getattr(args, "_argv", []),
-    )
-    apply_offline_coverage_profile(args, getattr(args, "_argv", []))
+    args = apply_exp06_rbf_profiles(args, robot_name, difficulty)
     scene = scene_for_key(catalog, robot_name, difficulty, scene_seed)
     robot = make_robot(robot_name)
     queries = [
@@ -1341,6 +1470,21 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
             hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
             hipac_transition_obb_safety_epsilon=float(args.hipac_transition_obb_safety_epsilon),
+            segment_edge_obb_cover=bool(args.segment_edge_obb_cover),
+            rrt_bridge_obb_cover=bool(args.rrt_bridge_obb_cover),
+            strict_obb_bridge_cover=bool(args.strict_obb_bridge_cover),
+            segment_edge_obb_metadata_only=bool(args.segment_edge_obb_metadata_only),
+            segment_edge_obb_metadata_require_cover=bool(args.segment_edge_obb_metadata_require_cover),
+            segment_edge_obb_lateral_radius=float(args.segment_edge_obb_lateral_radius),
+            segment_edge_obb_longitudinal_margin=float(args.segment_edge_obb_longitudinal_margin),
+            segment_edge_obb_safety_epsilon=float(args.segment_edge_obb_safety_epsilon),
+            segment_edge_obb_grow_iterations=int(args.segment_edge_obb_grow_iterations),
+            segment_edge_obb_binary_iterations=int(args.segment_edge_obb_binary_iterations),
+            segment_edge_obb_split_depth=int(args.segment_edge_obb_split_depth),
+            obb_max_window_segments=int(args.obb_max_window_segments),
+            obb_max_validations_per_window=int(args.obb_max_validations_per_window),
+            obb_fast_primary_orientation=bool(args.obb_fast_primary_orientation),
+            obb_fallback_orientations_on_primary_fail=bool(args.obb_fallback_orientations_on_primary_fail),
             hipac_promote_transition_slices=hipac_promote_transition_slices,
             hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
             hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
@@ -1403,6 +1547,17 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_direct_segment_after_rrt_min_length=float(
                 args.query_bridge_direct_segment_after_rrt_min_length
             ),
+            query_bridge_fast_direct_segment_after_rrt=bool(
+                args.query_bridge_fast_direct_segment_after_rrt
+            ),
+            query_bridge_fast_direct_random_shortcut_iters=int(
+                args.query_bridge_fast_direct_random_shortcut_iters
+            ),
+            query_bridge_hybridize_attempt_paths=bool(args.query_bridge_hybridize_attempt_paths),
+            query_bridge_hybrid_max_paths=int(args.query_bridge_hybrid_max_paths),
+            query_bridge_hybrid_max_vertices=int(args.query_bridge_hybrid_max_vertices),
+            query_bridge_hybrid_max_cross_checks=int(args.query_bridge_hybrid_max_cross_checks),
+            query_endpoint_point_anchor=bool(args.query_endpoint_point_anchor),
             query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
             query_bridge_no_path_retry_stop_on_first_success=bool(
                 args.query_bridge_no_path_retry_stop_on_first_success
@@ -1466,6 +1621,21 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "hipac_transition_obb_lateral_radius": float(args.hipac_transition_obb_lateral_radius),
             "hipac_transition_obb_longitudinal_margin": float(args.hipac_transition_obb_longitudinal_margin),
             "hipac_transition_obb_safety_epsilon": float(args.hipac_transition_obb_safety_epsilon),
+            "segment_edge_obb_cover": bool(args.segment_edge_obb_cover),
+            "rrt_bridge_obb_cover": bool(args.rrt_bridge_obb_cover),
+            "strict_obb_bridge_cover": bool(args.strict_obb_bridge_cover),
+            "segment_edge_obb_metadata_only": bool(args.segment_edge_obb_metadata_only),
+            "segment_edge_obb_metadata_require_cover": bool(args.segment_edge_obb_metadata_require_cover),
+            "segment_edge_obb_lateral_radius": float(args.segment_edge_obb_lateral_radius),
+            "segment_edge_obb_longitudinal_margin": float(args.segment_edge_obb_longitudinal_margin),
+            "segment_edge_obb_safety_epsilon": float(args.segment_edge_obb_safety_epsilon),
+            "segment_edge_obb_grow_iterations": int(args.segment_edge_obb_grow_iterations),
+            "segment_edge_obb_binary_iterations": int(args.segment_edge_obb_binary_iterations),
+            "segment_edge_obb_split_depth": int(args.segment_edge_obb_split_depth),
+            "obb_max_window_segments": int(args.obb_max_window_segments),
+            "obb_max_validations_per_window": int(args.obb_max_validations_per_window),
+            "obb_fast_primary_orientation": bool(args.obb_fast_primary_orientation),
+            "obb_fallback_orientations_on_primary_fail": bool(args.obb_fallback_orientations_on_primary_fail),
             "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
             "query_bridge_local_sample_assimilation": bool(args.query_bridge_local_sample_assimilation),
             "query_bridge_direct_partition_append_batch_size": int(
@@ -1545,6 +1715,17 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_direct_segment_after_rrt_min_length": float(
                 args.query_bridge_direct_segment_after_rrt_min_length
             ),
+            "query_bridge_fast_direct_segment_after_rrt": bool(
+                args.query_bridge_fast_direct_segment_after_rrt
+            ),
+            "query_bridge_fast_direct_random_shortcut_iters": int(
+                args.query_bridge_fast_direct_random_shortcut_iters
+            ),
+            "query_bridge_hybridize_attempt_paths": bool(args.query_bridge_hybridize_attempt_paths),
+            "query_bridge_hybrid_max_paths": int(args.query_bridge_hybrid_max_paths),
+            "query_bridge_hybrid_max_vertices": int(args.query_bridge_hybrid_max_vertices),
+            "query_bridge_hybrid_max_cross_checks": int(args.query_bridge_hybrid_max_cross_checks),
+            "query_endpoint_point_anchor": bool(args.query_endpoint_point_anchor),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
             "query_bridge_no_path_retry_stop_on_first_success": bool(
                 args.query_bridge_no_path_retry_stop_on_first_success
@@ -2367,6 +2548,31 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     row.get("query_bridge_direct_segment_after_rrt_min_length", math.nan)
                     for row in items
                 ),
+                "query_bridge_fast_direct_segment_after_rrt": median(
+                    1.0 if bool(row.get("query_bridge_fast_direct_segment_after_rrt", False)) else 0.0
+                    for row in items
+                ),
+                "query_bridge_fast_direct_random_shortcut_iters": median(
+                    row.get("query_bridge_fast_direct_random_shortcut_iters", 0.0)
+                    for row in items
+                ),
+                "query_bridge_hybridize_attempt_paths": median(
+                    1.0 if bool(row.get("query_bridge_hybridize_attempt_paths", False)) else 0.0
+                    for row in items
+                ),
+                "query_bridge_hybrid_max_paths": median(
+                    row.get("query_bridge_hybrid_max_paths", math.nan) for row in items
+                ),
+                "query_bridge_hybrid_max_vertices": median(
+                    row.get("query_bridge_hybrid_max_vertices", math.nan) for row in items
+                ),
+                "query_bridge_hybrid_max_cross_checks": median(
+                    row.get("query_bridge_hybrid_max_cross_checks", math.nan) for row in items
+                ),
+                "query_endpoint_point_anchor": median(
+                    1.0 if bool(row.get("query_endpoint_point_anchor", False)) else 0.0
+                    for row in items
+                ),
                 "rbf_robot_tuned_profile": median(
                     1.0 if bool(row.get("rbf_robot_tuned_profile", False)) else 0.0
                     for row in items
@@ -2435,6 +2641,11 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
                 "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
                 "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
+                "diag_query_bridge_hybridize_attempt_paths_tasks_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_tasks", 0.0) for row in items),
+                "diag_query_bridge_hybridize_attempt_paths_candidates_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_candidates", 0.0) for row in items),
+                "diag_query_bridge_hybridize_attempt_paths_accepts_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_accepts", 0.0) for row in items),
+                "diag_query_bridge_hybridize_attempt_paths_delta_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_delta", 0.0) for row in items),
+                "diag_query_bridge_hybridize_attempt_paths_audit_rejects_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_audit_rejects", 0.0) for row in items),
                 "diag_query_bridge_no_path_retry_budget_stages_median": median(row.get("diag_query_bridge_no_path_retry_budget_stages", 0.0) for row in items),
                 "diag_query_bridge_no_path_retry_adaptive_attempts_median": median(row.get("diag_query_bridge_batch_no_path_retry_adaptive_attempts", 0.0) for row in items),
                 "diag_query_bridge_no_path_retry_adaptive_successes_median": median(row.get("diag_query_bridge_batch_no_path_retry_adaptive_successes", 0.0) for row in items),
@@ -2459,6 +2670,10 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_direct_segment_after_rrt_edges_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_edges", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_audit_rejects_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_audit_rejects", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_add_fail_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_add_fail", 0.0) for row in items),
+                "diag_query_bridge_fast_direct_segment_after_rrt_median": median(row.get("diag_query_bridge_fast_direct_segment_after_rrt", 0.0) for row in items),
+                "diag_query_bridge_fast_direct_segment_after_rrt_edges_median": median(row.get("diag_query_bridge_fast_direct_segment_after_rrt_edges", 0.0) for row in items),
+                "diag_query_bridge_endpoint_point_anchor_attempts_median": median(row.get("diag_query_bridge_endpoint_point_anchor_attempts", 0.0) for row in items),
+                "diag_query_bridge_endpoint_point_anchor_success_median": median(row.get("diag_query_bridge_endpoint_point_anchor_success", 0.0) for row in items),
                 "diag_query_bridge_waypoint_quality_retry_median": median(row.get("diag_query_bridge_waypoint_quality_retry", 0.0) for row in items),
                 "diag_query_bridge_waypoint_quality_retry_tasks_median": median(row.get("diag_query_bridge_waypoint_quality_retry_tasks", 0.0) for row in items),
                 "diag_query_bridge_waypoint_quality_retry_attempts_median": median(row.get("diag_query_bridge_waypoint_quality_retry_attempts", 0.0) for row in items),
@@ -2595,6 +2810,13 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_parallel_rrt_early_stop_additive",
         "query_bridge_direct_segment_after_rrt",
         "query_bridge_direct_segment_after_rrt_min_length",
+        "query_bridge_fast_direct_segment_after_rrt",
+        "query_bridge_fast_direct_random_shortcut_iters",
+        "query_bridge_hybridize_attempt_paths",
+        "query_bridge_hybrid_max_paths",
+        "query_bridge_hybrid_max_vertices",
+        "query_bridge_hybrid_max_cross_checks",
+        "query_endpoint_point_anchor",
         "rbf_robot_tuned_profile",
         "ffb_start_depth",
         "rbf_max_depth",
@@ -2630,6 +2852,11 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_batch_pave_ms_total_median",
         "diag_query_bridge_rrt_fixed_iters_median",
         "diag_query_bridge_rrt_fixed_timeout_ms_median",
+        "diag_query_bridge_hybridize_attempt_paths_tasks_median",
+        "diag_query_bridge_hybridize_attempt_paths_candidates_median",
+        "diag_query_bridge_hybridize_attempt_paths_accepts_median",
+        "diag_query_bridge_hybridize_attempt_paths_delta_median",
+        "diag_query_bridge_hybridize_attempt_paths_audit_rejects_median",
         "diag_query_bridge_no_path_retry_budget_stages_median",
         "diag_query_bridge_no_path_retry_adaptive_attempts_median",
         "diag_query_bridge_no_path_retry_adaptive_successes_median",
@@ -2654,6 +2881,10 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_direct_segment_after_rrt_edges_median",
         "diag_query_bridge_direct_segment_after_rrt_audit_rejects_median",
         "diag_query_bridge_direct_segment_after_rrt_add_fail_median",
+        "diag_query_bridge_fast_direct_segment_after_rrt_median",
+        "diag_query_bridge_fast_direct_segment_after_rrt_edges_median",
+        "diag_query_bridge_endpoint_point_anchor_attempts_median",
+        "diag_query_bridge_endpoint_point_anchor_success_median",
         "diag_query_bridge_waypoint_quality_retry_median",
         "diag_query_bridge_waypoint_quality_retry_tasks_median",
         "diag_query_bridge_waypoint_quality_retry_attempts_median",
@@ -2964,13 +3195,7 @@ def main() -> int:
                     and bool(getattr(args, "rbf_robot_tuned_profile", True))
                     and not str(args.box_budgets).strip()
                 ):
-                    row_args_for_budget = apply_exp06_robot_tuned_rbf_profile(
-                        args,
-                        robot,
-                        difficulty,
-                        getattr(args, "_argv", []),
-                    )
-                    apply_offline_coverage_profile(row_args_for_budget, getattr(args, "_argv", []))
+                    row_args_for_budget = apply_exp06_rbf_profiles(args, robot, difficulty)
                     scenario_budgets = [int(row_args_for_budget.deep_max_boxes)]
                 for seed in scene_seed_values:
                     for budget in scenario_budgets:
@@ -3002,13 +3227,7 @@ def main() -> int:
                         row_rbf_lectdb = None
                         row_args = args
                         if method == "sbf_leaf_rrt":
-                            row_args = apply_exp06_robot_tuned_rbf_profile(
-                                args,
-                                robot,
-                                difficulty,
-                                getattr(args, "_argv", []),
-                            )
-                            apply_offline_coverage_profile(row_args, getattr(args, "_argv", []))
+                            row_args = apply_exp06_rbf_profiles(args, robot, difficulty)
                             row_split = effective_lect_split_schedule(
                                 row_args,
                                 robot,

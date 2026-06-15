@@ -219,6 +219,11 @@ void test_obb_zonotope_portal_corridor_edge_is_certified_nonsegment() {
     a << 0.5, 0.5;
     b << 1.5, 0.6;
     c << 2.5, 0.5;
+    Eigen::VectorXd obb_center(2);
+    obb_center << 1.5, 0.5;
+    Eigen::MatrixXd obb_generators = Eigen::MatrixXd::Zero(2, 2);
+    obb_generators(0, 0) = 1.0;
+    obb_generators(1, 1) = 0.1;
 
     std::vector<rbf::SegmentEdge> edges;
     const int edge_id = rbf::append_certified_portal_corridor_edge(
@@ -228,7 +233,9 @@ void test_obb_zonotope_portal_corridor_edge_is_certified_nonsegment() {
         std::vector<Eigen::VectorXd>{a, b, c},
         rbf::SegmentEdgeValidation::ConservativeObbZonotope,
         11,
-        3);
+        3,
+        &obb_center,
+        &obb_generators);
     assert(edge_id >= 0);
     assert(edges.size() == 1);
     assert(edges.front().type == rbf::SegmentEdgeType::PortalCorridor);
@@ -237,7 +244,14 @@ void test_obb_zonotope_portal_corridor_edge_is_certified_nonsegment() {
     assert(edges.front().portal_domain_id == 11);
     assert(edges.front().query_index == 3);
     assert(edges.front().internal_boxes.empty());
+    assert(edges.front().obb_centers.size() == 1);
+    assert(edges.front().obb_generators.size() == 1);
+    assert((edges.front().obb_centers.front() - obb_center).norm() < 1e-12);
+    assert((edges.front().obb_generators.front() - obb_generators).norm() < 1e-12);
     assert(!rbf::counts_as_segment_edge(edges.front().type));
+    assert(!rbf::counts_as_segment_edge(rbf::SegmentEdgeType::SegmentOBBCorridor));
+    assert(!rbf::counts_as_segment_edge(rbf::SegmentEdgeType::RRTBridgeOBBCorridor));
+    assert(!rbf::counts_as_segment_edge(rbf::SegmentEdgeType::TransitionOBBCorridor));
 
     rbf::AdjacencyGraph graph;
     rbf::apply_segment_edges_to_adjacency(edges, graph);

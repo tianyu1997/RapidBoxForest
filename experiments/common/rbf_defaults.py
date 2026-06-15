@@ -13,7 +13,7 @@ RBF_SHELF_PROFILE_NAME = "exp04_partition_leaf13_d23_fixed800_online25ms"
 RBF_OFFLINE_COVERAGE_PROFILE_NAME = "offline_coverage_v1"
 RBF_DEFAULT_BACKEND = "build_leaf_sweep_refined"
 RBF_DEFAULT_GROWER_MODE = "rrt"
-EXP06_REGISTERED_RBF_PROFILE_NAME = "exp06_rbf_robot_tuned_profile_v8_segment_trade"
+EXP06_REGISTERED_RBF_PROFILE_NAME = "exp06_rbf_robot_tuned_profile_v30_obb_hybrid_online_fast_fullsuccess"
 
 D23_CACHE_ROOT = REPO_ROOT / "outputs" / "new_experiments" / "exp04_full_root_d23" / "cache"
 D23_CACHE_LABEL = "iiwa_endpoint_only_p23_canonical_full_root"
@@ -68,12 +68,17 @@ DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS = 0.0
 DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE = ""
 DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS = 0
 DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS = 0
+DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS = False
+DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS = 8
+DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES = 128
+DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS = 4096
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP = False
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES = 1
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO = 1.75
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE = 0.75
 DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT = False
 DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH = 0.0
+DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS = 0
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR = True
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP = 0.08
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS = 2
@@ -236,11 +241,14 @@ _EXP06_REGISTERED_RBF_BASE_SETTINGS: dict[str, Any] = {
     "ffb_start_depth": 32,
     "query_bridge_ffb_start_depth": -1,
     "query_bridge_edge_cost_penalty": 5.0,
+    "query_bridge_force_selected": True,
     "query_bridge_rrt_fixed_iters": 10000,
     "query_bridge_no_path_retry_attempts": 32,
     "query_bridge_no_path_retry_stop_on_first_success": True,
-    "query_bridge_direct_segment_after_rrt": False,
+    "query_bridge_direct_segment_after_rrt": True,
     "query_bridge_direct_segment_after_rrt_min_length": 0.0,
+    "query_bridge_fast_direct_segment_after_rrt": True,
+    "query_bridge_fast_direct_random_shortcut_iters": 0,
     "query_bridge_direct_max_length": 15.0,
     "query_bridge_waypoint_quality_retry": False,
     "query_bridge_waypoint_quality_retry_attempts": 8,
@@ -252,6 +260,17 @@ _EXP06_REGISTERED_RBF_BASE_SETTINGS: dict[str, Any] = {
     "hipac_improved_leaf_sweep": False,
     "hipac_online_connectivity": False,
     "hipac_online_prebridge_portal": False,
+    "segment_edge_obb_cover": True,
+    "rrt_bridge_obb_cover": True,
+    "strict_obb_bridge_cover": True,
+    "segment_edge_obb_lateral_radius": 1.0e-5,
+    "segment_edge_obb_grow_iterations": 0,
+    "segment_edge_obb_binary_iterations": 0,
+    "segment_edge_obb_split_depth": 8,
+    "obb_max_window_segments": 8,
+    "obb_max_validations_per_window": 16,
+    "obb_fast_primary_orientation": True,
+    "obb_fallback_orientations_on_primary_fail": False,
 }
 
 # Paper-facing Exp.6 RBF profile.  Keep this table as the single source of
@@ -266,11 +285,31 @@ EXP06_REGISTERED_RBF_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
     },
     ("ur5", "medium"): {
         **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
+        # Strict OBB bridge cover is the stable UR5 operating point: it keeps
+        # all bridge witnesses conservative and avoids post-audit failures from
+        # uncertified direct repair edges.
         "leaf_max_depth": 8,
         "deep_max_boxes": 400,
         "query_endpoint_anchor_ffb_depth": 80,
         "ffb_start_depth": 8,
         "query_bridge_ffb_start_depth": 8,
+        "connector_rrt_step_size": 0.75,
+        "query_bridge_rrt_fixed_iters": 2000,
+        "query_bridge_fast_direct_random_shortcut_iters": 128,
+        "query_bridge_sequential_reuse": False,
+        "query_bridge_scene_reusable_edges": False,
+        "query_bridge_forced_attempts": 32,
+        "query_bridge_hybridize_attempt_paths": True,
+        "query_bridge_hybrid_max_paths": 32,
+        "query_bridge_hybrid_max_vertices": 384,
+        "query_bridge_hybrid_max_cross_checks": 16384,
+        "query_bridge_no_path_retry_attempts": 0,
+        "query_bridge_no_path_retry_budget_iters": "10000,20000",
+        "query_bridge_no_path_retry_budget_attempts": "1,1",
+        # Try local RRT bridge radii first, then fall back to the original
+        # unrestricted bridge attempt in C++ so the schedule cannot remove
+        # previously valid OBB witnesses.
+        "query_bridge_local_radius_schedule": "0.5,1.0,2.0,4.0",
         "query_bridge_full_residual_overlay_when_connected": True,
     },
     ("ur5", "hard"): {
@@ -280,6 +319,25 @@ EXP06_REGISTERED_RBF_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
         "query_endpoint_anchor_ffb_depth": 80,
         "ffb_start_depth": 8,
         "query_bridge_ffb_start_depth": 8,
+        "connector_rrt_step_size": 0.75,
+        "query_bridge_rrt_fixed_iters": 3480,
+        "query_bridge_fast_direct_random_shortcut_iters": 128,
+        # v28 online-aggressive point: forced20 trades a slight median path
+        # ratio increase for a large online-query time reduction.
+        "query_bridge_forced_attempts": 20,
+        "query_bridge_hybridize_attempt_paths": True,
+        "query_bridge_hybrid_max_paths": 32,
+        "query_bridge_hybrid_max_vertices": 384,
+        "query_bridge_hybrid_max_cross_checks": 16384,
+        "query_bridge_failure_fallback_to_main": True,
+        "query_bridge_parallel_rrt_early_stop": True,
+        "query_bridge_parallel_rrt_early_stop_min_successes": 1,
+        "query_bridge_parallel_rrt_early_stop_ratio": 1.0,
+        "query_bridge_parallel_rrt_early_stop_additive": 0.0,
+        "query_bridge_no_path_retry_attempts": 0,
+        "query_bridge_no_path_retry_budget_iters": "10000,20000",
+        "query_bridge_no_path_retry_budget_attempts": "1,1",
+        "query_bridge_local_radius_schedule": "0.5,1.0,2.0,4.0",
         "query_bridge_full_residual_overlay_when_connected": True,
     },
     ("panda", "medium"): {
@@ -287,20 +345,85 @@ EXP06_REGISTERED_RBF_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
         "deep_max_boxes": 400,
         "ffb_start_depth": 8,
         "query_bridge_ffb_start_depth": 8,
+        "query_bridge_edge_cost_penalty": 5.0,
+        "query_bridge_to_main_island": False,
+        "query_bridge_force_selected": True,
+        "query_bridge_failure_fallback_to_main": False,
+        "query_bridge_rrt_fixed_iters": 10000,
+        "query_bridge_fast_direct_random_shortcut_iters": 128,
+        # v30 full-success point: forced12 was faster but dropped one
+        # Panda-Medium saved-catalog query; forced14 restores 100/100 success
+        # while preserving most of the online-query speedup.
+        "query_bridge_forced_attempts": 14,
+        "query_bridge_hybridize_attempt_paths": True,
+        "query_bridge_hybrid_max_paths": 14,
+        "query_bridge_hybrid_max_vertices": 176,
+        "query_bridge_hybrid_max_cross_checks": 7168,
+        "query_bridge_no_path_retry_attempts": 32,
+        "query_bridge_no_path_retry_budget_iters": "",
+        "query_bridge_no_path_retry_budget_attempts": "",
         "query_bridge_full_residual_overlay_when_connected": True,
+        "segment_edge_obb_cover": True,
+        "rrt_bridge_obb_cover": True,
+        "strict_obb_bridge_cover": True,
+        "obb_max_window_segments": 8,
+        "obb_max_validations_per_window": 16,
     },
     ("panda", "hard"): {
         **_EXP06_REGISTERED_RBF_BASE_SETTINGS,
-        "rbf_max_depth": 110,
+        # Panda-Hard needs the high-budget direct witness profile for full
+        # saved-catalog success.  We keep the original audited bridge geometry
+        # but attach OBB metadata when the bridge can be certified by the OBB
+        # cover, so this row remains an OBB-enabled profile without switching
+        # back to the non-OBB v4 profile.
         "deep_max_boxes": 400,
         "ffb_start_depth": 8,
         "query_bridge_ffb_start_depth": 8,
+        "query_bridge_edge_cost_penalty": 5.0,
         "query_bridge_direct_sample_step": 0.08,
         "query_bridge_direct_segment_after_rrt": True,
-        "query_bridge_direct_segment_after_rrt_min_length": 8.0,
-        "query_bridge_full_residual_overlay_when_connected": True,
+        "query_bridge_direct_segment_after_rrt_min_length": 0.0,
+        "query_bridge_fast_direct_segment_after_rrt": True,
+        "query_bridge_fast_direct_random_shortcut_iters": 128,
+        "query_bridge_to_main_island": False,
+        "query_bridge_force_selected": True,
+        "query_bridge_failure_fallback_to_main": False,
+        "query_endpoint_point_anchor": True,
+        "query_bridge_accept_path_ratio": 1.50,
+        "query_bridge_accept_path_additive": 0.75,
         "query_bridge_rrt_fixed_iters": 40000,
+        "query_bridge_forced_attempts": 12,
+        "query_bridge_attempt_offset": 3,
+        "query_bridge_hybridize_attempt_paths": True,
+        "query_bridge_hybrid_max_paths": 8,
+        "query_bridge_hybrid_max_vertices": 128,
+        "query_bridge_hybrid_max_cross_checks": 4096,
+        "query_bridge_parallel_rrt_early_stop": True,
+        "query_bridge_parallel_rrt_early_stop_min_successes": 1,
+        "query_bridge_parallel_rrt_early_stop_ratio": 100.0,
+        "query_bridge_parallel_rrt_early_stop_additive": 100.0,
         "query_bridge_no_path_retry_attempts": 0,
+        "query_bridge_no_path_retry_budget_iters": "",
+        "query_bridge_no_path_retry_budget_attempts": "",
+        "query_bridge_local_radius_schedule": "0.5,1.0,2.0,4.0",
+        "query_bridge_waypoint_quality_retry": False,
+        "query_bridge_waypoint_quality_retry_attempts": 8,
+        "query_bridge_waypoint_quality_retry_iters": 0,
+        "query_bridge_waypoint_quality_max_ratio": 1.60,
+        "query_bridge_waypoint_quality_max_additive": 0.50,
+        "query_bridge_sequential_reuse": True,
+        "query_bridge_scene_reusable_edges": True,
+        "query_bridge_full_residual_overlay_when_connected": True,
+        "segment_edge_obb_cover": True,
+        "rrt_bridge_obb_cover": True,
+        "strict_obb_bridge_cover": False,
+        "segment_edge_obb_metadata_only": True,
+        "segment_edge_obb_lateral_radius": 1.0e-5,
+        "segment_edge_obb_grow_iterations": 0,
+        "segment_edge_obb_binary_iterations": 0,
+        "segment_edge_obb_split_depth": 8,
+        "obb_max_window_segments": 8,
+        "obb_max_validations_per_window": 16,
     },
 }
 

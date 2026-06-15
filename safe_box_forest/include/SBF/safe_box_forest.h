@@ -341,6 +341,17 @@ struct AdaptiveLeafSweepConfig {
 	double hipac_transition_obb_lateral_radius = 0.01;
 	double hipac_transition_obb_longitudinal_margin = 0.0;
 	double hipac_transition_obb_safety_epsilon = 0.0;
+	bool segment_edge_obb_cover = false;
+	bool rrt_bridge_obb_cover = false;
+	bool strict_obb_bridge_cover = false;
+	double segment_edge_obb_lateral_radius = 0.01;
+	double segment_edge_obb_longitudinal_margin = 0.0;
+	double segment_edge_obb_safety_epsilon = 0.0;
+	int segment_edge_obb_grow_iterations = 5;
+	int segment_edge_obb_binary_iterations = 5;
+	int segment_edge_obb_split_depth = 1;
+	int obb_max_window_segments = 16;
+	int obb_max_validations_per_window = 16;
 	bool hipac_promote_transition_slices = false;
 	std::string hipac_promote_transition_target_query_indices = "2,3";
 	int hipac_promote_transition_min_boxes = 8;

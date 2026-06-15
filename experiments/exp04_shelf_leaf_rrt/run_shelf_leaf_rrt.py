@@ -53,6 +53,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
+    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
@@ -213,6 +215,24 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
         path_length = float(result.path_length) if bool(result.success) else math.nan
         raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0
+        residual_segment_fraction = (
+            float(getattr(result, "residual_segment_fraction", math.nan))
+            if bool(result.success)
+            else math.nan
+        )
+        if not math.isfinite(residual_segment_fraction):
+            residual_segment_fraction = (
+                segment_length / raw_path_length
+                if bool(result.success) and raw_path_length > 1e-12
+                else math.nan
+            )
+        residual_segment_length = (
+            residual_segment_fraction * raw_path_length
+            if bool(result.success)
+            and math.isfinite(residual_segment_fraction)
+            and math.isfinite(raw_path_length)
+            else 0.0
+        )
         query_ms = float(result.query_time_ms)
         simplify_ms = float(getattr(result, "final_simplify_time_ms", 0.0))
         solve_ms = max(0.0, query_ms - simplify_ms)
@@ -229,9 +249,14 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
             "final_path_length": path_length,
             "raw_path_length": raw_path_length,
             "segment_edge_length": segment_length,
-            "segment_fraction": (segment_length / raw_path_length) if bool(result.success) and raw_path_length > 1e-12 else math.nan,
+            "segment_residual_length": residual_segment_length,
+            "segment_fraction": residual_segment_fraction,
             "box_sequence_len": len(list(result.box_sequence)),
             "segment_edges_used": int(result.segment_edges_used),
+            "obb_edges_used": int(getattr(result, "obb_edges_used", 0)),
+            "obb_regions_used": int(getattr(result, "obb_regions_used", 0)),
+            "obb_edge_length": float(getattr(result, "obb_edge_length", 0.0)),
+            "residual_segment_fraction": residual_segment_fraction,
             "waypoint_count": len(result.path_as_lists()),
             "audit_status": str(result.audit_status),
             "actual_start": start,
@@ -340,6 +365,17 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
         hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
         hipac_transition_obb_safety_epsilon=float(args.hipac_transition_obb_safety_epsilon),
+        segment_edge_obb_cover=bool(args.segment_edge_obb_cover),
+        rrt_bridge_obb_cover=bool(args.rrt_bridge_obb_cover),
+        strict_obb_bridge_cover=bool(args.strict_obb_bridge_cover),
+        segment_edge_obb_lateral_radius=float(args.segment_edge_obb_lateral_radius),
+        segment_edge_obb_longitudinal_margin=float(args.segment_edge_obb_longitudinal_margin),
+        segment_edge_obb_safety_epsilon=float(args.segment_edge_obb_safety_epsilon),
+        segment_edge_obb_grow_iterations=int(args.segment_edge_obb_grow_iterations),
+        segment_edge_obb_binary_iterations=int(args.segment_edge_obb_binary_iterations),
+        segment_edge_obb_split_depth=int(args.segment_edge_obb_split_depth),
+        obb_max_window_segments=int(args.obb_max_window_segments),
+        obb_max_validations_per_window=int(args.obb_max_validations_per_window),
         hipac_promote_transition_slices=hipac_promote_transition_slices,
         hipac_promote_transition_target_query_indices=str(args.hipac_promote_transition_target_query_indices),
         hipac_promote_transition_min_boxes=int(args.hipac_promote_transition_min_boxes),
@@ -420,6 +456,9 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
         query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
+        query_bridge_direct_segment_after_rrt=bool(args.query_bridge_direct_segment_after_rrt),
+        query_bridge_direct_segment_after_rrt_min_length=float(args.query_bridge_direct_segment_after_rrt_min_length),
+        query_bridge_fast_direct_segment_after_rrt=bool(args.query_bridge_fast_direct_segment_after_rrt),
         query_bridge_to_main_island=bool(args.query_bridge_to_main_island),
         query_bridge_to_main_direct_segment_max_length=float(args.query_bridge_to_main_direct_segment_max_length),
         query_bridge_to_main_box_corridor=bool(args.query_bridge_to_main_box_corridor),
@@ -591,6 +630,17 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_transition_obb_lateral_radius": float(options.hipac_transition_obb_lateral_radius),
         "option.hipac_transition_obb_longitudinal_margin": float(options.hipac_transition_obb_longitudinal_margin),
         "option.hipac_transition_obb_safety_epsilon": float(options.hipac_transition_obb_safety_epsilon),
+        "option.segment_edge_obb_cover": bool(options.segment_edge_obb_cover),
+        "option.rrt_bridge_obb_cover": bool(options.rrt_bridge_obb_cover),
+        "option.strict_obb_bridge_cover": bool(options.strict_obb_bridge_cover),
+        "option.segment_edge_obb_lateral_radius": float(options.segment_edge_obb_lateral_radius),
+        "option.segment_edge_obb_longitudinal_margin": float(options.segment_edge_obb_longitudinal_margin),
+        "option.segment_edge_obb_safety_epsilon": float(options.segment_edge_obb_safety_epsilon),
+        "option.segment_edge_obb_grow_iterations": int(options.segment_edge_obb_grow_iterations),
+        "option.segment_edge_obb_binary_iterations": int(options.segment_edge_obb_binary_iterations),
+        "option.segment_edge_obb_split_depth": int(options.segment_edge_obb_split_depth),
+        "option.obb_max_window_segments": int(options.obb_max_window_segments),
+        "option.obb_max_validations_per_window": int(options.obb_max_validations_per_window),
         "option.hipac_promote_transition_slices": bool(options.hipac_promote_transition_slices),
         "option.hipac_promote_transition_target_query_indices": str(options.hipac_promote_transition_target_query_indices),
         "option.hipac_promote_transition_min_boxes": int(options.hipac_promote_transition_min_boxes),
@@ -623,6 +673,13 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_rrt_fixed_iters": int(options.query_bridge_rrt_fixed_iters),
         "option.query_bridge_rrt_fixed_timeout_ms": float(options.query_bridge_rrt_fixed_timeout_ms),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
+        "option.query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
+        "option.query_bridge_direct_segment_after_rrt_min_length": float(
+            options.query_bridge_direct_segment_after_rrt_min_length
+        ),
+        "option.query_bridge_fast_direct_segment_after_rrt": bool(
+            getattr(options, "query_bridge_fast_direct_segment_after_rrt", False)
+        ),
         "option.query_bridge_to_main_island": bool(options.query_bridge_to_main_island),
         "option.query_bridge_to_main_direct_segment_max_length": float(options.query_bridge_to_main_direct_segment_max_length),
         "option.query_bridge_to_main_box_corridor": bool(options.query_bridge_to_main_box_corridor),
@@ -1041,6 +1098,33 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "query_bridge_hipac_transition_obb_gjk_tests_median": median(row.get("query_bridge_hipac_transition_obb_gjk_tests", 0) for row in items),
             "query_bridge_hipac_transition_obb_maybe_pairs_median": median(row.get("query_bridge_hipac_transition_obb_maybe_pairs", 0) for row in items),
             "query_bridge_hipac_transition_obb_ms_median": median(row.get("query_bridge_hipac_transition_obb_ms", 0.0) for row in items),
+            "segment_edge_obb_cover_attempts_median": median(row.get("segment_edge_obb_cover_attempts", 0) for row in items),
+            "segment_edge_obb_cover_success_median": median(row.get("segment_edge_obb_cover_success", 0) for row in items),
+            "segment_edge_obb_cover_fail_median": median(row.get("segment_edge_obb_cover_fail", 0) for row in items),
+            "segment_edge_obb_cover_validations_median": median(row.get("segment_edge_obb_cover_validations", 0) for row in items),
+            "segment_edge_obb_cover_regions_median": median(row.get("segment_edge_obb_cover_regions", 0) for row in items),
+            "segment_edge_obb_cover_windows_attempted_median": median(row.get("segment_edge_obb_cover_windows_attempted", 0) for row in items),
+            "segment_edge_obb_cover_windows_success_median": median(row.get("segment_edge_obb_cover_windows_success", 0) for row in items),
+            "segment_edge_obb_cover_replaced_segments_median": median(row.get("segment_edge_obb_cover_replaced_segments", 0) for row in items),
+            "segment_edge_obb_cover_partial_edges_median": median(row.get("segment_edge_obb_cover_partial_edges", 0) for row in items),
+            "segment_edge_obb_cover_partial_regions_median": median(row.get("segment_edge_obb_cover_partial_regions", 0) for row in items),
+            "segment_edge_obb_cover_partial_committed_median": median(row.get("segment_edge_obb_cover_partial_committed", 0) for row in items),
+            "segment_edge_obb_cover_partial_covered_length_median": median(row.get("segment_edge_obb_cover_partial_covered_length", 0.0) for row in items),
+            "segment_edge_obb_cover_ms_median": median(row.get("segment_edge_obb_cover_ms", 0.0) for row in items),
+            "rrt_bridge_obb_cover_attempts_median": median(row.get("rrt_bridge_obb_cover_attempts", 0) for row in items),
+            "rrt_bridge_obb_cover_success_median": median(row.get("rrt_bridge_obb_cover_success", 0) for row in items),
+            "rrt_bridge_obb_cover_fail_median": median(row.get("rrt_bridge_obb_cover_fail", 0) for row in items),
+            "rrt_bridge_obb_cover_regions_median": median(row.get("rrt_bridge_obb_cover_regions", 0) for row in items),
+            "rrt_bridge_obb_cover_validations_median": median(row.get("rrt_bridge_obb_cover_validations", 0) for row in items),
+            "rrt_bridge_obb_cover_replaced_segments_median": median(row.get("rrt_bridge_obb_cover_replaced_segments", 0) for row in items),
+            "rrt_bridge_obb_cover_partial_edges_median": median(row.get("rrt_bridge_obb_cover_partial_edges", 0) for row in items),
+            "rrt_bridge_obb_cover_partial_regions_median": median(row.get("rrt_bridge_obb_cover_partial_regions", 0) for row in items),
+            "rrt_bridge_obb_cover_partial_committed_median": median(row.get("rrt_bridge_obb_cover_partial_committed", 0) for row in items),
+            "rrt_bridge_obb_cover_partial_covered_length_median": median(row.get("rrt_bridge_obb_cover_partial_covered_length", 0.0) for row in items),
+            "rrt_bridge_obb_cover_ms_median": median(row.get("rrt_bridge_obb_cover_ms", 0.0) for row in items),
+            "obb_edges_used_total_median": median(row.get("obb_edges_used_total", 0) for row in items),
+            "obb_regions_used_total_median": median(row.get("obb_regions_used_total", 0) for row in items),
+            "obb_edge_length_total_median": median(row.get("obb_edge_length_total", 0.0) for row in items),
             "query_bridge_hipac_promote_attempts_median": median(row.get("query_bridge_hipac_promote_attempts", 0) for row in items),
             "query_bridge_hipac_promote_added_median": median(row.get("query_bridge_hipac_promote_added", 0) for row in items),
             "query_bridge_hipac_promote_failures_median": median(row.get("query_bridge_hipac_promote_failures", 0) for row in items),
@@ -1327,6 +1411,33 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_hipac_transition_obb_gjk_tests_median",
         "query_bridge_hipac_transition_obb_maybe_pairs_median",
         "query_bridge_hipac_transition_obb_ms_median",
+        "segment_edge_obb_cover_attempts_median",
+        "segment_edge_obb_cover_success_median",
+        "segment_edge_obb_cover_fail_median",
+        "segment_edge_obb_cover_validations_median",
+        "segment_edge_obb_cover_regions_median",
+        "segment_edge_obb_cover_windows_attempted_median",
+        "segment_edge_obb_cover_windows_success_median",
+        "segment_edge_obb_cover_replaced_segments_median",
+        "segment_edge_obb_cover_partial_edges_median",
+        "segment_edge_obb_cover_partial_regions_median",
+        "segment_edge_obb_cover_partial_committed_median",
+        "segment_edge_obb_cover_partial_covered_length_median",
+        "segment_edge_obb_cover_ms_median",
+        "rrt_bridge_obb_cover_attempts_median",
+        "rrt_bridge_obb_cover_success_median",
+        "rrt_bridge_obb_cover_fail_median",
+        "rrt_bridge_obb_cover_regions_median",
+        "rrt_bridge_obb_cover_validations_median",
+        "rrt_bridge_obb_cover_replaced_segments_median",
+        "rrt_bridge_obb_cover_partial_edges_median",
+        "rrt_bridge_obb_cover_partial_regions_median",
+        "rrt_bridge_obb_cover_partial_committed_median",
+        "rrt_bridge_obb_cover_partial_covered_length_median",
+        "rrt_bridge_obb_cover_ms_median",
+        "obb_edges_used_total_median",
+        "obb_regions_used_total_median",
+        "obb_edge_length_total_median",
         "query_bridge_hipac_promote_attempts_median",
         "query_bridge_hipac_promote_added_median",
         "query_bridge_hipac_promote_failures_median",
@@ -1569,6 +1680,21 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     )
+    parser.add_argument(
+        "--query-bridge-direct-segment-after-rrt",
+        action=argparse.BooleanOptionalAction,
+        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
+    )
+    parser.add_argument(
+        "--query-bridge-direct-segment-after-rrt-min-length",
+        type=float,
+        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
+    )
+    parser.add_argument(
+        "--query-bridge-fast-direct-segment-after-rrt",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+    )
     parser.add_argument("--query-box-transition-line-deviation-penalty", type=float, default=DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY)
     parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
@@ -1615,6 +1741,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
     parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)
     parser.add_argument("--hipac-transition-obb-safety-epsilon", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--rrt-bridge-obb-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--strict-obb-bridge-cover", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--segment-edge-obb-lateral-radius", type=float, default=0.01)
+    parser.add_argument("--segment-edge-obb-longitudinal-margin", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-safety-epsilon", type=float, default=0.0)
+    parser.add_argument("--segment-edge-obb-grow-iterations", type=int, default=5)
+    parser.add_argument("--segment-edge-obb-binary-iterations", type=int, default=5)
+    parser.add_argument("--segment-edge-obb-split-depth", type=int, default=1)
+    parser.add_argument("--obb-max-window-segments", type=int, default=16)
+    parser.add_argument("--obb-max-validations-per-window", type=int, default=96)
     parser.add_argument("--hipac-promote-transition-slices", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-promote-transition-target-query-indices", default="2,3")
     parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
@@ -1808,6 +1945,11 @@ def main() -> int:
             "query_foreign_edge_cost_penalty": float(args.query_foreign_edge_cost_penalty),
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
+            "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
+            "query_bridge_direct_segment_after_rrt_min_length": float(
+                args.query_bridge_direct_segment_after_rrt_min_length
+            ),
+            "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
             "query_bridge_to_main_box_corridor": bool(args.query_bridge_to_main_box_corridor),
@@ -1847,6 +1989,11 @@ def main() -> int:
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
+            "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
+            "query_bridge_direct_segment_after_rrt_min_length": float(
+                args.query_bridge_direct_segment_after_rrt_min_length
+            ),
+            "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_to_main_direct_segment_max_length": float(args.query_bridge_to_main_direct_segment_max_length),
             "query_bridge_to_main_box_corridor": bool(args.query_bridge_to_main_box_corridor),

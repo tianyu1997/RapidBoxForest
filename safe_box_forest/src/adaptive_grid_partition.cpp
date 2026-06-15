@@ -335,7 +335,17 @@ bool interval_box_subset(const std::vector<Interval>& inner,
 
 bool partition_counts_as_segment_edge(SegmentEdgeType type) {
 	return type != SegmentEdgeType::BoxCorridor &&
-	       type != SegmentEdgeType::PortalCorridor;
+	       type != SegmentEdgeType::PortalCorridor &&
+	       type != SegmentEdgeType::SegmentOBBCorridor &&
+	       type != SegmentEdgeType::RRTBridgeOBBCorridor &&
+	       type != SegmentEdgeType::TransitionOBBCorridor;
+}
+
+bool partition_counts_as_query_repair_edge(SegmentEdgeType type) {
+	return type == SegmentEdgeType::QueryBridge ||
+	       type == SegmentEdgeType::SegmentOBBCorridor ||
+	       type == SegmentEdgeType::RRTBridgeOBBCorridor ||
+	       type == SegmentEdgeType::TransitionOBBCorridor;
 }
 
 Eigen::VectorXd transition_waypoint_toward_goal(const std::vector<Interval>& lhs,
@@ -3521,10 +3531,11 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 								 std::max(edge.length, 1e-6);
 				}
 				if (partition_counts_as_segment_edge(edge.type) &&
-					edge.type != SegmentEdgeType::QueryBridge) {
+					edge.type != SegmentEdgeType::QueryBridge &&
+					edge.validation != SegmentEdgeValidation::ConservativeObbZonotope) {
 					edge_cost += 100.0;
 				}
-				if (edge.type == SegmentEdgeType::QueryBridge) {
+				if (partition_counts_as_query_repair_edge(edge.type)) {
 					edge_cost += query_bridge_penalty;
 				}
 				if (foreign_query_edge_penalty > 0.0 &&

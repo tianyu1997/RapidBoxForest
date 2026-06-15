@@ -57,6 +57,10 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
+    DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
     DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
@@ -143,6 +147,39 @@ def _diagnostic_max(diagnostics: dict[str, float], keys: list[str]) -> float:
     for key in keys:
         value = max(value, _diagnostic_number(diagnostics, key, 0.0))
     return value
+
+
+def _diagnostic_sum_suffix(diagnostics: dict[str, float], suffix: str) -> float:
+    return float(sum(
+        float(value)
+        for key, value in diagnostics.items()
+        if str(key).endswith(suffix)
+    ))
+
+
+def _diagnostic_max_suffix(diagnostics: dict[str, float], suffix: str) -> float:
+    value = 0.0
+    for key, item in diagnostics.items():
+        if str(key).endswith(suffix):
+            try:
+                value = max(value, float(item))
+            except (TypeError, ValueError):
+                continue
+    return value
+
+
+def _diagnostic_first_suffix(
+    diagnostics: dict[str, float],
+    suffix: str,
+    default: float = math.nan,
+) -> float:
+    for key in sorted(diagnostics):
+        if str(key).endswith(suffix):
+            try:
+                return float(diagnostics[key])
+            except (TypeError, ValueError):
+                return float(default)
+    return float(default)
 
 
 def _external_evidence_diagnostic_fields(diagnostics: dict[str, float]) -> dict[str, float]:
@@ -248,6 +285,11 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.rrt_optimize_after_first_iters",
         "query_bridge.attempt_fallback_paths",
         "query_bridge.attempt_fallback_paths_stored",
+        "query_bridge.hybridize_attempt_paths_tasks",
+        "query_bridge.hybridize_attempt_paths_candidates",
+        "query_bridge.hybridize_attempt_paths_accepts",
+        "query_bridge.hybridize_attempt_paths_delta",
+        "query_bridge.hybridize_attempt_paths_audit_rejects",
         "query_bridge.no_path_retry_budget_stages",
         "query_bridge.oracle_node_validations",
         "query_bridge.oracle_validation_cache_hits",
@@ -558,6 +600,21 @@ class RBFLeafRRTOptions:
     hipac_transition_obb_lateral_radius: float = 0.01
     hipac_transition_obb_longitudinal_margin: float = 0.0
     hipac_transition_obb_safety_epsilon: float = 0.0
+    segment_edge_obb_cover: bool = False
+    rrt_bridge_obb_cover: bool = False
+    strict_obb_bridge_cover: bool = False
+    segment_edge_obb_metadata_only: bool = False
+    segment_edge_obb_metadata_require_cover: bool = False
+    segment_edge_obb_lateral_radius: float = 0.01
+    segment_edge_obb_longitudinal_margin: float = 0.0
+    segment_edge_obb_safety_epsilon: float = 0.0
+    segment_edge_obb_grow_iterations: int = 5
+    segment_edge_obb_binary_iterations: int = 5
+    segment_edge_obb_split_depth: int = 1
+    obb_max_window_segments: int = 16
+    obb_max_validations_per_window: int = 16
+    obb_fast_primary_orientation: bool = True
+    obb_fallback_orientations_on_primary_fail: bool = False
     hipac_promote_transition_slices: bool = False
     hipac_promote_transition_target_query_indices: str = "2,3"
     hipac_promote_transition_min_boxes: int = 8
@@ -661,6 +718,10 @@ class RBFLeafRRTOptions:
     query_bridge_local_radius_schedule: str = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE
     query_bridge_rrt_optimize_after_first_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS
     query_bridge_attempt_fallback_paths: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS
+    query_bridge_hybridize_attempt_paths: bool = DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS
+    query_bridge_hybrid_max_paths: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS
+    query_bridge_hybrid_max_vertices: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES
+    query_bridge_hybrid_max_cross_checks: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS
     query_bridge_parallel_rrt_early_stop: bool = DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP
     query_bridge_parallel_rrt_early_stop_min_successes: int = (
         DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES
@@ -675,6 +736,9 @@ class RBFLeafRRTOptions:
     query_bridge_direct_segment_after_rrt_min_length: float = (
         DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH
     )
+    query_bridge_fast_direct_segment_after_rrt: bool = False
+    query_bridge_fast_direct_random_shortcut_iters: int = 0
+    query_endpoint_point_anchor: bool = False
     query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
     query_bridge_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS
     query_bridge_adaptive_step_repair: bool = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR
@@ -1504,6 +1568,28 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.hipac_transition_obb_longitudinal_margin = float(options.hipac_transition_obb_longitudinal_margin)
     if hasattr(cfg, "hipac_transition_obb_safety_epsilon"):
         cfg.hipac_transition_obb_safety_epsilon = float(options.hipac_transition_obb_safety_epsilon)
+    if hasattr(cfg, "segment_edge_obb_cover"):
+        cfg.segment_edge_obb_cover = bool(options.segment_edge_obb_cover)
+    if hasattr(cfg, "rrt_bridge_obb_cover"):
+        cfg.rrt_bridge_obb_cover = bool(options.rrt_bridge_obb_cover)
+    if hasattr(cfg, "strict_obb_bridge_cover"):
+        cfg.strict_obb_bridge_cover = bool(options.strict_obb_bridge_cover)
+    if hasattr(cfg, "segment_edge_obb_lateral_radius"):
+        cfg.segment_edge_obb_lateral_radius = float(options.segment_edge_obb_lateral_radius)
+    if hasattr(cfg, "segment_edge_obb_longitudinal_margin"):
+        cfg.segment_edge_obb_longitudinal_margin = float(options.segment_edge_obb_longitudinal_margin)
+    if hasattr(cfg, "segment_edge_obb_safety_epsilon"):
+        cfg.segment_edge_obb_safety_epsilon = float(options.segment_edge_obb_safety_epsilon)
+    if hasattr(cfg, "segment_edge_obb_grow_iterations"):
+        cfg.segment_edge_obb_grow_iterations = int(options.segment_edge_obb_grow_iterations)
+    if hasattr(cfg, "segment_edge_obb_binary_iterations"):
+        cfg.segment_edge_obb_binary_iterations = int(options.segment_edge_obb_binary_iterations)
+    if hasattr(cfg, "segment_edge_obb_split_depth"):
+        cfg.segment_edge_obb_split_depth = int(options.segment_edge_obb_split_depth)
+    if hasattr(cfg, "obb_max_window_segments"):
+        cfg.obb_max_window_segments = int(options.obb_max_window_segments)
+    if hasattr(cfg, "obb_max_validations_per_window"):
+        cfg.obb_max_validations_per_window = int(options.obb_max_validations_per_window)
     if hasattr(cfg, "hipac_promote_transition_slices"):
         cfg.hipac_promote_transition_slices = bool(options.hipac_promote_transition_slices)
     if hasattr(cfg, "hipac_promote_transition_target_query_indices"):
@@ -1624,6 +1710,24 @@ def query_rows(
         audited_path_length = path_length(actual_path) if bool(result.success) and reflected_ok else math.nan
         raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0
+        residual_segment_fraction = (
+            float(getattr(result, "residual_segment_fraction", math.nan))
+            if bool(result.success)
+            else math.nan
+        )
+        if not math.isfinite(residual_segment_fraction):
+            residual_segment_fraction = (
+                segment_length / raw_path_length
+                if bool(result.success) and raw_path_length > 1e-12
+                else math.nan
+            )
+        residual_segment_length = (
+            residual_segment_fraction * raw_path_length
+            if bool(result.success)
+            and math.isfinite(residual_segment_fraction)
+            and math.isfinite(raw_path_length)
+            else 0.0
+        )
         query_ms = float(result.query_time_ms)
         simplify_ms = float(getattr(result, "final_simplify_time_ms", 0.0))
         solve_ms = query_ms
@@ -1647,14 +1751,18 @@ def query_rows(
             "raw_path_length": raw_path_length,
             "canonical_path_length": float(result.path_length) if bool(result.success) else math.nan,
             "segment_edge_length": segment_length,
-            "segment_fraction": (segment_length / raw_path_length) if bool(result.success) and raw_path_length > 1e-12 else math.nan,
+            "segment_residual_length": residual_segment_length,
+            "segment_fraction": residual_segment_fraction,
             "box_sequence_len": len(list(result.box_sequence)),
             "segment_edges_used": int(result.segment_edges_used),
+            "obb_edges_used": int(getattr(result, "obb_edges_used", 0)),
+            "obb_regions_used": int(getattr(result, "obb_regions_used", 0)),
+            "obb_edge_length": float(getattr(result, "obb_edge_length", 0.0)),
             "partition_cells_used": int(getattr(result, "partition_cells_used", 0)),
             "partition_search_ms": float(getattr(result, "partition_search_ms", 0.0)),
             "partition_repair_ms": float(getattr(result, "partition_repair_ms", 0.0)),
             "non_grid_cells_used": int(getattr(result, "non_grid_cells_used", 0)),
-            "residual_segment_fraction": float(getattr(result, "residual_segment_fraction", 0.0)),
+            "residual_segment_fraction": residual_segment_fraction,
             "waypoint_count": len(canonical_path),
             "audit_status": actual_audit_status if not combined_audit_passed else str(result.audit_status),
             "canonical_audit_status": str(result.audit_status),
@@ -1734,6 +1842,7 @@ def bridge_all_queries(
     selected: list[tuple[str, list[float], list[float], int]] = []
     force_selected_indices: set[int] = set()
     query_items: list[tuple[str, list[float], list[float], int]] = []
+    force_selected = bool(getattr(options, "query_bridge_force_selected", False))
     for query_index, raw in enumerate(queries):
         query = query_spec(raw)
         start = query_point(robot, query.start, bool(options.canonicalize_queries))
@@ -1782,12 +1891,44 @@ def bridge_all_queries(
     if not labels and not adaptive_all and not to_main_enabled:
         return time.perf_counter() - t0, added_total, attempts, timing_by_label, added_by_label
 
+    # In non-forced mode, probe the existing graph after endpoint anchoring.
+    # Endpoint-to-main repair is useful only for queries that are still not
+    # acceptable; doing it unconditionally is a major online-time tail for
+    # already-connected random-scene queries.
+    initial_probe_by_label: dict[str, Any] = {}
+    needs_repair_by_label: dict[str, bool] = {}
+    if to_main_enabled and not force_selected:
+        probe_t0 = time.perf_counter()
+        probe_skips = 0
+        probe_repairs = 0
+        for label, start, goal, _query_index in query_items:
+            if labels and label not in labels:
+                continue
+            probe = forest.query(start, goal)
+            initial_probe_by_label[label] = probe
+            needs_repair = not query_good_enough(probe, start, goal)
+            needs_repair_by_label[label] = needs_repair
+            if needs_repair:
+                probe_repairs += 1
+            else:
+                probe_skips += 1
+        timing_by_label["__prebridge_probe__"] = time.perf_counter() - probe_t0
+        added_by_label["__prebridge_good_enough__"] = probe_skips
+        added_by_label["__prebridge_needs_repair__"] = probe_repairs
+
     if bool(getattr(options, "query_bridge_to_main_island", False)):
         main_t0 = time.perf_counter()
         main_added = 0
         main_attempts = 0
         endpoints: list[tuple[str, list[float]]] = []
         for label, start, goal, _query_index in query_items:
+            if labels and label not in labels:
+                continue
+            if needs_repair_by_label and not needs_repair_by_label.get(label, True):
+                added_by_label[f"{label}:to_main_skipped"] = (
+                    added_by_label.get(f"{label}:to_main_skipped", 0) + 1
+                )
+                continue
             endpoints.append((f"{label}:start", start))
             endpoints.append((f"{label}:goal", goal))
         for endpoint_label, point in endpoints:
@@ -1839,7 +1980,6 @@ def bridge_all_queries(
     # heavier endpoint-to-endpoint bridge for every query; after the endpoint
     # stage, re-probe the graph and only bridge queries that still violate the
     # acceptance criteria.
-    force_selected = bool(getattr(options, "query_bridge_force_selected", False))
     for label, start, goal, global_query_index in query_items:
         if labels and label not in labels:
             continue
@@ -1847,6 +1987,8 @@ def bridge_all_queries(
             selected_index = len(selected)
             selected.append((label, start, goal, global_query_index))
             force_selected_indices.add(selected_index)
+            continue
+        if needs_repair_by_label and not needs_repair_by_label.get(label, True):
             continue
         if labels or adaptive_all:
             probe = forest.query(start, goal)
@@ -1943,6 +2085,20 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS"] = str(
             int(getattr(options, "query_bridge_attempt_fallback_paths", 0))
         )
+        env_updates["RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_hybridize_attempt_paths", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS"] = str(
+            int(getattr(options, "query_bridge_hybrid_max_paths", 8))
+        )
+        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES"] = str(
+            int(getattr(options, "query_bridge_hybrid_max_vertices", 128))
+        )
+        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS"] = str(
+            int(getattr(options, "query_bridge_hybrid_max_cross_checks", 4096))
+        )
         env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP"] = (
             "1"
             if bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False))
@@ -1964,6 +2120,23 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH"] = str(
             float(getattr(options, "query_bridge_direct_segment_after_rrt_min_length", 0.0))
+        )
+        env_updates["RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT"] = (
+            "1"
+            if bool(getattr(options, "query_bridge_fast_direct_segment_after_rrt", False))
+            else "0"
+        )
+        env_updates["RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS"] = str(
+            int(getattr(options, "query_bridge_fast_direct_random_shortcut_iters", 0))
+        )
+        env_updates["RBF_QUERY_ENDPOINT_POINT_ANCHOR"] = (
+            "1" if bool(getattr(options, "query_endpoint_point_anchor", False)) else "0"
+        )
+        env_updates["RBF_OBB_FAST_PRIMARY_ORIENTATION"] = (
+            "1" if bool(getattr(options, "obb_fast_primary_orientation", True)) else "0"
+        )
+        env_updates["RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL"] = (
+            "1" if bool(getattr(options, "obb_fallback_orientations_on_primary_fail", False)) else "0"
         )
         if float(options.query_bridge_direct_sample_step) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
@@ -2000,6 +2173,16 @@ def bridge_all_queries(
             if bool(getattr(options, "query_bridge_full_residual_overlay_when_connected", False))
             else "0"
         )
+        env_updates["RBF_OBB_METADATA_ONLY"] = (
+            "1"
+            if bool(getattr(options, "segment_edge_obb_metadata_only", False))
+            else "0"
+        )
+        env_updates["RBF_OBB_METADATA_ONLY_REQUIRE_COVER"] = (
+            "1"
+            if bool(getattr(options, "segment_edge_obb_metadata_require_cover", False))
+            else "0"
+        )
         env_updates["RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES"] = (
             "1" if bool(getattr(options, "query_bridge_partition_neighbor_candidates", False)) else "0"
         )
@@ -2032,14 +2215,15 @@ def bridge_all_queries(
                 for selected_index, (label, start, goal, global_query_index) in enumerate(selected):
                     q0 = time.perf_counter()
                     probe = forest.query(start, goal)
-                    if query_good_enough(probe, start, goal):
+                    forced_query = selected_index in force_indices
+                    if (not forced_query) and query_good_enough(probe, start, goal):
                         reuse_skips += 1
                         added_values.append(0)
                         timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
                         added_by_label[label] = added_by_label.get(label, 0) + 0
                         continue
                     os.environ["RBF_QUERY_BRIDGE_GLOBAL_INDICES"] = str(int(global_query_index))
-                    if selected_index in force_indices:
+                    if forced_query:
                         os.environ["RBF_QUERY_BRIDGE_FORCE_INDICES"] = "0"
                     else:
                         os.environ.pop("RBF_QUERY_BRIDGE_FORCE_INDICES", None)
@@ -2260,12 +2444,68 @@ def run_leaf_rrt(
                     canonicalize_queries=bool(options.canonicalize_queries),
                 )
                 if (
+                    bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False)) and
+                    not all(bool(row.get("audit_passed", False)) for row in step_qrows)
+                ):
+                    retry_options = copy.copy(options)
+                    retry_options.query_bridge_parallel_rrt_early_stop = False
+                    (
+                        retry_bridge_s,
+                        retry_added,
+                        retry_attempts,
+                        retry_by_label_s,
+                        retry_added_by_label,
+                    ) = bridge_all_queries(
+                        forest,
+                        robot,
+                        [raw_query],
+                        retry_options,
+                    )
+                    query_bridge_s += float(retry_bridge_s)
+                    query_bridge_added += int(retry_added)
+                    query_bridge_attempts += int(retry_attempts)
+                    for key, value in retry_by_label_s.items():
+                        query_bridge_by_label_s[f"serial_retry:{key}"] = (
+                            query_bridge_by_label_s.get(f"serial_retry:{key}", 0.0) + float(value)
+                        )
+                    for key, value in retry_added_by_label.items():
+                        query_bridge_added_by_label[f"serial_retry:{key}"] = (
+                            query_bridge_added_by_label.get(f"serial_retry:{key}", 0) + int(value)
+                        )
+                    step_qrows = query_rows(
+                        forest,
+                        robot,
+                        [raw_query],
+                        obstacles=list(obstacles),
+                        audit_step=float(options.audit_segment_step),
+                        audit_collision_tolerance=float(options.audit_collision_tolerance),
+                        canonicalize_queries=bool(options.canonicalize_queries),
+                    )
+                if (
                     bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
                     not all(bool(row.get("audit_passed", False)) for row in step_qrows)
                 ):
                     fallback_options = copy.copy(options)
+                    fallback_options.query_bridge_sequential_reuse = True
                     fallback_options.query_bridge_to_main_island = True
                     fallback_options.query_bridge_force_selected = True
+                    fallback_options.query_bridge_direct_segment_after_rrt = True
+                    fallback_options.query_bridge_fast_direct_segment_after_rrt = True
+                    fallback_options.segment_edge_obb_cover = True
+                    fallback_options.rrt_bridge_obb_cover = True
+                    fallback_options.strict_obb_bridge_cover = True
+                    fallback_options.query_bridge_no_path_retry_attempts = max(
+                        int(getattr(options, "query_bridge_no_path_retry_attempts", 0)),
+                        2,
+                    )
+                    if not str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip():
+                        fallback_options.query_bridge_no_path_retry_budget_iters = "40000"
+                    if not str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip():
+                        fallback_options.query_bridge_no_path_retry_budget_attempts = "4"
+                    fallback_options.query_bridge_forced_attempts = max(
+                        int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
+                        int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+                    )
                     (
                         fallback_bridge_s,
                         fallback_added,
@@ -2321,6 +2561,64 @@ def run_leaf_rrt(
                 audit_collision_tolerance=float(options.audit_collision_tolerance),
                 canonicalize_queries=bool(options.canonicalize_queries),
             )
+            if (
+                bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
+                (
+                    not qrows or
+                    not all(bool(row.get("audit_passed", False)) for row in qrows)
+                )
+            ):
+                if len(qrows) == len(query_list):
+                    failed_queries = [
+                        raw_query
+                        for raw_query, row in zip(query_list, qrows, strict=True)
+                        if not bool(row.get("audit_passed", False))
+                    ]
+                else:
+                    # Some hard failures can produce no per-query result rows.
+                    # Fall back conservatively rather than silently accepting
+                    # an incomplete batch.
+                    failed_queries = list(query_list)
+                if failed_queries:
+                    fallback_options = copy.copy(options)
+                    fallback_options.query_bridge_to_main_island = True
+                    fallback_options.query_bridge_force_selected = True
+                    fallback_options.query_bridge_forced_attempts = max(
+                        int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
+                        int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+                    )
+                    (
+                        fallback_bridge_s,
+                        fallback_added,
+                        fallback_attempts,
+                        fallback_by_label_s,
+                        fallback_added_by_label,
+                    ) = bridge_all_queries(
+                        forest,
+                        robot,
+                        failed_queries,
+                        fallback_options,
+                    )
+                    query_bridge_s += float(fallback_bridge_s)
+                    query_bridge_added += int(fallback_added)
+                    query_bridge_attempts += int(fallback_attempts)
+                    for key, value in fallback_by_label_s.items():
+                        query_bridge_by_label_s[f"fallback:{key}"] = (
+                            query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
+                        )
+                    for key, value in fallback_added_by_label.items():
+                        query_bridge_added_by_label[f"fallback:{key}"] = (
+                            query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
+                        )
+                    qrows = query_rows(
+                        forest,
+                        robot,
+                        query_list,
+                        obstacles=list(obstacles),
+                        audit_step=float(options.audit_segment_step),
+                        audit_collision_tolerance=float(options.audit_collision_tolerance),
+                        canonicalize_queries=bool(options.canonicalize_queries),
+                    )
         final_boxes = len(list(forest.boxes()))
         final_segment_edges = len(list(forest.segment_edges()))
         final_adjacency_islands = -1 if partition_native_requested else forest_adjacency_island_count(forest)
@@ -2333,7 +2631,7 @@ def run_leaf_rrt(
     build_for_diagnostics = forest.last_build_profile() if hasattr(forest, "last_build_profile") else build
     successes = [row for row in qrows if bool(row["audit_passed"])]
     total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))
-    total_seg = sum(float(row["segment_edge_length"]) for row in successes)
+    total_seg = sum(float(row.get("segment_residual_length", row["segment_edge_length"])) for row in successes)
     diagnostics = {str(k): float(v) for k, v in dict(build_for_diagnostics.diagnostics).items()}
     partition_island_count = int(diagnostics.get(
         "adaptive.partition_islands",
@@ -2405,6 +2703,18 @@ def run_leaf_rrt(
         str(row["label"]): int(row["segment_edges_used"])
         for row in qrows
     }
+    query_obb_edges_used_by_label = {
+        str(row["label"]): int(row.get("obb_edges_used", 0))
+        for row in qrows
+    }
+    query_obb_regions_used_by_label = {
+        str(row["label"]): int(row.get("obb_regions_used", 0))
+        for row in qrows
+    }
+    query_obb_edge_length_by_label = {
+        str(row["label"]): float(row.get("obb_edge_length", 0.0))
+        for row in qrows
+    }
     return {
         "case": options.case_label,
         "seed": int(options.seed),
@@ -2420,6 +2730,9 @@ def run_leaf_rrt(
         "query_raw_length_by_label": query_raw_length_by_label,
         "query_segment_fraction_by_label": query_segment_fraction_by_label,
         "query_segment_edges_used_by_label": query_segment_edges_used_by_label,
+        "query_obb_edges_used_by_label": query_obb_edges_used_by_label,
+        "query_obb_regions_used_by_label": query_obb_regions_used_by_label,
+        "query_obb_edge_length_by_label": query_obb_edge_length_by_label,
         "query_bridge_sequential_reuse": bool(options.query_bridge_sequential_reuse),
         "query_bridge_scene_reusable_edges": bool(options.query_bridge_scene_reusable_edges),
         "query_bridge_reuse_scope": "scene_seed_local" if bool(options.query_bridge_scene_reusable_edges) else "query_index_local",
@@ -2429,6 +2742,44 @@ def run_leaf_rrt(
         "query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
         "query_bridge_direct_segment_after_rrt_min_length": float(
             options.query_bridge_direct_segment_after_rrt_min_length
+        ),
+        "query_bridge_fast_direct_segment_after_rrt": bool(
+            getattr(options, "query_bridge_fast_direct_segment_after_rrt", False)
+        ),
+        "query_bridge_fast_direct_random_shortcut_iters": int(
+            getattr(options, "query_bridge_fast_direct_random_shortcut_iters", 0)
+        ),
+        "query_bridge_hybridize_attempt_paths": bool(
+            getattr(options, "query_bridge_hybridize_attempt_paths", False)
+        ),
+        "query_bridge_hybrid_max_paths": int(
+            getattr(options, "query_bridge_hybrid_max_paths", 8)
+        ),
+        "query_bridge_hybrid_max_vertices": int(
+            getattr(options, "query_bridge_hybrid_max_vertices", 128)
+        ),
+        "query_bridge_hybrid_max_cross_checks": int(
+            getattr(options, "query_bridge_hybrid_max_cross_checks", 4096)
+        ),
+        "query_endpoint_point_anchor": bool(getattr(options, "query_endpoint_point_anchor", False)),
+        "segment_edge_obb_cover": bool(options.segment_edge_obb_cover),
+        "rrt_bridge_obb_cover": bool(options.rrt_bridge_obb_cover),
+        "strict_obb_bridge_cover": bool(options.strict_obb_bridge_cover),
+        "segment_edge_obb_metadata_only": bool(options.segment_edge_obb_metadata_only),
+        "segment_edge_obb_metadata_require_cover": bool(
+            options.segment_edge_obb_metadata_require_cover
+        ),
+        "segment_edge_obb_lateral_radius": float(options.segment_edge_obb_lateral_radius),
+        "segment_edge_obb_longitudinal_margin": float(options.segment_edge_obb_longitudinal_margin),
+        "segment_edge_obb_safety_epsilon": float(options.segment_edge_obb_safety_epsilon),
+        "segment_edge_obb_grow_iterations": int(options.segment_edge_obb_grow_iterations),
+        "segment_edge_obb_binary_iterations": int(options.segment_edge_obb_binary_iterations),
+        "segment_edge_obb_split_depth": int(options.segment_edge_obb_split_depth),
+        "obb_max_window_segments": int(options.obb_max_window_segments),
+        "obb_max_validations_per_window": int(options.obb_max_validations_per_window),
+        "obb_fast_primary_orientation": bool(getattr(options, "obb_fast_primary_orientation", True)),
+        "obb_fallback_orientations_on_primary_fail": bool(
+            getattr(options, "obb_fallback_orientations_on_primary_fail", False)
         ),
         "query_bridge_local_sample_assimilation": bool(options.query_bridge_local_sample_assimilation),
         "query_bridge_direct_partition_append_batch_size": int(
@@ -2680,6 +3031,343 @@ def run_leaf_rrt(
         "query_bridge_hipac_transition_obb_gjk_tests": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_gjk_tests", 0.0)),
         "query_bridge_hipac_transition_obb_maybe_pairs": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_maybe_pairs", 0.0)),
         "query_bridge_hipac_transition_obb_ms": float(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_ms", 0.0)),
+        "segment_edge_obb_cover_attempts": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_attempts")
+        )),
+        "segment_edge_obb_cover_success": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_success")
+        )),
+        "segment_edge_obb_cover_fail": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_fail")
+        )),
+        "segment_edge_obb_cover_validations": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_validations")
+        )),
+        "segment_edge_obb_cover_valid_candidates": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_valid_candidates",
+        )),
+        "segment_edge_obb_cover_grow_attempts": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_grow_attempts",
+        )),
+        "segment_edge_obb_cover_regions": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_regions")
+        )),
+        "segment_edge_obb_cover_region_volume_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_region_volume_sum",
+        )),
+        "segment_edge_obb_cover_region_volume_max": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".segment_obb_cover_region_volume_max",
+        )),
+        "segment_edge_obb_cover_region_log_volume_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_region_log_volume_sum",
+        )),
+        "segment_edge_obb_cover_region_volume_count": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_region_volume_count",
+        )),
+        "segment_edge_obb_cover_clearance_support_attempts": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_attempts",
+        )),
+        "segment_edge_obb_cover_clearance_support_success": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_success",
+        )),
+        "segment_edge_obb_cover_clearance_support_fail": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_fail",
+        )),
+        "segment_edge_obb_cover_clearance_support_samples": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_samples",
+        )),
+        "segment_edge_obb_cover_clearance_support_error_radius": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_error_radius",
+        )),
+        "segment_edge_obb_cover_clearance_support_min_margin": float(_diagnostic_first_suffix(
+            diagnostics,
+            ".segment_obb_cover_clearance_support_min_margin",
+        )),
+        "segment_edge_obb_cover_windows_attempted": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_windows_attempted")
+        )),
+        "segment_edge_obb_cover_windows_success": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_windows_success")
+        )),
+        "segment_edge_obb_cover_replaced_segments": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_replaced_segments")
+        )),
+        "segment_edge_obb_cover_partial_edges": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_partial_edges")
+        )),
+        "segment_edge_obb_cover_partial_regions": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_partial_regions")
+        )),
+        "segment_edge_obb_cover_partial_committed": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_partial_committed")
+        )),
+        "segment_edge_obb_cover_metadata_only": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_metadata_only",
+        )),
+        "segment_edge_obb_cover_metadata_only_segments": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_metadata_only_segments",
+        )),
+        "segment_edge_obb_cover_metadata_require_cover_reject": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_metadata_require_cover_reject",
+        )),
+        "segment_edge_obb_cover_partial_covered_length": float(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_partial_covered_length")
+        )),
+        "segment_edge_obb_cover_ms": float(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".segment_obb_cover_ms")
+        )),
+        "segment_edge_obb_cover_strict_reject": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_strict_reject",
+        )),
+        "segment_edge_obb_cover_edge_fail": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_edge_fail",
+        )),
+        "segment_edge_obb_cover_missing_box": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_missing_box",
+        )),
+        "segment_edge_obb_cover_failed_leaf_windows": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_failed_leaf_windows",
+        )),
+        "segment_edge_obb_cover_failed_leaf_length_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_failed_leaf_length_sum",
+        )),
+        "segment_edge_obb_cover_failed_leaf_length_max": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".segment_obb_cover_failed_leaf_length_max",
+        )),
+        "segment_edge_obb_cover_recursive_splits": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".segment_obb_cover_recursive_splits",
+        )),
+        "segment_edge_obb_cover_first_failed_leaf_recorded": int(_diagnostic_max_suffix(
+            diagnostics,
+            ".segment_obb_cover_first_failed_leaf_recorded",
+        )),
+        "segment_edge_obb_cover_first_failed_leaf_exact": int(_diagnostic_max_suffix(
+            diagnostics,
+            ".segment_obb_cover_first_failed_leaf_exact",
+        )),
+        "segment_edge_obb_cover_first_failed_leaf_length": float(_diagnostic_first_suffix(
+            diagnostics,
+            ".segment_obb_cover_first_failed_leaf_length",
+        )),
+        "segment_edge_obb_cover_first_failed_leaf_dims": int(_diagnostic_first_suffix(
+            diagnostics,
+            ".segment_obb_cover_first_failed_leaf_dims",
+            0.0,
+        )),
+        "rrt_bridge_obb_cover_attempts": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_attempts")
+        )),
+        "rrt_bridge_obb_cover_success": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_success")
+        )),
+        "rrt_bridge_obb_cover_fail": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_fail")
+        )),
+        "rrt_bridge_obb_cover_regions": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_regions")
+        )),
+        "rrt_bridge_obb_cover_region_volume_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_region_volume_sum",
+        )),
+        "rrt_bridge_obb_cover_region_volume_max": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_region_volume_max",
+        )),
+        "rrt_bridge_obb_cover_region_log_volume_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_region_log_volume_sum",
+        )),
+        "rrt_bridge_obb_cover_region_volume_count": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_region_volume_count",
+        )),
+        "rrt_bridge_obb_cover_validations": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_validations")
+        )),
+        "rrt_bridge_obb_cover_valid_candidates": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_valid_candidates",
+        )),
+        "rrt_bridge_obb_cover_grow_attempts": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_grow_attempts",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_attempts": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_attempts",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_success": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_success",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_fail": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_fail",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_samples": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_samples",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_error_radius": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_error_radius",
+        )),
+        "rrt_bridge_obb_cover_clearance_support_min_margin": float(_diagnostic_first_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_clearance_support_min_margin",
+        )),
+        "rrt_bridge_obb_cover_replaced_segments": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_replaced_segments")
+        )),
+        "rrt_bridge_obb_cover_partial_edges": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_partial_edges")
+        )),
+        "rrt_bridge_obb_cover_partial_regions": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_partial_regions")
+        )),
+        "rrt_bridge_obb_cover_partial_committed": int(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_partial_committed")
+        )),
+        "rrt_bridge_obb_cover_metadata_only": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_metadata_only",
+        )),
+        "rrt_bridge_obb_cover_metadata_only_segments": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_metadata_only_segments",
+        )),
+        "rrt_bridge_obb_cover_metadata_require_cover_reject": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_metadata_require_cover_reject",
+        )),
+        "rrt_bridge_obb_cover_partial_covered_length": float(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_partial_covered_length")
+        )),
+        "rrt_bridge_obb_cover_ms": float(sum(
+            value for key, value in diagnostics.items()
+            if key.endswith(".rrt_bridge_obb_cover_ms")
+        )),
+        "rrt_bridge_obb_cover_strict_reject": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_strict_reject",
+        )),
+        "rrt_bridge_obb_cover_edge_fail": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_edge_fail",
+        )),
+        "rrt_bridge_obb_cover_missing_box": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_missing_box",
+        )),
+        "rrt_bridge_obb_cover_failed_leaf_windows": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_failed_leaf_windows",
+        )),
+        "rrt_bridge_obb_cover_failed_leaf_length_sum": float(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_failed_leaf_length_sum",
+        )),
+        "rrt_bridge_obb_cover_failed_leaf_length_max": float(_diagnostic_max_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_failed_leaf_length_max",
+        )),
+        "rrt_bridge_obb_cover_recursive_splits": int(_diagnostic_sum_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_recursive_splits",
+        )),
+        "rrt_bridge_obb_cover_first_failed_leaf_recorded": int(_diagnostic_max_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_first_failed_leaf_recorded",
+        )),
+        "rrt_bridge_obb_cover_first_failed_leaf_exact": int(_diagnostic_max_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_first_failed_leaf_exact",
+        )),
+        "rrt_bridge_obb_cover_first_failed_leaf_length": float(_diagnostic_first_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_first_failed_leaf_length",
+        )),
+        "rrt_bridge_obb_cover_first_failed_leaf_dims": int(_diagnostic_first_suffix(
+            diagnostics,
+            ".rrt_bridge_obb_cover_first_failed_leaf_dims",
+            0.0,
+        )),
+        **{
+            f"rrt_bridge_obb_cover_first_failed_leaf_a_{dim}": float(_diagnostic_first_suffix(
+                diagnostics,
+                f".rrt_bridge_obb_cover_first_failed_leaf_a_{dim}",
+            ))
+            for dim in range(10)
+        },
+        **{
+            f"rrt_bridge_obb_cover_first_failed_leaf_b_{dim}": float(_diagnostic_first_suffix(
+                diagnostics,
+                f".rrt_bridge_obb_cover_first_failed_leaf_b_{dim}",
+            ))
+            for dim in range(10)
+        },
+        **{
+            f"segment_edge_obb_cover_first_failed_leaf_a_{dim}": float(_diagnostic_first_suffix(
+                diagnostics,
+                f".segment_edge_obb_cover_first_failed_leaf_a_{dim}",
+            ))
+            for dim in range(10)
+        },
+        **{
+            f"segment_edge_obb_cover_first_failed_leaf_b_{dim}": float(_diagnostic_first_suffix(
+                diagnostics,
+                f".segment_edge_obb_cover_first_failed_leaf_b_{dim}",
+            ))
+            for dim in range(10)
+        },
+        "obb_edges_used_total": int(sum(int(row.get("obb_edges_used", 0)) for row in qrows)),
+        "obb_regions_used_total": int(sum(int(row.get("obb_regions_used", 0)) for row in qrows)),
+        "obb_edge_length_total": float(sum(float(row.get("obb_edge_length", 0.0)) for row in qrows)),
         "query_bridge_hipac_promote_transition_attempts": int(diagnostics.get("query_bridge.hipac_promote_transition.attempts", 0.0)),
         "query_bridge_hipac_promote_transition_target_rejects": int(diagnostics.get("query_bridge.hipac_promote_transition.target_rejects", 0.0)),
         "query_bridge_hipac_promote_transition_candidate_boxes": int(diagnostics.get("query_bridge.hipac_promote_transition.candidate_boxes", 0.0)),

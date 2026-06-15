@@ -39,6 +39,9 @@ enum class SegmentEdgeType : std::uint8_t {
     QueryBridge = 3,
     BoxCorridor = 4,
     PortalCorridor = 5,
+    SegmentOBBCorridor = 6,
+    RRTBridgeOBBCorridor = 7,
+    TransitionOBBCorridor = 8,
 };
 
 enum class SegmentEdgeValidation : std::uint8_t {
@@ -59,6 +62,13 @@ struct SegmentEdge {
     // the edge is used. Other conservative portal certificates, such as
     // ConservativeObbZonotope, keep their certified centerline in waypoints.
     std::vector<BoxNode> internal_boxes;
+    // For SegmentEdgeValidation::ConservativeObbZonotope, each region is a
+    // certified C-space OBB stored as q = center + generators * xi,
+    // xi in [-1,1]^k.  These regions are hidden bridge volumes rather than
+    // global graph vertices.
+    std::vector<Eigen::VectorXd> obb_centers;
+    std::vector<Eigen::MatrixXd> obb_generators;
+    double obb_covered_length = 0.0;
     SegmentEdgeType type = SegmentEdgeType::Unknown;
     SegmentEdgeValidation validation = SegmentEdgeValidation::Unknown;
     int segment_resolution = 0;
@@ -93,6 +103,9 @@ struct QueryResult {
     double certified_box_length = 0.0;
     double provisional_audited_length = 0.0;
     double segment_edge_length = 0.0;
+    int obb_edges_used = 0;
+    int obb_regions_used = 0;
+    double obb_edge_length = 0.0;
     int partition_cells_used = 0;
     int non_grid_cells_used = 0;
     double partition_search_ms = 0.0;

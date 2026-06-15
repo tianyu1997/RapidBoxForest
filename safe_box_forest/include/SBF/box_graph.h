@@ -93,7 +93,12 @@ int append_certified_portal_corridor_edge(SegmentEdgeList& edges,
 										  std::vector<Eigen::VectorXd> waypoints,
 										  SegmentEdgeValidation validation,
 										  int portal_domain_id = -1,
-										  int query_index = -1);
+										  int query_index = -1,
+										  const Eigen::VectorXd* obb_center = nullptr,
+										  const Eigen::MatrixXd* obb_generators = nullptr,
+										  SegmentEdgeType edge_type = SegmentEdgeType::PortalCorridor,
+										  const std::vector<Eigen::VectorXd>* obb_centers = nullptr,
+										  const std::vector<Eigen::MatrixXd>* obb_generators_list = nullptr);
 int add_portal_corridor_edge(SegmentEdgeList& edges,
 							 AdjacencyGraph& graph,
 							 const BoxNode& source,
@@ -106,6 +111,7 @@ void apply_segment_edges_to_adjacency(const SegmentEdgeList& edges, AdjacencyGra
 const SegmentEdge* find_segment_edge(const SegmentEdgeList& edges, int source_box_id, int target_box_id);
 const SegmentEdge* find_segment_edge(const QueryGraphCache& cache, int source_box_id, int target_box_id);
 bool counts_as_segment_edge(SegmentEdgeType type);
+bool counts_as_query_repair_edge(SegmentEdgeType type);
 std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph);
 std::unordered_set<int> find_articulation_points(const AdjacencyGraph& graph);
 DijkstraResult dijkstra_search(const AdjacencyGraph& graph,

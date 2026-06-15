@@ -58,6 +58,7 @@ EXP04_D23_CACHE_ARTIFACT = Path(
 )
 EXP03_UR5_D20_CACHE_RECORDS = "2,097,151"
 EXP03_UR5_D20_CACHE_GIB = "1.67"
+GOLD_POINT_RELATIVE_PATH_IMPROVEMENT_THRESHOLD = 0.01
 
 METHOD_STYLE = {
     "sbf_leaf_rrt": {"label": "RBF", "color": "#1f77b4", "marker": "o"},
@@ -523,6 +524,45 @@ def is_full_success(row: dict[str, Any]) -> bool:
     return total > 0.0 and success >= total
 
 
+def select_quality_plateau_index(
+    quality_values: list[float],
+    *,
+    start_index: int = 0,
+    relative_improvement_threshold: float = GOLD_POINT_RELATIVE_PATH_IMPROVEMENT_THRESHOLD,
+) -> int | None:
+    """Select the last substantial quality-improvement point after start.
+
+    Lower values are better.  Starting from the first full-success point, move
+    forward only when a later checkpoint improves the current selected path
+    quality by at least the relative threshold.  This prevents a gold marker
+    from drifting to a much later checkpoint for a visually negligible gain.
+    """
+    if not quality_values:
+        return None
+    start_index = max(0, min(start_index, len(quality_values) - 1))
+    finite_indices = [
+        index for index in range(start_index, len(quality_values))
+        if math.isfinite(as_float(quality_values[index]))
+    ]
+    if not finite_indices:
+        return None
+    selected = finite_indices[0]
+    while True:
+        current_quality = as_float(quality_values[selected])
+        if not math.isfinite(current_quality) or current_quality <= 0.0:
+            return selected
+        threshold_quality = current_quality * (1.0 - relative_improvement_threshold)
+        next_index = None
+        for index in range(selected + 1, len(quality_values)):
+            candidate_quality = as_float(quality_values[index])
+            if math.isfinite(candidate_quality) and candidate_quality <= threshold_quality:
+                next_index = index
+                break
+        if next_index is None:
+            return selected
+        selected = next_index
+
+
 AMORTIZATION_QUERY_COUNTS = [1, 5, 10, 20, 50]
 PANEL_TITLE_FONTSIZE = 9.4
 AXIS_LABEL_FONTSIZE = 8.9
@@ -799,18 +839,19 @@ def current_random_context_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[s
                     full.append(row)
             if not full:
                 continue
-            best_path = min(path_length_stat(row) for row in full)
-            candidates = [
-                row for row in full
-                if path_length_stat(row) <= 1.08 * best_path
-            ] or full
-            chosen = sorted(
-                candidates,
+            ordered_full = sorted(
+                full,
                 key=lambda row: (
-                    measured_time_key(row),
+                    random_display_time(row),
                     path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
                 ),
-            )[0]
+            )
+            quality_values = [
+                path_length_stat(row) if math.isfinite(path_length_stat(row)) else math.nan
+                for row in ordered_full
+            ]
+            chosen_index = select_quality_plateau_index(quality_values, start_index=0)
+            chosen = ordered_full[chosen_index if chosen_index is not None else 0]
             build_s = as_float(chosen.get("offline_build_s_median", chosen.get("build_s")), 0.0)
             query_s = online_query_time(chosen)
             if not math.isfinite(query_s):
@@ -1159,6 +1200,148 @@ def exp06_per_query_tradeoff_rows(
     return out
 
 
+def exp06_prm_cumulative_curve_rows(manifest_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build full-catalog PRM curve checkpoints directly from the manifest.
+
+    The cumulative PRM runner stores incumbent paths for unchanged queries in
+    the manifest, while the summary CSV can collapse or omit late repeats.
+    Fig. 5 needs the full cumulative envelope so the late roadmap plateau
+    remains visible.  Table selection still uses the normal summary and
+    per-query trade-off rows.
+    """
+    if not isinstance(manifest_payload, dict):
+        return []
+    run_rows = manifest_payload.get("rows", [])
+    if not isinstance(run_rows, list):
+        return []
+
+    scenario_runs: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    scenario_query_keys: dict[tuple[str, str], set[tuple[str, str]]] = {}
+    scenario_scenes: dict[tuple[str, str], set[str]] = {}
+    for run in run_rows:
+        if str(run.get("method", "")) != "prm":
+            continue
+        robot = str(run.get("robot", "")).lower()
+        difficulty = str(run.get("difficulty", "")).lower()
+        stage_id = str(run.get("stage_id", ""))
+        if not robot or not difficulty or not stage_id:
+            continue
+        scenario_key = (robot, difficulty)
+        scenario_runs.setdefault(scenario_key, []).append(run)
+        scene_seed = str(run.get("scene_seed", ""))
+        if scene_seed:
+            scenario_scenes.setdefault(scenario_key, set()).add(scene_seed)
+        queries = run.get("queries", [])
+        if not isinstance(queries, list):
+            continue
+        for query_index, query in enumerate(queries):
+            label = str(query.get("label", f"q{query_index}"))
+            scenario_query_keys.setdefault(scenario_key, set()).add((scene_seed, label))
+
+    out: list[dict[str, Any]] = []
+    for (robot, difficulty), runs in sorted(scenario_runs.items()):
+        expected_keys = scenario_query_keys.get((robot, difficulty), set())
+        if not expected_keys:
+            continue
+        by_stage: dict[str, list[dict[str, Any]]] = {}
+        stage_budget: dict[str, float] = {}
+        for run in runs:
+            stage_id = str(run.get("stage_id", ""))
+            by_stage.setdefault(stage_id, []).append(run)
+            budget = as_float(run.get("budget_s"))
+            if math.isfinite(budget):
+                stage_budget[stage_id] = budget
+
+        incumbent_path: dict[tuple[str, str], float] = {}
+        incumbent_segment: dict[tuple[str, str], float] = {}
+        incumbent_solve: dict[tuple[str, str], float] = {}
+        for stage_id, group in sorted(
+            by_stage.items(),
+            key=lambda item: (stage_budget.get(item[0], math.inf), item[0]),
+        ):
+            build_values: list[float] = []
+            query_count_values: list[float] = []
+            for run in group:
+                scene_seed = str(run.get("scene_seed", ""))
+                query_count = as_float(run.get("query_count"), math.nan)
+                if math.isfinite(query_count):
+                    query_count_values.append(query_count)
+                build = as_float(run.get("offline_build_s", run.get("build_s")))
+                if math.isfinite(build):
+                    build_values.append(build)
+                queries = run.get("queries", [])
+                if not isinstance(queries, list):
+                    continue
+                for query_index, query in enumerate(queries):
+                    label = str(query.get("label", f"q{query_index}"))
+                    key = (scene_seed, label)
+                    if not query_success(query):
+                        continue
+                    path = as_float(query.get("path_length"))
+                    if math.isfinite(path):
+                        previous = incumbent_path.get(key, math.inf)
+                        incumbent_path[key] = min(previous, path)
+                    segment = as_float(query.get("segment_fraction"))
+                    if math.isfinite(segment):
+                        incumbent_segment[key] = segment
+                    solve_s = query_solve_seconds(query)
+                    if math.isfinite(solve_s):
+                        incumbent_solve[key] = solve_s
+
+            if not expected_keys.issubset(incumbent_path.keys()):
+                continue
+            path_values = [incumbent_path[key] for key in sorted(expected_keys)]
+            segment_values = [
+                incumbent_segment.get(key, 0.0)
+                for key in sorted(expected_keys)
+            ]
+            solve_values = [
+                incumbent_solve.get(key, 0.0)
+                for key in sorted(expected_keys)
+            ]
+            path_by_label: dict[str, list[float]] = {}
+            for _scene_seed, label in sorted(expected_keys):
+                path_by_label.setdefault(label, []).append(incumbent_path[(_scene_seed, label)])
+            budget = stage_budget.get(stage_id, math.nan)
+            build_for_display = (
+                budget
+                if math.isfinite(budget)
+                else percentile_value(build_values, 0.50)
+            )
+            solve_for_display = percentile_value(solve_values, 0.50) if solve_values else 0.0
+            display_s = max(0.0, build_for_display) / 5.0 + max(0.0, solve_for_display)
+            out.append({
+                "method": "prm",
+                "robot": robot,
+                "difficulty": difficulty,
+                "stage_id": stage_id,
+                "source": "prm_cumulative_curve_from_manifest",
+                "budget_s": budget,
+                "scenes": len(scenario_scenes.get((robot, difficulty), set())),
+                "success_scenes": len(scenario_scenes.get((robot, difficulty), set())),
+                "queries_per_scene": median(query_count_values),
+                "success_queries": len(expected_keys),
+                "total_queries": len(expected_keys),
+                "offline_build_s_median": percentile_value(build_values, 0.50),
+                "build_s": build_for_display,
+                "online_solve_per_query_s_median": solve_for_display,
+                "online_per_query_s_median": solve_for_display,
+                "planning_s_median": display_s,
+                "measured_time_s_median": display_s,
+                "amortized_s_k5": display_s,
+                "path_length_mean": mean(path_values),
+                "path_length_median": percentile_value(path_values, 0.50),
+                "raw_segment_fraction_median": percentile_value(segment_values, 0.50),
+                "_build_values": build_values,
+                "_display_time_values": [display_s],
+                "_online_solve_values": solve_values,
+                "_path_by_label": path_by_label,
+                "_path_values": path_values,
+                "_segment_values": segment_values,
+            })
+    return out
+
+
 def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[str, str], dict[str, list[dict[str, Any]]]]:
     def sparse_cumulative_prm_points(points: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Keep the PRM cumulative roadmap curve readable in Fig. 5.
@@ -1183,15 +1366,13 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
                 pareto.append((index, point))
                 best_path = min(best_path, path)
         source = pareto if len(pareto) >= 2 else list(enumerate(sorted_points))
-        if len(source) <= 8:
-            return [point for _index, point in source]
-
         selected_indices: set[int] = set()
 
-        def add_nearest(target_s: float) -> None:
+        def add_nearest(target_s: float, *, from_all: bool = False) -> None:
+            candidates_source = list(enumerate(sorted_points)) if from_all else source
             valid = [
                 (index, point)
-                for index, point in source
+                for index, point in candidates_source
                 if index not in selected_indices and as_float(point.get("total_s")) > 0.0
             ]
             if not valid:
@@ -1203,24 +1384,65 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             )
             selected_indices.add(index)
 
+        def add_stage_build(target_build_s: float) -> None:
+            """Keep visible late cumulative PRM checkpoints when present.
+
+            PRM is a reusable roadmap, so the late curve is important even when
+            the incumbent changes only slightly.  Select by encoded build
+            checkpoint instead of display time because total_s also includes
+            query cost and is not strictly monotone in the roadmap build budget.
+            """
+            pattern = re.compile(rf"build{re.escape(f'{target_build_s:g}')}s(?:_|$)")
+            matches = [
+                (index, point)
+                for index, point in enumerate(sorted_points)
+                if pattern.search(str(point.get("stage_id", "")))
+            ]
+            if not matches:
+                return
+            index, _point = min(
+                matches,
+                key=lambda item: as_float(item[1].get("total_s"), math.inf),
+            )
+            selected_indices.add(index)
+
         # Always show the first full-success checkpoint, the best path point,
-        # and the final/biggest-budget checkpoint on the cumulative curve.
+        # and the final/biggest-budget checkpoint on the cumulative curve.  The
+        # final checkpoint must come from the original sorted curve, not only
+        # the Pareto-improving subset; otherwise the visibly flat tail of a
+        # cumulative PRM roadmap disappears.
         selected_indices.add(source[0][0])
         best_index, _best_point = min(
             source,
             key=lambda item: as_float(item[1].get("path_length"), math.inf),
         )
         selected_indices.add(best_index)
-        selected_indices.add(source[-1][0])
+        selected_indices.add(len(sorted_points) - 1)
+        # Keep the last cumulative checkpoints even if they do not improve the
+        # incumbent.  This makes the late roadmap saturation/plateau visible
+        # instead of visually truncating PRM at its last Pareto improvement.
+        for tail_index in range(max(0, len(sorted_points) - 5), len(sorted_points)):
+            selected_indices.add(tail_index)
 
-        min_s = min(as_float(point.get("total_s")) for _index, point in source)
-        max_s = max(as_float(point.get("total_s")) for _index, point in source)
+        min_s = min(as_float(point.get("total_s")) for point in sorted_points)
+        max_s = max(as_float(point.get("total_s")) for point in sorted_points)
         if math.isfinite(min_s) and math.isfinite(max_s) and min_s > 0.0 and max_s > min_s:
-            # Five interior samples plus the fixed endpoints above gives at
-            # most eight visible PRM markers per panel.
+            # Five Pareto-biased interior samples keep the early quality
+            # changes readable.
             for step in range(1, 6):
                 fraction = step / 6.0
                 add_nearest(math.exp(math.log(min_s) * (1.0 - fraction) + math.log(max_s) * fraction))
+            # Add a few samples from the complete cumulative time axis, not
+            # just the Pareto-improving subset.  PRM often plateaus after the
+            # roadmap has saturated; without these late checkpoints the figure
+            # falsely suggests the curve stops before the flat tail.
+            for fraction in (0.78, 0.88, 0.96):
+                add_nearest(
+                    math.exp(math.log(min_s) * (1.0 - fraction) + math.log(max_s) * fraction),
+                    from_all=True,
+                )
+        for target_build_s in (2.0, 4.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0):
+            add_stage_build(target_build_s)
         return [
             sorted_points[index]
             for index in sorted(selected_indices, key=lambda item: sorted_points[item]["total_s"])
@@ -1268,10 +1490,31 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             continue
         path_len = path_length_stat(row)
         expected = expected_queries.get((robot, difficulty), 0.0)
+        full_catalog_success = (
+            total > 0.0
+            and success >= total
+            and (expected <= 0.0 or total >= expected)
+        )
+        # PRM and BIT* are cumulative/anytime traces.  Some checkpoints are
+        # stored for only a subset of the saved queries, but they are still
+        # useful for showing the full time-quality envelope.  Table/context
+        # selection still uses full catalog success through
+        # current_random_context_from_rows().
+        bitstar_partial_checkpoint = (
+            method == "bitstar"
+            and total > 0.0
+            and success > 0.0
+            and (expected <= 0.0 or total >= expected)
+        )
+        prm_partial_checkpoint = (
+            method == "prm"
+            and total > 0.0
+            and success > 0.0
+            and (expected <= 0.0 or total >= expected)
+        )
         if (
             total <= 0
-            or success < total
-            or (expected > 0.0 and total < expected)
+            or not (full_catalog_success or bitstar_partial_checkpoint or prm_partial_checkpoint)
             or not math.isfinite(plan)
             or not math.isfinite(path_len)
         ):
@@ -1282,8 +1525,86 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
                 "online_s": online,
                 "path_length": path_len,
                 "measured_time_s": plan,
+                "stage_id": str(row.get("stage_id", "")),
+                "full_success": full_catalog_success,
+                "success": success,
+                "total": total,
                 "path_by_label": row.get("_path_by_label") or row.get("path_by_label") or {},
                 "path_values": row.get("_path_values") or row.get("path_values") or [],
+            }
+        )
+    # Some cumulative PRM checkpoints are stored as one row per saved scene
+    # (10 queries each) rather than one scenario-level 100-query summary row.
+    # Aggregate those rows for the figure so the cumulative roadmap curve keeps
+    # its late, usually flat, high-build tail.  This is display-only; table
+    # context selection still uses scenario-level full-success rows.
+    prm_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for row in rows:
+        if str(row.get("method", "")) != "prm":
+            continue
+        robot = str(row.get("robot", "")).lower()
+        difficulty = str(row.get("difficulty", "")).lower()
+        stage_id = str(row.get("stage_id", ""))
+        if not robot or not difficulty or not stage_id:
+            continue
+        expected = expected_queries.get((robot, difficulty), 0.0)
+        total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
+        success = as_float(row.get("success_queries", row.get("success_scenes")), 0.0)
+        if expected <= 0.0 or total <= 0.0 or total >= expected or success < total:
+            continue
+        plan = random_display_time(row)
+        online = online_query_time(row)
+        path_len = path_length_stat(row)
+        if not (math.isfinite(plan) and math.isfinite(online) and math.isfinite(path_len)):
+            continue
+        prm_groups.setdefault((robot, difficulty, stage_id), []).append(row)
+    existing_prm_stages: dict[tuple[str, str], set[str]] = {}
+    for key, scenario in out.items():
+        existing_prm_stages[key] = {
+            str(point.get("stage_id", ""))
+            for point in scenario.get("prm", [])
+            if str(point.get("stage_id", ""))
+        }
+    for (robot, difficulty, stage_id), group in prm_groups.items():
+        expected = expected_queries.get((robot, difficulty), 0.0)
+        success_total = sum(as_float(row.get("success_queries", row.get("success_scenes")), 0.0) for row in group)
+        query_total = sum(as_float(row.get("total_queries", row.get("scenes")), 0.0) for row in group)
+        if expected <= 0.0 or query_total < expected or success_total < query_total:
+            continue
+        if stage_id in existing_prm_stages.get((robot, difficulty), set()):
+            continue
+        plans = [random_display_time(row) for row in group if math.isfinite(random_display_time(row))]
+        onlines = [online_query_time(row) for row in group if math.isfinite(online_query_time(row))]
+        path_values: list[float] = []
+        path_by_label: dict[str, list[float]] = {}
+        for row in group:
+            values = finite_values(row.get("_path_values") or row.get("path_values"))
+            if values:
+                path_values.extend(values)
+            else:
+                scalar = path_length_stat(row)
+                if math.isfinite(scalar):
+                    path_values.append(scalar)
+            labels = row.get("_path_by_label") or row.get("path_by_label") or {}
+            if isinstance(labels, dict):
+                for label, values_for_label in labels.items():
+                    finite = finite_values(values_for_label)
+                    if finite:
+                        path_by_label.setdefault(str(label), []).extend(finite)
+        if not plans or not onlines or not path_values:
+            continue
+        out.setdefault((robot, difficulty), {}).setdefault("prm", []).append(
+            {
+                "total_s": percentile_value(plans, 0.50),
+                "online_s": percentile_value(onlines, 0.50),
+                "path_length": mean(path_values),
+                "measured_time_s": percentile_value(plans, 0.50),
+                "stage_id": stage_id,
+                "full_success": True,
+                "success": success_total,
+                "total": query_total,
+                "path_by_label": path_by_label,
+                "path_values": path_values,
             }
         )
     for scenario in out.values():
@@ -1707,6 +2028,8 @@ def find_exp06_ompl_curve_summary(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp06" / "ompl_prm_bitstar_60s_quality_stall_v2" / "random_robot_summary.csv",
         out_dir / "ompl_prm_bitstar_60s_quality_stall_v2" / "random_robot_summary.csv",
+        out_dir / "exp06" / "ompl_prm_cumulative_20s_sparse_noearly_v1" / "random_robot_summary.csv",
+        out_dir / "ompl_prm_cumulative_20s_sparse_noearly_v1" / "random_robot_summary.csv",
         out_dir / "exp06" / "ompl_tradeoff_curves" / "random_robot_summary.csv",
         out_dir / "ompl_tradeoff_curves" / "random_robot_summary.csv",
     ]
@@ -1720,6 +2043,8 @@ def find_exp06_ompl_curve_manifest(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "exp06" / "ompl_prm_bitstar_60s_quality_stall_v2" / "random_robot_manifest.json",
         out_dir / "ompl_prm_bitstar_60s_quality_stall_v2" / "random_robot_manifest.json",
+        out_dir / "exp06" / "ompl_prm_cumulative_20s_sparse_noearly_v1" / "random_robot_manifest.json",
+        out_dir / "ompl_prm_cumulative_20s_sparse_noearly_v1" / "random_robot_manifest.json",
         out_dir / "exp06" / "ompl_tradeoff_curves" / "random_robot_manifest.json",
         out_dir / "ompl_tradeoff_curves" / "random_robot_manifest.json",
     ]
@@ -3356,6 +3681,23 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
 
 def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+
+    def quality_plateau_row(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        ordered = sorted(
+            candidates,
+            key=lambda row: (
+                measured_time_key(row),
+                path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
+                int(float(row.get("deep_max_boxes", 0) or 0)),
+            ),
+        )
+        quality_values = [
+            path_length_stat(row) if math.isfinite(path_length_stat(row)) else math.nan
+            for row in ordered
+        ]
+        selected_index = select_quality_plateau_index(quality_values, start_index=0)
+        return ordered[selected_index if selected_index is not None else 0]
+
     keys = sorted({tuple(str(row.get(field, "")) for field in group_fields) for row in rows})
     for key in keys:
         items = [
@@ -3372,37 +3714,9 @@ def select_best_budget_rows(rows: list[dict[str, Any]], group_fields: list[str])
             or str(row.get("registered_profile", "")).lower() in {"1", "true", "yes"}
         ]
         if registered:
-            out.append(sorted(
-                registered,
-                key=lambda row: (
-                    online_query_time(row) if math.isfinite(online_query_time(row)) else measured_time_key(row),
-                    amortized_query_time(row, 10) if math.isfinite(amortized_query_time(row, 10)) else measured_time_key(row),
-                    path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
-                    int(float(row.get("deep_max_boxes", 0) or 0)),
-                ),
-            )[0])
+            out.append(quality_plateau_row(registered))
             continue
-        finite_path = [
-            path_length_stat(row)
-            for row in candidates
-            if math.isfinite(path_length_stat(row))
-        ]
-        if finite_path:
-            best_path = min(finite_path)
-            candidates = [
-                row for row in candidates
-                if math.isfinite(path_length_stat(row))
-                and path_length_stat(row) <= 1.08 * best_path
-            ] or candidates
-        out.append(sorted(
-            candidates,
-            key=lambda row: (
-                online_query_time(row) if math.isfinite(online_query_time(row)) else measured_time_key(row),
-                amortized_query_time(row, 10) if math.isfinite(amortized_query_time(row, 10)) else measured_time_key(row),
-                path_length_stat(row) if math.isfinite(path_length_stat(row)) else 1e9,
-                int(float(row.get("deep_max_boxes", 0) or 0)),
-            ),
-        )[0])
+        out.append(quality_plateau_row(candidates))
     return out
 
 
@@ -3539,17 +3853,19 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     caption = r"\captionof{table}{Saved-catalog random-scene selected trade-off context points.}"
     path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
     notes = (
-        r"RBF cells are selected full-success budget points under the fixed strict-audit policy; context columns use current full-success PRM/RRTConnect/BIT* points where available. "
+        r"Selected cells start at the first full-success checkpoint and advance only while the next checkpoint improves path ratio by at least 1\%; time breaks ties. "
+        r"Context columns use current full-success PRM/RRTConnect/BIT* points where available. "
         r"Times in s; Online/q excludes final simplification/audit. "
         r"RBF/PRM include Build; RRTConnect/BIT* are Online/q only. "
         r"$L/L^\star_{\mathrm{q}}$ is success-only by saved query label. "
-        r"PRM uses one cumulative roadmap checkpoint per scenario; BIT* is "
-        r"a post-hoc checkpoint context; no Audit/q column."
+        r"PRM uses measured cumulative roadmap checkpoints and may remain "
+        r"improving at the largest PRM budget; BIT* is a post-hoc anytime "
+        r"checkpoint context; no Audit/q column."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"
         notes = (
-            r"RBF cells are selected full-success budget points under the fixed strict-audit policy. "
+            r"RBF cells start at the first full-success checkpoint and advance only while the next checkpoint improves path ratio by at least 1\%; time breaks ties. "
             r"Times in s; Online/q excludes final simplification/audit. "
             r"$L/L^\star_{\mathrm{scn}}$ is success-only against a scenario-level strict-audited reference because current "
             r"per-query OMPL baseline traces are unavailable; it is within-scenario context only. "
@@ -3793,6 +4109,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                         s=SELECTED_POINT_SIZE,
                         zorder=5,
                     )
+            plotted_curve_xy: dict[str, tuple[list[float], list[float], list[dict[str, Any]]]] = {}
             for method in ["prm", "bitstar"]:
                 points = scenario_curves.get(method, [])
                 if len(points) < 2:
@@ -3809,6 +4126,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     )
                     for point in points
                 ]
+                plotted_curve_xy[method] = (xs, ys, points)
                 panel_path_values.extend(ys)
                 if method == "bitstar":
                     axis.plot(xs, ys, "-", color=style["color"], alpha=0.74, linewidth=LINE_WIDTH)
@@ -3828,13 +4146,46 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                         s=POINT_SIZE,
                         alpha=0.62,
                     )
+                    full_indices = [
+                        index for index, point in enumerate(points)
+                        if bool(point.get("full_success", True))
+                    ]
+                    if full_indices:
+                        first_full = full_indices[0]
+                        axis.scatter(
+                            [xs[first_full]],
+                            [ys[first_full]],
+                            facecolors="none",
+                            edgecolors="black",
+                            linewidths=0.8,
+                            s=24,
+                            zorder=4,
+                        )
                 else:
-                    axis.plot(xs, ys, "-", color=style["color"], alpha=0.42, linewidth=LINE_WIDTH)
+                    # PRM is plotted as a cumulative incumbent curve: the
+                    # roadmap quality stays fixed between build checkpoints
+                    # and only changes when a later checkpoint improves the
+                    # incumbent path.  A straight line visually invents
+                    # continuous quality improvement and hides the late
+                    # plateau behavior.
+                    axis.step(
+                        xs,
+                        ys,
+                        where="post",
+                        color=style["color"],
+                        alpha=0.52,
+                        linewidth=LINE_WIDTH,
+                    )
                     axis.scatter(xs, ys, marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.58)
                 if method != "bitstar":
+                    full_indices = [
+                        index for index, point in enumerate(points)
+                        if bool(point.get("full_success", True))
+                    ]
+                    first_full = full_indices[0] if full_indices else 0
                     axis.scatter(
-                        [xs[0]],
-                        [ys[0]],
+                        [xs[first_full]],
+                        [ys[first_full]],
                         facecolors="none",
                         edgecolors="black",
                         linewidths=0.8,
@@ -3859,6 +4210,60 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                 context_x = context_figure_time(item, 5)
                 axis.scatter([context_x], [item_ratio],
                              marker=style["marker"], color=style["color"], s=POINT_SIZE, alpha=0.82)
+            for method in ["prm", "rrtconnect", "bitstar"]:
+                item = scenario_context.get(method)
+                if not item:
+                    continue
+                curve_xy = plotted_curve_xy.get(method)
+                if curve_xy is not None:
+                    xs, ys, points = curve_xy
+                    full_indices = [
+                        index for index, point in enumerate(points)
+                        if bool(point.get("full_success", True))
+                    ]
+                    first_full_index = full_indices[0] if full_indices else 0
+                    candidate_indices = [
+                        index for index in range(first_full_index, len(points))
+                        if math.isfinite(ys[index]) and math.isfinite(xs[index])
+                    ]
+                    if not candidate_indices:
+                        continue
+                    # The selected/gold point is on the actual displayed
+                    # curve, constrained to lie at or after the first
+                    # full-success (black) point.  It advances only while path
+                    # quality decreases by the configured relative threshold,
+                    # preventing negligible late improvements from moving the
+                    # selected point to the far end of the curve.
+                    selected_index = select_quality_plateau_index(
+                        ys,
+                        start_index=first_full_index,
+                    )
+                    if selected_index is None:
+                        continue
+                    context_x = xs[selected_index]
+                    item_ratio = ys[selected_index]
+                else:
+                    context_x = context_figure_time(item, 5)
+                    if not math.isfinite(context_x):
+                        continue
+                    item_ratio = figure_path_ratio(
+                        item.get("path_by_label"),
+                        item.get("path_values"),
+                        item.get("path_length"),
+                        path_refs,
+                        scalar_path_ref,
+                    )
+                    if not math.isfinite(item_ratio):
+                        continue
+                axis.scatter(
+                    [context_x],
+                    [item_ratio],
+                    facecolors="none",
+                    edgecolors="#d4a017",
+                    linewidths=SELECTED_LINE_WIDTH,
+                    s=SELECTED_POINT_SIZE,
+                    zorder=6,
+                )
             axis.set_xscale("log")
             use_compact_log_x_ticks(axis)
             axis.set_xlabel("Build/5+Online/q (s)" if row_index == len(robot_order) - 1 else "")
@@ -3989,23 +4394,14 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
             row["paper_selected_profile"] = override_profile
             row["source"] = override_profile
         if rbf_override_rows:
-            override_keys = {
-                (
-                    str(row.get("method", "")),
-                    str(row.get("robot", "")).lower(),
-                    str(row.get("difficulty", "")).lower(),
-                    int(float(row.get("deep_max_boxes", 0) or 0)),
-                )
-                for row in rbf_override_rows
-            }
+            # A registered RBF override is the sole paper-facing Exp.6 RBF
+            # source.  Remove all older RBF budget/profile rows before table,
+            # figure, and L*_q reference construction; otherwise retired
+            # diagnostic rows can define the denominator for the registered OBB
+            # profile while not being displayed as the selected method.
             rows = [
                 row for row in rows
-                if (
-                    str(row.get("method", "")),
-                    str(row.get("robot", "")).lower(),
-                    str(row.get("difficulty", "")).lower(),
-                    int(float(row.get("deep_max_boxes", 0) or 0)),
-                ) not in override_keys
+                if str(row.get("method", "")) != "sbf_leaf_rrt"
             ]
             rows.extend(rbf_override_rows)
     if include_current_baselines:
@@ -4040,14 +4436,23 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     iris_rows: list[dict[str, Any]] = []
     accepted_iris_summaries: list[Path] = []
     curve_rows: list[dict[str, Any]] = []
+    curve_rows_for_figure: list[dict[str, Any]] = []
     per_query_tradeoff_rows: list[dict[str, Any]] = []
     curve_manifest_payload = load_json_file(curve_manifest)
+    prm_cumulative_curve_rows: list[dict[str, Any]] = []
     if curve_summary is not None:
-        curve_rows = [
+        raw_curve_rows = [
             row for row in read_csv_rows(curve_summary)
-            if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
+            if str(row.get("method")) in {"prm", "bitstar"}
         ]
-        annotate_summary_rows_with_manifest_distributions(curve_rows, curve_manifest_payload)
+        annotate_summary_rows_with_manifest_distributions(raw_curve_rows, curve_manifest_payload)
+        curve_rows = [row for row in raw_curve_rows if is_full_success(row)]
+        prm_cumulative_curve_rows = exp06_prm_cumulative_curve_rows(curve_manifest_payload)
+        curve_rows_for_figure.extend(
+            row for row in raw_curve_rows
+            if str(row.get("method")) != "prm"
+        )
+        curve_rows_for_figure.extend(prm_cumulative_curve_rows)
         tradeoff_methods = {"bitstar"} if combined_prm_bitstar_manifest else set()
         per_query_tradeoff_rows.extend(
             exp06_per_query_tradeoff_rows(curve_manifest_payload, methods=tradeoff_methods)
@@ -4055,30 +4460,36 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     accepted_curve_supplements: list[Path] = []
     for supplement_summary, supplement_manifest in curve_supplements:
         supplement_manifest_payload = load_json_file(supplement_manifest)
-        supplement_rows = [
+        raw_supplement_rows = [
             row for row in read_csv_rows(supplement_summary)
-            if str(row.get("method")) in {"prm", "bitstar"} and is_full_success(row)
+            if str(row.get("method")) in {"prm", "bitstar"}
         ]
-        annotate_summary_rows_with_manifest_distributions(supplement_rows, supplement_manifest_payload)
+        annotate_summary_rows_with_manifest_distributions(raw_supplement_rows, supplement_manifest_payload)
+        supplement_rows = [row for row in raw_supplement_rows if is_full_success(row)]
         if supplement_rows:
             accepted_curve_supplements.append(supplement_summary)
             curve_rows.extend(supplement_rows)
+        if raw_supplement_rows:
+            curve_rows_for_figure.extend(raw_supplement_rows)
     bitstar_trace_manifest_payload = (
         curve_manifest_payload
         if combined_prm_bitstar_manifest else
         load_json_file(bitstar_trace_manifest)
     )
     bitstar_rows: list[dict[str, Any]] = []
+    bitstar_rows_for_figure: list[dict[str, Any]] = []
     if (
         not combined_prm_bitstar_summary
         and bitstar_trace_summary is not None
         and manifest_uses_required_simplify(bitstar_trace_manifest_payload)
     ):
-        bitstar_rows = [
+        raw_bitstar_rows = [
             row for row in read_csv_rows(bitstar_trace_summary)
-            if str(row.get("method")) == "bitstar" and is_full_success(row)
+            if str(row.get("method")) == "bitstar"
         ]
-        annotate_summary_rows_with_manifest_distributions(bitstar_rows, bitstar_trace_manifest_payload)
+        annotate_summary_rows_with_manifest_distributions(raw_bitstar_rows, bitstar_trace_manifest_payload)
+        bitstar_rows_for_figure.extend(raw_bitstar_rows)
+        bitstar_rows = [row for row in raw_bitstar_rows if is_full_success(row)]
         per_query_tradeoff_rows.extend(
             exp06_per_query_tradeoff_rows(bitstar_trace_manifest_payload, methods={"bitstar"})
         )
@@ -4087,14 +4498,16 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         supplement_manifest_payload = load_json_file(supplement_manifest)
         if not manifest_uses_required_simplify(supplement_manifest_payload):
             continue
-        supplement_rows = [
+        raw_supplement_rows = [
             row for row in read_csv_rows(supplement_summary)
-            if str(row.get("method")) == "bitstar" and is_full_success(row)
+            if str(row.get("method")) == "bitstar"
         ]
-        annotate_summary_rows_with_manifest_distributions(supplement_rows, supplement_manifest_payload)
+        annotate_summary_rows_with_manifest_distributions(raw_supplement_rows, supplement_manifest_payload)
+        supplement_rows = [row for row in raw_supplement_rows if is_full_success(row)]
         if supplement_rows:
             accepted_bitstar_trace_supplements.append(supplement_summary)
             bitstar_rows.extend(supplement_rows)
+            bitstar_rows_for_figure.extend(raw_supplement_rows)
             per_query_tradeoff_rows.extend(
                 exp06_per_query_tradeoff_rows(supplement_manifest_payload, methods={"bitstar"})
             )
@@ -4107,7 +4520,14 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
     else:
         figure_base_rows = rows
     table_rows = rows + baseline_rows + curve_rows + bitstar_rows + per_query_tradeoff_rows + iris_rows
-    figure_rows = figure_base_rows + baseline_rows + curve_rows + bitstar_rows + per_query_tradeoff_rows + iris_rows
+    figure_rows = (
+        figure_base_rows
+        + baseline_rows
+        + curve_rows_for_figure
+        + bitstar_rows_for_figure
+        + per_query_tradeoff_rows
+        + iris_rows
+    )
     table_path = generated / "tab_tro_random_summary.tex"
     pdf_path = generated / "fig_tro_random_tradeoff.pdf"
     png_path = generated / "fig_tro_random_tradeoff.png"
@@ -4162,7 +4582,7 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "ompl_curve_manifest_sha256": file_sha256_if_reasonable(curve_manifest),
         "ompl_curve_supplements": [str(path) for path in accepted_curve_supplements],
         "ompl_curve_supplement_sha256": {str(path): file_sha256(path) for path in accepted_curve_supplements},
-        "ompl_per_query_tradeoff_policy": "bitstar_only_per_query_seed_select_fastest_within_1p08x_best_path_prm_uses_cumulative_scenario_checkpoint",
+        "ompl_per_query_tradeoff_policy": "bitstar_per_query_seed_select_fastest_within_1p08x_best_path_prm_figure_uses_manifest_cumulative_incumbent_curve",
         "ompl_per_query_tradeoff_rows": len(per_query_tradeoff_rows),
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,

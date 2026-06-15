@@ -610,16 +610,27 @@ int append_certified_portal_corridor_edge(SegmentEdgeList& edges,
                                           std::vector<Eigen::VectorXd> waypoints,
                                           SegmentEdgeValidation validation,
                                           int portal_domain_id,
-                                          int query_index) {
+                                          int query_index,
+                                          const Eigen::VectorXd* obb_center,
+                                          const Eigen::MatrixXd* obb_generators,
+                                          SegmentEdgeType edge_type,
+                                          const std::vector<Eigen::VectorXd>* obb_centers,
+                                          const std::vector<Eigen::MatrixXd>* obb_generators_list) {
     if (validation != SegmentEdgeValidation::ConservativeObbZonotope ||
         waypoints.size() < 2U) {
+        return -1;
+    }
+    if (edge_type != SegmentEdgeType::PortalCorridor &&
+        edge_type != SegmentEdgeType::SegmentOBBCorridor &&
+        edge_type != SegmentEdgeType::RRTBridgeOBBCorridor &&
+        edge_type != SegmentEdgeType::TransitionOBBCorridor) {
         return -1;
     }
     const int next_id = append_segment_edge(edges,
                                             source.id,
                                             target.id,
                                             std::move(waypoints),
-                                            SegmentEdgeType::PortalCorridor,
+                                            edge_type,
                                             0,
                                             validation,
                                             false,
@@ -630,6 +641,25 @@ int append_certified_portal_corridor_edge(SegmentEdgeList& edges,
     auto& edge = edges.back();
     edge.portal_domain_id = portal_domain_id;
     edge.conservative_certificate = true;
+    if (obb_centers != nullptr && obb_generators_list != nullptr &&
+        obb_centers->size() == obb_generators_list->size()) {
+        for (std::size_t index = 0; index < obb_centers->size(); ++index) {
+            const Eigen::VectorXd& center = (*obb_centers)[index];
+            const Eigen::MatrixXd& generators = (*obb_generators_list)[index];
+            if (center.size() > 0 && generators.rows() == center.size()) {
+                edge.obb_centers.push_back(center);
+                edge.obb_generators.push_back(generators);
+            }
+        }
+    }
+    if (obb_center != nullptr && obb_generators != nullptr &&
+        obb_center->size() > 0 && obb_generators->rows() == obb_center->size()) {
+        edge.obb_centers.push_back(*obb_center);
+        edge.obb_generators.push_back(*obb_generators);
+    }
+    if (!edge.obb_centers.empty()) {
+        edge.obb_covered_length = edge.length;
+    }
     return next_id;
 }
 
@@ -694,7 +724,17 @@ const SegmentEdge* find_segment_edge(const QueryGraphCache& cache,
 
 bool counts_as_segment_edge(SegmentEdgeType type) {
     return type != SegmentEdgeType::BoxCorridor &&
-           type != SegmentEdgeType::PortalCorridor;
+           type != SegmentEdgeType::PortalCorridor &&
+           type != SegmentEdgeType::SegmentOBBCorridor &&
+           type != SegmentEdgeType::RRTBridgeOBBCorridor &&
+           type != SegmentEdgeType::TransitionOBBCorridor;
+}
+
+bool counts_as_query_repair_edge(SegmentEdgeType type) {
+    return type == SegmentEdgeType::QueryBridge ||
+           type == SegmentEdgeType::SegmentOBBCorridor ||
+           type == SegmentEdgeType::RRTBridgeOBBCorridor ||
+           type == SegmentEdgeType::TransitionOBBCorridor;
 }
 
 std::vector<std::vector<int>> find_islands(const AdjacencyGraph& graph) {
@@ -950,10 +990,11 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
                                  std::max(edge->length, 1e-6);
                 }
                 if (counts_as_segment_edge(edge->type) &&
-                    edge->type != SegmentEdgeType::QueryBridge) {
+                    edge->type != SegmentEdgeType::QueryBridge &&
+                    edge->validation != SegmentEdgeValidation::ConservativeObbZonotope) {
                     edge_cost += 100.0;
                 }
-                if (edge->type == SegmentEdgeType::QueryBridge) {
+                if (counts_as_query_repair_edge(edge->type)) {
                     edge_cost += query_bridge_penalty;
                 }
                 if (foreign_query_edge_penalty > 0.0 &&

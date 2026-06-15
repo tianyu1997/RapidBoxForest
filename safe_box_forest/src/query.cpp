@@ -47,6 +47,13 @@ QueryResult CorridorQuery::run(const QueryGraphCache& cache,
         if (edge != nullptr && counts_as_segment_edge(edge->type)) {
             result.segment_edges_used += 1;
         }
+        if (edge != nullptr && !edge->obb_centers.empty()) {
+            result.obb_edges_used += 1;
+            result.obb_regions_used += static_cast<int>(edge->obb_centers.size());
+            result.obb_edge_length += edge->obb_covered_length > 0.0
+                ? edge->obb_covered_length
+                : edge->length;
+        }
     }
     result.path_length = path_length(result.path);
     result.success = !result.path.empty();
