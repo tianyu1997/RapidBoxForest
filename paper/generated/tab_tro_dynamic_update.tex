@@ -1,23 +1,22 @@
-\par\vspace{0.1ex}
+\par\vspace{0.25ex}
 \noindent\begin{minipage}{\columnwidth}
-\begingroup
 \centering
-\captionof{table}{Adaptive leaf-sweep maintenance only, not end-to-end replanning.}
+\captionof{table}{Adaptive leaf-sweep maintenance timing.}
 \label{tab:tro-dynamic-update}
 \scriptsize
-\setlength{\tabcolsep}{3.0pt}
+\setlength{\tabcolsep}{2.0pt}
+\renewcommand{\arraystretch}{1.02}
 \begin{tabular}{@{}lcc@{}}
 \toprule
 Operation & Time (ms) & Speedup \\
 \midrule
-Warm build (10 obstacles) & 210.35 [208.64, 212.29] & -- \\
-Insert to 15 obstacles & 0.04 [0.04, 0.05] & 4295.7--5155.2$\times$ \\
-Remove from 15 obstacles & 9.11 [9.02, 9.23] & 22.8--23.2$\times$ \\
-Warm build (15 obstacles) & 210.21 [209.45, 210.75] & -- \\
+Warm build (10 obstacles) & 922.75 [897.57, 955.67] & -- \\
+Insert to 15 obstacles & 6.06 [5.69, 6.54] & 153.3--207.5$\times$ \\
+Remove from 15 obstacles & 0.35 [0.31, 1.65] & 943.6--3354.0$\times$ \\
+Warm build (15 obstacles) & 958.79 [941.67, 1115.18] & -- \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} Median [Q1, Q3]. Maintenance only; Speedup = 15-obstacle warm build / update time.\par}
-\par\endgroup
+{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), ms. Maintenance only, not end-to-end replanning; speedup compares each update row with the 15-obstacle warm build.\par}
 \end{minipage}
-\par\vspace{0.1ex}
+\par\vspace{0.25ex}

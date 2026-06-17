@@ -153,6 +153,8 @@ def profile_row(profile: Any) -> dict[str, Any]:
         "dirty_seed_count": int(getattr(profile, "dirty_seed_count", 0)),
         "regrow_attempts": int(getattr(profile, "regrow_attempts", 0)),
         "segment_edges_added": int(getattr(profile, "segment_edges_added", 0)),
+        "collision_cache_boxes_before": int(getattr(profile, "collision_cache_boxes_before", 0)),
+        "collision_cache_boxes_after": int(getattr(profile, "collision_cache_boxes_after", 0)),
         "collision_cache_candidates": int(getattr(profile, "collision_cache_candidates", 0)),
         "collision_cache_promoted": int(getattr(profile, "collision_cache_promoted", 0)),
         "used_warm_rebuild": bool(getattr(profile, "used_warm_rebuild", False)),
@@ -403,6 +405,17 @@ def build_adaptive(args: argparse.Namespace, forest: Any, obstacles: list[Any], 
     return row
 
 
+def require_nonempty_build(row: dict[str, Any], *, label: str) -> None:
+    boxes = int(row.get("forest_boxes", 0) or 0)
+    cells = int(row.get("partition_cell_count", 0) or 0)
+    if boxes <= 0 and cells <= 0:
+        raise RuntimeError(
+            f"{label} produced an empty adaptive leaf-sweep forest. "
+            "This makes dynamic updates vacuous; increase leaf/adaptive depth "
+            "or reduce obstacle density before reporting Exp.7."
+        )
+
+
 def run_record(args: argparse.Namespace, record: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     robot_name = str(record["robot"])
     seed = int(record["seed"])
@@ -414,6 +427,7 @@ def run_record(args: argparse.Namespace, record: dict[str, Any]) -> tuple[list[d
 
     forest, opt = make_forest(args, robot, robot_name, seed, f"exp07_{robot_name}_seed{seed}_incremental")
     initial_build = build_adaptive(args, forest, prefix, opt)
+    require_nonempty_build(initial_build, label=f"initial build {robot_name} seed {seed}")
 
     events: list[dict[str, Any]] = []
     insert_profile = profile_row(forest.add_obstacles_and_rebuild(obstacles[min_count:max_count]))
@@ -432,6 +446,7 @@ def run_record(args: argparse.Namespace, record: dict[str, Any]) -> tuple[list[d
 
     max_forest, max_opt = make_forest(args, robot, robot_name, seed, f"exp07_{robot_name}_seed{seed}_max_build")
     max_build = build_adaptive(args, max_forest, obstacles[:max_count], max_opt)
+    require_nonempty_build(max_build, label=f"max build {robot_name} seed {seed}")
 
     remove_profile = profile_row(forest.remove_obstacle_suffix_and_regrow(min_count))
     events.append(

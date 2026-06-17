@@ -527,6 +527,7 @@ private:
 	struct CachedCollisionBox {
 		BoxNode box;
 		std::vector<int> blocking_obstacle_indices;
+		bool active = true;
 	};
 
 	FindFreeBoxResult find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
@@ -603,6 +604,8 @@ private:
 	int next_box_id() const;
 	void populate_dynamic_collision_cache(const LeafSweepResult& result,
 										  int obstacle_count);
+	void clear_dynamic_collision_cache();
+	void rebuild_dynamic_collision_cache_index();
 	void add_dynamic_collision_cache_box(const BoxNode& box,
 										 std::vector<int> blocking_obstacle_indices);
 	int promote_unblocked_collision_cache(const std::unordered_set<int>& removed_obstacle_indices,
@@ -639,6 +642,8 @@ private:
 	bool has_adaptive_partition_config_ = false;
 	AdaptiveLeafSweepConfig last_adaptive_partition_config_;
 	std::vector<CachedCollisionBox> dynamic_collision_box_cache_;
+	std::unordered_map<int, std::vector<std::size_t>> dynamic_collision_cache_blocker_index_;
+	int dynamic_collision_cache_active_count_ = 0;
 	BuildProfile last_build_;
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;

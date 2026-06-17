@@ -1,47 +1,27 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Endpoint envelope source study.}
+\captionof{table}{Endpoint-envelope source comparison over fixed joint-box widths.}
 \label{tab:tro-endpoint-envelope}
 \scriptsize
 \setlength{\tabcolsep}{2.0pt}
-\renewcommand{\arraystretch}{0.78}
-\begin{tabular}{@{}llrrr@{}}
+\renewcommand{\arraystretch}{0.86}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}l*{5}{r}@{\hspace{0.8em}}*{5}{r}@{\hspace{0.8em}}*{5}{r}@{}}
 \toprule
-Width & Source & Vol. & Time ($\mu$s) & Neg. gap \\
+ & \multicolumn{5}{c}{Volume ratio} & \multicolumn{5}{c}{Time ($\mu$s)} & \multicolumn{5}{c}{Gap (mm)} \\
+\cmidrule(lr){2-6}\cmidrule(lr){7-11}\cmidrule(l){12-16}
+Source & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 \\
 \midrule
-0.02 & IFK-AA & 0.000045 & 5.48 & 0.000000 \\
-0.02 & HIFK-3 & 0.000042 & 25.94 & 0.000000 \\
-0.02 & HIFK-5 & 0.000042 & 70.40 & 0.000000 \\
-0.02 & Critical sample & 0.000041 & 8.68 & -0.000048 \\
-0.02 & Analytical & 0.000041 & 6429.96 & 0.000000 \\
-0.02 & MC & 0.000026 & 2251.74 & -0.006053 \\
-0.10 & IFK-AA & 0.007709 & 6.45 & 0.000000 \\
-0.10 & HIFK-3 & 0.006187 & 29.16 & 0.000000 \\
-0.10 & HIFK-5 & 0.005748 & 73.82 & 0.000000 \\
-0.10 & Critical sample & 0.005085 & 10.03 & -0.001174 \\
-0.10 & Analytical & 0.005086 & 6602.25 & 0.000000 \\
-0.10 & MC & 0.003739 & 11233.26 & -0.032677 \\
-0.20 & IFK-AA & 0.095828 & 6.58 & 0.000000 \\
-0.20 & HIFK-3 & 0.063170 & 27.21 & 0.000000 \\
-0.20 & HIFK-5 & 0.054478 & 73.15 & 0.000000 \\
-0.20 & Critical sample & 0.041680 & 11.56 & -0.004527 \\
-0.20 & Analytical & 0.041748 & 6800.10 & 0.000000 \\
-0.20 & MC & 0.032592 & 22352.95 & -0.065574 \\
-0.30 & IFK-AA & 0.501814 & 6.81 & 0.000000 \\
-0.30 & HIFK-3 & 0.268384 & 29.27 & 0.000000 \\
-0.30 & HIFK-5 & 0.214676 & 75.92 & 0.000000 \\
-0.30 & Critical sample & 0.141227 & 12.69 & -0.010770 \\
-0.30 & Analytical & 0.142112 & 6927.12 & 0.000000 \\
-0.30 & MC & 0.112648 & 33813.58 & -0.088868 \\
-0.50 & IFK-AA & 5.602815 & 7.35 & 0.000000 \\
-0.50 & HIFK-3 & 2.028027 & 29.38 & 0.000000 \\
-0.50 & HIFK-5 & 1.347150 & 72.32 & 0.000000 \\
-0.50 & Critical sample & 0.639900 & 16.33 & -0.030972 \\
-0.50 & Analytical & 0.650907 & 7096.01 & -0.004492 \\
-0.50 & MC & 0.534496 & 56835.57 & -0.123531 \\
+IFK-AA & 1.09 & 1.52 & 2.30 & 3.53 & 8.61 & 5.48 & 6.45 & 6.58 & 6.81 & 7.35 & -- & -- & -- & -- & -- \\
+HIFK-3 & 1.04 & 1.22 & 1.51 & 1.89 & 3.12 & 25.94 & 29.16 & 27.21 & 29.27 & 29.38 & -- & -- & -- & -- & -- \\
+HIFK-5 & 1.02 & 1.13 & 1.30 & 1.51 & 2.07 & 70.40 & 73.82 & 73.15 & 75.92 & 72.32 & -- & -- & -- & -- & -- \\
+Critical sample & 1.00 & 1.00 & 1.00 & 0.99 & 0.98 & 8.68 & 10.03 & 11.56 & 12.69 & 16.33 & -0.05 & -1.17 & -4.53 & -10.77 & -30.97 \\
+Analytical & 1.00 & 1.00 & 1.00 & 1.00 & 1.00 & 6429.96 & 6602.25 & 6800.10 & 6927.12 & 7096.01 & 0.00 & 0.00 & 0.00 & 0.00 & -4.49 \\
+MC & 0.64 & 0.74 & 0.78 & 0.79 & 0.82 & 2251.74 & 11233.26 & 22352.95 & 33813.58 & 56835.57 & -6.05 & -32.68 & -65.57 & -88.87 & -123.53 \\
 \bottomrule
 \end{tabular}
+}
 \par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} IFK/HIFK are certificate-backed. Critical sample, Analytical, and Monte Carlo (MC) are diagnostics only; Neg. gap uses the sampled-union diagnostic.\par}
+{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostics. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}
 \par\endgroup

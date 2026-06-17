@@ -1,27 +1,23 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Link envelopes; Env. build, Coll. obstacle test.}
+\captionof{table}{Link-envelope representation comparison over fixed joint-box widths.}
 \label{tab:tro-link-envelope}
 \scriptsize
-\setlength{\tabcolsep}{2.2pt}
+\setlength{\tabcolsep}{2.0pt}
 \renewcommand{\arraystretch}{0.84}
-\begin{tabular}{llrrrr}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}l*{6}{r}@{\hspace{0.8em}}*{6}{r}@{\hspace{0.8em}}*{6}{r}@{}}
 \toprule
-Width & Envelope & Splits & Vol. & Env. ($\mu$s) & Coll. ($\mu$s) \\
+ & \multicolumn{6}{c}{Volume} & \multicolumn{6}{c}{Build ($\mu$s)} & \multicolumn{6}{c}{Test ($\mu$s)} \\
+\cmidrule(lr){2-7}\cmidrule(lr){8-13}\cmidrule(l){14-19}
+Envelope & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 \\
 \midrule
-0.02 & Link AABB & 1 & 0.013 & 0.110 & 0.300 \\
-0.02 & SupportHull & 1 & 0.000 & 0.166 & 0.309 \\
-0.05 & Link AABB & 1 & 0.020 & 0.139 & 0.310 \\
-0.05 & SupportHull & 1 & 0.003 & 0.177 & 0.306 \\
-0.10 & Link AABB & 1 & 0.038 & 0.141 & 0.297 \\
-0.10 & SupportHull & 1 & 0.014 & 0.188 & 0.305 \\
-0.20 & Link AABB & 1 & 0.147 & 0.136 & 0.305 \\
-0.20 & SupportHull & 1 & 0.105 & 0.171 & 0.311 \\
-0.30 & Link AABB & 1 & 0.502 & 0.137 & 0.305 \\
-0.30 & SupportHull & 1 & 0.440 & 0.175 & 4.823 \\
-0.50 & Link AABB & 1 & 4.514 & 0.143 & 0.304 \\
-0.50 & SupportHull & 1 & 4.448 & 0.184 & 10.950 \\
+Link AABB & 0.0136 & 0.0201 & 0.0384 & 0.147 & 0.508 & 4.61 & 0.138 & 0.152 & 0.167 & 0.166 & 0.171 & 0.178 & 0.586 & 0.605 & 0.601 & 0.604 & 0.630 & 0.790 \\
+SupportHull & 0.000359 & 0.00266 & 0.0143 & 0.106 & 0.449 & 4.54 & 0.205 & 0.214 & 0.218 & 0.219 & 0.217 & 0.250 & 12.520 & 12.850 & 12.267 & 12.223 & 12.659 & 13.026 \\
 \bottomrule
 \end{tabular}
+}
+\par\vspace{0.1ex}
+{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools shifted free-space probes and known-colliding obstacle probes; build time excludes endpoint time.\par}
 \par\endgroup

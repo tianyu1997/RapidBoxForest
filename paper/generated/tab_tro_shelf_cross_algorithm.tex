@@ -1,27 +1,27 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA strict-audited per-query cross-algorithm comparison.}
+\captionof{table}{Shelf+IIWA fixed-audit per-query cross-algorithm comparison.}
 \label{tab:tro-shelf-cross-algorithm}
 \footnotesize
 \setlength{\tabcolsep}{1.9pt}
-\renewcommand{\arraystretch}{1.12}
-\setlength{\extrarowheight}{1.0pt}
+\renewcommand{\arraystretch}{1.18}
+\setlength{\extrarowheight}{1.2pt}
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}lrr@{\hspace{0.6em}}rr@{\hspace{0.6em}}rr@{\hspace{0.6em}}rr@{\hspace{0.6em}}rr@{}}
 \toprule
-  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RBF b100\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.166\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP/GCS\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 355.425\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 20.040\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRTConnect\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.000\,s}}}} \\
+  & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{\rbf{} b100\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 0.166\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{IRIS-NP/GCS\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 355.425\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{PRM\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont Build 20.040\,s}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{RRT-Connect\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont No reusable build}}}} & \multicolumn{2}{c}{\textbf{\footnotesize \shortstack{BIT*\\[-0.2ex]{\normalfont\fontsize{6.6}{7.1}\selectfont No reusable build}}}} \\
 \cmidrule(lr){2-3}\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
 Query & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ & $T$ (s) & $L/L^\star$ \\
 \midrule
-AS$\rightarrow$TS & 0.081 [0.078, 0.087] & 1.39 [1.34, 1.48] & 0.449 [0.449, 0.449] & 1.44 [1.44, 1.44] & 0.198 [0.147, 0.248] & 1.61 [1.42, 1.73] & 0.034 [0.024, 0.052] & 2.27 [2.05, 2.72] & 4.004 [4.002, 4.004] & 1.06 [1.02, 1.08] \\
-TS$\rightarrow$CS & 0.163 [0.158, 0.170] & 1.12 [1.09, 1.14] & 0.269 [0.269, 0.269] & 1.26 [1.26, 1.26] & 0.173 [0.118, 0.312] & 2.99 [2.11, 3.22] & 0.054 [0.021, 0.089] & 3.98 [2.80, 5.09] & 10.138 [10.004, 10.386] & 1.09 [1.04, 1.11] \\
-CS$\rightarrow$LB & 0.109 [0.104, 0.118] & 1.47 [1.32, 1.82] & 0.381 [0.381, 0.381] & 1.07 [1.07, 1.07] & 0.136 [0.120, 0.195] & 1.49 [1.39, 2.09] & 0.032 [0.027, 0.070] & 2.20 [1.75, 2.51] & 7.504 [7.504, 7.725] & 1.03 [1.01, 1.06] \\
-LB$\rightarrow$RB & 0.132 [0.128, 0.141] & 1.15 [1.07, 1.25] & 0.786 [0.786, 0.786] & 1.07 [1.07, 1.07] & 0.164 [0.091, 0.399] & 1.18 [1.09, 1.27] & 0.001 [0.001, 0.002] & 1.29 [1.27, 1.32] & 1.654 [1.654, 1.654] & 1.02 [1.02, 1.03] \\
-RB$\rightarrow$AS & 0.143 [0.138, 0.150] & 1.04 [1.03, 1.05] & 0.527 [0.527, 0.527] & 1.01 [1.01, 1.01] & 0.252 [0.096, 0.295] & 1.23 [1.17, 1.24] & 0.001 [0.001, 0.001] & 1.07 [1.03, 1.10] & 0.204 [0.204, 0.204] & 1.02 [1.01, 1.03] \\
+AS$\rightarrow$TS & \shortstack{0.081\\[-0.2ex]{\scriptsize [0.078, 0.087]}} & \shortstack{1.39\\[-0.2ex]{\scriptsize [1.34, 1.48]}} & \shortstack{0.449\\[-0.2ex]{\scriptsize [0.449, 0.449]}} & \shortstack{1.44\\[-0.2ex]{\scriptsize [1.44, 1.44]}} & \shortstack{0.198\\[-0.2ex]{\scriptsize [0.147, 0.248]}} & \shortstack{1.61\\[-0.2ex]{\scriptsize [1.42, 1.73]}} & \shortstack{0.034\\[-0.2ex]{\scriptsize [0.024, 0.052]}} & \shortstack{2.27\\[-0.2ex]{\scriptsize [2.05, 2.72]}} & \shortstack{4.004\\[-0.2ex]{\scriptsize [4.002, 4.004]}} & \shortstack{1.06\\[-0.2ex]{\scriptsize [1.02, 1.08]}} \\
+TS$\rightarrow$CS & \shortstack{0.163\\[-0.2ex]{\scriptsize [0.158, 0.170]}} & \shortstack{1.12\\[-0.2ex]{\scriptsize [1.09, 1.14]}} & \shortstack{0.269\\[-0.2ex]{\scriptsize [0.269, 0.269]}} & \shortstack{1.26\\[-0.2ex]{\scriptsize [1.26, 1.26]}} & \shortstack{0.173\\[-0.2ex]{\scriptsize [0.118, 0.312]}} & \shortstack{2.99\\[-0.2ex]{\scriptsize [2.11, 3.22]}} & \shortstack{0.054\\[-0.2ex]{\scriptsize [0.021, 0.089]}} & \shortstack{3.98\\[-0.2ex]{\scriptsize [2.80, 5.09]}} & \shortstack{10.138\\[-0.2ex]{\scriptsize [10.004, 10.386]}} & \shortstack{1.09\\[-0.2ex]{\scriptsize [1.04, 1.11]}} \\
+CS$\rightarrow$LB & \shortstack{0.109\\[-0.2ex]{\scriptsize [0.104, 0.118]}} & \shortstack{1.47\\[-0.2ex]{\scriptsize [1.32, 1.82]}} & \shortstack{0.381\\[-0.2ex]{\scriptsize [0.381, 0.381]}} & \shortstack{1.07\\[-0.2ex]{\scriptsize [1.07, 1.07]}} & \shortstack{0.136\\[-0.2ex]{\scriptsize [0.120, 0.195]}} & \shortstack{1.49\\[-0.2ex]{\scriptsize [1.39, 2.09]}} & \shortstack{0.032\\[-0.2ex]{\scriptsize [0.027, 0.070]}} & \shortstack{2.20\\[-0.2ex]{\scriptsize [1.75, 2.51]}} & \shortstack{7.504\\[-0.2ex]{\scriptsize [7.504, 7.725]}} & \shortstack{1.03\\[-0.2ex]{\scriptsize [1.01, 1.06]}} \\
+LB$\rightarrow$RB & \shortstack{0.132\\[-0.2ex]{\scriptsize [0.128, 0.141]}} & \shortstack{1.15\\[-0.2ex]{\scriptsize [1.07, 1.25]}} & \shortstack{0.786\\[-0.2ex]{\scriptsize [0.786, 0.786]}} & \shortstack{1.07\\[-0.2ex]{\scriptsize [1.07, 1.07]}} & \shortstack{0.164\\[-0.2ex]{\scriptsize [0.091, 0.399]}} & \shortstack{1.18\\[-0.2ex]{\scriptsize [1.09, 1.27]}} & \shortstack{0.001\\[-0.2ex]{\scriptsize [0.001, 0.002]}} & \shortstack{1.29\\[-0.2ex]{\scriptsize [1.27, 1.32]}} & \shortstack{1.654\\[-0.2ex]{\scriptsize [1.654, 1.654]}} & \shortstack{1.02\\[-0.2ex]{\scriptsize [1.02, 1.03]}} \\
+RB$\rightarrow$AS & \shortstack{0.143\\[-0.2ex]{\scriptsize [0.138, 0.150]}} & \shortstack{1.04\\[-0.2ex]{\scriptsize [1.03, 1.05]}} & \shortstack{0.527\\[-0.2ex]{\scriptsize [0.527, 0.527]}} & \shortstack{1.01\\[-0.2ex]{\scriptsize [1.01, 1.01]}} & \shortstack{0.252\\[-0.2ex]{\scriptsize [0.096, 0.295]}} & \shortstack{1.23\\[-0.2ex]{\scriptsize [1.17, 1.24]}} & \shortstack{0.001\\[-0.2ex]{\scriptsize [0.001, 0.001]}} & \shortstack{1.07\\[-0.2ex]{\scriptsize [1.03, 1.10]}} & \shortstack{0.204\\[-0.2ex]{\scriptsize [0.204, 0.204]}} & \shortstack{1.02\\[-0.2ex]{\scriptsize [1.01, 1.03]}} \\
 \bottomrule
 \end{tabular}%
 }
 \par\vspace{0.05ex}
-{\scriptsize\emph{Notes:} Median [Q1, Q3], s. $T$=Online/q excluding final simplification/audit; $L/L^\star$ uses the query-level strict-audited reference. b100=100-box RBF; IRIS-NP precedes GCS. RBF build excludes d23 prewarm/load/RSS; PRM build is the median selected roadmap checkpoint; RRTConnect/BIT* have no reusable build; PRM/BIT* select the fastest per-query checkpoint within $1.01\times$ that query's best strict-audited mean path; no Audit/q.\par}
+{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. \(T=\onlineq{}\), excluding final simplification and audit; \(L/L^\star\) uses the query-level 0.01-rad audited reference path. Single-query planners have no reusable-build term. AS denotes the approach-side anchor; TS and CS are shelf-side anchors; LB and RB are left and right bin anchors.\par}
 \par\endgroup

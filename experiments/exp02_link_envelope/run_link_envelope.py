@@ -43,6 +43,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--widths", default=DEFAULT_WIDTHS)
     parser.add_argument("--samples", type=int, default=1000)
+    parser.add_argument("--collision-repeats", type=int, default=5)
     parser.add_argument("--seed", type=int, default=6200)
     parser.add_argument("--robot-json", type=Path, default=ROBOT_PATH)
     return parser.parse_args()
@@ -124,6 +125,38 @@ def marcucci_combined_obstacle_bounds() -> list[float]:
     return [value for box in obstacles for value in box]
 
 
+def shifted_obstacle_bounds(bounds: list[float], dx: float = 20.0) -> list[float]:
+    shifted = list(bounds)
+    for offset in range(0, len(shifted), 6):
+        shifted[offset + 0] += dx
+        shifted[offset + 3] += dx
+    return shifted
+
+
+def center_from_aabb(box: list[float]) -> tuple[float, float, float]:
+    return (
+        0.5 * (float(box[0]) + float(box[3])),
+        0.5 * (float(box[1]) + float(box[4])),
+        0.5 * (float(box[2]) + float(box[5])),
+    )
+
+
+def guaranteed_colliding_obstacle_bounds(result: dict[str, Any], method: str, template_bounds: list[float]) -> list[float]:
+    bounds = list(template_bounds)
+    if method == "support_hull":
+        hulls = [float(value) for value in result.get("support_hulls", [])]
+        if len(hulls) >= 13:
+            cx, cy, cz = center_from_aabb(hulls[:6])
+        else:
+            link_boxes = [float(value) for value in result.get("link_iaabbs", [])]
+            cx, cy, cz = center_from_aabb(link_boxes[:6])
+    else:
+        link_boxes = [float(value) for value in result.get("link_iaabbs", [])]
+        cx, cy, cz = center_from_aabb(link_boxes[:6])
+    bounds[:6] = make_aabb_bounds(cx, cy, cz, 0.005, 0.005, 0.005)
+    return bounds
+
+
 def aabb_corners(box: list[float]) -> list[list[float]]:
     return [
         [x, y, z]
@@ -200,55 +233,84 @@ def collision_mode_for_method(method: str) -> str:
     return "aabb_only" if method == "link_iaabb" else "support_hull_only"
 
 
-def collision_records(robot: Any, boxes: list[list[Any]], method: str, endpoint_cfg: Any, obstacle_bounds: list[float]) -> list[dict[str, float]]:
+def collision_records(
+    robot: Any,
+    boxes: list[list[Any]],
+    method: str,
+    endpoint_cfg: Any,
+    obstacle_bounds_by_box: list[list[float]],
+    *,
+    repeats: int,
+    count_all_pairs: bool,
+) -> list[dict[str, float]]:
     cfg = envelope_config(method)
+    if method == "support_hull" and hasattr(cfg, "support_hull_config"):
+        cfg.support_hull_config.direct_collision = True
     mode = collision_mode_for_method(method)
     records: list[dict[str, float]] = []
     use_link_aabb_broadphase = method == "link_iaabb"
-    count_all_pairs = method != "link_iaabb"
-    for intervals in boxes:
-        collision = lie._cpp.compute_envelope_collision_info(
-            robot,
-            intervals,
-            endpoint_cfg,
-            cfg,
-            obstacle_bounds,
-            mode,
-            "summary",
-            use_link_aabb_broadphase,
-            count_all_pairs,
-        )
-        records.append({
-            "collision_time_us": float(collision["collision_time_us"]),
-            "link_aabb_tests": float(collision.get("link_aabb_tests", 0.0)),
-            "link_aabb_rejects": float(collision.get("link_aabb_rejects", 0.0)),
-            "gjk_tests": float(collision.get("gjk_tests", 0.0)),
-            "gjk_iterations": float(collision.get("gjk_iterations", 0.0)),
-            "maybe_pairs": float(collision.get("maybe_pairs", 0.0)),
-        })
+    repeat_count = max(1, int(repeats))
+    for intervals, obstacle_bounds in zip(boxes, obstacle_bounds_by_box):
+        for _ in range(repeat_count):
+            collision = lie._cpp.compute_envelope_collision_info(
+                robot,
+                intervals,
+                endpoint_cfg,
+                cfg,
+                obstacle_bounds,
+                mode,
+                "summary",
+                use_link_aabb_broadphase,
+                count_all_pairs,
+            )
+            records.append({
+                "collision_time_us": float(collision["collision_time_us"]),
+                "link_aabb_tests": float(collision.get("link_aabb_tests", 0.0)),
+                "link_aabb_rejects": float(collision.get("link_aabb_rejects", 0.0)),
+                "gjk_tests": float(collision.get("gjk_tests", 0.0)),
+                "gjk_iterations": float(collision.get("gjk_iterations", 0.0)),
+                "maybe_pairs": float(collision.get("maybe_pairs", 0.0)),
+            })
     return records
 
 
-def summarize_method(label: str, method: str, results: list[dict[str, Any]], collisions: list[dict[str, float]]) -> dict[str, Any]:
+def summarize_collision_records(prefix: str, records: list[dict[str, float]]) -> dict[str, Any]:
+    collision_times = [float(record["collision_time_us"]) for record in records]
+    gjk_tests = [float(record["gjk_tests"]) for record in records]
+    gjk_iterations = [float(record["gjk_iterations"]) for record in records]
+    maybe_pairs = [float(record["maybe_pairs"]) for record in records]
+    stem = "collision" if prefix == "collision" else f"{prefix}_collision"
+    return {
+        f"{stem}_us_median": median(collision_times),
+        f"{stem}_us_mean": mean(collision_times),
+        f"{stem}_gjk_tests_median": median(gjk_tests),
+        f"{stem}_gjk_tests_mean": mean(gjk_tests),
+        f"{stem}_gjk_iterations_median": median(gjk_iterations),
+        f"{stem}_gjk_iterations_mean": mean(gjk_iterations),
+        f"{stem}_maybe_pairs_median": median(maybe_pairs),
+        f"{stem}_maybe_pairs_mean": mean(maybe_pairs),
+    }
+
+
+def summarize_method(
+    label: str,
+    method: str,
+    results: list[dict[str, Any]],
+    free_collisions: list[dict[str, float]],
+    colliding_collisions: list[dict[str, float]],
+) -> dict[str, Any]:
     volumes: list[float] = []
     envelope_times: list[float] = []
-    collision_times: list[float] = []
-    gjk_tests: list[float] = []
-    gjk_iterations: list[float] = []
-    maybe_pairs: list[float] = []
     bytes_values: list[float] = []
-    for result, collision in zip(results, collisions):
+    for result in results:
         envelope_us = float(result["envelope_time_us"])
         envelope_times.append(envelope_us)
-        collision_times.append(float(collision["collision_time_us"]))
-        gjk_tests.append(float(collision["gjk_tests"]))
-        gjk_iterations.append(float(collision["gjk_iterations"]))
-        maybe_pairs.append(float(collision["maybe_pairs"]))
         if method == "support_hull":
             volumes.append(support_hull_volume(result.get("support_hulls", [])))
         else:
             volumes.append(box_volume(result.get("link_iaabbs", [])))
         bytes_values.append(float(payload_bytes(result)))
+    all_collisions = free_collisions + colliding_collisions
     return {
         "envelope": label,
         "split_count": 1,
@@ -257,23 +319,20 @@ def summarize_method(label: str, method: str, results: list[dict[str, Any]], col
         "volume_m3_mean": mean(volumes),
         "envelope_us_median": median(envelope_times),
         "envelope_us_mean": mean(envelope_times),
-        "collision_us_median": median(collision_times),
-        "collision_us_mean": mean(collision_times),
-        "collision_gjk_tests_median": median(gjk_tests),
-        "collision_gjk_tests_mean": mean(gjk_tests),
-        "collision_gjk_iterations_median": median(gjk_iterations),
-        "collision_gjk_iterations_mean": mean(gjk_iterations),
-        "collision_maybe_pairs_median": median(maybe_pairs),
-        "collision_maybe_pairs_mean": mean(maybe_pairs),
+        **summarize_collision_records("free", free_collisions),
+        **summarize_collision_records("colliding", colliding_collisions),
+        **summarize_collision_records("collision", all_collisions),
         "payload_bytes_median": median(bytes_values),
         "samples": len(results),
+        "collision_repeats": len(all_collisions) / max(1, 2 * len(results)),
     }
 
 
 def run_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     robot = lie.Robot.from_json(str(args.robot_json))
     endpoint_cfg = lie.make_endpoint_config("ifk_aa")
-    obstacle_bounds = marcucci_combined_obstacle_bounds()
+    base_obstacle_bounds = marcucci_combined_obstacle_bounds()
+    free_obstacle_bounds = shifted_obstacle_bounds(base_obstacle_bounds)
     rows: list[dict[str, Any]] = []
     for width in progress(parse_widths(args), desc="exp02 widths"):
         boxes = sample_boxes(robot, width, phase_samples(args), int(args.seed) + int(round(width * 10000)))
@@ -281,14 +340,48 @@ def run_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
             method: batch_method_results(robot, boxes, method, endpoint_cfg)
             for _label, method in progress(METHODS, desc=f"exp02 envelope w={width:g}", total=len(METHODS))
         }
-        collisions_by_method = {
-            method: collision_records(robot, boxes, method, endpoint_cfg, obstacle_bounds)
-            for _label, method in progress(METHODS, desc=f"exp02 collision w={width:g}", total=len(METHODS))
+        free_obstacles_by_box = [free_obstacle_bounds for _ in boxes]
+        free_collisions_by_method = {
+            method: collision_records(
+                robot,
+                boxes,
+                method,
+                endpoint_cfg,
+                free_obstacles_by_box,
+                repeats=int(args.collision_repeats),
+                count_all_pairs=True,
+            )
+            for _label, method in progress(METHODS, desc=f"exp02 free collision w={width:g}", total=len(METHODS))
+        }
+        colliding_obstacles_by_method = {
+            method: [
+                guaranteed_colliding_obstacle_bounds(result, method, free_obstacle_bounds)
+                for result in results_by_method[method]
+            ]
+            for _label, method in METHODS
+        }
+        colliding_collisions_by_method = {
+            method: collision_records(
+                robot,
+                boxes,
+                method,
+                endpoint_cfg,
+                colliding_obstacles_by_method[method],
+                repeats=int(args.collision_repeats),
+                count_all_pairs=True,
+            )
+            for _label, method in progress(METHODS, desc=f"exp02 colliding collision w={width:g}", total=len(METHODS))
         }
         for label, method in METHODS:
             rows.append({
                 "width": float(width),
-                **summarize_method(label, method, results_by_method[method], collisions_by_method[method]),
+                **summarize_method(
+                    label,
+                    method,
+                    results_by_method[method],
+                    free_collisions_by_method[method],
+                    colliding_collisions_by_method[method],
+                ),
             })
     return rows
 
@@ -301,16 +394,33 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "endpoint",
         "split_count",
         "samples",
+        "collision_repeats",
         "volume_m3_median",
         "volume_m3_mean",
         "envelope_us_median",
         "envelope_us_mean",
+        "free_collision_us_median",
+        "free_collision_us_mean",
+        "colliding_collision_us_median",
+        "colliding_collision_us_mean",
         "collision_us_median",
         "collision_us_mean",
+        "free_collision_gjk_tests_median",
+        "free_collision_gjk_tests_mean",
+        "colliding_collision_gjk_tests_median",
+        "colliding_collision_gjk_tests_mean",
         "collision_gjk_tests_median",
         "collision_gjk_tests_mean",
+        "free_collision_gjk_iterations_median",
+        "free_collision_gjk_iterations_mean",
+        "colliding_collision_gjk_iterations_median",
+        "colliding_collision_gjk_iterations_mean",
         "collision_gjk_iterations_median",
         "collision_gjk_iterations_mean",
+        "free_collision_maybe_pairs_median",
+        "free_collision_maybe_pairs_mean",
+        "colliding_collision_maybe_pairs_median",
+        "colliding_collision_maybe_pairs_mean",
         "collision_maybe_pairs_median",
         "collision_maybe_pairs_mean",
         "payload_bytes_median",
@@ -335,14 +445,14 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
         r"\begin{table}[t]",
         r"\centering",
-        r"\caption{Width-wise IFK\_AA link-envelope comparison with one link split ($S=1$). Entries are means over fixed-width boxes. Env. reports envelope materialization only; Coll. is the standalone obstacle test.}",
+        r"\caption{Width-wise IFK\_AA link-envelope comparison with one link split ($S=1$). Entries are means over fixed-width boxes and repeated collision calls.}",
         r"\label{tab:tro-link-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",
         r"\renewcommand{\arraystretch}{0.94}",
         r"\begin{tabular}{@{}llrrr@{}}",
         r"\toprule",
-        r"Width & Envelope & $V$ (m$^3$) & \shortstack{Env.\\($\mu$s)} & \shortstack{Coll.\\($\mu$s)} \\",
+        r"Width & Envelope & $V$ (m$^3$) & \shortstack{Env.\\($\mu$s)} & \shortstack{Test\\($\mu$s)} \\",
         r"\midrule",
     ]
     last_width: float | None = None
@@ -357,7 +467,14 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{tex_num(row.get('collision_us_mean'), 1)} \\\\"
         )
         last_width = width
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
+    lines.extend([
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\par\vspace{0.1ex}",
+        r"{\scriptsize Test merges shifted-free and guaranteed-colliding obstacle cases over repeated calls. The colliding case scans all obstacle/link pairs. SupportHull uses direct GJK without AABB broadphase.}",
+        r"\end{table}",
+        "",
+    ])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 
@@ -394,7 +511,13 @@ def main() -> int:
         "params": namespace_dict(args),
         "summary_csv": str(csv_path) if not args.dry_run else None,
         "table": str(tex_path) if not args.dry_run else None,
-        "timing_policy": "Table reports mean envelope materialization time only. Mean collision time is reported separately and is not included in envelope time. Median and GJK counters remain in the CSV/manifest for audit.",
+        "timing_policy": (
+            "Table reports envelope materialization separately from collision testing. "
+            "Collision timing is averaged over repeated calls in both shifted-free and guaranteed-colliding "
+            "obstacle cases. The colliding case disables early exit by scanning all obstacle/link pairs. "
+            "LinkIAABB uses AABB overlap tests; SupportHull uses direct GJK with AABB broadphases disabled. "
+            "Median and GJK counters remain in the CSV/manifest for audit."
+        ),
         "migrated_archive_features": [
             "batch envelope materialization",
             "Marcucci combined obstacle set for collision benchmark",
