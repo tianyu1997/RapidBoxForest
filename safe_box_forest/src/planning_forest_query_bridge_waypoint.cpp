@@ -23,6 +23,31 @@
 
 namespace rbf {
 
+int RBFPlanningForest::try_add_query_box_corridor_edge(
+    int source_box_id,
+    int target_box_id,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    double segment_resolution,
+    int query_index) {
+    if (source_box_id < 0 || target_box_id < 0 ||
+        !box_only_path_connected_partition_first(source_box_id, target_box_id)) {
+        return -1;
+    }
+    const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                         target_box_id,
+                                                         waypoint_path,
+                                                         SegmentEdgeType::BoxCorridor,
+                                                         segment_resolution,
+                                                         SegmentEdgeValidation::CollisionChecked,
+                                                         false,
+                                                         query_index);
+    if (edge_id >= 0) {
+        invalidate_query_cache();
+        return 1;
+    }
+    return 0;
+}
+
 int RBFPlanningForest::bridge_query_with_waypoint_path(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -2235,21 +2260,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             try_reverse_boundary_pave(dense_config,
                                       dense_repair_added,
                                       dense_repair_added);
-        if (source_box_id >= 0 &&
-            target_box_id >= 0 &&
-            box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-            const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                                 target_box_id,
-                                                                 corridor_path,
-                                                                 SegmentEdgeType::BoxCorridor,
-                                                                 bridge_rrt.segment_resolution,
-                                                                 SegmentEdgeValidation::CollisionChecked,
-                                                                 false,
-                                                                 bridge_edge_query_index);
-            box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
-            if (box_corridor_edges_added > 0) {
-                invalidate_query_cache();
-            }
+        box_corridor_edges_added =
+            try_add_query_box_corridor_edge(source_box_id,
+                                            target_box_id,
+                                            corridor_path,
+                                            bridge_rrt.segment_resolution,
+                                            bridge_edge_query_index);
+        if (box_corridor_edges_added >= 0) {
             return finish_bridge(dense_repair_added + box_corridor_edges_added);
         }
     }
@@ -2292,23 +2309,16 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     }
     auto [source_box_id, target_box_id] =
         try_reverse_boundary_pave(pave_config, added, added);
-    if (added > 0 &&
-        source_box_id >= 0 &&
-        target_box_id >= 0 &&
-        box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-        const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                             target_box_id,
-                                                             corridor_path,
-                                                             SegmentEdgeType::BoxCorridor,
-                                                             bridge_rrt.segment_resolution,
-                                                             SegmentEdgeValidation::CollisionChecked,
-                                                             false,
-                                                             bridge_edge_query_index);
-        box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
-        if (box_corridor_edges_added > 0) {
-            invalidate_query_cache();
+    if (added > 0) {
+        box_corridor_edges_added =
+            try_add_query_box_corridor_edge(source_box_id,
+                                            target_box_id,
+                                            corridor_path,
+                                            bridge_rrt.segment_resolution,
+                                            bridge_edge_query_index);
+        if (box_corridor_edges_added >= 0) {
+            return finish_bridge(added + box_corridor_edges_added);
         }
-        return finish_bridge(added + box_corridor_edges_added);
     }
     if (dense_box_corridor_candidate && !dense_repair_attempted && !partition_native_mode()) {
         ChainPaveConfig dense_config = config_.connector.pave;
@@ -2342,21 +2352,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             try_reverse_boundary_pave(dense_config,
                                       dense_repair_added,
                                       dense_repair_added);
-        if (source_box_id >= 0 &&
-            target_box_id >= 0 &&
-            box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-            const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                                 target_box_id,
-                                                                 corridor_path,
-                                                                 SegmentEdgeType::BoxCorridor,
-                                                                 bridge_rrt.segment_resolution,
-                                                                 SegmentEdgeValidation::CollisionChecked,
-                                                                 false,
-                                                                 bridge_edge_query_index);
-            box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
-            if (box_corridor_edges_added > 0) {
-                invalidate_query_cache();
-            }
+        box_corridor_edges_added =
+            try_add_query_box_corridor_edge(source_box_id,
+                                            target_box_id,
+                                            corridor_path,
+                                            bridge_rrt.segment_resolution,
+                                            bridge_edge_query_index);
+        if (box_corridor_edges_added >= 0) {
             return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
         }
     }
@@ -2373,23 +2375,16 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     }
     source_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     target_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
-    if (added > 0 &&
-        source_box_id >= 0 &&
-        target_box_id >= 0 &&
-        box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-        const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                             target_box_id,
-                                                             corridor_path,
-                                                             SegmentEdgeType::BoxCorridor,
-                                                             bridge_rrt.segment_resolution,
-                                                             SegmentEdgeValidation::CollisionChecked,
-                                                             false,
-                                                             bridge_edge_query_index);
-        box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
-        if (box_corridor_edges_added > 0) {
-            invalidate_query_cache();
+    if (added > 0) {
+        box_corridor_edges_added =
+            try_add_query_box_corridor_edge(source_box_id,
+                                            target_box_id,
+                                            corridor_path,
+                                            bridge_rrt.segment_resolution,
+                                            bridge_edge_query_index);
+        if (box_corridor_edges_added >= 0) {
+            return finish_bridge(added + box_corridor_edges_added);
         }
-        return finish_bridge(added + box_corridor_edges_added);
     }
     if (defer_query_segment_edge) {
         const bool max_depth_ffb_failed =
