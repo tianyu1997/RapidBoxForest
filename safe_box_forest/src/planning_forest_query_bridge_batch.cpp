@@ -92,21 +92,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             throw std::invalid_argument("bridge_queries received a start/goal dimension mismatch");
         }
         const bool forced_task = query_bridge_forced_index(index);
-        auto mark_task_skip = [&](double code, const char* reason) {
-            last_build_.diagnostics["query_bridge.batch_task." +
-                                    std::to_string(index) +
-                                    ".skip_reason_code"] = code;
-            if (reason != nullptr && reason[0] != '\0') {
-                last_build_.diagnostics[std::string("query_bridge.batch_task_skip.") + reason] += 1.0;
-            }
-        };
         QueryResult initial_query;
         bool has_initial_query = false;
         if (!forced_task || partition_path_first_options.enabled) {
             initial_query = query(starts[index], goals[index]);
             has_initial_query = true;
             if (!forced_task && query_result_good(initial_query, starts[index], goals[index])) {
-                mark_task_skip(1.0, "initial_good");
+                query_bridge_mark_task_skip(last_build_, index, 1.0, "initial_good");
                 continue;
             }
         }
@@ -117,7 +109,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             merge_diagnostic_snapshot(last_build_.diagnostics, anchor_context.diagnostics().snapshot());
         }
         if (start_box_id < 0) {
-            mark_task_skip(2.0, "start_anchor_failed");
+            query_bridge_mark_task_skip(last_build_, index, 2.0, "start_anchor_failed");
             continue;
         }
         int goal_box_id = locate_query_bridge_box(goals[index]);
@@ -138,8 +130,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                              "goal");
         }
         if (goal_box_id < 0 || goal_box_id == start_box_id) {
-            mark_task_skip(goal_box_id < 0 ? 3.0 : 4.0,
-                           goal_box_id < 0 ? "goal_anchor_failed" : "same_box");
+            query_bridge_mark_task_skip(last_build_,
+                                        index,
+                                        goal_box_id < 0 ? 3.0 : 4.0,
+                                        goal_box_id < 0 ? "goal_anchor_failed" : "same_box");
             continue;
         }
 

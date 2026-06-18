@@ -275,6 +275,11 @@ void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
 
 std::string query_bridge_task_key(std::size_t index, const std::string& suffix);
 
+void query_bridge_mark_task_skip(BuildProfile& profile,
+                                 std::size_t index,
+                                 double code,
+                                 const char* reason);
+
 double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
                                               const Eigen::VectorXd& a,
                                               const Eigen::VectorXd& b);

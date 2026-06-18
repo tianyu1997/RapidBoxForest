@@ -86,6 +86,16 @@ std::string query_bridge_task_key(std::size_t index, const std::string& suffix) 
     return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
 }
 
+void query_bridge_mark_task_skip(BuildProfile& profile,
+                                 std::size_t index,
+                                 double code,
+                                 const char* reason) {
+    profile.diagnostics[query_bridge_task_key(index, "skip_reason_code")] = code;
+    if (reason != nullptr && reason[0] != '\0') {
+        profile.diagnostics[std::string("query_bridge.batch_task_skip.") + reason] += 1.0;
+    }
+}
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
