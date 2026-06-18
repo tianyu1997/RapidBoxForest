@@ -362,7 +362,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                 "offline_shortcut.pave");
             }
         } else {
-            last_build_.diagnostics["offline_shortcut.partition_legacy_chain_pave_skipped"] += 1.0;
+            last_build_.diagnostics["offline_shortcut.partition_graph_chain_pave_skipped"] += 1.0;
         }
         stats.pave_boxes_added += pave_added;
         int edge_id = -1;

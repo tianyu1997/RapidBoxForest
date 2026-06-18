@@ -84,7 +84,7 @@ int RBFPlanningForest::run_query_bridge_chain_pave(
     return added;
 }
 
-bool RBFPlanningForest::skip_legacy_query_bridge_pave_if_partition_native(
+bool RBFPlanningForest::skip_graph_query_bridge_pave_if_partition_native(
     StageContext& context,
     const char* counter_name) const {
     if (!partition_native_mode()) {
@@ -111,9 +111,9 @@ std::pair<int, int> RBFPlanningForest::run_query_bridge_reverse_boundary_pave(
         box_only_path_connected_partition_first(source_box_id, target_box_id)) {
         return {source_box_id, target_box_id};
     }
-    if (skip_legacy_query_bridge_pave_if_partition_native(
+    if (skip_graph_query_bridge_pave_if_partition_native(
             context,
-            "query_bridge.partition_legacy_reverse_chain_pave_skipped")) {
+            "query_bridge.partition_graph_reverse_chain_pave_skipped")) {
         return {source_box_id, target_box_id};
     }
     const int remaining_chain = forward_config.max_chain - std::max(0, forward_added);

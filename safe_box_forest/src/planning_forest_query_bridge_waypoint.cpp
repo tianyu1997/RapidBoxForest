@@ -1524,9 +1524,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return direct_corridor_added;
         }
         if (partition_native_mode()) {
-            skip_legacy_query_bridge_pave_if_partition_native(
+            skip_graph_query_bridge_pave_if_partition_native(
                 context,
-                "query_bridge.partition_legacy_dense_chain_pave_skipped");
+                "query_bridge.partition_graph_dense_chain_pave_skipped");
             dense_repair_attempted = true;
         }
     }
@@ -1569,9 +1569,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                      short_local_bridge)
             : config_.connector.pave;
     int added = 0;
-    if (!skip_legacy_query_bridge_pave_if_partition_native(
+    if (!skip_graph_query_bridge_pave_if_partition_native(
             context,
-            "query_bridge.partition_legacy_forward_chain_pave_skipped")) {
+            "query_bridge.partition_graph_forward_chain_pave_skipped")) {
         added = run_query_bridge_chain_pave(
             corridor_path,
             start_box_id,
@@ -1632,9 +1632,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
         }
     }
-    if (!skip_legacy_query_bridge_pave_if_partition_native(
+    if (!skip_graph_query_bridge_pave_if_partition_native(
             context,
-            "query_bridge.partition_legacy_gap_connector_skipped")) {
+            "query_bridge.partition_graph_gap_connector_skipped")) {
         IslandConnectorConfig gap_config = config_.connector;
         gap_config.max_total_bridge_boxes = 0;
         IslandConnector gap_connector(*oracle_, robot_, checker, gap_config);

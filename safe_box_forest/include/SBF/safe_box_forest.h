@@ -603,8 +603,8 @@ private:
 									StageContext& context,
 									const ChainPaveConfig& pave_config,
 									const char* partition_prefix);
-	bool skip_legacy_query_bridge_pave_if_partition_native(StageContext& context,
-														   const char* counter_name) const;
+	bool skip_graph_query_bridge_pave_if_partition_native(StageContext& context,
+														  const char* counter_name) const;
 	std::pair<int, int> run_query_bridge_reverse_boundary_pave(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,
