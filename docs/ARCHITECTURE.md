@@ -126,6 +126,7 @@ src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra h
 src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
+src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
                                    survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
@@ -143,6 +144,10 @@ New production features should normally land in the smallest matching module
 above. `src/safe_box_forest.cpp` is currently a compatibility/orchestration
 holding file; adding new algorithm branches there should be treated as a
 temporary step with a follow-up extraction.
+
+The former `improve_workspace/` prototype tree has been retired. Its useful
+mechanisms are now production code in `lect_database` and `safe_box_forest`;
+new experiments and implementations should not depend on a parallel workspace.
 
 ## Planner Data Flow
 

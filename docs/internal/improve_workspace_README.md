@@ -1,10 +1,9 @@
-# Improve Workspace Historical Notes
+# Improve Workspace Integration Notes
 
-This is a historical note for the deleted `improve_workspace/` sidecar. The
-sidecar implementation is no longer an active independent code path; production
-relevant mechanisms have been integrated into the main `lect_database` and
-`safe_box_forest` modules. Do not run new experiments or validation from an
-`improve_workspace/` directory.
+The former `improve_workspace/` prototype tree has been retired. It must not be
+kept as an independent code path. Production-relevant mechanisms from that work
+now live in the main `lect_database` and `safe_box_forest` modules, and new
+experiments must use the production runners under `experiments/`.
 
 Primary C-LECT source plan:
 
@@ -13,7 +12,7 @@ Primary C-LECT source plan:
 - Lines: `1439`
 - SHA-256: `a8b1a4947ef5b4dc669ea5048d459f19b71fbc3994d1b76462a7dc63403feae0`
 
-## Former Sidecar Contents
+## Prototype Source Mapping
 
 - `clect_sidecar/adaptive_sweep.py`: early-stop adaptive sweep, terminal cells,
   priority/relevance, local split scoring, targeted children, and no-good
@@ -68,8 +67,9 @@ Primary C-LECT source plan:
 
 ## Hierarchical Partition Connectivity / HiPaC
 
-`docs/分级partition连通.md` is implemented as an independent sidecar in
-`clect_sidecar/hipac.py`.  It models the complete strategy in that document:
+The HiPaC prototype has been migrated into production-facing partition,
+connector, portal-corridor, and experiment configuration code. The original
+prototype model covered:
 
 - `HiPaCCellState`: `FREE`, `CERT_OCCUPIED`, `MIXED`, `DEFERRED`, and
   `REFINED` cell states.
@@ -90,15 +90,9 @@ Primary C-LECT source plan:
   anchor pairs, `P_attach`, `P_samecomp`, online mixed-cell refinement count,
   and online repair time.
 
-Former validation entry point:
-
-```bash
-python3 improve_workspace/tools/run_hipac_validation.py
-```
-
-This command referred to the deleted sidecar and is retained only to identify
-historical artifacts. Current validation should use the main CMake/CTest and
-experiment runners.
+Current validation should use the main CMake/CTest targets and production
+experiment runners; there is no supported `improve_workspace` validation entry
+point.
 
 It wrote:
 
@@ -108,15 +102,9 @@ It wrote:
 - `improve_workspace/hipac_experiment_suite.csv`
 - `improve_workspace/hipac_experiment_suite.md`
 
-## Former Validation
+## Former Validation Artifacts
 
-The complete sidecar validation used to be:
-
-```bash
-python3 improve_workspace/tools/run_sidecar_validation.py
-```
-
-This command is obsolete after production integration. It wrote:
+The deleted prototype validation wrote:
 
 - `improve_workspace/sidecar_validation.json`
 - `improve_workspace/synthetic_clect_benchmark.md`
