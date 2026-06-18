@@ -568,6 +568,12 @@ private:
 											double depth_failures_before,
 											int query_index,
 											bool enabled);
+	int run_query_bridge_chain_pave(const std::vector<Eigen::VectorXd>& waypoint_path,
+									int start_box_id,
+									int& next_id,
+									StageContext& context,
+									const ChainPaveConfig& pave_config,
+									const char* partition_prefix);
 	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
 										   const Eigen::Ref<const Eigen::VectorXd>& goal,
 										   const std::vector<Eigen::VectorXd>& waypoint_path,

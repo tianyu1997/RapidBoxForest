@@ -137,6 +137,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_edges.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_pair.cpp
+    src/planning_forest_query_bridge_pave.cpp
     src/planning_forest_query_bridge_waypoint.cpp
     src/planning_forest_query_utils.cpp
     src/planning_forest_shortcut.cpp

@@ -195,6 +195,9 @@ src/planning_forest_query_bridge_batch_utils.cpp
 src/planning_forest_query_bridge_edges.cpp
                                    query bridge segment/box-corridor edge
                                    insertion helpers
+src/planning_forest_query_bridge_pave.cpp
+                                   query bridge chain-pave execution and
+                                   partition append helpers
 src/planning_forest_query_bridge_waypoint.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation

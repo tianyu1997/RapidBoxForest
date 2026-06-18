@@ -113,11 +113,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     const double query_bridge_depth_failures_before =
         boundary_max_depth_failure_count_local(context);
     int next_id = next_box_id();
-    auto append_partition_after_pave = [&](std::size_t boxes_before, const char* prefix) {
-        if (boxes_.size() > boxes_before) {
-            append_adaptive_partition_boxes(boxes_before, &last_build_, prefix);
-        }
-    };
     auto capped_ffb_depth = [&](int requested_depth) {
         const int max_tree_depth = std::max(1, config_.database.max_tree_depth);
         return std::min(max_tree_depth, std::max(1, requested_depth));
@@ -214,24 +209,17 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         std::vector<Eigen::VectorXd> reverse_path(corridor_path.rbegin(),
                                                   corridor_path.rend());
         context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_attempts");
-        const std::size_t boxes_before_reverse = boxes_.size();
-        const int reverse_added = chain_pave_along_path(reverse_path,
-                                                        target_box_id,
-                                                        boxes_,
-                                                        *oracle_,
-                                                        adjacency_,
-                                                        next_id,
-                                                        context,
-                                                        reverse_config);
+        const int reverse_added = run_query_bridge_chain_pave(
+            reverse_path,
+            target_box_id,
+            next_id,
+            context,
+            reverse_config,
+            "query_bridge.reverse_boundary_pave");
         if (reverse_added > 0) {
-            append_partition_after_pave(boxes_before_reverse,
-                                        "query_bridge.reverse_boundary_pave");
             accumulated_added += reverse_added;
             context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_added",
                                               static_cast<double>(reverse_added));
-            context.diagnostics().add_counter(
-                "query_bridge.full_adjacency_rebuilds_avoided");
-            invalidate_query_cache();
         }
         return locate_query_boxes();
     };
@@ -2244,23 +2232,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         ChainPaveConfig dense_config =
             make_dense_query_bridge_pave_config(config_.connector.pave,
                                                 query_bridge_ffb_depth);
-        const std::size_t boxes_before_dense = boxes_.size();
-        dense_repair_added = chain_pave_along_path(
+        dense_repair_added = run_query_bridge_chain_pave(
             corridor_path,
             start_box_id,
-            boxes_,
-            *oracle_,
-            adjacency_,
             next_id,
             context,
-            dense_config);
-        if (dense_repair_added > 0) {
-            append_partition_after_pave(boxes_before_dense,
-                                        "query_bridge.dense_boundary_pave");
-            context.diagnostics().add_counter(
-                "query_bridge.full_adjacency_rebuilds_avoided");
-            invalidate_query_cache();
-        }
+            dense_config,
+            "query_bridge.dense_boundary_pave");
         auto [source_box_id, target_box_id] =
             try_reverse_boundary_pave(dense_config,
                                       dense_repair_added,
@@ -2284,23 +2262,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             : config_.connector.pave;
     int added = 0;
     if (!partition_native_mode()) {
-        const std::size_t boxes_before_forward = boxes_.size();
-        added = chain_pave_along_path(
+        added = run_query_bridge_chain_pave(
             corridor_path,
             start_box_id,
-            boxes_,
-            *oracle_,
-            adjacency_,
             next_id,
             context,
-            pave_config);
-        if (added > 0) {
-            append_partition_after_pave(boxes_before_forward,
-                                        "query_bridge.forward_boundary_pave");
-            context.diagnostics().add_counter(
-                "query_bridge.full_adjacency_rebuilds_avoided");
-            invalidate_query_cache();
-        }
+            pave_config,
+            "query_bridge.forward_boundary_pave");
     } else {
         context.diagnostics().add_counter(
             "query_bridge.partition_legacy_forward_chain_pave_skipped");
@@ -2323,23 +2291,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         ChainPaveConfig dense_config =
             make_dense_query_bridge_pave_config(config_.connector.pave,
                                                 query_bridge_ffb_depth);
-        const std::size_t boxes_before_dense_retry = boxes_.size();
-        dense_repair_added = chain_pave_along_path(
+        dense_repair_added = run_query_bridge_chain_pave(
             corridor_path,
             start_box_id,
-            boxes_,
-            *oracle_,
-            adjacency_,
             next_id,
             context,
-            dense_config);
-        if (dense_repair_added > 0) {
-            append_partition_after_pave(boxes_before_dense_retry,
-                                        "query_bridge.dense_boundary_retry");
-            context.diagnostics().add_counter(
-                "query_bridge.full_adjacency_rebuilds_avoided");
-            invalidate_query_cache();
-        }
+            dense_config,
+            "query_bridge.dense_boundary_retry");
         std::tie(source_box_id, target_box_id) =
             try_reverse_boundary_pave(dense_config,
                                       dense_repair_added,
