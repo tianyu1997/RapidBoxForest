@@ -6,7 +6,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "48b4abba7d6dc94db7b864604557b0ad332130406e5974fc96ea70bb6714c766"
+      "sha256": "e319ac7eee60b749433cff0e1b8d888db9e3d880b51da5c7d639ca5f90ebe6dd"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
@@ -20,7 +20,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "e535a6a3d751ff3df9eec759b58f0b9909b9e086330e22d0ed1b2ca7db84142c"
+      "sha256": "745e8806636216662ad68056fc3f5407be966a1939cda19252e6485dad33a3b2"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
@@ -34,7 +34,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "76af7cedf16201dfbf46c16d98cf6aacbacdf300f1df1825fe8689fbb1401fa7"
+      "sha256": "8f29fe937aea4272509230a1c49122895c074be2b4ed045df4328de1653885e9"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
@@ -65,7 +65,7 @@
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "8dc8d5c2f975475d8c02053c1efdfcb7342ae0ce2c96f9c07b0666554ca876de"
+      "sha256": "285d80f0d5d2a9313891e534833438cc367b5d2379a7f89fa429b861df9e7170"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
@@ -82,14 +82,14 @@
   },
   "environment": {
     "cwd": ".",
-    "git_sha": "15c70aed83ff",
+    "git_sha": "d20125c322ce",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
       "VmData_kb": 22012,
-      "VmHWM_kb": 31800,
-      "VmRSS_kb": 31800,
+      "VmHWM_kb": 31820,
+      "VmRSS_kb": 31820,
       "VmSize_kb": 36708
     },
     "processor": "x86_64",

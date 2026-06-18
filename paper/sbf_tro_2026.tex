@@ -1026,7 +1026,7 @@ reported only as query-validated transitions.
     \centering
     \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
     \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark the first
-    checkpoints with audited success on the full saved query set. The horizontal
+    checkpoints with audited success on the saved five-query set. The horizontal
     coordinate is Build/5 + \onlineq{} for methods with reusable builds and
     \onlineq{} for single-query rows.}
     \label{fig:tro_shelf_cross_tradeoff}
@@ -1050,7 +1050,7 @@ reported only as query-validated transitions.
   rows; the right panel varies the amortization count \(K\) in
   Build/\(K\) + \onlineq{}. Methods without a reusable-build term are plotted at
   \onlineq{}. Rings mark the first checkpoints with
-  audited success on the full saved query set (black) and later \(\ge 1\%\)
+  audited success on the reported saved query set (black) and later \(\ge 1\%\)
   path-ratio improvements (gold); PRM and BIT* curves use offline checkpoints.}
   \label{fig:tro_random_tradeoff}
 \end{table*}
@@ -1123,32 +1123,34 @@ five-query cycle, not a universal amortization claim.
 
 The random-scene study uses saved prefix catalogs: ten pre-generated queries
 per scene reused by every method. Across KUKA LBR iiwa, UR5, and Panda,
-medium and hard rows over ten seeds give 600 saved query evaluations per
-method. For each robot and seed, medium and hard rows share the saved
-start-goal set; hard rows add later obstacle prefixes instead of regenerating
-unrelated scenes. Before any method summary is computed, a fixed manifest rule
-removes direct-line cases, where the start-goal segment validates directly. The
+medium and hard rows over ten seeds define 600 saved query instances per method
+before manifest pruning. For each robot and seed, medium and hard rows share the
+saved start-goal set; hard rows add later obstacle prefixes instead of
+regenerating unrelated scenes. Before any method summary is computed, a fixed
+manifest rule removes direct-line cases, where the start-goal segment validates
+directly. The
 trade-off plot uses Build/5 + \onlineq{} as a fixed amortization reference for
-rows with reusable builds and \onlineq{} for single-query rows. The saved
-catalogs still contain ten queries per scene, and the right panel varies the
-amortization count \(K\).
+rows with reusable builds and \onlineq{} for single-query rows. The stored
+catalogs retain ten queries per scene; the right panel varies the amortization
+count \(K\) as a reuse horizon rather than as a post-pruning sample count.
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
 random rows use LECT caches and anchors tied to each robot rather than
 Shelf-specific assets. Each \rbf{} row in Table~\ref{tab:tro-random-summary}
-uses the OBB-corridor profile and passes the fixed audit on the full saved query
-set. Repair witnesses contribute to accepted paths only after conversion into
+uses the OBB-corridor profile and passes the fixed audit on the reported saved
+query set. Repair witnesses contribute to accepted paths only after conversion into
 finite-cover \cspace{} OBB-corridor regions; the generated summaries list no
 residual ordinary (non-corridor) segments for those \rbf{} rows. PRM is built
 once per scene, whereas \mbox{RRT-Connect} and BIT* solve each query
 independently.
 The archived \mbox{IRIS-NP/GCS} saved-catalog run is retained only as a
-feasibility diagnostic because its success counts were too low for comparable
-\onlineq{} and path-ratio rows: hard rows had 0/100 successes for each robot,
-and medium rows had 0/100 (IIWA), 30/100 (UR5), and 10/100 (Panda) successes.
-The comparison therefore reports \onlineq{} and audited path ratios for
-\rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared catalogs.
+feasibility diagnostic: its strict saved-catalog success was too low to support
+comparable \onlineq{} and path-ratio rows. The table-generation manifest
+therefore excludes it from Table~\ref{tab:tro-random-summary} and
+Fig.~\ref{fig:tro_random_tradeoff}; the comparison reports \onlineq{} and
+audited path ratios for \rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared
+catalogs.
 \mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
 points;
 the exception is Panda-Hard, where \rbf{} has the lower median \onlineq{}.

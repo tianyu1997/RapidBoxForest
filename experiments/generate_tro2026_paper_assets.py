@@ -560,7 +560,7 @@ def select_quality_plateau_index(
     """Select the last substantial quality-improvement point after start.
 
     Lower values are better. Starting from the first point with audited success
-    on the full saved query set, move
+    on the reported saved query set, move
     forward only when a later checkpoint improves the current displayed path
     quality by at least the relative threshold.  This prevents a gold marker
     from drifting to a much later checkpoint for a visually negligible gain.
@@ -1434,7 +1434,7 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             )
             selected_indices.add(index)
 
-        # Always show the first checkpoint with audited success on the full saved query set,
+        # Always show the first checkpoint with audited success on the reported saved query set,
         # the best path point,
         # and the final/biggest-budget checkpoint on the cumulative curve.  The
         # final checkpoint must come from the original sorted curve, not only
@@ -1567,7 +1567,7 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
     # Aggregate those rows for the figure so the cumulative roadmap curve keeps
     # its late, usually flat, high-build tail.  This is display-only; table
     # context selection still uses scenario-level rows with audited success on the
-    # full saved query set.
+    # reported saved query set.
     prm_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         if str(row.get("method", "")) != "prm":
@@ -2746,7 +2746,7 @@ def ompl_per_query_tradeoff_stats(
     single global checkpoint can therefore misrepresent both online time and
     path quality.  For Table III, select the fastest full-seed-success
     checkpoint for each query whose mean path is within ``path_slack`` of that
-    query's best checkpoint with audited success on the full saved query set.
+    query's best checkpoint with audited success on the saved five-query set.
     """
     method_rows = [
         row for row in run_rows
@@ -4286,7 +4286,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     notes = (
         r"Median \([Q_1,Q_3]\), s. Build is a per-scene reusable-build term for \rbf{} and PRM; "
         r"RRT-Connect and BIT* are single-query rows. \onlineq{} excludes final simplification and audit; "
-        r"\(L/L^\star_{\mathrm{q}}\) uses success-only query-level 0.01-rad audited references for the saved queries."
+        r"\(L/L^\star_{\mathrm{q}}\) uses success-only query-level 0.01-rad audited references for the reported saved queries."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"
@@ -4653,7 +4653,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                         continue
                     # The reported/gold point is on the actual displayed
                     # curve, constrained to lie at or after the first
-                    # point with audited success on the full saved query set (black).
+                    # point with audited success on the reported saved query set (black).
                     # It advances only while path
                     # quality decreases by the configured relative threshold,
                     # preventing negligible late improvements from moving the
