@@ -67,20 +67,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                  const Eigen::VectorXd& goal) {
         return query_bridge_result_acceptable(current, start, goal, bridge_acceptance);
     };
-    auto locate_existing_box_for_query_bridge = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
-        if (partition_native_mode()) {
-            return locate_box_partition_first(point, config_.query.nearest_if_outside);
-        }
-        for (const auto& box : boxes_) {
-            if (box.contains(point, config_.query.adjacency_tolerance)) {
-                return box.id;
-            }
-        }
-        if (!config_.query.nearest_if_outside) {
-            return -1;
-        }
-        return locate_box_partition_first(point, config_.query.nearest_if_outside);
-    };
     auto box_id_contains_query_point = [&](int box_id,
                                            const Eigen::Ref<const Eigen::VectorXd>& point) {
         if (box_id < 0) {
@@ -95,7 +81,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     auto refresh_located_or_keep_anchor = [&](int anchor_box_id,
                                               const Eigen::Ref<const Eigen::VectorXd>& point,
                                               const char* endpoint_name) {
-        const int located = locate_existing_box_for_query_bridge(point);
+        const int located = locate_query_bridge_box(point);
         if (located >= 0) {
             return located;
         }
@@ -149,7 +135,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 continue;
             }
         }
-        int start_box_id = locate_existing_box_for_query_bridge(starts[index]);
+        int start_box_id = locate_query_bridge_box(starts[index]);
         if (start_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             start_box_id = anchor_query_endpoint_box(starts[index], anchor_context);
@@ -159,7 +145,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             mark_task_skip(2.0, "start_anchor_failed");
             continue;
         }
-        int goal_box_id = locate_existing_box_for_query_bridge(goals[index]);
+        int goal_box_id = locate_query_bridge_box(goals[index]);
         if (goal_box_id < 0) {
             StageContext anchor_context = StageContext::from_runtime(config_.runtime);
             goal_box_id = anchor_query_endpoint_box(goals[index], anchor_context);
@@ -324,9 +310,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             return 0;
         }
         const int source_box_id =
-            locate_existing_box_for_query_bridge(task.start);
+            locate_query_bridge_box(task.start);
         const int target_box_id =
-            locate_existing_box_for_query_bridge(task.goal);
+            locate_query_bridge_box(task.goal);
         if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
             batch_context.diagnostics().add_counter(
                 "query_bridge.direct_start_goal_segment_missing_endpoint");
@@ -474,8 +460,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_length_rejects"));
             return 0;
         }
-        const int source_box_id = locate_existing_box_for_query_bridge(task.start);
-        const int target_box_id = locate_existing_box_for_query_bridge(task.goal);
+        const int source_box_id = locate_query_bridge_box(task.start);
+        const int target_box_id = locate_query_bridge_box(task.goal);
         if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
             batch_context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_missing_endpoint");

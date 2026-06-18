@@ -541,6 +541,7 @@ private:
 								  StageContext& context);
 	int locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
 								   bool nearest_if_outside) const;
+	int locate_query_bridge_box(const Eigen::Ref<const Eigen::VectorXd>& point) const;
 	bool box_only_path_connected_partition_first(int source_box_id,
 												 int target_box_id) const;
 	bool overlay_path_connected_partition_first(int source_box_id,

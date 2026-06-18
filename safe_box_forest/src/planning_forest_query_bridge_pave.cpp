@@ -9,6 +9,22 @@
 
 namespace rbf {
 
+int RBFPlanningForest::locate_query_bridge_box(
+    const Eigen::Ref<const Eigen::VectorXd>& point) const {
+    if (partition_native_mode()) {
+        return locate_box_partition_first(point, config_.query.nearest_if_outside);
+    }
+    for (const auto& box : boxes_) {
+        if (box.contains(point, config_.query.adjacency_tolerance)) {
+            return box.id;
+        }
+    }
+    if (!config_.query.nearest_if_outside) {
+        return -1;
+    }
+    return locate_box_partition_first(point, config_.query.nearest_if_outside);
+}
+
 std::pair<int, int> RBFPlanningForest::locate_query_bridge_boxes(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,
