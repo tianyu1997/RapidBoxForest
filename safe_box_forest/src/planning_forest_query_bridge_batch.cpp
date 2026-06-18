@@ -1445,6 +1445,28 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
                                               static_cast<double>(attempts));
     };
+    struct TaskAttemptPlan {
+        bool forced = false;
+        bool partition_path_first = false;
+        int base_attempts = 1;
+        int effective_attempts = 1;
+    };
+    auto prepare_task_attempts = [&](QueryBridgeSearchTask& task) {
+        TaskAttemptPlan plan;
+        plan.forced = query_bridge_forced(task);
+        plan.base_attempts = base_attempts_for_task(task, plan.forced);
+        plan.partition_path_first =
+            task.waypoint_path_from_partition_query && !task.waypoint_path.empty();
+        plan.effective_attempts =
+            plan.partition_path_first ? 0 : plan.base_attempts;
+        if (plan.partition_path_first) {
+            mark_partition_path_first_task(task);
+        }
+        plan.effective_attempts =
+            expand_attempts_for_local_radius(plan.effective_attempts);
+        record_forced_and_attempts(task, plan.forced, plan.effective_attempts);
+        return plan;
+    };
     auto adopt_waypoint_after_rrt =
         [&](QueryBridgeSearchTask& task,
             std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
@@ -1824,18 +1846,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(probe_t0));
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-            prepared[task_offset].forced = query_bridge_forced(task);
-            prepared[task_offset].attempts =
-                base_attempts_for_task(task, prepared[task_offset].forced);
-            if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
-                prepared[task_offset].attempts = 0;
-                mark_partition_path_first_task(task);
-            }
-            prepared[task_offset].attempts =
-                expand_attempts_for_local_radius(prepared[task_offset].attempts);
-            record_forced_and_attempts(task,
-                                       prepared[task_offset].forced,
-                                       prepared[task_offset].attempts);
+            const TaskAttemptPlan attempt_plan = prepare_task_attempts(task);
+            prepared[task_offset].forced = attempt_plan.forced;
+            prepared[task_offset].attempts = attempt_plan.effective_attempts;
             for (int attempt = 0; attempt < prepared[task_offset].attempts; ++attempt) {
                 jobs.push_back({task_offset, attempt});
             }
@@ -1937,21 +1950,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(probe_t0));
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-        const bool forced_task = query_bridge_forced(task);
-        const int attempts = base_attempts_for_task(task, forced_task);
-        int effective_attempts =
-            task.waypoint_path_from_partition_query && !task.waypoint_path.empty()
-                ? 0
-                : attempts;
-        effective_attempts = expand_attempts_for_local_radius(effective_attempts);
-        record_forced_and_attempts(task, forced_task, effective_attempts);
-        if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
-            mark_partition_path_first_task(task);
+        const TaskAttemptPlan attempt_plan = prepare_task_attempts(task);
+        if (attempt_plan.partition_path_first) {
             mark_partition_path_first_rrt_skipped(task);
         }
-        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(effective_attempts));
+        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
+            static_cast<std::size_t>(attempt_plan.effective_attempts));
         const auto rrt_t0 = Clock::now();
-        run_attempts_for_task(task, effective_attempts, attempt_paths);
+        run_attempts_for_task(task, attempt_plan.effective_attempts, attempt_paths);
         const double rrt_ms = elapsed_ms_since(rrt_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
                                                   rrt_ms);
@@ -1961,20 +1967,23 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
             best_length = path_length(task.waypoint_path);
         }
-        adopt_waypoint_after_rrt(task, attempt_paths, attempts, best_length);
+        adopt_waypoint_after_rrt(task,
+                                 attempt_paths,
+                                 attempt_plan.base_attempts,
+                                 best_length);
         const bool segment_only_task =
             query_bridge_index_segment_only(index_options, task.index);
         if (segment_only_task) {
-            run_segment_only_retry(task, attempts, best_length);
+            run_segment_only_retry(task, attempt_plan.base_attempts, best_length);
         } else {
-            run_no_path_retries(task, attempts, best_length);
+            run_no_path_retries(task, attempt_plan.base_attempts, best_length);
         }
         if (task.waypoint_path.empty()) {
             mark_batch_task_no_path(task, elapsed_ms_since(task_t0));
             continue;
         }
         finish_ready_waypoint_task(task,
-                                   forced_task,
+                                   attempt_plan.forced,
                                    segment_only_task,
                                    best_length,
                                    [&]() { return elapsed_ms_since(task_t0); });
