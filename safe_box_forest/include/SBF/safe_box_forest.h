@@ -582,6 +582,16 @@ private:
 											 double audited_bridge_length,
 											 bool allow_residual_segments,
 											 int& next_id);
+	int try_promote_query_bridge_direct_transition(
+		int source_box_id,
+		int target_box_id,
+		const std::vector<std::vector<int>>& sample_layers,
+		std::size_t boxes_before_direct_corridor,
+		StageContext& context,
+		int query_index,
+		int bridge_edge_query_index,
+		const char* reason,
+		bool& attempted);
 		int try_add_query_box_corridor_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,
