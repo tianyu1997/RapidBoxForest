@@ -134,6 +134,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_path_utils.cpp
     src/planning_forest_query_bridge_repair_options.cpp
     src/planning_forest_query_bridge_batch_utils.cpp
+    src/planning_forest_query_bridge_edges.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_pair.cpp
     src/planning_forest_query_bridge_waypoint.cpp
