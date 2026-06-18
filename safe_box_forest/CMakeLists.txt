@@ -102,6 +102,7 @@ add_library(sbf_core STATIC
     src/planning_forest_obb.cpp
     src/planning_forest_overlay.cpp
     src/planning_forest_partition.cpp
+    src/planning_forest_query_utils.cpp
     src/planning_forest_shortcut.cpp
     src/query.cpp
     src/runtime.cpp
