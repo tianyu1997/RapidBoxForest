@@ -591,6 +591,12 @@ private:
 		StageContext& context,
 		int query_index,
 		int batch_task_index = -1);
+	int try_add_query_direct_start_goal_segment_for_points(
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		StageContext& context,
+		int query_index,
+		int batch_task_index = -1);
 	int try_add_query_fast_direct_segment_after_rrt_edge(
 		int source_box_id,
 		int target_box_id,
@@ -599,6 +605,19 @@ private:
 		StageContext& context,
 		double min_length,
 		int query_index,
+		int batch_task_index = -1);
+	int try_add_query_fast_direct_segment_after_rrt_path(
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const RRTConnectConfig& bridge_rrt,
+		StageContext& context,
+		bool enabled,
+		bool shortcut_enabled,
+		int random_shortcut_iters,
+		double min_length,
+		int shortcut_query_index,
+		int edge_query_index,
 		int batch_task_index = -1);
 	int try_commit_query_bridge_segment_only_edge(
 		const Eigen::Ref<const Eigen::VectorXd>& start,

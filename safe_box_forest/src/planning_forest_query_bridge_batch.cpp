@@ -253,131 +253,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.fast_direct_segment_after_rrt",
         fast_direct_segment_after_rrt ? 1.0 : 0.0);
-    auto try_direct_start_goal_segment = [&](QueryBridgeSearchTask& task) -> int {
-        if (!direct_start_goal_segment || task.direct_start_goal_satisfied) {
-            return 0;
-        }
-        const int source_box_id =
-            locate_query_bridge_box(task.start);
-        const int target_box_id =
-            locate_query_bridge_box(task.goal);
-        if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.direct_start_goal_segment_missing_endpoint");
-            return 0;
-        }
-        const int added = try_add_query_direct_start_goal_segment_edge(
-            source_box_id,
-            target_box_id,
-            task.start,
-            task.goal,
-            batch_context,
-            query_bridge_edge_query_index(scene_reusable_edges, task),
-            static_cast<int>(task.index));
-        task.direct_start_goal_satisfied = added > 0;
-        return added;
-    };
-    auto try_fast_direct_segment_after_rrt = [&](QueryBridgeSearchTask& task) -> int {
-        if (!fast_direct_segment_after_rrt || task.waypoint_path.empty()) {
-            return 0;
-        }
-        std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
-        candidate_paths.push_back(task.waypoint_path);
-        if (edge_options.fast_direct_shortcut && task.waypoint_path.size() > 2) {
-            const double before_length = path_length(task.waypoint_path);
-            CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-            std::vector<Eigen::VectorXd> shortened =
-                collision_shortcut_path(task.waypoint_path,
-                                        checker,
-                                        collision_shortcut_resolution(config_.query));
-            const double after_length = path_length(shortened);
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_shortcut_attempts");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_shortcut_attempts"));
-            if (!shortened.empty() && after_length + 1e-12 < before_length) {
-                candidate_paths.push_back(std::move(shortened));
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.fast_direct_segment_after_rrt_shortcut_accepts");
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.fast_direct_segment_after_rrt_shortcut_delta",
-                    before_length - after_length);
-                batch_context.diagnostics().add_counter(
-                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_shortcut_accepts"));
-                batch_context.diagnostics().add_counter(
-                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_shortcut_delta"),
-                    before_length - after_length);
-            }
-            const int random_shortcut_iters = edge_options.fast_direct_random_shortcut_iters;
-            const auto& random_source = candidate_paths.back();
-            if (random_shortcut_iters > 0 && random_source.size() > 2U) {
-                const double random_before_length = path_length(random_source);
-                const std::uint32_t shortcut_seed =
-                    static_cast<std::uint32_t>(0x9e3779b9U ^
-                                               ((static_cast<std::uint32_t>(task.query_index) + 1U) * 2654435761U) ^
-                                               (static_cast<std::uint32_t>(task.index + 1U) * 2246822519U) ^
-                                               static_cast<std::uint32_t>(random_source.size()));
-                std::vector<Eigen::VectorXd> random_shortened =
-                    random_collision_shortcut_path(random_source,
-                                                   checker,
-                                                   collision_shortcut_resolution(config_.query),
-                                                   random_shortcut_iters,
-                                                   shortcut_seed);
-                const double random_after_length = path_length(random_shortened);
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_attempts");
-                batch_context.diagnostics().add_counter(
-                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_attempts"));
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_iters",
-                    static_cast<double>(random_shortcut_iters));
-                if (!random_shortened.empty() &&
-                    random_after_length + 1e-12 < random_before_length) {
-                    candidate_paths.push_back(std::move(random_shortened));
-                    batch_context.diagnostics().add_counter(
-                        "query_bridge.fast_direct_segment_after_rrt_random_shortcut_accepts");
-                    batch_context.diagnostics().add_counter(
-                        "query_bridge.fast_direct_segment_after_rrt_random_shortcut_delta",
-                        random_before_length - random_after_length);
-                    batch_context.diagnostics().add_counter(
-                        query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_accepts"));
-                    batch_context.diagnostics().add_counter(
-                        query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_random_shortcut_delta"),
-                        random_before_length - random_after_length);
-                }
-            }
-        }
-        std::sort(candidate_paths.begin(),
-                  candidate_paths.end(),
-                  [](const auto& lhs, const auto& rhs) {
-                      return path_length(lhs) < path_length(rhs);
-                  });
-        candidate_paths.erase(std::unique(candidate_paths.begin(),
-                                          candidate_paths.end(),
-                                          [](const auto& lhs, const auto& rhs) {
-                                              if (lhs.size() != rhs.size()) {
-                                                  return false;
-                                              }
-                                              for (std::size_t index = 0; index < lhs.size(); ++index) {
-                                                  if ((lhs[index] - rhs[index]).norm() > 1e-12) {
-                                                      return false;
-                                                  }
-                                              }
-                                              return true;
-                                          }),
-                              candidate_paths.end());
-        const int source_box_id = locate_query_bridge_box(task.start);
-        const int target_box_id = locate_query_bridge_box(task.goal);
-        return try_add_query_fast_direct_segment_after_rrt_edge(
-            source_box_id,
-            target_box_id,
-            candidate_paths,
-            task.bridge_rrt,
-            batch_context,
-            fast_direct_segment_after_rrt_min_length,
-            query_bridge_edge_query_index(scene_reusable_edges, task),
-            static_cast<int>(task.index));
-    };
 	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
 	        const QueryBridgeHipacPrebridgeGate prebridge_gate =
 	            query_bridge_hipac_prebridge_gate(last_adaptive_partition_config_,
@@ -738,7 +613,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                           static_cast<double>(tasks.size()));
     if (direct_start_goal_segment) {
         for (auto& task : tasks) {
-            const int added = try_direct_start_goal_segment(task);
+            if (task.direct_start_goal_satisfied) {
+                continue;
+            }
+            const int added = try_add_query_direct_start_goal_segment_for_points(
+                task.start,
+                task.goal,
+                batch_context,
+                query_bridge_edge_query_index(scene_reusable_edges, task),
+                static_cast<int>(task.index));
+            task.direct_start_goal_satisfied = added > 0;
             if (added > 0) {
                 added_by_query[task.index] += added;
             }
@@ -1152,7 +1036,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     return;
                 }
             }
-            const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
+            const int fast_direct_added =
+                try_add_query_fast_direct_segment_after_rrt_path(
+                    task.start,
+                    task.goal,
+                    task.waypoint_path,
+                    task.bridge_rrt,
+                    batch_context,
+                    fast_direct_segment_after_rrt,
+                    edge_options.fast_direct_shortcut,
+                    edge_options.fast_direct_random_shortcut_iters,
+                    fast_direct_segment_after_rrt_min_length,
+                    task.query_index,
+                    query_bridge_edge_query_index(scene_reusable_edges, task),
+                    static_cast<int>(task.index));
             if (fast_direct_added > 0) {
                 added_by_query[task.index] += fast_direct_added;
                 batch_context.diagnostics().set_value(

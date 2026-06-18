@@ -5,8 +5,10 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_utils.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
 #include <string>
 
@@ -166,6 +168,23 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     return 1;
 }
 
+int RBFPlanningForest::try_add_query_direct_start_goal_segment_for_points(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    StageContext& context,
+    int query_index,
+    int batch_task_index) {
+    const int source_box_id = locate_query_bridge_box(start);
+    const int target_box_id = locate_query_bridge_box(goal);
+    return try_add_query_direct_start_goal_segment_edge(source_box_id,
+                                                       target_box_id,
+                                                       start,
+                                                       goal,
+                                                       context,
+                                                       query_index,
+                                                       batch_task_index);
+}
+
 int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     int source_box_id,
     int target_box_id,
@@ -257,6 +276,122 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     add_task_counter("fast_direct_segment_after_rrt_edges");
     set_task_value("fast_direct_segment_after_rrt_length", added_length);
     return 1;
+}
+
+int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    const RRTConnectConfig& bridge_rrt,
+    StageContext& context,
+    bool enabled,
+    bool shortcut_enabled,
+    int random_shortcut_iters,
+    double min_length,
+    int shortcut_query_index,
+    int edge_query_index,
+    int batch_task_index) {
+    if (!enabled || waypoint_path.empty()) {
+        return 0;
+    }
+    const auto add_task_counter = [&](const std::string& suffix, double value = 1.0) {
+        if (batch_task_index >= 0) {
+            context.diagnostics().add_counter(
+                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
+                value);
+        }
+    };
+
+    std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
+    candidate_paths.push_back(waypoint_path);
+    if (shortcut_enabled && waypoint_path.size() > 2U) {
+        const double before_length = path_length(waypoint_path);
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+        std::vector<Eigen::VectorXd> shortened =
+            collision_shortcut_path(waypoint_path,
+                                    checker,
+                                    collision_shortcut_resolution(config_.query));
+        const double after_length = path_length(shortened);
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_shortcut_attempts");
+        add_task_counter("fast_direct_segment_after_rrt_shortcut_attempts");
+        if (!shortened.empty() && after_length + 1e-12 < before_length) {
+            candidate_paths.push_back(std::move(shortened));
+            context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_shortcut_accepts");
+            context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_shortcut_delta",
+                before_length - after_length);
+            add_task_counter("fast_direct_segment_after_rrt_shortcut_accepts");
+            add_task_counter("fast_direct_segment_after_rrt_shortcut_delta",
+                             before_length - after_length);
+        }
+        const auto& random_source = candidate_paths.back();
+        if (random_shortcut_iters > 0 && random_source.size() > 2U) {
+            const double random_before_length = path_length(random_source);
+            const std::uint32_t shortcut_seed =
+                static_cast<std::uint32_t>(
+                    0x9e3779b9U ^
+                    ((static_cast<std::uint32_t>(shortcut_query_index) + 1U) *
+                     2654435761U) ^
+                    (static_cast<std::uint32_t>(batch_task_index + 1) * 2246822519U) ^
+                    static_cast<std::uint32_t>(random_source.size()));
+            std::vector<Eigen::VectorXd> random_shortened =
+                random_collision_shortcut_path(random_source,
+                                               checker,
+                                               collision_shortcut_resolution(config_.query),
+                                               random_shortcut_iters,
+                                               shortcut_seed);
+            const double random_after_length = path_length(random_shortened);
+            context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_random_shortcut_attempts");
+            add_task_counter("fast_direct_segment_after_rrt_random_shortcut_attempts");
+            context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_random_shortcut_iters",
+                static_cast<double>(random_shortcut_iters));
+            if (!random_shortened.empty() &&
+                random_after_length + 1e-12 < random_before_length) {
+                candidate_paths.push_back(std::move(random_shortened));
+                context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_accepts");
+                context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_random_shortcut_delta",
+                    random_before_length - random_after_length);
+                add_task_counter("fast_direct_segment_after_rrt_random_shortcut_accepts");
+                add_task_counter("fast_direct_segment_after_rrt_random_shortcut_delta",
+                                 random_before_length - random_after_length);
+            }
+        }
+    }
+    std::sort(candidate_paths.begin(),
+              candidate_paths.end(),
+              [](const auto& lhs, const auto& rhs) {
+                  return path_length(lhs) < path_length(rhs);
+              });
+    candidate_paths.erase(std::unique(candidate_paths.begin(),
+                                      candidate_paths.end(),
+                                      [](const auto& lhs, const auto& rhs) {
+                                          if (lhs.size() != rhs.size()) {
+                                              return false;
+                                          }
+                                          for (std::size_t index = 0; index < lhs.size(); ++index) {
+                                              if ((lhs[index] - rhs[index]).norm() > 1e-12) {
+                                                  return false;
+                                              }
+                                          }
+                                          return true;
+                                      }),
+                          candidate_paths.end());
+    const int source_box_id = locate_query_bridge_box(start);
+    const int target_box_id = locate_query_bridge_box(goal);
+    return try_add_query_fast_direct_segment_after_rrt_edge(source_box_id,
+                                                           target_box_id,
+                                                           candidate_paths,
+                                                           bridge_rrt,
+                                                           context,
+                                                           min_length,
+                                                           edge_query_index,
+                                                           batch_task_index);
 }
 
 int RBFPlanningForest::try_commit_query_bridge_segment_only_edge(
