@@ -140,89 +140,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                          waypoint_shortcut_options,
                                          context,
                                          query_index);
-    auto locate_box_linear = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
-        for (const auto& box : boxes_) {
-            if (intervals_contain_point_local(box.joint_intervals,
-                                              point,
-                                              config_.query.adjacency_tolerance)) {
-                return box.id;
-            }
-        }
-        return -1;
-    };
-    auto locate_query_boxes = [&]() {
-        using Clock = std::chrono::steady_clock;
-        const auto locate_t0 = Clock::now();
-        int source_box_id = -1;
-        int target_box_id = -1;
-        if (partition_native_mode()) {
-            source_box_id =
-                locate_box_partition_first(start, config_.query.nearest_if_outside);
-            target_box_id =
-                locate_box_partition_first(goal, config_.query.nearest_if_outside);
-            context.diagnostics().add_counter(
-                "query_bridge.locate_query_boxes_partition_first");
-        } else {
-            source_box_id = locate_box_linear(start);
-            target_box_id = locate_box_linear(goal);
-            if ((source_box_id < 0 || target_box_id < 0) && config_.query.nearest_if_outside) {
-                context.diagnostics().add_counter(
-                    "query_bridge.locate_query_boxes_cache_fallbacks");
-                invalidate_query_cache();
-                source_box_id =
-                    locate_box_partition_first(start, config_.query.nearest_if_outside);
-                target_box_id =
-                    locate_box_partition_first(goal, config_.query.nearest_if_outside);
-            }
-        }
-        context.diagnostics().record_timing(
-            "query_bridge.locate_query_boxes_ms",
-            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                      locate_t0).count());
-        return std::pair<int, int>{source_box_id, target_box_id};
-    };
-    auto query_boxes_connected = [&](int source_box_id, int target_box_id) {
-        if (source_box_id < 0 || target_box_id < 0) {
-            return false;
-        }
-        return box_only_path_connected_partition_first(source_box_id, target_box_id);
-    };
-    auto try_reverse_boundary_pave =
-        [&](const ChainPaveConfig& forward_config,
-            int forward_added,
-            int& accumulated_added) -> std::pair<int, int> {
-        auto [source_box_id, target_box_id] = locate_query_boxes();
-        if (query_boxes_connected(source_box_id, target_box_id)) {
-            return {source_box_id, target_box_id};
-        }
-        if (partition_native_mode()) {
-            context.diagnostics().add_counter(
-                "query_bridge.partition_legacy_reverse_chain_pave_skipped");
-            return {source_box_id, target_box_id};
-        }
-        const int remaining_chain = forward_config.max_chain - std::max(0, forward_added);
-        if (target_box_id < 0 || remaining_chain <= 0) {
-            return {source_box_id, target_box_id};
-        }
-        ChainPaveConfig reverse_config = forward_config;
-        reverse_config.max_chain = remaining_chain;
-        std::vector<Eigen::VectorXd> reverse_path(corridor_path.rbegin(),
-                                                  corridor_path.rend());
-        context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_attempts");
-        const int reverse_added = run_query_bridge_chain_pave(
-            reverse_path,
-            target_box_id,
-            next_id,
-            context,
-            reverse_config,
-            "query_bridge.reverse_boundary_pave");
-        if (reverse_added > 0) {
-            accumulated_added += reverse_added;
-            context.diagnostics().add_counter("query_bridge.reverse_boundary_pave_added",
-                                              static_cast<double>(reverse_added));
-        }
-        return locate_query_boxes();
-    };
     const bool bridge_internal_simplify =
         query_bridge_internal_simplify_enabled(direct_segment_after_rrt_candidate);
     context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
@@ -2009,7 +1926,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             set_query_bridge_task_value("direct_corridor_residual_segment_loop_ms",
                                         residual_segment_loop_ms);
         }
-        auto [source_box_id, target_box_id] = locate_query_boxes();
+        auto [source_box_id, target_box_id] =
+            locate_query_bridge_boxes(start, goal, context);
         const bool local_corridor_connected =
             final_bad.empty() && endpoint_layers_connected();
         context.diagnostics().set_value("query_bridge.direct_corridor_local_connected",
@@ -2215,9 +2133,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             dense_config,
             "query_bridge.dense_boundary_pave");
         auto [source_box_id, target_box_id] =
-            try_reverse_boundary_pave(dense_config,
-                                      dense_repair_added,
-                                      dense_repair_added);
+            run_query_bridge_reverse_boundary_pave(start,
+                                                   goal,
+                                                   corridor_path,
+                                                   dense_config,
+                                                   dense_repair_added,
+                                                   dense_repair_added,
+                                                   next_id,
+                                                   context);
         const int maybe_box_corridor_edges_added =
             try_add_query_box_corridor_edge(source_box_id,
                                             target_box_id,
@@ -2249,7 +2172,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             "query_bridge.partition_legacy_forward_chain_pave_skipped");
     }
     auto [source_box_id, target_box_id] =
-        try_reverse_boundary_pave(pave_config, added, added);
+        run_query_bridge_reverse_boundary_pave(start,
+                                               goal,
+                                               corridor_path,
+                                               pave_config,
+                                               added,
+                                               added,
+                                               next_id,
+                                               context);
     if (added > 0) {
         const int maybe_box_corridor_edges_added =
             try_add_query_box_corridor_edge(source_box_id,
@@ -2274,9 +2204,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             dense_config,
             "query_bridge.dense_boundary_retry");
         std::tie(source_box_id, target_box_id) =
-            try_reverse_boundary_pave(dense_config,
-                                      dense_repair_added,
-                                      dense_repair_added);
+            run_query_bridge_reverse_boundary_pave(start,
+                                                   goal,
+                                                   corridor_path,
+                                                   dense_config,
+                                                   dense_repair_added,
+                                                   dense_repair_added,
+                                                   next_id,
+                                                   context);
         const int maybe_box_corridor_edges_added =
             try_add_query_box_corridor_edge(source_box_id,
                                             target_box_id,

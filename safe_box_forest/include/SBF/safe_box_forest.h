@@ -578,12 +578,24 @@ private:
 											double depth_failures_before,
 											int query_index,
 											bool enabled);
+	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
+												  const Eigen::Ref<const Eigen::VectorXd>& goal,
+												  StageContext& context);
 	int run_query_bridge_chain_pave(const std::vector<Eigen::VectorXd>& waypoint_path,
 									int start_box_id,
 									int& next_id,
 									StageContext& context,
 									const ChainPaveConfig& pave_config,
 									const char* partition_prefix);
+	std::pair<int, int> run_query_bridge_reverse_boundary_pave(
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const ChainPaveConfig& forward_config,
+		int forward_added,
+		int& accumulated_added,
+		int& next_id,
+		StageContext& context);
 	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
 										   const Eigen::Ref<const Eigen::VectorXd>& goal,
 										   const std::vector<Eigen::VectorXd>& waypoint_path,
