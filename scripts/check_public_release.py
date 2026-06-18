@@ -108,6 +108,7 @@ BROKEN_REFERENCE_ALLOWLIST = {
     "scripts/export_public_release.py",
     "scripts/check_public_release.py",
     "scripts/check_release_readiness.py",
+    "scripts/self_test_release_tools.py",
     "docs/OPEN_SOURCE_RELEASE_CHECKLIST.md",
     "docs/REPRODUCIBILITY.md",
 }

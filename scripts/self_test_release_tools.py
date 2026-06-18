@@ -136,6 +136,21 @@ def check_staged_scope_policy(repo_root: Path, tmp_root: Path) -> None:
         raise RuntimeError("non-exported staged addition should be rejected")
 
 
+def check_forbidden_sidecar_policy(repo_root: Path, tmp_root: Path) -> None:
+    scripts_dir = repo_root / "scripts"
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    import export_public_release
+
+    fake_repo = tmp_root / "forbidden_sidecar_repo"
+    (fake_repo / "improve_workspace").mkdir(parents=True)
+    sidecar_errors = export_public_release.check_forbidden_source_sidecars(fake_repo)
+    if not sidecar_errors:
+        raise RuntimeError("improve_workspace sidecar should be rejected")
+    if "integrate their code into the main modules" not in sidecar_errors[0]:
+        raise RuntimeError(f"unexpected improve_workspace sidecar error: {sidecar_errors}")
+
+
 def write_mutated_manifest(source: Path, destination: Path, *, mutation: str) -> None:
     data = json.loads(source.read_text(encoding="utf-8"))
     artifact = data["artifacts"][0]
@@ -243,6 +258,7 @@ def write_package_with_schema_version(source: Path, destination: Path, schema_ve
 def run_self_test(repo_root: Path, tmp_root: Path) -> None:
     check_required_file_list_consistency(repo_root)
     check_staged_scope_policy(repo_root, tmp_root)
+    check_forbidden_sidecar_policy(repo_root, tmp_root)
     fake_repo = tmp_root / "repo"
     cache_dir = fake_repo / "outputs/fake_cache"
     snapshot_dir = cache_dir / "lect_snapshot"
