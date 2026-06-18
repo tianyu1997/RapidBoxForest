@@ -127,6 +127,9 @@ src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
+src/planning_forest_database.cpp   default config, LECT database identity/root
+                                   setup, external evidence, and forest
+                                   construction
 src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
                                    survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
