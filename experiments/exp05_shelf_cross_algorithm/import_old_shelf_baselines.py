@@ -6,6 +6,7 @@ import csv
 import hashlib
 import json
 import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -19,8 +20,10 @@ from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_me
 from experiments.common.metrics import median
 
 
-OLD_PAPER_ROOT = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026")
-OLD_OUTPUT_ROOT = Path("/home/tian/桌面/box_aabb/cpp/SBF/outputs/paper")
+OLD_PAPER_ROOT_ENV = "RBF_OLD_TRO_PAPER_ROOT"
+OLD_OUTPUT_ROOT_ENV = "RBF_OLD_TRO_OUTPUT_ROOT"
+OLD_PAPER_ROOT = Path(os.environ[OLD_PAPER_ROOT_ENV]) if OLD_PAPER_ROOT_ENV in os.environ else REPO_ROOT / "external" / "old_tro2026" / "paper"
+OLD_OUTPUT_ROOT = Path(os.environ[OLD_OUTPUT_ROOT_ENV]) if OLD_OUTPUT_ROOT_ENV in os.environ else REPO_ROOT / "external" / "old_tro2026" / "outputs"
 OLD_TABLE = OLD_PAPER_ROOT / "generated" / "tab_tro_main_shelf_best_tradeoff.tex"
 OLD_ANYTIME_JSON = OLD_OUTPUT_ROOT / "tro2026_shelf_anytime_tradeoff_full.json"
 OLD_IRIS_JSON = OLD_OUTPUT_ROOT / "tro2026_shelf_iris_np_gcs_anytime.json"

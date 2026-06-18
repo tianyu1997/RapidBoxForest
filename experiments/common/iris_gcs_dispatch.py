@@ -12,18 +12,32 @@ from experiments.common.metrics import mean, median
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_IRIS_PYTHON = Path("/home/tian/miniconda3/envs/sbf/bin/python")
-DEFAULT_GCS_REPO = Path("/home/tian/桌面/box_aabb/gcs-science-robotics")
-SHELF_IRIS_SCRIPT = REPO_ROOT / "safe_box_forest" / "experiments" / "sbf_old" / "paper_16_shelf_iris_np_gcs_anytime.py"
+DEFAULT_IRIS_PYTHON_ENV = "RBF_IRIS_PYTHON"
+DEFAULT_GCS_REPO_ENV = "RBF_GCS_REPO"
+SHELF_IRIS_SCRIPT_ENV = "RBF_SHELF_IRIS_SCRIPT"
+
+
+def shelf_iris_script() -> Path:
+    configured = os.environ.get(SHELF_IRIS_SCRIPT_ENV)
+    if configured:
+        return Path(configured)
+    return REPO_ROOT / "external" / "old_tro2026" / "paper_16_shelf_iris_np_gcs_anytime.py"
 
 
 def default_iris_python() -> Path:
-    return DEFAULT_IRIS_PYTHON if DEFAULT_IRIS_PYTHON.exists() else Path(sys.executable)
+    configured = os.environ.get(DEFAULT_IRIS_PYTHON_ENV)
+    if configured:
+        path = Path(configured)
+        if path.exists():
+            return path
+    return Path(sys.executable)
 
 
 def default_gcs_repo() -> Path:
-    local = DEFAULT_GCS_REPO
-    return local if local.is_dir() else REPO_ROOT / "gcs-science-robotics"
+    configured = os.environ.get(DEFAULT_GCS_REPO_ENV)
+    if configured:
+        return Path(configured)
+    return REPO_ROOT / "gcs-science-robotics"
 
 
 def iris_env() -> dict[str, str]:
@@ -97,10 +111,17 @@ def run_shelf_iris_anytime(
     deps = check_iris_dependencies(python_executable, gcs_repo)
     if not deps.get("ok"):
         raise RuntimeError(f"IRIS/GCS dependency check failed: {deps}")
+    script = shelf_iris_script()
+    if not script.exists():
+        raise RuntimeError(
+            "IRIS/GCS shelf runner is not bundled in the clean public release. "
+            f"Set {SHELF_IRIS_SCRIPT_ENV} to the legacy runner path or import the "
+            "published baseline artifact instead."
+        )
     out_json.parent.mkdir(parents=True, exist_ok=True)
     command = [
         str(python_executable),
-        str(SHELF_IRIS_SCRIPT),
+        str(script),
         "--seeds",
         str(max(1, int(seeds))),
         "--logical-threads",

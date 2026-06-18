@@ -6,8 +6,9 @@ to produce a reproducible evidence chain that supports the manuscript claims.
 
 ## Principles
 
-1. All paper-facing scripts live under `experiments/` and must not invoke scripts
-   from `safe_box_forest/experiments/sbf_old/`.
+1. All paper-facing scripts live under `experiments/` and must not invoke
+   bundled historical SBF experiment trees. Legacy baseline context, when used,
+   must be supplied as an external artifact or explicit external script path.
 2. Raw artifacts are authoritative. Tables, figures, and prose snippets are
    generated from JSON/JSONL/CSV artifacts, not copied by hand.
 3. Final planning success means fixed-resolution final audit success. Audit time
@@ -276,9 +277,10 @@ studies must not replace the main registered rows.
 
 The experiment section is considered complete only when:
 
-1. `paper/sbf_tro_2026.tex` no longer depends on `paper/sbf_old/generated` for
-   experiment tables or figures.
-2. `experiments/` paper-facing runners no longer call `sbf_old` scripts.
+1. `paper/sbf_tro_2026.tex` no longer depends on bundled old-paper generated
+   assets for experiment tables or figures.
+2. `experiments/` paper-facing runners no longer call bundled historical SBF
+   experiment scripts.
 3. Exp.6 and Exp.7 consume saved scene catalogs in full runs.
 4. `paper/generated/tro_table_generation_manifest.json` records the source
    artifact for every table and figure.

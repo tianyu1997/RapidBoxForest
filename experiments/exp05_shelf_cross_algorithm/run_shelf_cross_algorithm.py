@@ -1444,8 +1444,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seeds", default="0,1,2,3,4,5,6,7")
     parser.add_argument("--methods", default=",".join(METHODS))
     parser.add_argument("--rerun-baselines", action=argparse.BooleanOptionalAction, default=True, help="Rerun OMPL baselines instead of importing old audited artifacts. IRIS-NP+GCS may still be imported unless explicitly supported.")
-    parser.add_argument("--old-paper-root", type=Path, default=Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026"))
-    parser.add_argument("--old-output-root", type=Path, default=Path("/home/tian/桌面/box_aabb/cpp/SBF/outputs/paper"))
+    parser.add_argument(
+        "--old-paper-root",
+        type=Path,
+        default=Path(os.environ.get("RBF_OLD_TRO_PAPER_ROOT", str(REPO_ROOT / "external" / "old_tro2026" / "paper"))),
+    )
+    parser.add_argument(
+        "--old-output-root",
+        type=Path,
+        default=Path(os.environ.get("RBF_OLD_TRO_OUTPUT_ROOT", str(REPO_ROOT / "external" / "old_tro2026" / "outputs"))),
+    )
     parser.add_argument("--threads", type=int, default=8)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)

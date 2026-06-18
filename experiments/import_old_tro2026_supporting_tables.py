@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,8 @@ if str(REPO_ROOT) not in sys.path:
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, write_json
 
 
-OLD_GENERATED = Path("/home/tian/桌面/box_aabb/cpp/SBF/doc/paper/tro_rewrite_2026/generated")
+OLD_GENERATED_ENV = "RBF_OLD_TRO_GENERATED"
+OLD_GENERATED = Path(os.environ[OLD_GENERATED_ENV]) if OLD_GENERATED_ENV in os.environ else Path("external/old_tro2026/generated")
 
 TABLES = {}
 

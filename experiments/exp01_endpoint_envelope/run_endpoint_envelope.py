@@ -266,24 +266,36 @@ def tex_bool(value: Any) -> str:
     return "Y" if text in {"1", "true", "yes", "y"} else "N"
 
 
+def source_label(value: Any) -> str:
+    return (
+        str(value)
+        .replace("IFK_AA", "IFK-AA")
+        .replace("HIFK_3", "HIFK-3")
+        .replace("HIFK_5", "HIFK-5")
+        .replace("CritSample", "Critical sample")
+        .replace("_", r"\_")
+    )
+
+
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
-        r"\begin{table}[t]",
+        r"% Auto-generated from current trade-off artifacts.",
+        r"\begingroup",
         r"\centering",
-        r"\caption{Endpoint AABB source comparison at fixed joint-box widths. Cert. marks IFK/HIFK certificate-backed sources. CritSample, Analytical, and MC are diagnostic/reference sources; Max neg. gap reports the worst per-axis shortfall against their sampling-union reference.}",
+        r"\captionof{table}{Endpoint AABB source comparison at fixed joint-box widths. IFK and HIFK are certificate-backed sources. Critical sample, Analytical, and MC are diagnostic or reference sources; Worst gap reports the largest per-axis shortfall against their sampling-union reference.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",
         r"\renewcommand{\arraystretch}{0.94}",
         r"\begin{tabular}{@{}llrrrr@{}}",
         r"\toprule",
-        r"Width & Source & Cert. & $V_{\mathrm{ep}}$ (m$^3$) & Time ($\mu$s) & Max neg. gap \\",
+        r"Width & Source & Cert & $V_{\mathrm{ep}}$ (m$^3$) & Time ($\mu$s) & Worst gap \\",
         r"\midrule",
     ]
     last_width: float | None = None
     for row in rows:
         width = float(row["width"])
-        source = str(row["source"]).replace("_", r"\_")
+        source = source_label(row["source"])
         if last_width is not None and abs(width - last_width) > 1e-12:
             lines.append(r"\addlinespace")
         lines.append(
@@ -294,7 +306,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{tex_num(row.get('max_negative_gap'), 4)} \\\\"
         )
         last_width = width
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
+    lines.extend([r"\bottomrule", r"\end{tabular}", r"\par\endgroup", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines), encoding="utf-8")
 

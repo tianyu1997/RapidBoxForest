@@ -74,7 +74,7 @@ separate box-overlap graph edges from segment edges and report raw no-post
 segment fraction before final simplification.
 
 The registered RBF algorithm default is
-`exp04_partition_leaf12_d23_fixed1280_online25ms`: leaf sweep coverage with
+`exp04_partition_leaf13_d23_fixed800_online25ms`: leaf sweep coverage with
 adaptive deep refinement and partition-native online query bridge planning.
 Shelf+IIWA baseline
 rows add the d23 warm-cache override; random multi-robot rows do not inherit the

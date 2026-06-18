@@ -186,12 +186,12 @@ R.~A. Brooks and T.~Lozano-P\'erez, ``A subdivision algorithm in configuration
   vol. SMC-15, no.~2, pp. 224--233, 1985.
 
 \bibitem{kuffner2000rrt}
-J.~J. Kuffner and S.~M. LaValle, ``{RRT}-connect: An efficient approach to
+J.~J. Kuffner and S.~M. LaValle, ``{RRT-Connect}: An efficient approach to
   single-query path planning,'' in \emph{{IEEE} International Conference on
   Robotics and Automation ({ICRA})}, 2000, pp. 995--1001.
 
 \bibitem{gammell2015batch}
-J.~D. Gammell, S.~S. Srinivasa, and T.~D. Barfoot, ``Batch informed trees
+J.~D. Gammell, S.~S. Srinivasa, and T.~D. Barfoot, ``{Batch Informed Trees}
   ({BIT}*): Sampling-based optimal planning via the heuristically guided search
   of implicit random geometric graphs,'' in \emph{{IEEE} International
   Conference on Robotics and Automation ({ICRA})}, 2015, pp. 3067--3074.
@@ -202,13 +202,13 @@ J.~D. Gammell, T.~D. Barfoot, and S.~S. Srinivasa, ``Informed sampling for
   no.~4, pp. 966--984, 2018.
 
 \bibitem{janson2015fmt}
-L.~Janson, E.~Schmerling, A.~Clark, and M.~Pavone, ``Fast marching tree: A fast
-  marching sampling-based method for optimal motion planning in many
+L.~Janson, E.~Schmerling, A.~Clark, and M.~Pavone, ``{Fast Marching Tree}: A
+  fast marching sampling-based method for optimal motion planning in many
   dimensions,'' \emph{Int. J. Robot. Res.}, vol.~34, no.~7, pp. 883--921, 2015.
 
 \bibitem{sucan2012ompl}
-I.~A. {\c S}ucan, M.~Moll, and L.~E. Kavraki, ``The open motion planning
-  library,'' \emph{IEEE Robot. Autom. Mag.}, vol.~19, no.~4, pp. 72--82, 2012.
+I.~A. {\c S}ucan, M.~Moll, and L.~E. Kavraki, ``The {Open Motion Planning
+  Library},'' \emph{IEEE Robot. Autom. Mag.}, vol.~19, no.~4, pp. 72--82, 2012.
 
 \bibitem{moll2015benchmarking}
 M.~Moll, I.~A. {\c S}ucan, and L.~E. Kavraki, ``Benchmarking motion planning
@@ -235,7 +235,7 @@ J.~Schulman, Y.~Duan, J.~Ho, A.~Lee, I.~Awwal, H.~Bradlow, J.~Pan, S.~Patil,
 
 \bibitem{mukadam2018gpmp2}
 M.~Mukadam, J.~Dong, X.~Yan, F.~Dellaert, and B.~Boots, ``Continuous-time
-  gaussian process motion planning via probabilistic inference,'' \emph{Int. J.
-  Robot. Res.}, vol.~37, no.~11, pp. 1319--1340, 2018.
+  {Gaussian} process motion planning via probabilistic inference,'' \emph{Int.
+  J. Robot. Res.}, vol.~37, no.~11, pp. 1319--1340, 2018.
 
 \end{thebibliography}

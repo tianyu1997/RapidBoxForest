@@ -33,6 +33,8 @@ EXPERIMENTS = {
     "appendix": ("Appendix sweeps", REPO_ROOT / "experiments" / "appendix_sweeps" / "run_appendix_sweeps.py"),
 }
 
+PUBLIC_SMOKE_EXPERIMENTS = ("exp01", "exp02")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Unified TRO2026 experiment dispatcher.")
@@ -49,6 +51,8 @@ def parse_args() -> argparse.Namespace:
 def selected_experiments(args: argparse.Namespace) -> list[str]:
     wanted = set(csv_list(args.only))
     if not wanted or "all" in wanted:
+        if str(args.phase) == "smoke":
+            return [item for item in PUBLIC_SMOKE_EXPERIMENTS if item in EXPERIMENTS]
         return list(EXPERIMENTS)
     unknown = sorted(item for item in wanted if item not in EXPERIMENTS)
     if unknown:
@@ -99,6 +103,11 @@ def main() -> int:
         "run_id": run_id("tro2026"),
         "phase": str(args.phase),
         "status": "executed" if args.execute and not args.dry_run else "dry_run",
+        "selection_policy": (
+            "public_smoke_fast_core" if str(args.phase) == "smoke" and "all" in set(csv_list(args.only))
+            else "explicit_or_full"
+        ),
+        "public_smoke_experiments": list(PUBLIC_SMOKE_EXPERIMENTS),
         "environment": environment_metadata(),
         "commands": commands,
         "runs": runs,

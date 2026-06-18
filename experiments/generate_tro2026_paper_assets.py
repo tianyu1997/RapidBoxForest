@@ -27,7 +27,7 @@ from experiments.common.rbf_defaults import (  # noqa: E402
 REQUIRED_TABLES = {
     "tab_tro_endpoint_envelope.tex": "Endpoint-envelope source comparison over fixed joint-box widths.",
     "tab_tro_link_envelope.tex": "Link-envelope representation comparison over fixed joint-box widths.",
-    "tab_tro_shelf_ablation.tex": "Shelf+IIWA RBF operating point and mechanism ablations.",
+    "tab_tro_shelf_ablation.tex": "Shelf+IIWA RBF profile and mechanism ablations.",
     "tab_tro_shelf_cross_algorithm.tex": "Shelf+IIWA cross-algorithm comparison.",
     "tab_tro_random_summary.tex": "Random multi-robot summary.",
     "tab_tro_dynamic_update.tex": "Dynamic update summary.",
@@ -179,6 +179,29 @@ def file_sha256_if_reasonable(path: Path | None, max_bytes: int = 256 * 1024 * 1
     except OSError:
         return None
     return file_sha256(path)
+
+
+def manifest_path(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    try:
+        return str(path.resolve().relative_to(REPO_ROOT.resolve()))
+    except ValueError:
+        return str(path)
+
+
+def relativize_manifest(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: relativize_manifest(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [relativize_manifest(item) for item in value]
+    if isinstance(value, str):
+        repo_prefix = str(REPO_ROOT.resolve())
+        if value == repo_prefix:
+            return "."
+        if value.startswith(repo_prefix + os.sep):
+            return value[len(repo_prefix) + 1:]
+    return value
 
 
 def tex_num(value: Any, digits: int = 3) -> str:
@@ -536,8 +559,8 @@ def select_quality_plateau_index(
 ) -> int | None:
     """Select the last substantial quality-improvement point after start.
 
-    Lower values are better. Starting from the first point that solves all saved
-    queries, move
+    Lower values are better. Starting from the first point with audited success
+    on the full saved query set, move
     forward only when a later checkpoint improves the current displayed path
     quality by at least the relative threshold.  This prevents a gold marker
     from drifting to a much later checkpoint for a visually negligible gain.
@@ -740,7 +763,7 @@ def generate_pipeline_figure(pdf_path: Path, png_path: Path) -> None:
     add_box(0.035, 0.66, 0.145, 0.17, "Joint box $I$\nrounded links", facecolor=palette["geom"])
     add_box(0.215, 0.66, 0.165, 0.17, "Endpoint envelopes\n$E_a(I), E_b(I)$", facecolor=palette["geom"])
     add_box(0.415, 0.66, 0.165, 0.17, "Link envelope\nconv$(E_a \\cup E_b)$ + r", facecolor=palette["geom"])
-    add_box(0.615, 0.66, 0.155, 0.17, "Scene validation\nvs. obstacles", facecolor=palette["scene"])
+    add_box(0.615, 0.66, 0.155, 0.17, "Scene validation\nagainst obstacles", facecolor=palette["scene"])
     add_box(0.815, 0.66, 0.145, 0.17, "Accepted box\nor blocker set", facecolor=palette["scene"])
 
     arrow(0.18, 0.745, 0.215, 0.745)
@@ -753,7 +776,7 @@ def generate_pipeline_figure(pdf_path: Path, png_path: Path) -> None:
         0.43,
         0.330,
         0.12,
-        "LECT evidence cache: kinematics-keyed endpoint/link records\n(no obstacle labels or imported free-space certificates)",
+        "LECT evidence cache: kinematics-keyed endpoint/link records\n(no obstacle labels or imported collision-free certificates)",
         facecolor=palette["cache"],
         fontsize=7.8,
     )
@@ -1411,7 +1434,8 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             )
             selected_indices.add(index)
 
-        # Always show the first checkpoint that solves all saved queries, the best path point,
+        # Always show the first checkpoint with audited success on the full saved query set,
+        # the best path point,
         # and the final/biggest-budget checkpoint on the cumulative curve.  The
         # final checkpoint must come from the original sorted curve, not only
         # the Pareto-improving subset; otherwise the visibly flat tail of a
@@ -1478,7 +1502,7 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
         total = as_float(row.get("total_queries", row.get("scenes")), 0.0)
         plan = random_display_time(row)
         if method == "bitstar":
-            # BIT* rows in Exp.6 are anytime checkpoint envelopes.  The
+            # BIT* rows in Exp.6 are anytime checkpoint traces.  The
             # figure should show the checkpoint budget used to obtain that
             # quality, not the median first-solution time of the queries that
             # happened to solve before the checkpoint.  Using the latter
@@ -1542,7 +1566,8 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
     # (10 queries each) rather than one scenario-level 100-query summary row.
     # Aggregate those rows for the figure so the cumulative roadmap curve keeps
     # its late, usually flat, high-build tail.  This is display-only; table
-    # context selection still uses scenario-level rows that solve all saved queries.
+    # context selection still uses scenario-level rows with audited success on the
+    # full saved query set.
     prm_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         if str(row.get("method", "")) != "prm":
@@ -1773,7 +1798,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\resizebox{\textwidth}{!}{%",
         r"\begin{tabular}{@{}l*{5}{r}@{\hspace{0.8em}}*{5}{r}@{\hspace{0.8em}}*{5}{r}@{}}",
         r"\toprule",
-        r" & \multicolumn{5}{c}{Vol./Analyt.} & \multicolumn{5}{c}{Time ($\mu$s)} & \multicolumn{5}{c}{Gap (mm)} \\",
+        r" & \multicolumn{5}{c}{Volume ratio} & \multicolumn{5}{c}{Time ($\mu$s)} & \multicolumn{5}{c}{Gap (mm)} \\",
         r"\cmidrule(lr){2-6}\cmidrule(lr){7-11}\cmidrule(l){12-16}",
         r"Source & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.10 & 0.20 & 0.30 & 0.50 \\",
         r"\midrule",
@@ -1790,7 +1815,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostics. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}",
+        r"{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostic or reference rows. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1872,7 +1897,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools shifted free-space probes and known-colliding obstacle probes; build time excludes endpoint time.\par}",
+        r"{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools far-separated probes and local obstacle-overlap probes; build time excludes endpoint time.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -2721,7 +2746,7 @@ def ompl_per_query_tradeoff_stats(
     single global checkpoint can therefore misrepresent both online time and
     path quality.  For Table III, select the fastest full-seed-success
     checkpoint for each query whose mean path is within ``path_slack`` of that
-    query's best checkpoint that solves all saved queries.
+    query's best checkpoint with audited success on the full saved query set.
     """
     method_rows = [
         row for row in run_rows
@@ -2928,11 +2953,14 @@ def format_method_header(
     *,
     simplify_s: Any | None = None,
     time_label: str = "Build",
+    build_note: str | None = None,
 ) -> str:
     details: list[str] = []
     build = as_float(build_s)
     if math.isfinite(build):
         details.append(rf"{time_label} {tex_num(build, 3)}\,s")
+    elif build_note:
+        details.append(build_note)
     simplify = as_float(simplify_s)
     if math.isfinite(simplify):
         details.append(rf"Simp {tex_num(simplify, 3)}\,s")
@@ -2989,7 +3017,7 @@ def grouped_query_table(
         r"\toprule",
         "  & "
         + " & ".join(
-            rf"\multicolumn{{{per_method_cols}}}{{c}}{{{format_method_header(str(method['label']), method.get('build_s'), None, simplify_s=method.get('simplify_s'), time_label=str(method.get('time_label', 'Build')))}}}"
+            rf"\multicolumn{{{per_method_cols}}}{{c}}{{{format_method_header(str(method['label']), method.get('build_s'), None, simplify_s=method.get('simplify_s'), time_label=str(method.get('time_label', 'Build')), build_note=method.get('build_note'))}}}"
             for method in methods
         )
         + r" \\",
@@ -3275,7 +3303,7 @@ def generate_exp04_table(
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA \rbf{} operating point and mechanism ablations that solve all saved queries.}",
+        r"\captionof{table}{Shelf+IIWA \rbf{} query-validated profile and mechanism ablations.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.2pt}",
@@ -3299,7 +3327,7 @@ def generate_exp04_table(
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit.\par}",
+        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit; \(L/L^\star\) uses success-only 0.01-rad audited references.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3459,7 +3487,7 @@ def generate_exp05_table(
                 ),
             )
             label = labels[method]
-            build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
+            build_s = math.nan if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         else:
             build_s = math.nan
             stage_id = str(row.get("stage_id", method))
@@ -3489,12 +3517,13 @@ def generate_exp05_table(
                 )
             label = labels[method]
             if method != "prm" or not math.isfinite(as_float(build_s)):
-                build_s = 0.0 if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
+                build_s = math.nan if method in {"rrtconnect", "bitstar"} else row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
         if method != "sbf_leaf_rrt":
             time_label = "Build"
         methods.append({
             "label": label,
             "build_s": build_s,
+            "build_note": "No reusable build" if method in {"rrtconnect", "bitstar"} else None,
             "simplify_s": None,
             "time_label": time_label,
             "time_metric_label": time_metric_label,
@@ -3515,13 +3544,13 @@ def generate_exp05_table(
             global_path_refs[query_label] = ref
     grouped_query_table(
         path,
-        caption=r"Shelf+IIWA fixed-audit per-query cross-algorithm comparison.",
+        caption=r"Shelf+IIWA audited-success per-query timing and path-quality comparison.",
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
             r"Median \([Q_1,Q_3]\), s. \(T=\onlineq{}\), excluding final simplification and audit; "
             r"\(L/L^\star\) uses the query-level 0.01-rad audited reference path. "
-            r"AS/TS/CS/LB/RB denote approach-side, two shelf-side, and left/right bin anchors."
+            r"AS, TS, CS, LB, and RB denote the approach-side anchor, two shelf-side anchors, and the left and right bin anchors."
         ),
         include_segment=False,
         time_unit="s",
@@ -4252,7 +4281,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
             2,
         )
 
-    caption = r"\captionof{table}{Saved-catalog random-scene trade-off reference points.}"
+    caption = r"\captionof{table}{Saved-catalog random-scene operating points.}"
     path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
     notes = (
         r"Median \([Q_1,Q_3]\), s. Build is a per-scene reusable-build term for \rbf{} and PRM; "
@@ -4624,7 +4653,8 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                         continue
                     # The reported/gold point is on the actual displayed
                     # curve, constrained to lie at or after the first
-                    # point that solves all saved queries (black). It advances only while path
+                    # point with audited success on the full saved query set (black).
+                    # It advances only while path
                     # quality decreases by the configured relative threshold,
                     # preventing negligible late improvements from moving the
                     # reported point to the far end of the curve.
@@ -5005,14 +5035,14 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
             r"\par\vspace{0.25ex}",
             r"\noindent\begin{minipage}{\columnwidth}",
             r"\centering",
-            r"\captionof{table}{Adaptive leaf-sweep maintenance timing.}",
+            r"\captionof{table}{Adaptive leaf-sweep maintenance-only timing.}",
             r"\label{tab:tro-dynamic-update}",
             r"\scriptsize",
             r"\setlength{\tabcolsep}{2.0pt}",
             r"\renewcommand{\arraystretch}{1.02}",
             r"\begin{tabular}{@{}lcc@{}}",
             r"\toprule",
-            r"Operation & Time (ms) & Speedup \\",
+            rf"Operation & Time (ms) & \shortstack{{Speedup over\\{target_n}-obstacle build}} \\",
             r"\midrule",
         ]
         for row in rows:
@@ -5037,7 +5067,7 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
         lines = [
             r"\begin{table}[t]",
             r"\centering",
-            r"\caption{Adaptive leaf-sweep maintenance timing. Values are milliseconds shown as \([Q_1, Q_3]\) over saved ordered random scenes.}",
+            r"\caption{Adaptive leaf-sweep maintenance-only timing. Values are milliseconds shown as \([Q_1, Q_3]\) over saved ordered random scenes.}",
             r"\label{tab:tro-dynamic-update}",
             r"\footnotesize",
             r"\setlength{\tabcolsep}{3.0pt}",
@@ -5058,7 +5088,7 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
         lines = [
             r"\begin{table}[t]",
             r"\centering",
-            r"\caption{Adaptive leaf-sweep maintenance timing. Insert reports the cost of adding the obstacle that makes the scene contain \(N\) obstacles; remove reports deleting one obstacle from an \(N\)-obstacle scene. Values are milliseconds shown as \([Q_1, Q_3]\) over random ordered scenes.}",
+            r"\caption{Adaptive leaf-sweep maintenance-only timing. Insert reports the cost of adding the obstacle that makes the scene contain \(N\) obstacles; remove reports deleting one obstacle from an \(N\)-obstacle scene. Values are milliseconds shown as \([Q_1, Q_3]\) over random ordered scenes.}",
             r"\label{tab:tro-dynamic-update}",
             r"\footnotesize",
             r"\setlength{\tabcolsep}{3.0pt}",
@@ -5096,7 +5126,7 @@ def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> Non
         r"\footnotesize",
         r"\begin{tabular}{lrrrr}",
         r"\toprule",
-        r"Transition & SR & Update (s) & Warm (s) & Speedup \\",
+        r"Transition & SR & Update (s) & Warm (s) & \shortstack{Speedup\\over warm} \\",
         r"\midrule",
     ]
     for row in rows:
@@ -5235,6 +5265,7 @@ def main() -> int:
             "caption": caption,
             "sha256": file_sha256(path),
         }
+    manifest = relativize_manifest(manifest)
     write_json(generated / "tro_table_generation_manifest.json", manifest)
     print(f"wrote {generated / 'tro_table_generation_manifest.json'}")
     return 0

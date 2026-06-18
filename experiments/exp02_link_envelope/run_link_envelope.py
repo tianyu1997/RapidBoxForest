@@ -141,7 +141,7 @@ def center_from_aabb(box: list[float]) -> tuple[float, float, float]:
     )
 
 
-def guaranteed_colliding_obstacle_bounds(result: dict[str, Any], method: str, template_bounds: list[float]) -> list[float]:
+def known_colliding_obstacle_bounds(result: dict[str, Any], method: str, template_bounds: list[float]) -> list[float]:
     bounds = list(template_bounds)
     if method == "support_hull":
         hulls = [float(value) for value in result.get("support_hulls", [])]
@@ -355,7 +355,7 @@ def run_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
         }
         colliding_obstacles_by_method = {
             method: [
-                guaranteed_colliding_obstacle_bounds(result, method, free_obstacle_bounds)
+                known_colliding_obstacle_bounds(result, method, free_obstacle_bounds)
                 for result in results_by_method[method]
             ]
             for _label, method in METHODS
@@ -441,11 +441,16 @@ def tex_num(value: Any, digits: int = 3) -> str:
     return f"{x:.{digits}f}"
 
 
+def envelope_label(value: Any) -> str:
+    return str(value).replace("LinkIAABB", "Link AABB").replace("_", r"\_")
+
+
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
     lines = [
-        r"\begin{table}[t]",
+        r"% Auto-generated from current trade-off artifacts.",
+        r"\begingroup",
         r"\centering",
-        r"\caption{Width-wise IFK\_AA link-envelope comparison with one link split ($S=1$). Entries are means over fixed-width boxes and repeated collision calls.}",
+        r"\captionof{table}{Link-envelope representation comparison over fixed joint-box widths.}",
         r"\label{tab:tro-link-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",
@@ -461,7 +466,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         if last_width is not None and abs(width - last_width) > 1e-12:
             lines.append(r"\addlinespace")
         lines.append(
-            f"{tex_num(width, 2)} & {row['envelope']} & "
+            f"{tex_num(width, 2)} & {envelope_label(row['envelope'])} & "
             f"{tex_num(row.get('volume_m3_mean'), 6)} & "
             f"{tex_num(row.get('envelope_us_mean'), 1)} & "
             f"{tex_num(row.get('collision_us_mean'), 1)} \\\\"
@@ -471,8 +476,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize Test merges shifted-free and guaranteed-colliding obstacle cases over repeated calls. The colliding case scans all obstacle/link pairs. SupportHull uses direct GJK without AABB broadphase.}",
-        r"\end{table}",
+        r"{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools far-separated probes and local obstacle-overlap probes; build time excludes endpoint time.\par}",
+        r"\par\endgroup",
         "",
     ])
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -513,7 +518,7 @@ def main() -> int:
         "table": str(tex_path) if not args.dry_run else None,
         "timing_policy": (
             "Table reports envelope materialization separately from collision testing. "
-            "Collision timing is averaged over repeated calls in both shifted-free and guaranteed-colliding "
+            "Collision timing is averaged over repeated calls in far-separated and local obstacle-overlap "
             "obstacle cases. The colliding case disables early exit by scanning all obstacle/link pairs. "
             "LinkIAABB uses AABB overlap tests; SupportHull uses direct GJK with AABB broadphases disabled. "
             "Median and GJK counters remain in the CSV/manifest for audit."

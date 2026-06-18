@@ -1,9 +1,8 @@
 # TRO 2026 Experiment Workspace
 
 This directory contains the current paper-facing experiment framework for
-`paper/sbf_tro_2026.tex`. Legacy scripts were archived under
-`experiments/archive/20260603_legacy_current/` and are no longer paper-facing
-entry points.
+`paper/sbf_tro_2026.tex`. Legacy development scripts are not part of the clean
+public export and are no longer paper-facing entry points.
 
 ## Current Entry Points
 
@@ -13,6 +12,13 @@ python3 experiments/run_tro2026.py --phase smoke --execute
 python3 experiments/common/generate_random_scene_catalog.py --out outputs/tro2026/catalogs/random_scene_catalog.json --scene-seeds 50 --mode generate
 python3 experiments/generate_tro2026_paper_assets.py --out-dir outputs/tro2026 --paper-dir paper
 ```
+
+The default public smoke suite intentionally runs only the lightweight core
+mechanism checks (`exp01`, `exp02`). Heavier planning, random-scene, Drake/IRIS,
+and dynamic-update studies should be requested explicitly with `--only` once
+their required caches, catalogs, and optional dependencies are available.
+Smoke execute mode still requires the `link_interval_envelope` Python module to
+be importable; use dry-run mode in a source-only checkout.
 
 ## Experiment Modules
 
@@ -27,9 +33,9 @@ python3 experiments/generate_tro2026_paper_assets.py --out-dir outputs/tro2026 -
 
 ## Required Policy
 
-Paper-facing scripts must not import or execute
-`safe_box_forest/experiments/sbf_old`. Historical files may mention that path
-only inside `experiments/archive/`.
+Paper-facing scripts must not import or execute bundled historical SBF
+experiment trees. If a legacy baseline is needed for context, it must be passed
+as an external artifact or script path and recorded in the output manifest.
 
 Exp.5 may import non-RBF baseline values from the old TRO artifact only through
 `exp05_shelf_cross_algorithm/import_old_shelf_baselines.py`. The importer

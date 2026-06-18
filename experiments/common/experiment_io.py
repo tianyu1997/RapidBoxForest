@@ -85,6 +85,14 @@ def proc_status() -> dict[str, int]:
     return out
 
 
+def repo_relative_string(path: Path) -> str:
+    resolved = path.resolve()
+    try:
+        return str(resolved.relative_to(REPO_ROOT.resolve()))
+    except ValueError:
+        return str(path)
+
+
 def environment_metadata() -> dict[str, Any]:
     thread_env = {
         key: os.environ.get(key)
@@ -98,8 +106,8 @@ def environment_metadata() -> dict[str, Any]:
         "machine": platform.machine(),
         "processor": platform.processor(),
         "hostname": socket.gethostname(),
-        "cwd": str(Path.cwd()),
-        "repo_root": str(REPO_ROOT),
+        "cwd": repo_relative_string(Path.cwd()),
+        "repo_root": ".",
         "thread_env": thread_env,
         "proc_status": proc_status(),
     }
@@ -125,7 +133,7 @@ def default_sbf_subprocess_env() -> dict[str, str]:
 
 
 def command_record(command: Sequence[str], *, cwd: Path | None = None) -> dict[str, Any]:
-    return {"command": [str(part) for part in command], "cwd": str(cwd or REPO_ROOT)}
+    return {"command": [str(part) for part in command], "cwd": repo_relative_string(cwd or REPO_ROOT)}
 
 
 def run_command(
