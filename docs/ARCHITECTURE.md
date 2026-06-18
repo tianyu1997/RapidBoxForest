@@ -144,6 +144,9 @@ src/planning_forest_adaptive_build.cpp
                                    adaptive deep leaf sweep, query-root
                                    refinement, and leaf-sweep refine build
                                    backends
+src/planning_forest_adaptive_cover_utils.cpp
+                                   adaptive cover frontier, depth, probe, and
+                                   connectivity scoring helpers
 src/planning_forest_adaptive_merge.cpp
                                    budgeted/grid/tree/exact merge helpers for
                                    adaptive build backends
