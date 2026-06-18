@@ -1530,12 +1530,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                      env_indexed_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS",
                                                 query_index,
                                                 base_subdivisions));
-        for (int item = 1; item < subdivisions; ++item) {
-            fractions.push_back(static_cast<double>(item) / static_cast<double>(subdivisions));
-        }
-        std::stable_sort(fractions.begin(), fractions.end(), [](double lhs, double rhs) {
-            return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
-        });
+        fractions = query_bridge_center_ordered_fractions(subdivisions);
         int repair_calls = 0;
         int repair_added = 0;
         const auto initial_bad = bad_transitions();
@@ -1670,19 +1665,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                              static_cast<int>(std::ceil(gap_length / adaptive_fine_step))));
                 adaptive_repair_max_subdivisions_used =
                     std::max(adaptive_repair_max_subdivisions_used, target_subdivisions);
-                std::vector<double> adaptive_fractions;
-                adaptive_fractions.reserve(static_cast<std::size_t>(
-                    std::max(0, target_subdivisions - 1)));
-                for (int item = 1; item < target_subdivisions; ++item) {
-                    adaptive_fractions.push_back(
-                        static_cast<double>(item) /
-                        static_cast<double>(target_subdivisions));
-                }
-                std::stable_sort(adaptive_fractions.begin(),
-                                 adaptive_fractions.end(),
-                                 [](double lhs, double rhs) {
-                                     return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
-                                 });
+                const std::vector<double> adaptive_fractions =
+                    query_bridge_center_ordered_fractions(target_subdivisions);
                 for (double u : adaptive_fractions) {
                     if (adaptive_repair_calls >= adaptive_max_calls) {
                         break;
@@ -1756,44 +1740,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 env_double_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_OFFSET",
                                       std::max(0.01, sample_step * 0.25)));
             const auto domain = oracle_->planning_intervals();
-            auto lateral_candidates = [&](const Eigen::VectorXd& seed,
-                                          const Eigen::VectorXd& direction) {
-                std::vector<int> dims;
-                dims.reserve(static_cast<std::size_t>(seed.size()));
-                for (int dim = 0; dim < seed.size(); ++dim) {
-                    dims.push_back(dim);
-                }
-                std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
-                    const double lhs_abs = std::abs(direction[lhs]);
-                    const double rhs_abs = std::abs(direction[rhs]);
-                    if (std::abs(lhs_abs - rhs_abs) > 1e-12) {
-                        return lhs_abs < rhs_abs;
-                    }
-                    return lhs < rhs;
-                });
-                std::vector<Eigen::VectorXd> out;
-                const int dim_limit = std::min<int>(lateral_dims,
-                                                    static_cast<int>(dims.size()));
-                out.reserve(static_cast<std::size_t>(std::max(0, dim_limit) * lateral_rounds * 2));
-                for (int item = 0; item < dim_limit; ++item) {
-                    const int dim = dims[static_cast<std::size_t>(item)];
-                    for (int round = 1; round <= lateral_rounds; ++round) {
-                        for (double sign : {1.0, -1.0}) {
-                            Eigen::VectorXd candidate = seed;
-                            candidate[dim] += sign * lateral_offset * static_cast<double>(round);
-                            if (dim < static_cast<int>(domain.size())) {
-                                candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
-                                                          std::max(domain[static_cast<std::size_t>(dim)].lo,
-                                                                   candidate[dim]));
-                            }
-                            if ((candidate - seed).norm() > 1e-12) {
-                                out.push_back(std::move(candidate));
-                            }
-                        }
-                    }
-                }
-                return out;
-            };
             for (int transition : final_bad) {
                 if (lateral_repair_calls >= lateral_max_calls) {
                     break;
@@ -1807,7 +1753,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
                 const Eigen::VectorXd seed = 0.5 * (a + b);
                 const Eigen::VectorXd direction = b - a;
-                for (const Eigen::VectorXd& lateral_seed : lateral_candidates(seed, direction)) {
+                for (const Eigen::VectorXd& lateral_seed :
+                     query_bridge_lateral_candidates(seed,
+                                                     direction,
+                                                     domain,
+                                                     lateral_dims,
+                                                     lateral_rounds,
+                                                     lateral_offset)) {
                     if (lateral_repair_calls >= lateral_max_calls) {
                         break;
                     }
@@ -1864,20 +1816,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const bool group_residual_gaps =
                 env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
-            std::vector<std::pair<int, int>> gap_groups;
-            gap_groups.reserve(final_bad.size());
-            for (int transition : final_bad) {
-                if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
-                    continue;
-                }
-                if (!group_residual_gaps ||
-                    gap_groups.empty() ||
-                    transition > gap_groups.back().second + 1) {
-                    gap_groups.emplace_back(transition, transition);
-                } else {
-                    gap_groups.back().second = transition;
-                }
-            }
+            const std::vector<std::pair<int, int>> gap_groups =
+                query_bridge_group_residual_gap_transitions(final_bad,
+                                                            sample_layers.size(),
+                                                            group_residual_gaps);
             context.diagnostics().set_value(
                 "query_bridge.direct_corridor_segment_gap_groups",
                 static_cast<double>(gap_groups.size()));

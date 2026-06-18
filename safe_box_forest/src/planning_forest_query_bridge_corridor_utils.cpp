@@ -280,4 +280,85 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
     return result;
 }
 
+std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
+    std::vector<double> fractions;
+    if (subdivisions <= 1) {
+        return fractions;
+    }
+    fractions.reserve(static_cast<std::size_t>(std::max(0, subdivisions - 1)));
+    for (int item = 1; item < subdivisions; ++item) {
+        fractions.push_back(static_cast<double>(item) / static_cast<double>(subdivisions));
+    }
+    std::stable_sort(fractions.begin(), fractions.end(), [](double lhs, double rhs) {
+        return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
+    });
+    return fractions;
+}
+
+std::vector<Eigen::VectorXd> query_bridge_lateral_candidates(
+    const Eigen::VectorXd& seed,
+    const Eigen::VectorXd& direction,
+    const std::vector<Interval>& domain,
+    int lateral_dims,
+    int lateral_rounds,
+    double lateral_offset) {
+    std::vector<int> dims;
+    dims.reserve(static_cast<std::size_t>(seed.size()));
+    for (int dim = 0; dim < seed.size(); ++dim) {
+        dims.push_back(dim);
+    }
+    std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
+        const double lhs_abs = std::abs(direction[lhs]);
+        const double rhs_abs = std::abs(direction[rhs]);
+        if (std::abs(lhs_abs - rhs_abs) > 1e-12) {
+            return lhs_abs < rhs_abs;
+        }
+        return lhs < rhs;
+    });
+    std::vector<Eigen::VectorXd> out;
+    const int dim_limit = std::min<int>(std::max(0, lateral_dims),
+                                        static_cast<int>(dims.size()));
+    const int rounds = std::max(0, lateral_rounds);
+    out.reserve(static_cast<std::size_t>(dim_limit * rounds * 2));
+    for (int item = 0; item < dim_limit; ++item) {
+        const int dim = dims[static_cast<std::size_t>(item)];
+        for (int round = 1; round <= rounds; ++round) {
+            for (double sign : {1.0, -1.0}) {
+                Eigen::VectorXd candidate = seed;
+                candidate[dim] += sign * lateral_offset * static_cast<double>(round);
+                if (dim < static_cast<int>(domain.size())) {
+                    candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
+                                              std::max(domain[static_cast<std::size_t>(dim)].lo,
+                                                       candidate[dim]));
+                }
+                if ((candidate - seed).norm() > 1e-12) {
+                    out.push_back(std::move(candidate));
+                }
+            }
+        }
+    }
+    return out;
+}
+
+std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
+    const std::vector<int>& final_bad,
+    std::size_t layer_count,
+    bool group_residual_gaps) {
+    std::vector<std::pair<int, int>> gap_groups;
+    gap_groups.reserve(final_bad.size());
+    for (int transition : final_bad) {
+        if (transition < 0 || transition + 1 >= static_cast<int>(layer_count)) {
+            continue;
+        }
+        if (!group_residual_gaps ||
+            gap_groups.empty() ||
+            transition > gap_groups.back().second + 1) {
+            gap_groups.emplace_back(transition, transition);
+        } else {
+            gap_groups.back().second = transition;
+        }
+    }
+    return gap_groups;
+}
+
 }  // namespace rbf

@@ -2,7 +2,10 @@
 
 #include <Eigen/Core>
 
+#include <SBF/box_graph.h>
+
 #include <cstddef>
+#include <utility>
 #include <vector>
 
 namespace rbf {
@@ -69,5 +72,20 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<bool>& covered,
     const QueryBridgeDirectFfbTaskBuildOptions& options);
+
+std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
+
+std::vector<Eigen::VectorXd> query_bridge_lateral_candidates(
+    const Eigen::VectorXd& seed,
+    const Eigen::VectorXd& direction,
+    const std::vector<Interval>& domain,
+    int lateral_dims,
+    int lateral_rounds,
+    double lateral_offset);
+
+std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
+    const std::vector<int>& final_bad,
+    std::size_t layer_count,
+    bool group_residual_gaps);
 
 }  // namespace rbf
