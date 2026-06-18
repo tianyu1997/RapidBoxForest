@@ -192,6 +192,21 @@ src/planning_forest_query_bridge_batch_utils.cpp
                                    query bridge batch task records and oracle
                                    counter aggregation, acceptance, and route
                                    scoring helpers
+src/planning_forest_query_bridge_batch_options.cpp
+                                   environment/config parsing for batch bridge
+                                   retries, parallel RRT, detours, path-quality
+                                   retry, and index-selection controls
+src/planning_forest_query_bridge_path_utils.cpp
+                                   waypoint path length, shortcut, and internal
+                                   simplification helpers shared by bridge
+                                   attempts
+src/planning_forest_query_bridge_corridor_options.cpp
+                                   runtime option parsing for direct corridor,
+                                   reusable edge, shortcut, residual, and
+                                   detailed-timing controls
+src/planning_forest_query_bridge_repair_options.cpp
+                                   subdivision, adaptive, and lateral repair
+                                   option builders for direct corridor paving
 src/planning_forest_query_bridge_edges.cpp
                                    query bridge segment/box-corridor edge
                                    insertion helpers
@@ -212,6 +227,9 @@ src/planning_forest_query_bridge_batch.cpp
 src/planning_forest_query_bridge_endpoint.cpp
                                    endpoint anchoring and endpoint-to-main
                                    corridor repair
+src/planning_forest_query_bridge_endpoint_options.h
+                                   endpoint-anchor option helpers kept header-only
+                                   for the endpoint repair module
 src/planning_forest_query_bridge_pair.cpp
                                    pair-level query bridge orchestration and
                                    RRT/segment fallback dispatch
