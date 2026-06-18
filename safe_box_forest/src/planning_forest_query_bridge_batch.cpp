@@ -925,11 +925,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             checker,
             bridge_robot,
             config,
-                derived_planner_seed(config_.grower.rng_seed,
-                                     kSeedBatchBridgeOffset,
-                                     scheduled_attempt,
-                                     task.query_index,
-                                     task.short_local_bridge ? 0 : kSeedAttemptStride),
+            query_bridge_rrt_seed_for_attempt(task,
+                                              config_.grower.rng_seed,
+                                              scheduled_attempt),
             cancel_override ? cancel_override : batch_context.native_cancel_flag());
         if (path.empty()) {
             return std::vector<Eigen::VectorXd>{};

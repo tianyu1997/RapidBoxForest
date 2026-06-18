@@ -197,6 +197,10 @@ RRTConnectConfig query_bridge_rrt_config_for_attempt(
     double default_timeout_ms,
     const QueryBridgeRetryOptions& options);
 
+int query_bridge_rrt_seed_for_attempt(const QueryBridgeSearchTask& task,
+                                      int rng_seed,
+                                      int scheduled_attempt);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,

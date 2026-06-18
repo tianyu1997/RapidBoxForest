@@ -147,6 +147,16 @@ RRTConnectConfig query_bridge_rrt_config_for_attempt(
     return config;
 }
 
+int query_bridge_rrt_seed_for_attempt(const QueryBridgeSearchTask& task,
+                                      int rng_seed,
+                                      int scheduled_attempt) {
+    return derived_planner_seed(rng_seed,
+                                kSeedBatchBridgeOffset,
+                                scheduled_attempt,
+                                task.query_index,
+                                task.short_local_bridge ? 0 : kSeedAttemptStride);
+}
+
 void query_bridge_mark_task_skip(BuildProfile& profile,
                                  std::size_t index,
                                  double code,
