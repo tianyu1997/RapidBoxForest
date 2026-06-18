@@ -13,6 +13,7 @@
 #include <LECTDatabase/online_cache.h>
 #include <rbf/lect_database.h>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -676,6 +677,15 @@ private:
 		int batch_task_query_index,
 		bool local_overlay_connected,
 		bool count_without_local_overlay_attempt);
+	AdaptiveLeafSweepResult build_fixed_virtual_leaf_sweep_cover(
+		const std::vector<Obstacle>& obstacles,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		int initial_leaf_depth,
+		int adaptive_depth_min,
+		int target_leaf_depth,
+		LeafSweepConfig leaf_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		std::chrono::steady_clock::time_point total_start);
 	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
 												  const Eigen::Ref<const Eigen::VectorXd>& goal,
 												  StageContext& context);
