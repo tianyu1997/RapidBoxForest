@@ -77,6 +77,7 @@
 \usepackage{needspace}
 \usepackage{bm}
 \usepackage{xr}
+\usepackage{cite}
 \usepackage{hyperref}
 \hypersetup{hidelinks}
 \usepackage{cleveref}
@@ -142,30 +143,33 @@ E-mail: \texttt{ty1997@link.cuhk.edu.hk}.}}
 \maketitle
 
 \begin{abstract}
-Repeated-query manipulation benefits from reusable planning structure, but certified
-convex regions can require costly construction and recertification in cluttered
-workcells.
-RapidBoxForest (\rbf{}) checks axis-aligned joint boxes with endpoint-to-link
-swept-capsule bounds, organizes boxes accepted by the scene-validation policy into a
-scene-level forest and typed corridor graph, and stores kinematics-keyed envelope
-evidence in a Lifelong Envelope Cache Tree (LECT) separately from scene labels.
+Repeated-query manipulation benefits from reusable planning structure, but
+constructing and recertifying general collision-free convex regions can be
+costly in cluttered workcells.
+RapidBoxForest (\rbf{}) uses axis-aligned joint boxes as the reusable region
+primitive: it checks boxes with endpoint-to-link swept-capsule bounds, organizes
+boxes accepted by the scene-validation policy into a scene-level forest and
+typed corridor graph, and stores kinematics-keyed envelope evidence in a
+Lifelong Envelope Cache Tree (LECT) separately from scene labels.
 Certificates are conditional: they apply only to conservative box unions or
-OBB-corridor unions (OBB: oriented bounding box); repaired or shortened paths,
-and paths using filter-only evidence, require independent query validation.
+finite-cover OBB-corridor unions (OBB: oriented bounding box); paths that are
+repaired, shortened, post-processed, or derived from \mbox{filter-only} evidence
+require independent query validation.
 Saved-catalog experiments use audit-separated timing and explicit cache
-accounting. On Shelf+IIWA, warm-cache depth-23 LECT replay builds the reusable
-scene structure in 0.166~s, with 0.130~s per-query online time and 0.164~s
-five-query amortized time; live hierarchical interval forward kinematics
-(HIFK-5) materialization takes 7.006~s. At the saved-catalog
-random-scene operating points, \rbf{} has lower per-query online time than the
+accounting. On Shelf+IIWA, warm-cache depth-23 LECT replay has a 0.166~s median
+reusable-build time, with 0.130~s median \onlineq{} (per-query online time) and
+0.164~s median five-query amortized time; live hierarchical interval forward
+kinematics (\mbox{HIFK-5}) materialization takes 7.006~s. At the saved-catalog
+random-scene operating points, \rbf{} has lower median \onlineq{} than the
 Batch Informed Trees (BIT*) reference rows in all six robot--difficulty cases,
-while BIT* has lower median path ratios than \rbf{} in the four UR5/Panda
-cases.
-In a maintenance-only study, leaf-sweep insertions are 153.3--207.5$\times$
-faster and removals are 943.6--3354.0$\times$ faster than the 15-obstacle warm
-build. Snapshot creation, loading, and resident memory are excluded from the
-reported timing rows; update rows report maintenance only, not a complete
-pipeline that updates the scene and solves a query.
+while BIT* has lower median audited path ratios than \rbf{} in the four
+UR5/Panda cases.
+In a maintenance-only scene-cache study, leaf-sweep insertions show a
+153.3--207.5$\times$ speedup and removals show a
+943.6--3354.0$\times$ speedup relative to the 15-obstacle warm-build baseline.
+Snapshot creation, loading, and resident memory are excluded from the reported
+timing rows; update rows report maintenance only, not the full
+update-and-query pipeline.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -175,8 +179,8 @@ Motion planning, multi-query planning, link interval envelopes, box-region plann
 \begin{table*}[!t]
 \centering
 \caption{Qualitative taxonomy of reusable manipulation-planning paradigms.
-The comparison emphasizes the persistent object, validation granularity, and
-scene-edit semantics rather than ranking planners by runtime.}
+The comparison emphasizes the persistent object, validation and certificate
+granularity, and scene-edit semantics rather than ranking planners by runtime.}
 \label{tab:related_qualitative_comparison}
 \fontsize{6.7}{7.2}\selectfont
 \setlength{\tabcolsep}{1.6pt}
@@ -188,7 +192,7 @@ Family & Persistent object & Vol. & Validation and certificate unit & Scene-edit
 PRM and LazyPRM & Roadmap vertices and edges & No & Local edges or path segments &
 Topology can be reused; affected edges require rechecking &
 Reusable multi-query graph, but reusable evidence is zero-volume. \\
-RRT-Connect and RRT & Query tree & No & Incremental path segments &
+\mbox{RRT-Connect} and RRT & Query tree & No & Incremental path segments &
 Little persistent reuse across queries &
 Query-focused discovery; persistent structure is query-local. \\
 BIT* and FMT* & Batch sample graph or tree & No & Candidate graph edges &
@@ -201,7 +205,7 @@ IRIS and GCS & Certified convex regions and graph & Yes & Convex collision-free 
 Region reuse is scene-coupled; edits may require reinflation or recertification &
 Optimization-ready regions with construction and recertification cost. \\
 \rbf{} & Box forest + typed graph + LECT evidence & Yes &
-Joint boxes via link envelopes; query validation for filter-only paths &
+Joint boxes via link envelopes; query validation for \mbox{filter-only} paths &
 Scene boxes are maintained locally; LECT replays kinematics-keyed evidence &
 Low-overhead volumetric reuse with less expressive boxes and conditional certificates. \\
 \midrule
@@ -221,30 +225,30 @@ Many high-degree-of-freedom manipulation workloads contain related queries in
 nearly fixed workcells. Robot kinematics persist, while start-goal pairs,
 local obstacles, or small scene edits change. Convex-region planners,
 including IRIS (Iterative Regional Inflation) and Graphs of Convex Sets (GCS),
-provide optimization-ready region-level abstractions once regions are
-certified~\cite{deits2015computing,marcucci2023motion,marcucci2024shortest}, but region
-construction can be costly in high-dimensional or frequently edited
+provide optimization-ready region-level abstractions once collision-free regions
+are certified~\cite{deits2015computing,marcucci2023motion,marcucci2024shortest},
+but region construction can be costly in high-dimensional or frequently edited
 scenes.
 Sampling-based planners, including PRM and RRT variants, avoid such region
 construction~\cite{lavalle2006planning,lavalle1998rapidly,
 kavraki1996probabilistic,karaman2011sampling}, but their reusable structures
-are zero-volume roadmaps or query trees.
+are typically zero-volume roadmaps or query trees.
 
-\rbf{} addresses this trade-off with a low-overhead volumetric model: it grows
-axis-aligned joint-space boxes, checks them with link-envelope bounds,
-connects policy-accepted boxes into a typed corridor graph, and reuses that graph
-across later queries. The resulting trade-off is explicit: boxes are less
-expressive than more general convex covers, but they simplify validation, graph
-building, updates, and multi-query reuse.
+\rbf{} takes a middle position between these families. It grows axis-aligned
+joint-space boxes, checks them with link-envelope bounds, connects
+policy-accepted boxes into a typed corridor graph, and reuses that graph across
+later queries. The trade-off is explicit: boxes are less expressive than more
+general convex covers, but they simplify validation, graph building, updates,
+and multi-query reuse.
 
 \paragraph{Problem statement}
 Let $\Q\subset\Real^n$ be the joint-limit box of a fixed manipulator and let
 $\calO\subset\Real^3$ be the current workspace obstacle set. Given a set or
 stream of queries $(q_s,q_g)\in\Q^2$, \rbf{} builds a finite family of
 policy-accepted configuration-space (\cspace{}) boxes and an adjacency graph
-over those boxes. The design goal is low scene-construction and maintenance
-overhead while retaining reusable volumetric planning structure and conservative
-evidence where the stated validation policy supports it.
+over those boxes. The design goal is to reduce scene-construction and
+maintenance overhead while retaining reusable volumetric planning structure and
+conservative evidence where the stated validation policy supports it.
 
 The geometric core adapts classical endpoint bounding. For rounded links,
 endpoint envelopes bound endpoint trajectories over a joint box; their
@@ -256,17 +260,19 @@ Reuse is split accordingly: scene-level \rbf{} caches store one scene's box
 forest and corridor graph, while the Lifelong Envelope Cache Tree (LECT) stores
 replayable kinematics-keyed endpoint and link evidence.
 
-The evaluation follows the same boundary. Success is counted only after
-fixed-step query validation unless a row is explicitly conservative. Warm-cache Shelf rows
-include replay-based scene construction and per-query retrieval; snapshot
-creation, loading, resident memory, and offline setup amortization are excluded.
-Dynamic update rows measure scene-cache maintenance, not a complete pipeline
-that updates the scene and solves a query. Thus the experiments evaluate low-overhead reusable-region
-construction under a stated validation policy, not dominance over single-query
-planners, repair-free certification, or completeness. This work contributes:
+The evaluation mirrors this certificate boundary. Success is counted only after
+fixed-step query validation unless a row is explicitly conservative. Warm-cache
+Shelf rows include replay-based scene construction and per-query retrieval; they
+exclude snapshot creation, loading, resident memory, and offline setup
+amortization. Dynamic update rows measure scene-cache maintenance, not the
+full update-and-query pipeline. Thus the experiments evaluate low-overhead
+reusable-region construction under a stated validation policy, not claims of
+dominance over single-query planners, repair-free
+certification, or completeness. This work contributes:
 \begin{enumerate}[nosep,leftmargin=*]
-  \item \emph{Box validation:} conservative endpoint-to-link envelopes validate
-  boxes; non-conservative endpoint sources remain query-validated filters.
+  \item \emph{Box validation:} endpoint-to-link envelopes provide conditional
+  box certificates when their inputs are conservative; otherwise they are used
+  only as query-validated filters.
   \item \emph{Planning object:} policy-accepted boxes form a reusable scene forest and
   typed corridor graph.
   \item \emph{Two-level reuse:} scene caches hold boxes and graph state; LECT
@@ -274,7 +280,7 @@ planners, repair-free certification, or completeness. This work contributes:
   \item \emph{Local scene-cache maintenance:} deletions promote blocked domains;
   insertions trigger bounded refill.
   \item \emph{Evaluation protocol:} saved catalogs, audit-separated timing, and
-  cache accounting define the evaluation scope.
+  cache accounting define what is and is not compared.
 \end{enumerate}
 
 Sections~\ref{sec:link_envelopes}--\ref{sec:exp} cover link envelopes, LECT,
@@ -284,11 +290,10 @@ forest construction and updates, and evaluation.
 \centering
 \includegraphics[width=0.97\textwidth]{figures/framework.png}
 \caption{\rbf{} pipeline for link-envelope-guided multi-query planning. Top:
-endpoint interval envelopes induce link interval envelopes over a
-configuration-space (\cspace{})
-box. Middle: LECT reuses kinematics-keyed endpoint and link-envelope records
-across repeated builds. Bottom: scene filtering and sample-guided growth expand
-a policy-accepted scene-level box forest for repeated corridor queries.}
+endpoint interval envelopes induce link interval envelopes over a \cspace{} box.
+Middle: LECT reuses kinematics-keyed endpoint and link-envelope records across
+repeated builds. Bottom: scene filtering and sample-guided growth expand a
+policy-accepted scene-level box forest for repeated corridor queries.}
 \label{fig:linkiaabb}
 \end{figure*}
 
@@ -299,7 +304,8 @@ Convex-region planners construct collision-free convex regions and search or
 optimize on the induced graph. IRIS variants inflate collision-free convex
 regions, and Graphs of Convex Sets (GCS) make the
 resulting graph optimization explicit~\cite{deits2015computing,marcucci2023motion,
-marcucci2024shortest,amice2022finding,petersen2023growing,werner2024approximating}. \rbf{} shares
+marcucci2024shortest,amice2022finding,petersen2023growing,
+werner2024approximating}. \rbf{} shares
 the region-level objective but uses axis-aligned \cspace{} boxes; this restricted
 geometry limits expressivity while keeping validation, adjacency, and update
 operations local and explicit.
@@ -320,11 +326,11 @@ merlet2004solving,merlet2009interval}. Redon \etal{} apply this pipeline to
 articulated-body continuous collision detection over time
 steps~\cite{redon2004ccd_avatar,redon2005fast_artic}; related Taylor-model and
 safety methods use similar swept-sphere
-bounds~\cite{zhang2007taylor,schwarzer2005adaptive,corrales2011ssl}. \rbf{} uses
-joint-box intervals rather than trajectory time steps as the bounding domain,
-stores compatible interval evidence in LECT, and assembles policy-accepted boxes
-into a typed corridor graph. Repaired or post-processed paths remain subject to
-query validation.
+bounds~\cite{zhang2007taylor,schwarzer2005adaptive,corrales2011ssl}. \rbf{}
+uses joint-box intervals rather than trajectory time steps as the bounding
+domain, stores compatible interval evidence in LECT, and assembles
+policy-accepted boxes into a typed corridor graph. Repaired, shortened,
+post-processed, or \mbox{filter-only} paths remain subject to query validation.
 
 \paragraph{Reuse and adaptive decomposition}
 Multi-query planners amortize effort through reusable graphs. Probabilistic
@@ -336,7 +342,7 @@ brooks1985subdivision}. \rbf{} combines reusable graph search with box-level
 envelope validation and a separate kinematics-keyed evidence cache.
 
 \paragraph{Sampling baselines and refinement}
-RRT*, RRT-Connect, Batch Informed Trees (BIT*), Fast Marching
+RRT*, \mbox{RRT-Connect}, Batch Informed Trees (BIT*), Fast Marching
 Tree (FMT*), and the Open Motion Planning Library (OMPL) provide standard
 single-query or anytime implementations and benchmarking
 infrastructure~\cite{karaman2011sampling,kuffner2000rrt,gammell2015batch,
@@ -344,13 +350,15 @@ gammell2018informed,janson2015fmt,sucan2012ompl,moll2015benchmarking}.
 Trajectory optimizers refine supplied
 paths~\cite{ratliff2009chomp,kalakrishnan2011stomp,schulman2014motion,
 mukadam2018gpmp2}. \rbf{} is complementary: it supplies reusable volumetric
-context before repair, smoothing, and query validation.
+context before repair, smoothing, and query validation rather than replacing
+those stages.
 
 % ==============================================================================
 \section{Link Interval Envelopes}\label{sec:link_envelopes}
 
 The link-envelope validation layer maps joint regions to endpoint and link
-bounds. For a joint region
+bounds; graph connectivity and query acceptance are handled by later layers. For
+a joint region
 $I\subseteq\Q$, endpoint envelopes $E_k(I)$ bound endpoint trajectories and
 link envelopes $B_\ell(I)$ bound rounded links over the same region:
 \[
@@ -360,16 +368,18 @@ Axis-aligned joint boxes are the default regions; local oriented bounding boxes
 (OBBs) in scaled joint coordinates are used only for typed bridge corridors.
 Conservative endpoint evidence supports certificates only after link construction
 and scene-separation tests. Empirical or otherwise non-conservative endpoint
-sources are filters and must be followed by query validation.
+sources are filters; candidate edges or paths that depend on them require query
+validation.
 
 \begin{samepage}
 \begin{assumption}[Collision model for certificates]
 \label{ass:collision_model}
-The certificate model covers active rounded links against $\mathcal{O}$, with
-joint limits enforced by $I\subseteq\Q$. Self-collision, attachments, grippers,
-task regions, and other constraints are outside this certificate unless encoded
-in the validation policy and cache descriptor; the experiments check only
-collisions between active links and workspace obstacles.
+The certificate model is limited to collision between active rounded links and
+$\mathcal{O}$; joint limits are enforced by requiring $I\subseteq\Q$.
+Self-collision, attachments, grippers, task regions, and other constraints are
+outside this certificate model unless encoded in the validation policy and cache
+descriptor. The reported experiments instantiate this subset: active-link
+versus workspace-obstacle checks.
 \end{assumption}
 \end{samepage}
 
@@ -407,18 +417,19 @@ $\Gamma_a(I)\subseteq E_a(I)$ and $\Gamma_b(I)\subseteq E_b(I)$, then
 \subseteq
 \operatorname{conv}\bigl(E_a(I)\cup E_b(I)\bigr)\oplus B_2(r).
 \]
-Consequently, any outer representation of the right-hand side is a valid link
-interval envelope for the whole joint box $I$.
+Consequently, any conservative outer representation of the right-hand side is a
+valid link interval envelope for the whole joint box $I$.
 \end{proposition}
 \end{samepage}
 
 \begin{proof}
 For each $q\in I$, the center segment of the moved link is the convex hull of
-the two moved endpoints, so
-$T(q)[a,b]\subseteq\operatorname{conv}(\Gamma_a(I)\cup\Gamma_b(I))$ over the
-entire interval. The endpoint inclusions place this set inside
-$\operatorname{conv}(E_a(I)\cup E_b(I))$. Adding the fixed radius ball commutes
-with the rigid-motion sweep of the capsule, giving the stated containment.
+the two moved endpoints, and those endpoints lie in
+\(\Gamma_a(I)\) and \(\Gamma_b(I)\). Hence all center segments are contained in
+\(\operatorname{conv}(\Gamma_a(I)\cup\Gamma_b(I))\). The endpoint inclusions
+place this set inside \(\operatorname{conv}(E_a(I)\cup E_b(I))\). Adding the
+fixed radius ball commutes with the rigid-motion sweep of the capsule, giving
+the stated containment.
 \end{proof}
 
 \begin{corollary}[Conservative joint-box validation]
@@ -443,26 +454,26 @@ A certificate is attached only when endpoint propagation, radius padding, and
 obstacle-disjointness tests are outward bounds under
 \Cref{ass:collision_model}. Axis-aligned bounding box (AABB) padding uses a
 conservative $B_\infty$ radius lift. SupportHull/GJK is certificate-backed only
-with outward obstacle inflation, margins, and termination tolerances. Empirical
-endpoint sources and post-processing outside a conservative box union or
-OBB-corridor union are treated as non-conservative filters; they do not extend
-\Cref{cor:box_validation} or \Cref{thm:corridor_certificate}.
+with outward obstacle inflation, explicit margins, and conservative termination
+tolerances. Empirical endpoint sources and post-processing outside a
+conservative box union or a finite-cover OBB-corridor union are treated as
+non-conservative filters; they do not extend \Cref{cor:box_validation} or
+\Cref{thm:corridor_certificate}.
 
 \subsection{Endpoint Interval Envelopes}\label{sec:rewrite_endpoint_env}
 
 For endpoint $k$, let $\Gamma_k(I)$ be its exact trajectory over interval $I$.
 Any conservative set containing $\Gamma_k(I)$ is an endpoint interval envelope;
 the basic record is an endpoint AABB because it is compact and directly reusable
-by all link-envelope representations. The planner uses two certificate-backed
-endpoint sources. Interval forward kinematics (IFK) propagates
-affine-arithmetic bounds along the Denavit--Hartenberg chain; shared noise
-symbols preserve some trigonometric correlation, making it a low-cost
-certificate-backed endpoint source in this implementation.
+by all link-envelope representations. This implementation uses two
+certificate-backed endpoint sources. IFK-AA denotes interval forward kinematics
+(IFK) with affine-arithmetic bounds propagated along the Denavit--Hartenberg
+chain; shared noise symbols preserve part of the trigonometric correlation.
 Hierarchical IFK (HIFK) bisects the joint interval and forms hulls of child
-endpoint boxes, reducing wrapping at higher materialization cost. IFK is the unsplit
-affine-arithmetic pass; HIFK is a hierarchical split-and-hull evaluation
-(for example, HIFK-5 means five split levels), so the split depth is part of the
-cache descriptor and cannot be exchanged with an unsplit record. A
+endpoint boxes, reducing wrapping at higher materialization cost. IFK is the
+unsplit affine-arithmetic pass; HIFK is a hierarchical split-and-hull evaluation
+(for example, \mbox{HIFK-5} means five split levels), so the split depth is part
+of the cache descriptor and cannot be exchanged with an unsplit record. A
 critical-sample source probes interval endpoints,
 midpoints, near-boundary configurations, and trigonometric turning candidates;
 it can reduce over-approximation relative to IFK, but does not certify coupled
@@ -472,21 +483,25 @@ subproblems, reducing one- and two-joint boundary cases to structured root
 search. It becomes conservative only with an interval-closure wrapper; the
 Analytical row in Table~\ref{tab:tro-endpoint-envelope} is otherwise a
 diagnostic reference.
-The critical-sample and analytical sources serve as diagnostics or filters:
-any path using either source is accepted only after fixed-step query validation
-unless wrapped by an independent conservative certificate. During LECT
-tree descent, transient prefix transforms are reused so unaffected
-kinematic-chain prefixes are not recomputed; this is a runtime materialization
-optimization rather than persistent scene state. Fig.~\ref{fig:linkiaabb} shows
-the endpoint-to-link pipeline, LECT reuse, and box-forest use.
+Without such a wrapper, critical-sample and analytical sources are diagnostics
+in the endpoint study and filters when used by the planner, not certificate
+evidence. Any path using either source is accepted only after fixed-step query
+validation unless wrapped by an independent conservative certificate. During
+LECT tree descent, transient prefix transforms are reused so
+unaffected kinematic-chain prefixes are not recomputed; this is a runtime
+materialization optimization rather than persistent scene state.
+Fig.~\ref{fig:linkiaabb} shows the endpoint-to-link pipeline, LECT reuse, and
+box-forest use.
 
 \subsection{C-space OBB Endpoint Envelopes}\label{sec:obb_endpoint_env}
 
 Axis-aligned boxes remain the global forest primitive. Bridge repair motions
-can introduce joint correlations. For transitions with certificate support,
-\rbf{} uses a validated local typed \cspace{} \mbox{OBB-corridor} region
-while leaving the dyadic forest unchanged. OBBs are defined in scaled joint
-coordinates.
+can introduce joint correlations. For a bridge transition to be
+certificate-supported, \rbf{} validates a local typed \cspace{}
+\mbox{OBB-corridor} region with the finite-cover test below, while leaving the
+dyadic forest unchanged. Without a successful finite cover, the same transition
+can be used only as a typed candidate that requires query validation. OBBs are
+defined in scaled joint coordinates.
 Let \(y=S(q-q_{\rm ref})\), where \(S\) is a diagonal joint scaling, and let
 \[
 \begin{aligned}
@@ -506,7 +521,7 @@ from the fitted orientation.
 
 \paragraph{Cover certificate}
 The conservative cover test tiles the local cube, maps each tile to joint
-space, and validates the resulting AABB hulls:
+space, and validates the joint-space AABB hull of each tile:
 \[
 I_r=\operatorname{bbox}_q(q_c+A X_r).
 \]
@@ -550,6 +565,8 @@ the OBB source is a non-conservative filter and not a certificate.
 \end{samepage}
 
 OBB endpoint records feed the same endpoint-to-link construction as joint boxes.
+They refine a local typed edge; they do not add OBB nodes to the global
+axis-aligned forest.
 For a zonotope-plus-box endpoint record,
 \[
 h_{E_k}(d)=d^\top c_k+\sum_i |d^\top g_{k,i}|
@@ -565,10 +582,10 @@ h_\ell(d)=h_\ell^\circ(d)+r_\ell\|d\|_2.
 \]
 Coordinate-axis queries of \(h_\ell\) provide an AABB broadphase, while the same
 support record can be used by the SupportHull/GJK narrow phase. An
-OBB-corridor edge is certificate-supported only under conservative endpoint
-bounds and separation tests; otherwise it remains a typed transition requiring
-query validation. The corridor layer is separate from the persistent dyadic LECT
-tree unless promoted to a scene-local graph layer.
+OBB-corridor edge is certificate-supported only when its endpoint bounds,
+finite-cover test, and separation tests are conservative; otherwise it remains a
+typed transition requiring query validation. OBB-corridor records belong to the
+scene-local typed graph, not the persistent dyadic LECT tree.
 
 \subsection{Link-Envelope Representations}\label{sec:rewrite_link_env}
 
@@ -586,7 +603,8 @@ B_\ell(I) = \operatorname{bbox}\bigl(E_{\ell-1}(I) \cup E_\ell(I)\bigr)
 \oplus B_\infty(r_\ell).
 \]
 Segment subdivision can retain a union of padded sub-envelopes for more
-selective filtering, but the union must remain explicit to preserve the gain.
+selective filtering, but the union must remain explicit to preserve the tighter
+bound.
 
 \paragraph{Fixed-direction slab envelope}
 A discrete oriented polytope record with \(k\) directions (\(k\)-DOP) stores
@@ -594,7 +612,7 @@ lower and upper support values along a fixed direction set. Endpoint boxes are
 projected onto those directions, padded by the link radius, and merged over
 retained segment pieces. In the runtime pipeline, these slab tests form a low-cost
 intermediate filter: after the padded AABB broadphase, non-axis directions can
-reject close obstacle candidates before GJK\@. They are filters unless
+reject close obstacle candidates before GJK\@. Slab tests are filters unless
 their endpoint source and separation tests are conservative.
 
 \paragraph{SupportHull envelope}
@@ -614,16 +632,16 @@ scene tests.
 LECT is a replay layer below the scene-level \rbf{} cache. It stores
 scene-independent endpoint and link-envelope evidence keyed by robot kinematics
 and joint intervals. Obstacle tests, box labels, graph connectivity, and query
-outcomes remain scene-local; every replayed envelope must still be checked
-against the current obstacle set.
+outcomes remain scene-local. A replay hit supplies geometry only; every replayed
+envelope must still be checked against the current obstacle set.
 
 \subsection{Cache Key and Split Policy}\label{sec:lect_design}
 
 LECT is a dynamically grown binary \(k\)-d tree over $\Q$. A node
 stores its joint interval, split metadata, cached endpoint evidence, and runtime
-residency state. The central invariant is that evidence is \emph{kinematics-keyed}
-rather than \emph{scene-keyed}: replay imports geometry bounds, never a
-scene-validation label.
+residency state. The central invariant is that evidence is
+\emph{kinematics-keyed} rather than \emph{scene-keyed}: replay imports geometry
+bounds, not scene-validation labels or graph edges.
 
 \paragraph{Evidence/label separation}
 An envelope record is replay-compatible only when the robot model, endpoint
@@ -651,8 +669,9 @@ downstream envelopes and is skipped for that descriptor.
 \paragraph{Sparse interval staging}
 Deep cells need not materialize every ancestor. A planning cell can carry its
 exact joint interval, split counts, and descriptor fingerprint; if an exact
-replay record is absent, the interval is materialized on demand and then validated
-against the scene. Scene labels remain only in the forest or partition layer.
+replay record is absent, the interval is materialized on demand under the same
+descriptor and then validated against the scene. Scene labels remain only in the
+forest or partition layer and are never inferred from a descriptor match.
 
 \subsection{Runtime Use and Validation Boundary}
 
@@ -661,14 +680,15 @@ a joint interval, the runtime replays or materializes endpoint evidence, derives
 the requested link representation, and applies the current scene-validation
 policy. In the evaluated pipeline, AABB broadphase precedes SupportHull/GJK
 refinement. Parent or child records can accelerate materialization, but replayed
-evidence alone is not a collision-free certificate. When a node is split,
-child-derived hulls can tighten an ancestor envelope; the reconstructed record
-remains representation-dependent and must be checked again against \(\calO\).
+evidence alone is not a collision-free certificate. When the required child
+records are present, their hulls can tighten an ancestor envelope; the
+reconstructed record remains representation-dependent and must still pass the
+current scene-validation policy.
 Directional records are staged filters: a joint interval first passes the
 padded AABB broadphase, and only the remaining close obstacle candidates reach
 slab or SupportHull/GJK refinement. If no exact replay record exists, the
 interval is materialized on demand and then handled by the same validation path,
-so a cache miss changes cost but not semantics.
+so a cache miss changes cost, not semantics or validation responsibility.
 
 \subsection{Storage and Warm-Build Semantics}\label{sec:lect_storage}
 
@@ -676,13 +696,14 @@ Persistence is selective. Endpoint records and derived link-envelope records are
 the reusable evidence units. IFK+AABB records can be regenerated on demand,
 whereas slab or SupportHull records are stored only when their additional
 rejection power justifies lookup and storage cost. The prewarm pass fills target
-leaf records and propagates child hulls to reconstruct ancestors. This avoids
-recomputing direct forward kinematics independently at every ancestor depth. In
-a warm build, a cache hit reconstructs the requested link envelopes and
-revalidates them against the current obstacles. Warm builds still regrow scene-specific
-boxes; persisted box labels are not imported as certificates. The registered
-Shelf replay is read-only during timing, so the replay store does not accumulate
-new evidence during those measurements. Random-scene cache growth is treated
+leaf envelope records and derives ancestor hulls from child evidence. This
+avoids recomputing direct forward kinematics independently at every ancestor
+depth. In a warm build, a cache hit reconstructs the requested link envelopes;
+the scene builder then checks those envelopes under the current
+scene-validation policy. Warm builds still choose and grow scene-specific boxes;
+persisted box labels are not imported as certificates. The registered Shelf
+replay is read-only during timing, so the replay store does not accumulate new
+evidence during those measurements. Random-scene cache growth is treated
 separately as part of the per-robot profile.
 
 \begin{figure*}[!t]
@@ -691,8 +712,8 @@ separately as part of the per-robot profile.
 \includegraphics[width=0.292\textwidth]{figures/sbf_grow_1.png} &
 \includegraphics[width=0.292\textwidth]{figures/sbf_grow_3.png} &
 \includegraphics[width=0.292\textwidth]{figures/sbf_grow_5.png} \\
-{\footnotesize (a) C-space cells \& box $Q$} &
-{\footnotesize (b) C-space path} &
+{\footnotesize (a) \cspace{} cells \& box $Q$} &
+{\footnotesize (b) \cspace{} path} &
 {\footnotesize (c) Invalidated boxes} \\[2pt]
 \includegraphics[width=0.292\textwidth]{figures/sbf_grow_2.png} &
 \includegraphics[width=0.292\textwidth]{figures/sbf_grow_4.png} &
@@ -723,12 +744,12 @@ policy-accepted scene box is still checked against the current obstacles.
 A box is an axis-aligned joint interval
 $B=[l^{(1)},u^{(1)}]\times\cdots\times[l^{(n)},u^{(n)}]\subseteq\Q$.
 A \emph{policy-accepted box} is policy-relative: it has passed the configured
-scene-validation policy. Under conservative link-envelope disjointness, this
-acceptance is a collision-free certificate; under a non-conservative filter, the
-box is only a planning region, and any path segment relying on it must pass query
-validation. Cells that do not pass validation are not inserted into the forest;
-selected blocked or inconclusive domains are retained for local refinement or
-later update.
+scene-validation policy. When the policy is conservative link-envelope
+disjointness, this acceptance is a collision-free certificate; under a
+non-conservative filter, the box is only a planning region, and any path segment
+relying on it must pass query validation. Cells that do not pass the policy are
+not inserted into the forest; selected blocked or inconclusive domains are
+retained for local refinement or later update.
 
 \subsection{Construction Objective}\label{sec:forest_objective}
 
@@ -757,15 +778,15 @@ by at most a small tolerance $\varepsilon_c$:
 Only exact overlap or contact directly yields a contained box corridor.
 Tolerance-gap and explicit segment edges are graph-search aids, not
 certificates, unless they are converted into conservative box-corridor or
-OBB-corridor regions; otherwise they require query validation.
+finite-cover OBB-corridor regions; otherwise they require query validation.
 
 \subsection{Build Pipeline}
 
 The build proceeds through four stages. First, local materialization descends
 LECT around a seed and returns the first interval on that descent accepted by
-the scene-validation policy. Second, a leaf sweep classifies shallow cells and records
-blocked domains for possible refinement or later edits. Third, frontier growth
-adds boxes near anchors and query-relevant boundaries. Finally, consolidation
+the scene-validation policy. Second, a leaf sweep classifies shallow cells and
+records blocked domains for possible refinement or later edits. Third, frontier
+growth adds boxes near anchors and query-relevant boundaries. Finally, consolidation
 merges or removes redundant boxes only when the resulting boxes still satisfy
 the same validation rule. \Cref{alg:ffb_rewrite,alg:leaf_sweep_refine} define
 the two validation routines reused throughout this pipeline; frontier growth
@@ -773,12 +794,13 @@ and consolidation repeat the same materialize--validate--connect pattern under
 budget limits and do not introduce a separate validation primitive.
 
 \paragraph{Implementation controls}
-Validation semantics and timings are governed by the build budget, LECT descriptor,
-endpoint and link representation, admitted edge types, and audit resolution.
+Validation semantics and timings are governed by the build budget, LECT
+descriptor, endpoint and link representation, admitted edge types, and audit
+resolution.
 Materialization failures remain deferred domains for restricted refinement;
 frontier or repair witnesses are certificate-supported only after conversion
-into conservative box-corridor or OBB-corridor regions. Lower-level scheduling
-constants are fixed in the artifact manifest.
+into conservative box-corridor or finite-cover OBB-corridor regions.
+Lower-level scheduling constants are fixed in the artifact manifest.
 
 \begin{algorithm}[t]
 \caption{Local box materialization around a seed.}
@@ -824,8 +846,9 @@ connect to the forest
 \begin{samepage}
 After consolidation, $G$ has policy-accepted vertices and edge types
 $(E_{\cap},E_{\varepsilon},E_s,E_o,E_{\pi})$. Only $E_{\cap}$, $E_o$,
-and $E_{\pi}$ are certified corridor or portal edges; $E_{\varepsilon}$,
-$E_s$, and other outputs require query validation.
+and $E_{\pi}$ can be certified corridor or portal edges, and only when backed by
+conservative region checks; $E_{\varepsilon}$, $E_s$, and other outputs require
+query validation. The edge label alone is therefore not a certificate.
 \end{samepage}
 
 \begin{samepage}
@@ -835,7 +858,7 @@ returned paths contained in conservative box regions or finite-cover
 OBB-corridor regions. \Cref{thm:corridor_certificate} states the box-region
 case; \Cref{sec:obb_endpoint_env} gives the finite-cover certificate for
 OBB-corridor edges. All other returns are query-validated results, not
-conservative box-corridor proofs.
+conservative-region proofs.
 \end{samepage}
 
 \begin{samepage}
@@ -854,8 +877,9 @@ collision model in \Cref{ass:collision_model}.
 
 \begin{proof}
 For any $s\in[0,1]$, the containment assumption gives a conservatively
-validated box $B\in\mathcal{F}$ with $\gamma(s)\in B$. By construction, conservative validation of $B$
-means every conservative link envelope for $B$ is disjoint from $\calO$.
+validated box $B\in\mathcal{F}$ with $\gamma(s)\in B$. Because $B$ has passed
+conservative link-envelope validation, every conservative link envelope for
+$B$ is disjoint from $\calO$.
 Because each such envelope contains the link geometry for every configuration
 inside $B$ (\Cref{cor:box_validation}), the robot geometry at $\gamma(s)$ is
 also disjoint from $\calO$. Since $s$ was arbitrary, the whole path is
@@ -875,12 +899,12 @@ non-conservative filters are accepted only after independent query validation.
 \subsection{Dynamic Obstacle Updates}
 \label{sec:dynamic_update_method}
 
-For obstacle edits, robot kinematics and LECT records stay fixed; only scene
-labels and graph edges change. Deletions may promote cached blocked domains
-after edited-scene validation. Insertions invalidate conflicting boxes and
-witnesses, then run bounded local refill. The update is local by design: it
-maintains the represented forest rather than rediscovering every newly
-collision-free region.
+For obstacle edits, robot kinematics and LECT records stay fixed; scene labels,
+forest membership, and graph edges are updated locally. Deletions may promote
+cached blocked domains after edited-scene validation. Insertions invalidate
+conflicting boxes and scene-local typed witnesses, then run bounded local
+refill. The update is local by design: it updates the represented forest rather
+than exhaustively rediscovering every newly collision-free region.
 
 \begin{algorithm}[H]
 \caption{Obstacle deletion promotion and insertion refill.}
@@ -894,7 +918,7 @@ collision-free region.
   \STATE promote only domains that pass edited-scene validation and adjacency checks
 \ENDIF
 \IF{$\Delta^{+}\neq\emptyset$}
-  \STATE remove boxes and typed witnesses hit by inserted obstacles
+  \STATE remove boxes and scene-local typed witnesses hit by inserted obstacles
   \STATE run a bounded local leaf sweep inside each invalidated box
   \STATE insert replacement boxes that pass validation and connect to the
   surviving forest
@@ -905,21 +929,25 @@ collision-free region.
 \end{algorithm}
 
 After an update, retained or inserted boxes must satisfy the edited-scene
-validation policy, and typed edges must keep their original semantics. If the
-updated graph cannot provide a contained conservative corridor, the candidate
-path is accepted only after independent query validation.
+validation policy, and revalidated typed edges must keep their original
+semantics. If the updated graph cannot provide a contained conservative
+corridor, the candidate path is accepted only after independent query
+validation.
 
 \section{Experiments}\label{sec:exp}
 
-The experiments evaluate this \rbf{} implementation under saved scenes,
-stated validation policies, and audit-separated timing. The Shelf+IIWA profile
-study uses the KUKA LBR iiwa shelf-workcell benchmark and the
+The experiments are organized into three declared scopes: a registered
+Shelf+IIWA profile, saved random-scene catalogs, and maintenance-only
+scene-cache updates. For compact presentation, some result tables and
+trade-off plots are grouped, but the discussion interprets them in the same
+scope order. The
+Shelf+IIWA study uses the KUKA LBR iiwa shelf-workcell benchmark and the
 manifest-registered \rbf{} configuration; \emph{registered} means fixed in the
-artifact manifest before table extraction. Planning rows use a common reporting
-convention for success, audit resolution, final simplification, online timing,
-and path-ratio references; offline checkpoint curves explicitly sweep planner
-budget. Dynamic-update rows are separate maintenance-only measurements of the
-scene cache. Random scenes and queries are saved before planner execution.
+artifact manifest before table extraction. Planning rows share success, audit,
+final-simplification, online-timing, and path-ratio conventions; offline curves
+sweep planner budget explicitly. Random scenes and queries are saved before
+planner execution, so methods share the same start-goal and obstacle instances
+within each scope.
 
 \begin{table*}[!t]
   \centering
@@ -935,26 +963,30 @@ Intel i5-12600KF CPU and 31~GiB memory. The generated
 tables and figures are tied to provenance manifests that record sources, thread
 and simplification policies, checksums, and artifact-integrity checks. The
 manifests record an 8-thread budget for \rbf{} and LECT work and matching
-math-library thread limits; OMPL RRT-Connect, PRM, and BIT* are
+math-library thread limits; OMPL \mbox{RRT-Connect}, PRM, and BIT* are
 algorithmically single-threaded in these runners unless planner-internal
 parallelism is exposed by the backend. Table headers include a reusable-build
 term only for methods that construct a persistent object before queries:
-\rbf{}, PRM, and the Shelf IRIS-NP/GCS row (nonlinear-programming IRIS followed
-by GCS optimization). RRT-Connect and BIT* are reported as per-query timing
-baselines without a reusable-build term.
+\rbf{}, PRM, and the Shelf \mbox{IRIS-NP/GCS} row (nonlinear-programming IRIS
+followed by GCS optimization). \mbox{RRT-Connect} and BIT* are reported as
+per-query timing baselines without a reusable-build term.
 
 Success requires query validation with the fixed 0.01-rad segment step.
 \onlineq{} denotes per-query online time and excludes final simplification and
-audit time. When the optional per-query audit column (Audit/q) is present,
-audit-complete time is \(\onlineq{}\) plus 0.010~s plus Audit/q. Numeric
-entries are medians with \([Q_1,Q_3]\) quartiles.
-Path-ratio columns use success-only audited query-level references unless a
-caption states otherwise; lower path ratios are better. The main tables
+audit time. When the optional per-query audit column (Audit/q) is present, the
+audit-complete reference is \(\onlineq{}\) plus the fixed 0.010~s
+final-simplification budget plus Audit/q. Planning-table entries are medians
+with \([Q_1,Q_3]\) quartiles unless a caption or note states otherwise.
+Path-ratio columns report audited returned length divided by the success-only
+audited query-level reference unless a caption or note states otherwise; lower
+is better. Mechanism-study tables use the aggregation stated in
+their notes. The main planning tables
 summarize query-validated outcomes; they are not conservative-corridor
 certificates, repair-free results, or parameter-sensitivity studies. The
-reported runs check active rounded links against \(\calO\); self-collision,
-attached objects, grippers, and task-specific forbidden regions require
-additional scene checks before using the certificate.
+reported planning rows instantiate \Cref{ass:collision_model}: active rounded
+links are checked against \(\calO\). Self-collision, attached objects, grippers,
+and task-specific forbidden regions require additional scene checks before using
+the certificate.
 
 \paragraph{Cache and profile boundary}
 Warm-cache rows include compatible LECT lookup and evidence reads. Snapshot
@@ -969,8 +1001,8 @@ AABB broadphase. Cache reuse requires matching robot model,
 endpoint source, link representation, split-depth descriptor, radii, and
 active-link set. Timing remains audit-separated. Bridge or repair witnesses
 become certificate-supported only after conversion into conservative
-box-corridor or OBB-corridor edges; all remaining witnesses stay
-query-validated transitions.
+box-corridor or finite-cover OBB-corridor edges; all remaining witnesses are
+reported only as query-validated transitions.
 
 \begin{figure}[!t]
   \centering
@@ -994,9 +1026,9 @@ query-validated transitions.
     \centering
     \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
     \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark the first
-    checkpoints with audited success on the full saved query set. Timings use the \onlineq{}
-    column of Table~\ref{tab:tro-shelf-cross-algorithm}; reusable-build terms
-    are added only for methods with a reusable-build measurement.}
+    checkpoints with audited success on the full saved query set. The horizontal
+    coordinate is Build/5 + \onlineq{} for methods with reusable builds and
+    \onlineq{} for single-query rows.}
     \label{fig:tro_shelf_cross_tradeoff}
   \end{minipage}
 \end{figure*}
@@ -1016,9 +1048,10 @@ query-validated transitions.
   \captionof{figure}{Saved-catalog random-scene trade-off. Left and middle panels
   show a fixed five-query amortization, Build/5 + \onlineq{}, for medium and hard
   rows; the right panel varies the amortization count \(K\) in
-  Build/\(K\) + \onlineq{}. Rings mark the first checkpoints with
-  audited success on the full saved query set (black) and later \(\ge 1\%\) path-ratio improvements (gold);
-  PRM and BIT* use offline checkpoints.}
+  Build/\(K\) + \onlineq{}. Methods without a reusable-build term are plotted at
+  \onlineq{}. Rings mark the first checkpoints with
+  audited success on the full saved query set (black) and later \(\ge 1\%\)
+  path-ratio improvements (gold); PRM and BIT* curves use offline checkpoints.}
   \label{fig:tro_random_tradeoff}
 \end{table*}
 
@@ -1057,30 +1090,33 @@ Table~\ref{tab:tro-shelf-ablation}. The representation rows compare cost:
 Link~AABB lowers \onlineq{} from 0.130~s to 0.123~s at a similar path ratio;
 \mbox{SupportHull-only} raises five-query time from 0.164~s to 0.296~s.
 
-As a validation-boundary diagnostic, the manifest-registered query pipeline produced
-40/40 audited paths. An ablated variant with query bridge, repair, shortcutting,
-and final simplification disabled produced 0/40; this compound ablation shows
-that accepted Shelf paths depend on those auxiliary stages, but it does not
-isolate single-stage effects. The
-Shelf rows in Table~\ref{tab:tro-shelf-ablation} are query-validated results, not
-conservative-corridor certificates.
+The Shelf profile results should therefore be read as query-validated pipeline
+results rather than pure box-corridor certificates. The manifest-registered
+query pipeline produced 40/40 audited paths. With query bridge, repair,
+shortcutting, and final simplification all disabled, a compound ablation
+produced 0/40; it identifies where the conservative-only pipeline stops without
+isolating single-stage effects.
 
 \subsection{Shelf Cross-Algorithm Context}
 \label{sec:exp_shelf_cross_algorithm}
 
 The cross-algorithm shelf study uses the same five queries, 0.01-rad audit
-segment step, and 0.010~s final-simplification budget for \rbf{}, IRIS-NP/GCS,
-PRM, RRT-Connect, and BIT*. \rbf{} uses the b100 profile and per-query
-\onlineq{}; PRM and IRIS-NP/GCS report reusable builds, while RRT-Connect and
-BIT* are single-query rows with no reusable-build term. BIT* checkpoints are
-offline quality--time references, not online stopping rules.
+segment step, and 0.010~s final-simplification budget for \rbf{},
+\mbox{IRIS-NP/GCS}, PRM, \mbox{RRT-Connect}, and BIT*. \rbf{} uses the b100
+profile and per-query \onlineq{}; PRM and \mbox{IRIS-NP/GCS} report reusable
+builds, while \mbox{RRT-Connect} and BIT* are single-query rows with no
+reusable-build term.
+BIT* checkpoints are offline quality--time references, not online stopping
+rules.
 
 \Needspace{8\baselineskip}
 Under these definitions, reusable builds are 0.166~s (\rbf{}), 20.040~s
-(PRM), and 355.425~s (IRIS-NP/GCS), excluding \rbf{} d23 prewarm, snapshot
-load, and resident memory. For all five queries, RRT-Connect has lower median
-\(T\) and higher \(L/L^\star\) than \rbf{}, while BIT* has higher median \(T\)
-and lower \(L/L^\star\).
+(PRM), and 355.425~s (\mbox{IRIS-NP/GCS}). The \rbf{} number excludes d23
+prewarm, snapshot load, and resident memory. In per-query \(T\),
+\mbox{RRT-Connect} is lower than \rbf{} on each of the five Shelf query rows but
+has higher \(L/L^\star\), while BIT* has higher median \(T\) and lower
+\(L/L^\star\). This is a scoped timing--quality comparison for the saved
+five-query cycle, not a universal amortization claim.
 
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
@@ -1090,32 +1126,36 @@ per scene reused by every method. Across KUKA LBR iiwa, UR5, and Panda,
 medium and hard rows over ten seeds give 600 saved query evaluations per
 method. For each robot and seed, medium and hard rows share the saved
 start-goal set; hard rows add later obstacle prefixes instead of regenerating
-unrelated scenes. Fixed-audit probes exclude direct-line cases before table
-extraction. The trade-off plot uses Build/5 + \onlineq{} as a fixed
-amortization reference, while the saved catalogs still contain ten queries per
-scene and the right panel varies the amortization count \(K\).
+unrelated scenes. Before any method summary is computed, a fixed manifest rule
+removes direct-line cases, where the start-goal segment validates directly. The
+trade-off plot uses Build/5 + \onlineq{} as a fixed amortization reference for
+rows with reusable builds and \onlineq{} for single-query rows. The saved
+catalogs still contain ten queries per scene, and the right panel varies the
+amortization count \(K\).
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
 random rows use LECT caches and anchors tied to each robot rather than
 Shelf-specific assets. Each \rbf{} row in Table~\ref{tab:tro-random-summary}
 uses the OBB-corridor profile and passes the fixed audit on the full saved query
-set. Repair
-witnesses contribute to accepted paths only after conversion into conservative
-\cspace{} OBB-corridor regions; the generated summaries list no residual
-ordinary (non-corridor) segments for those \rbf{} rows. PRM is built once per scene,
-whereas RRT-Connect and BIT* solve each query independently. The archived
-IRIS-NP/GCS saved-catalog run is retained only as a feasibility diagnostic
-because its saved-query audit outcomes did not support comparable timing and
-path-quality rows: hard rows had 0/100 successes for each robot, and medium rows had
-0/100 (IIWA), 30/100 (UR5), and 10/100 (Panda) successes. The comparison
-therefore focuses on online latency and path quality under shared catalogs.
-RRT-Connect has the lowest median \onlineq{} in five of six operating points;
+set. Repair witnesses contribute to accepted paths only after conversion into
+finite-cover \cspace{} OBB-corridor regions; the generated summaries list no
+residual ordinary (non-corridor) segments for those \rbf{} rows. PRM is built
+once per scene, whereas \mbox{RRT-Connect} and BIT* solve each query
+independently.
+The archived \mbox{IRIS-NP/GCS} saved-catalog run is retained only as a
+feasibility diagnostic because its success counts were too low for comparable
+\onlineq{} and path-ratio rows: hard rows had 0/100 successes for each robot,
+and medium rows had 0/100 (IIWA), 30/100 (UR5), and 10/100 (Panda) successes.
+The comparison therefore reports \onlineq{} and audited path ratios for
+\rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared catalogs.
+\mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
+points;
 the exception is Panda-Hard, where \rbf{} has the lower median \onlineq{}.
-RRT-Connect has higher median path ratios than \rbf{} in all six. With the
-scene forest reused, \rbf{} has lower median \onlineq{} than BIT* in all six
-cases; \(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision for IIWA and
-is worse for UR5/Panda.
+\mbox{RRT-Connect} has higher median audited path ratios than \rbf{} in all
+six. With the scene forest reused, \rbf{} has lower median \onlineq{} than
+BIT* in all six cases; \(L/L^\star_{\mathrm{q}}\) matches BIT* to table
+precision in the two IIWA rows and is higher in the four UR5/Panda rows.
 
 \subsection{Mechanism Studies}
 \label{sec:exp_mechanisms}
@@ -1124,7 +1164,7 @@ Tables~\ref{tab:tro-endpoint-envelope} and~\ref{tab:tro-link-envelope} compare
 endpoint sources and envelope narrow phases. \Cref{tab:tro-endpoint-envelope}
 reports endpoint volume as a ratio to the Analytical row at the same width and
 the sampled-union signed gap in millimeters; negative gaps are
-finite-sampling diagnostics. Only IFK and HIFK rows are certificate-backed;
+finite-sampling diagnostics. Only IFK-AA and HIFK rows are certificate-backed;
 Critical sample, Analytical, and MC rows are diagnostic or reference rows rather
 than certificate evidence. \Cref{tab:tro-link-envelope} motivates the AABB broadphase:
 SupportHull/GJK stores a compact support record, but wide boxes increase
@@ -1138,10 +1178,10 @@ query bridge, connector, simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
-both cases. The 0/8 result is a scope check, not evidence of post-edit query
-success;
+both diagnostic configurations. The 0/8 result is a scope check, not a
+measurement of post-edit query success;
 Table~\ref{tab:tro-dynamic-update} reports local maintenance timing only,
-not timing for a complete pipeline that updates the scene and solves a query.
+not end-to-end replanning after an edit.
 
 \FloatBarrier
 \section{Conclusion}\label{sec:conclusion}
@@ -1151,24 +1191,27 @@ multi-query manipulation. It uses axis-aligned boxes as the reusable region type
 endpoint-to-link swept-capsule bounds provide the validation test,
 policy-accepted boxes form a scene-level forest and typed corridor graph, and
 LECT separates reusable kinematics-keyed evidence from scene labels.
-Certificates apply only to conservative box unions or OBB-corridor unions;
-repaired, shortened, and post-processed paths require independent query validation.
+Certificates apply only to conservative box unions or finite-cover
+OBB-corridor unions; paths that are repaired, shortened, post-processed, or
+derived from \mbox{filter-only} evidence require independent query validation.
 
 Under saved catalogs, audit-separated timing, and explicit cache accounting,
-warm-cache depth-23 LECT replay on Shelf+IIWA yields a 0.166~s reusable build
-and 0.130~s \onlineq{}, whereas live HIFK-5 materialization takes 7.006~s. In
-saved random scenes, \rbf{} has lower \onlineq{} than BIT* at all six operating
-points in Table~\ref{tab:tro-random-summary}, while BIT* has lower, hence
-better, path ratios in the four UR5/Panda cases. The dynamic-update rows measure
-scene-cache maintenance rather than a complete pipeline that updates the scene
-and solves a query.
+warm-cache depth-23 LECT replay on Shelf+IIWA yields a 0.166~s median reusable
+build and 0.130~s median \onlineq{}, whereas live \mbox{HIFK-5} materialization
+takes 7.006~s. In saved random scenes, \rbf{} has lower median \onlineq{} than
+BIT* at all six operating points in Table~\ref{tab:tro-random-summary}, while
+BIT* has lower, hence better, median audited path ratios in the four UR5/Panda
+cases.
+The dynamic-update rows measure scene-cache maintenance rather than the full
+update-and-query pipeline.
 Within this scope, \rbf{} is a low-overhead method for constructing reusable
-regions for repeated queries.
-Remaining limitations are the lack of certificate coverage for repaired,
-shortened, and post-processed paths; the absence of a complete update-and-query
-timing pipeline; unreported LECT snapshot-load and memory break-even analyses;
-and validation beyond active-link obstacle collision, including self-collision,
-\mbox{payload} and gripper models, and task-specific regions.
+regions for repeated queries. The same scope defines the remaining limitations:
+certificates exclude paths that are repaired, shortened, post-processed, or
+derived from \mbox{filter-only} evidence; update rows do not include the full
+update-and-query pipeline; LECT snapshot-load and memory break-even analyses
+are not reported; and validation beyond active-link obstacle collision,
+including self-collision, \mbox{payload} and gripper models, and task-specific
+regions, remains future work.
 
 \begingroup
 \let\origthebibliography\thebibliography
