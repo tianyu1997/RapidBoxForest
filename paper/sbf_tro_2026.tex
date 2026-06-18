@@ -208,7 +208,7 @@ Optimization-ready regions with construction and recertification cost. \\
 \rbf{} & Box forest + typed graph + LECT evidence & Yes &
 Joint boxes via link envelopes; query validation for \mbox{filter-only} paths &
 Scene boxes are maintained locally; LECT replays kinematics-keyed evidence &
-Box-level volumetric reuse with less expressive regions and conditional certificates. \\
+Volumetric reuse via axis-aligned boxes; certificates are conditional. \\
 \midrule
 \multicolumn{6}{@{}p{0.985\textwidth}@{}}{\emph{Abbrev.:}
 PRM=probabilistic roadmap; RRT=rapidly exploring random tree;
@@ -1127,11 +1127,11 @@ five-query cycle, not a universal amortization claim.
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
 
-The random-scene study uses saved prefix catalogs, with ten pre-generated
+The random-scene study uses saved random-scene catalogs, with ten pre-generated
 queries per scene shared by every method. Across KUKA LBR iiwa, UR5, and Panda,
 the medium and hard catalogs over ten seeds contain 600 saved query instances
 before the method-independent pruning rule below is applied. For each robot and
-seed, medium and hard rows share the saved start-goal set; hard rows add saved
+seed, medium and hard rows share the saved start-goal set; hard rows append saved
 obstacle prefixes instead of regenerating unrelated scenes. Before any method
 summary is computed, a fixed manifest rule removes direct-line cases, where the
 start-goal segment validates directly. The trade-off plot uses Build/5 +
@@ -1158,7 +1158,7 @@ audited path ratios for \rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared
 catalogs.
 \mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
 points; Panda-Hard is the exception. \mbox{RRT-Connect}'s median audited path
-ratio is higher, hence worse, than \rbf{} in all six. Under scene-forest reuse,
+ratio is higher, hence worse, than \rbf{} in all six. With scene-forest reuse,
 \rbf{} has lower median \onlineq{} than BIT* in all six cases;
 \(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision in the two IIWA rows
 and is higher in the four UR5/Panda rows.
