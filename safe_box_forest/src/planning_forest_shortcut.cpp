@@ -33,6 +33,25 @@ std::unordered_set<std::uint64_t> partition_segment_pair_set_local(const Segment
     return pairs;
 }
 
+ChainPaveConfig make_offline_shortcut_pave_config(const ChainPaveConfig& base,
+                                                  int max_tree_depth,
+                                                  int query_bridge_pave_depth) {
+    ChainPaveConfig config = base;
+    config.fill_gaps = true;
+    config.require_connected_chain = true;
+    config.max_chain = std::max(config.max_chain, 64);
+    config.max_steps_per_waypoint = std::max(config.max_steps_per_waypoint, 16);
+    config.find_free_box.max_depth = std::min(
+        std::max(1, max_tree_depth),
+        std::max(1,
+                 query_bridge_pave_depth > 0
+                     ? query_bridge_pave_depth
+                     : config.find_free_box.max_depth));
+    config.gap_fill_time_budget_ms = std::max(config.gap_fill_time_budget_ms, 75.0);
+    config.gap_fill_max_ffb_calls = std::max(config.gap_fill_max_ffb_calls, 192);
+    return config;
+}
+
 } // namespace
 
 int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
@@ -312,19 +331,10 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         }
         int pave_added = 0;
         if (!partition_native_mode()) {
-            ChainPaveConfig pave_config = config_.connector.pave;
-            pave_config.fill_gaps = true;
-            pave_config.require_connected_chain = true;
-            pave_config.max_chain = std::max(pave_config.max_chain, 64);
-            pave_config.max_steps_per_waypoint = std::max(pave_config.max_steps_per_waypoint, 16);
-            pave_config.find_free_box.max_depth = std::min(
-                std::max(1, config_.database.max_tree_depth),
-                std::max(1,
-                         config_.query_bridge_pave_depth > 0
-                             ? config_.query_bridge_pave_depth
-                             : pave_config.find_free_box.max_depth));
-	            pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 75.0);
-            pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 192);
+            ChainPaveConfig pave_config =
+                make_offline_shortcut_pave_config(config_.connector.pave,
+                                                  config_.database.max_tree_depth,
+                                                  config_.query_bridge_pave_depth);
             const std::size_t boxes_before_pave = boxes_.size();
             pave_added = chain_pave_along_path(waypoints,
                                                candidate.source,
@@ -346,27 +356,27 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         int edge_id = -1;
         if (pave_added > 0 &&
             box_only_path_connected_partition_first(candidate.source, candidate.target)) {
-            edge_id = add_segment_edge_partition_first(                                       candidate.source,
-                                       candidate.target,
-                                       waypoints,
-                                       SegmentEdgeType::BoxCorridor,
-                                       config_.query.audit_resolution,
-                                       SegmentEdgeValidation::CollisionChecked,
-                                       false,
-                                       -1);
+            edge_id = add_segment_edge_partition_first(candidate.source,
+                                                       candidate.target,
+                                                       waypoints,
+                                                       SegmentEdgeType::BoxCorridor,
+                                                       config_.query.audit_resolution,
+                                                       SegmentEdgeValidation::CollisionChecked,
+                                                       false,
+                                                       -1);
             if (edge_id >= 0) {
                 ++box_corridor_edges;
             }
         } else {
             ++pave_fail;
-            edge_id = add_segment_edge_partition_first(                                       candidate.source,
-                                       candidate.target,
-                                       std::move(waypoints),
-                                       SegmentEdgeType::QueryBridge,
-                                       config_.query.audit_resolution,
-                                       SegmentEdgeValidation::CollisionChecked,
-                                       true,
-                                       -1);
+            edge_id = add_segment_edge_partition_first(candidate.source,
+                                                       candidate.target,
+                                                       std::move(waypoints),
+                                                       SegmentEdgeType::QueryBridge,
+                                                       config_.query.audit_resolution,
+                                                       SegmentEdgeValidation::CollisionChecked,
+                                                       true,
+                                                       -1);
             if (edge_id >= 0) {
                 ++segment_edges;
             }
