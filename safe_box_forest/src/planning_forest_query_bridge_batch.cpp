@@ -1392,6 +1392,28 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
                                               total_ms);
     };
+    auto mark_partition_path_first_task = [&](const QueryBridgeSearchTask& task) {
+        batch_context.diagnostics().add_counter(
+            "query_bridge.partition_path_first_tasks");
+        batch_context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "partition_path_first"),
+            1.0);
+    };
+    auto mark_partition_path_first_rrt_skipped = [&](const QueryBridgeSearchTask& task) {
+        batch_context.diagnostics().add_counter(
+            "query_bridge.partition_path_first_rrt_skipped");
+        batch_context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "waypoint_from_partition_path"),
+            1.0);
+    };
+    auto mark_batch_task_no_path = [&](const QueryBridgeSearchTask& task,
+                                       double total_ms) {
+        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "no_path"),
+                                              1.0);
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
+                                              total_ms);
+    };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1434,11 +1456,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 : std::max(1, task.attempts);
             if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
                 prepared[task_offset].attempts = 0;
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.partition_path_first_tasks");
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "partition_path_first"),
-                    1.0);
+                mark_partition_path_first_task(task);
             }
             if (prepared[task_offset].attempts > 0 &&
                 !retry_options.local_radius_schedule.empty() &&
@@ -1528,11 +1546,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             double best_length = std::numeric_limits<double>::infinity();
             if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
                 best_length = path_length(task.waypoint_path);
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.partition_path_first_rrt_skipped");
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "waypoint_from_partition_path"),
-                    1.0);
+                mark_partition_path_first_rrt_skipped(task);
             }
             select_attempt_paths(task, attempt_paths[task_offset], best_length);
             if (task.waypoint_path.empty()) {
@@ -1555,11 +1569,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                        best_length,
                                        task.waypoint_path);
             if (task.waypoint_path.empty()) {
-                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "no_path"),
-                                                      1.0);
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "total_ms"),
+                mark_batch_task_no_path(
+                    task,
                     elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
                 continue;
             }
@@ -1656,16 +1667,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
                                               static_cast<double>(effective_attempts));
         if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.partition_path_first_tasks");
-            batch_context.diagnostics().add_counter(
-                "query_bridge.partition_path_first_rrt_skipped");
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "partition_path_first"),
-                1.0);
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "waypoint_from_partition_path"),
-                1.0);
+            mark_partition_path_first_task(task);
+            mark_partition_path_first_rrt_skipped(task);
         }
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(effective_attempts));
         const auto rrt_t0 = Clock::now();
@@ -1868,11 +1871,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 static_cast<double>(retry_successes_total));
         }
         if (task.waypoint_path.empty()) {
-            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "no_path"),
-                                                  1.0);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                                  elapsed_ms_since(task_t0));
+            mark_batch_task_no_path(task, elapsed_ms_since(task_t0));
             continue;
         }
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "waypoint_length"),
