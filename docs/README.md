@@ -30,6 +30,12 @@ notes. Those files are implementation context only; they are not canonical API,
 build, or reproduction documentation, and the clean public export excludes
 `docs/internal/` by default.
 
+Prototype source trees must be upstreamed into the main modules instead of kept
+as parallel workspaces. In particular, `improve_workspace/` is treated as a
+forbidden sidecar: the release-readiness checks fail if it exists in the source
+tree, even though `.gitignore` also prevents it from being accidentally
+committed.
+
 ## Archive Policy
 
 - `internal/archive/` keeps superseded planning notes that may still explain
