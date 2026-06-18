@@ -579,21 +579,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            return 0;
 	        }
 
-	        std::unordered_map<int, int> component_by_box;
 	        const auto components = adaptive_partition_->component_box_ids_with_overlay();
-	        for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
-	            for (int box_id : components[component_index]) {
-	                component_by_box.emplace(box_id, static_cast<int>(component_index));
-	            }
-	        }
 	        const int start_box_id = locate_box_partition_first(task.start, false);
 	        const int goal_box_id = locate_box_partition_first(task.goal, false);
-	        const int start_component =
-	            component_by_box.count(start_box_id) > 0 ? component_by_box[start_box_id] : -1;
-	        const int goal_component =
-	            component_by_box.count(goal_box_id) > 0 ? component_by_box[goal_box_id] : -1;
-	        const bool has_endpoint_component_target =
-	            start_component > 0 || goal_component > 0;
 
 	        const double max_pair_distance =
 	            std::max(0.0, last_adaptive_partition_config_.hipac_online_prebridge_max_pair_distance);
@@ -603,81 +591,39 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        const double pair_weight =
 	            std::max(0.0,
 	                     last_adaptive_partition_config_.hipac_online_prebridge_pair_distance_weight);
-	        const AdaptiveGridPartitionComponentPair* best_pair = nullptr;
-	        double best_score = std::numeric_limits<double>::infinity();
-	        int considered = 0;
-	        int distance_rejects = 0;
-	        int endpoint_component_rejects = 0;
-	        for (const auto& pair : candidate_pairs) {
-	            if (pair.source_box_id < 0 ||
-	                pair.target_box_id < 0 ||
-	                pair.source_point.size() == 0 ||
-	                pair.target_point.size() == 0 ||
-	                pair.source_point.size() != pair.target_point.size()) {
-	                continue;
-	            }
-	            const bool matches_endpoint_component =
-	                (start_component > 0 && pair.source_component_index == start_component) ||
-	                (goal_component > 0 && pair.source_component_index == goal_component);
-	            if (has_endpoint_component_target && !matches_endpoint_component) {
-	                ++endpoint_component_rejects;
-	                continue;
-	            }
-	            const double pair_distance = std::sqrt(std::max(0.0, pair.distance_sq));
-	            if (max_pair_distance > 0.0 &&
-	                pair_distance > max_pair_distance + 1e-12) {
-	                ++distance_rejects;
-	                continue;
-	            }
-	            const Eigen::VectorXd midpoint = 0.5 * (pair.source_point + pair.target_point);
-		            const double route_distance =
-		                std::sqrt(std::max(0.0,
-		                                   query_bridge_point_polyline_distance_sq(midpoint,
-		                                                              coarse_route)));
-	            const bool touches_start =
-	                start_component >= 0 &&
-	                (pair.source_component_index == start_component ||
-	                 pair.target_component_index == start_component);
-	            const bool touches_goal =
-	                goal_component >= 0 &&
-	                (pair.source_component_index == goal_component ||
-	                 pair.target_component_index == goal_component);
-	            const double endpoint_bonus = (touches_start ? 0.50 : 0.0) +
-	                                          (touches_goal ? 0.50 : 0.0);
-	            const double component_size_bonus =
-	                0.02 * std::log1p(static_cast<double>(
-	                    std::max(0, pair.source_component_size)));
-	            const double score = route_weight * route_distance +
-	                                 pair_weight * pair_distance -
-	                                 endpoint_bonus -
-	                                 component_size_bonus;
-	            ++considered;
-	            if (score < best_score) {
-	                best_score = score;
-	                best_pair = &pair;
-	            }
-	        }
+	        const QueryBridgeHipacPrebridgeSelection prebridge_selection =
+	            query_bridge_select_hipac_prebridge_pair(candidate_pairs,
+	                                                     components,
+	                                                     start_box_id,
+	                                                     goal_box_id,
+	                                                     coarse_route,
+	                                                     max_pair_distance,
+	                                                     route_weight,
+	                                                     pair_weight);
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_considered",
-	                                                static_cast<double>(considered));
+	                                                static_cast<double>(prebridge_selection.considered));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_distance_rejects",
-	                                                static_cast<double>(distance_rejects));
+	                                                static_cast<double>(prebridge_selection.distance_rejects));
 	        batch_context.diagnostics().add_counter(
 	            "query_bridge.hipac_prebridge_endpoint_component_rejects",
-	            static_cast<double>(endpoint_component_rejects));
-	        if (best_pair == nullptr) {
+	            static_cast<double>(prebridge_selection.endpoint_component_rejects));
+	        if (prebridge_selection.candidate_index < 0 ||
+	            prebridge_selection.candidate_index >= static_cast<int>(candidate_pairs.size())) {
 	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_no_candidate_after_filter");
 	            return 0;
 	        }
+	        const AdaptiveGridPartitionComponentPair& best_pair =
+	            candidate_pairs[static_cast<std::size_t>(prebridge_selection.candidate_index)];
 
 	        task.hipac_prebridge_resolves_used += 1;
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_portal_attempts");
 	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_score"),
-	                                              best_score);
+	                                              prebridge_selection.score);
 	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_pair_distance"),
-	                                              std::sqrt(std::max(0.0, best_pair->distance_sq)));
-	        std::vector<Eigen::VectorXd> local_path{best_pair->source_point, best_pair->target_point};
-	        const int added = add_partition_portal_corridor_overlay(best_pair->source_point,
-	                                                                best_pair->target_point,
+	                                              std::sqrt(std::max(0.0, best_pair.distance_sq)));
+	        std::vector<Eigen::VectorXd> local_path{best_pair.source_point, best_pair.target_point};
+	        const int added = add_partition_portal_corridor_overlay(best_pair.source_point,
+	                                                                best_pair.target_point,
 	                                                                local_path,
 	                                                                "query_bridge.hipac_online_prebridge",
 	                                                                false,

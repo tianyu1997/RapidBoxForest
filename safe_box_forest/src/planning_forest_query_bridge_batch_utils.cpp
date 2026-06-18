@@ -3,6 +3,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_query_utils.h"
 
+#include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <numeric>
 #include <random>
 #include <string>
+#include <unordered_map>
 
 namespace rbf {
 
@@ -142,6 +144,90 @@ double query_bridge_point_polyline_distance_sq(
         best = (point - path.front()).squaredNorm();
     }
     return best;
+}
+
+QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
+    const std::vector<AdaptiveGridPartitionComponentPair>& candidate_pairs,
+    const std::vector<std::vector<int>>& components,
+    int start_box_id,
+    int goal_box_id,
+    const std::vector<Eigen::VectorXd>& coarse_route,
+    double max_pair_distance,
+    double route_weight,
+    double pair_weight) {
+    QueryBridgeHipacPrebridgeSelection selection;
+    std::unordered_map<int, int> component_by_box;
+    for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
+        for (int box_id : components[component_index]) {
+            component_by_box.emplace(box_id, static_cast<int>(component_index));
+        }
+    }
+    const auto start_component_it = component_by_box.find(start_box_id);
+    if (start_component_it != component_by_box.end()) {
+        selection.start_component = start_component_it->second;
+    }
+    const auto goal_component_it = component_by_box.find(goal_box_id);
+    if (goal_component_it != component_by_box.end()) {
+        selection.goal_component = goal_component_it->second;
+    }
+    const bool has_endpoint_component_target =
+        selection.start_component > 0 || selection.goal_component > 0;
+
+    double best_score = std::numeric_limits<double>::infinity();
+    for (std::size_t index = 0; index < candidate_pairs.size(); ++index) {
+        const auto& pair = candidate_pairs[index];
+        if (pair.source_box_id < 0 ||
+            pair.target_box_id < 0 ||
+            pair.source_point.size() == 0 ||
+            pair.target_point.size() == 0 ||
+            pair.source_point.size() != pair.target_point.size()) {
+            continue;
+        }
+        const bool matches_endpoint_component =
+            (selection.start_component > 0 &&
+             pair.source_component_index == selection.start_component) ||
+            (selection.goal_component > 0 &&
+             pair.source_component_index == selection.goal_component);
+        if (has_endpoint_component_target && !matches_endpoint_component) {
+            ++selection.endpoint_component_rejects;
+            continue;
+        }
+        const double pair_distance = std::sqrt(std::max(0.0, pair.distance_sq));
+        if (max_pair_distance > 0.0 &&
+            pair_distance > max_pair_distance + 1e-12) {
+            ++selection.distance_rejects;
+            continue;
+        }
+        const Eigen::VectorXd midpoint = 0.5 * (pair.source_point + pair.target_point);
+        const double route_distance =
+            std::sqrt(std::max(0.0,
+                               query_bridge_point_polyline_distance_sq(midpoint,
+                                                                       coarse_route)));
+        const bool touches_start =
+            selection.start_component >= 0 &&
+            (pair.source_component_index == selection.start_component ||
+             pair.target_component_index == selection.start_component);
+        const bool touches_goal =
+            selection.goal_component >= 0 &&
+            (pair.source_component_index == selection.goal_component ||
+             pair.target_component_index == selection.goal_component);
+        const double endpoint_bonus = (touches_start ? 0.50 : 0.0) +
+                                      (touches_goal ? 0.50 : 0.0);
+        const double component_size_bonus =
+            0.02 * std::log1p(static_cast<double>(
+                std::max(0, pair.source_component_size)));
+        const double score = route_weight * route_distance +
+                             pair_weight * pair_distance -
+                             endpoint_bonus -
+                             component_size_bonus;
+        ++selection.considered;
+        if (score < best_score) {
+            best_score = score;
+            selection.score = score;
+            selection.candidate_index = static_cast<int>(index);
+        }
+    }
+    return selection;
 }
 
 std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(

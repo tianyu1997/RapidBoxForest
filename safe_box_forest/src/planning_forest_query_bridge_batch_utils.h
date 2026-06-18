@@ -10,11 +10,23 @@
 
 namespace rbf {
 
+struct AdaptiveGridPartitionComponentPair;
+
 struct QueryBridgeAcceptanceThresholds {
     double max_segment_fraction = 0.25;
     double path_ratio = 1.50;
     double path_additive = 0.75;
     double max_path_length = 4.5;
+};
+
+struct QueryBridgeHipacPrebridgeSelection {
+    int candidate_index = -1;
+    int considered = 0;
+    int distance_rejects = 0;
+    int endpoint_component_rejects = 0;
+    int start_component = -1;
+    int goal_component = -1;
+    double score = 0.0;
 };
 
 struct QueryBridgePartitionPathFirstOptions {
@@ -204,6 +216,16 @@ double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
 double query_bridge_point_polyline_distance_sq(
     const Eigen::VectorXd& point,
     const std::vector<Eigen::VectorXd>& path);
+
+QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
+    const std::vector<AdaptiveGridPartitionComponentPair>& candidate_pairs,
+    const std::vector<std::vector<int>>& components,
+    int start_box_id,
+    int goal_box_id,
+    const std::vector<Eigen::VectorXd>& coarse_route,
+    double max_pair_distance,
+    double route_weight,
+    double pair_weight);
 
 std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
     const QueryBridgeSearchTask& task,
