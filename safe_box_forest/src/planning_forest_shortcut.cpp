@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -31,6 +33,39 @@ std::unordered_set<std::uint64_t> partition_segment_pair_set_local(const Segment
         pairs.insert(partition_segment_pair_key_local(edge.source_box_id, edge.target_box_id));
     }
     return pairs;
+}
+
+struct OfflineShortcutStats {
+    int tested_pairs = 0;
+    int candidates = 0;
+    int audit_fail = 0;
+    int edges_added = 0;
+    int box_corridor_edges = 0;
+    int segment_edges = 0;
+    int pave_boxes_added = 0;
+    int pave_fail = 0;
+    int portal_corridor_edges = 0;
+    int portal_corridor_fail = 0;
+};
+
+void record_offline_shortcut_stats(std::unordered_map<std::string, double>& diagnostics,
+                                   const OfflineShortcutStats& stats,
+                                   bool include_portal_stats) {
+    diagnostics["offline_shortcut.tested_pairs"] += static_cast<double>(stats.tested_pairs);
+    diagnostics["offline_shortcut.candidates"] += static_cast<double>(stats.candidates);
+    diagnostics["offline_shortcut.audit_fail"] += static_cast<double>(stats.audit_fail);
+    diagnostics["offline_shortcut.edges_added"] += static_cast<double>(stats.edges_added);
+    diagnostics["offline_shortcut.box_corridor_edges_added"] +=
+        static_cast<double>(stats.box_corridor_edges);
+    diagnostics["offline_shortcut.segment_edges_added"] += static_cast<double>(stats.segment_edges);
+    diagnostics["offline_shortcut.pave_boxes_added"] += static_cast<double>(stats.pave_boxes_added);
+    diagnostics["offline_shortcut.pave_fail"] += static_cast<double>(stats.pave_fail);
+    if (include_portal_stats) {
+        diagnostics["offline_shortcut.portal_corridor_edges_added"] +=
+            static_cast<double>(stats.portal_corridor_edges);
+        diagnostics["offline_shortcut.portal_corridor_fail"] +=
+            static_cast<double>(stats.portal_corridor_fail);
+    }
 }
 
 ChainPaveConfig make_offline_shortcut_pave_config(const ChainPaveConfig& base,
@@ -95,7 +130,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         query_options.shortcut_boxes = false;
         query_options.max_expansions = std::max(0, last_adaptive_partition_config_.grid_planning_max_expansions);
         query_options.adjacency_tolerance = config_.query.adjacency_tolerance;
-        int tested_pairs = 0;
+        OfflineShortcutStats stats;
         for (std::size_t outer = 0; outer < landmarks.size(); ++outer) {
             const auto& lhs = landmarks[outer];
             for (std::size_t inner = outer + 1; inner < landmarks.size(); ++inner) {
@@ -103,7 +138,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                 if (lhs.center.size() == 0 || lhs.center.size() != rhs.center.size()) {
                     continue;
                 }
-                ++tested_pairs;
+                ++stats.tested_pairs;
                 const double direct = (lhs.center - rhs.center).norm();
                 if (direct <= 1e-9 ||
                     (safe_max_segment_length > 0.0 && direct > safe_max_segment_length) ||
@@ -130,18 +165,11 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                            const ShortcutCandidate& rhs) {
             return lhs.score > rhs.score;
         });
+        stats.candidates = static_cast<int>(candidates.size());
 
-        int added = 0;
-        int portal_corridor_edges = 0;
-        int portal_corridor_fail = 0;
-        int box_corridor_edges = 0;
-        int segment_edges = 0;
-        int pave_added_total = 0;
-        int pave_fail = 0;
-        int audit_fail = 0;
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         for (const auto& candidate : candidates) {
-            if (added >= max_edges) {
+            if (stats.edges_added >= max_edges) {
                 break;
             }
             if (candidate.source_center.size() == 0 ||
@@ -162,11 +190,11 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                 if (portal_added > 0) {
                     existing_segment_pairs.insert(
                         partition_segment_pair_key_local(candidate.source, candidate.target));
-                    ++portal_corridor_edges;
-                    ++added;
+                    ++stats.portal_corridor_edges;
+                    ++stats.edges_added;
                     continue;
                 }
-                ++portal_corridor_fail;
+                ++stats.portal_corridor_fail;
             }
             const double audit_fail_before =
                 last_build_.diagnostics["offline_shortcut.partition_box_corridor_overlay_audit_fail"];
@@ -181,23 +209,23 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
             const double audit_fail_after =
                 last_build_.diagnostics["offline_shortcut.partition_box_corridor_overlay_audit_fail"];
             if (audit_fail_after > audit_fail_before) {
-                ++audit_fail;
+                ++stats.audit_fail;
             }
             if (overlay_added > 0) {
                 existing_segment_pairs.insert(
                     partition_segment_pair_key_local(candidate.source, candidate.target));
-                ++box_corridor_edges;
-                ++added;
+                ++stats.box_corridor_edges;
+                ++stats.edges_added;
                 continue;
             }
-            ++pave_fail;
+            ++stats.pave_fail;
             if (allow_segment_fallback) {
                 const auto audit = audit_waypoint_path(waypoints,
                                                        checker,
                                                        config_.query.audit_resolution,
                                                        config_.query.audit_segment_step);
                 if (!audit.passed) {
-                    ++audit_fail;
+                    ++stats.audit_fail;
                     continue;
                 }
                 const int edge_id = add_segment_edge_partition_first(candidate.source,
@@ -213,28 +241,17 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                 if (edge_id >= 0) {
                     existing_segment_pairs.insert(
                         partition_segment_pair_key_local(candidate.source, candidate.target));
-                    ++segment_edges;
-                    ++added;
+                    ++stats.segment_edges;
+                    ++stats.edges_added;
                 }
             }
         }
         last_build_.diagnostics["offline_shortcut.partition_native"] += 1.0;
         last_build_.diagnostics["offline_shortcut.partition_native_direct_overlay"] += 1.0;
         last_build_.diagnostics["offline_shortcut.partition_native_query_bridge_skipped"] += 1.0;
-        last_build_.diagnostics["offline_shortcut.tested_pairs"] += static_cast<double>(tested_pairs);
-        last_build_.diagnostics["offline_shortcut.candidates"] += static_cast<double>(candidates.size());
-        last_build_.diagnostics["offline_shortcut.audit_fail"] += static_cast<double>(audit_fail);
-        last_build_.diagnostics["offline_shortcut.edges_added"] += static_cast<double>(added);
-        last_build_.diagnostics["offline_shortcut.segment_edges_added"] += static_cast<double>(segment_edges);
-        last_build_.diagnostics["offline_shortcut.portal_corridor_edges_added"] +=
-            static_cast<double>(portal_corridor_edges);
-        last_build_.diagnostics["offline_shortcut.portal_corridor_fail"] +=
-            static_cast<double>(portal_corridor_fail);
-        last_build_.diagnostics["offline_shortcut.box_corridor_edges_added"] += static_cast<double>(box_corridor_edges);
-        last_build_.diagnostics["offline_shortcut.pave_boxes_added"] += static_cast<double>(pave_added_total);
-        last_build_.diagnostics["offline_shortcut.pave_fail"] += static_cast<double>(pave_fail);
+        record_offline_shortcut_stats(last_build_.diagnostics, stats, true);
         sync_adaptive_partition_segment_edges(&last_build_, "offline_shortcut.partition_native");
-        return added;
+        return stats.edges_added;
     }
 
     const int limit = std::min<int>(candidate_limit, static_cast<int>(boxes_.size()));
@@ -271,7 +288,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
     const QueryGraphCache cache = build_query_graph_cache(boxes_, adjacency_, segment_edges_);
     const double safe_min_gain = std::max(1.0, min_gain_ratio);
     const double safe_max_segment_length = std::max(0.0, max_segment_length);
-    int tested_pairs = 0;
+    OfflineShortcutStats stats;
     for (std::size_t outer = 0; outer < landmarks.size(); ++outer) {
         const BoxNode& lhs = boxes_[static_cast<std::size_t>(landmarks[outer])];
         for (std::size_t inner = outer + 1; inner < landmarks.size(); ++inner) {
@@ -279,7 +296,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
             if (lhs.n_dims() != rhs.n_dims()) {
                 continue;
             }
-            ++tested_pairs;
+            ++stats.tested_pairs;
             const double direct = (lhs.center() - rhs.center()).norm();
             if (direct <= 1e-9 ||
                 (safe_max_segment_length > 0.0 && direct > safe_max_segment_length) ||
@@ -298,18 +315,13 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                        const ShortcutCandidate& rhs) {
         return lhs.score > rhs.score;
     });
+    stats.candidates = static_cast<int>(candidates.size());
 
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-    int added = 0;
-    int box_corridor_edges = 0;
-    int segment_edges = 0;
-    int pave_added_total = 0;
-    int pave_fail = 0;
-    int audit_fail = 0;
     int next_id = next_box_id();
     StageContext context = StageContext::from_runtime(config_.runtime);
     for (const auto& candidate : candidates) {
-        if (added >= max_edges) {
+        if (stats.edges_added >= max_edges) {
             break;
         }
         if (find_segment_edge(segment_edges_, candidate.source, candidate.target) != nullptr) {
@@ -326,7 +338,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                config_.query.audit_resolution,
                                                config_.query.audit_segment_step);
         if (!audit.passed) {
-            ++audit_fail;
+            ++stats.audit_fail;
             continue;
         }
         int pave_added = 0;
@@ -352,7 +364,7 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         } else {
             last_build_.diagnostics["offline_shortcut.partition_legacy_chain_pave_skipped"] += 1.0;
         }
-        pave_added_total += pave_added;
+        stats.pave_boxes_added += pave_added;
         int edge_id = -1;
         if (pave_added > 0 &&
             box_only_path_connected_partition_first(candidate.source, candidate.target)) {
@@ -365,10 +377,10 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                        false,
                                                        -1);
             if (edge_id >= 0) {
-                ++box_corridor_edges;
+                ++stats.box_corridor_edges;
             }
         } else {
-            ++pave_fail;
+            ++stats.pave_fail;
             edge_id = add_segment_edge_partition_first(candidate.source,
                                                        candidate.target,
                                                        std::move(waypoints),
@@ -378,26 +390,19 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
                                                        true,
                                                        -1);
             if (edge_id >= 0) {
-                ++segment_edges;
+                ++stats.segment_edges;
             }
         }
         if (edge_id >= 0) {
-            ++added;
+            ++stats.edges_added;
         }
     }
-    if (added > 0) {
+    if (stats.edges_added > 0) {
         invalidate_query_cache();
     }
-    last_build_.diagnostics["offline_shortcut.tested_pairs"] += static_cast<double>(tested_pairs);
-    last_build_.diagnostics["offline_shortcut.candidates"] += static_cast<double>(candidates.size());
-    last_build_.diagnostics["offline_shortcut.audit_fail"] += static_cast<double>(audit_fail);
-    last_build_.diagnostics["offline_shortcut.edges_added"] += static_cast<double>(added);
-    last_build_.diagnostics["offline_shortcut.box_corridor_edges_added"] += static_cast<double>(box_corridor_edges);
-    last_build_.diagnostics["offline_shortcut.segment_edges_added"] += static_cast<double>(segment_edges);
-    last_build_.diagnostics["offline_shortcut.pave_boxes_added"] += static_cast<double>(pave_added_total);
-    last_build_.diagnostics["offline_shortcut.pave_fail"] += static_cast<double>(pave_fail);
+    record_offline_shortcut_stats(last_build_.diagnostics, stats, false);
     sync_adaptive_partition_segment_edges(&last_build_, "offline_shortcut");
-    return added;
+    return stats.edges_added;
 }
 
 } // namespace rbf
