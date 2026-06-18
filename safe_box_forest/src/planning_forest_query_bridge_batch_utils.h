@@ -87,6 +87,12 @@ struct QueryBridgeBatchExecutionOptions {
     bool parallel_task_rrt = true;
 };
 
+struct QueryBridgeIndexOptions {
+    std::string force_indices_csv;
+    std::string global_indices_csv;
+    std::string segment_only_indices_csv;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -162,6 +168,18 @@ QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env()
 void record_query_bridge_batch_execution_diagnostics(
     StageContext& context,
     const QueryBridgeBatchExecutionOptions& options);
+
+QueryBridgeIndexOptions query_bridge_index_options_from_env();
+
+bool query_bridge_index_forced(const QueryBridgeIndexOptions& options,
+                               std::size_t index);
+
+bool query_bridge_index_segment_only(const QueryBridgeIndexOptions& options,
+                                     std::size_t index);
+
+int query_bridge_index_global(const QueryBridgeIndexOptions& options,
+                              std::size_t position,
+                              int fallback);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

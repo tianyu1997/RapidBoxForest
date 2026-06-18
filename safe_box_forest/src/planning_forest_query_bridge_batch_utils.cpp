@@ -5,11 +5,71 @@
 #include "env_config.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cctype>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <string>
 
 namespace rbf {
+namespace {
+
+std::string getenv_string_or_empty(const char* name) {
+    const char* raw = std::getenv(name);
+    return raw != nullptr ? std::string(raw) : std::string();
+}
+
+bool csv_nonnegative_index_contains(const std::string& csv, std::size_t target) {
+    if (csv.empty()) {
+        return false;
+    }
+    std::stringstream stream(csv);
+    std::string item;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (item.empty()) {
+            continue;
+        }
+        char* end = nullptr;
+        const long value = std::strtol(item.c_str(), &end, 10);
+        if (end != item.c_str() && value >= 0 &&
+            static_cast<std::size_t>(value) == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+int csv_position_value_or_default(const std::string& csv,
+                                  std::size_t position,
+                                  int fallback) {
+    if (csv.empty()) {
+        return fallback;
+    }
+    std::stringstream stream(csv);
+    std::string item;
+    std::size_t index = 0;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (index == position) {
+            if (item.empty()) {
+                return fallback;
+            }
+            char* end = nullptr;
+            const long value = std::strtol(item.c_str(), &end, 10);
+            return end != item.c_str() ? static_cast<int>(value) : fallback;
+        }
+        ++index;
+    }
+    return fallback;
+}
+
+}  // namespace
 
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env() {
     QueryBridgeAcceptanceThresholds thresholds;
@@ -289,6 +349,31 @@ void record_query_bridge_batch_execution_diagnostics(
     const QueryBridgeBatchExecutionOptions& options) {
     context.diagnostics().set_value("query_bridge.evaluate_all_fallback_paths",
                                     options.evaluate_all_fallback_paths ? 1.0 : 0.0);
+}
+
+QueryBridgeIndexOptions query_bridge_index_options_from_env() {
+    QueryBridgeIndexOptions options;
+    options.force_indices_csv = getenv_string_or_empty("RBF_QUERY_BRIDGE_FORCE_INDICES");
+    options.global_indices_csv = getenv_string_or_empty("RBF_QUERY_BRIDGE_GLOBAL_INDICES");
+    options.segment_only_indices_csv =
+        getenv_string_or_empty("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES");
+    return options;
+}
+
+bool query_bridge_index_forced(const QueryBridgeIndexOptions& options,
+                               std::size_t index) {
+    return csv_nonnegative_index_contains(options.force_indices_csv, index);
+}
+
+bool query_bridge_index_segment_only(const QueryBridgeIndexOptions& options,
+                                     std::size_t index) {
+    return csv_nonnegative_index_contains(options.segment_only_indices_csv, index);
+}
+
+int query_bridge_index_global(const QueryBridgeIndexOptions& options,
+                              std::size_t position,
+                              int fallback) {
+    return csv_position_value_or_default(options.global_indices_csv, position, fallback);
 }
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,

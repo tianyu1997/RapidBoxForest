@@ -3,7 +3,6 @@
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
@@ -30,8 +29,6 @@
 #include <vector>
 
 namespace rbf {
-
-using detail::env_index_list_contains;
 
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
                                                    const std::vector<Eigen::VectorXd>& goals) {
@@ -127,8 +124,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             partition_refresh_base = boxes_.size();
         }
     };
-    auto query_bridge_forced_index = [](std::size_t index) {
-        return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", index);
+    const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
+    auto query_bridge_forced_index = [&](std::size_t index) {
+        return query_bridge_index_forced(index_options, index);
     };
     const QueryBridgePartitionPathFirstOptions partition_path_first_options =
         query_bridge_partition_path_first_options_from_env(partition_native_mode());
@@ -193,10 +191,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         QueryBridgeSearchTask task;
         task.index = index;
-        task.query_index =
-            env_index_list_value_or_default("RBF_QUERY_BRIDGE_GLOBAL_INDICES",
-                                            index,
-                                            static_cast<int>(index));
+        task.query_index = query_bridge_index_global(index_options,
+                                                     index,
+                                                     static_cast<int>(index));
         last_build_.diagnostics["query_bridge.batch_task." +
                                 std::to_string(index) +
                                 ".global_index"] = static_cast<double>(task.query_index);
@@ -1162,7 +1159,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return query_bridge_forced_index(task.index);
     };
     auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
-        if (env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index)) {
+        if (query_bridge_index_segment_only(index_options, task.index)) {
             return false;
         }
         if (respect_forced && query_bridge_forced(task)) {
@@ -1757,9 +1754,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
     const bool has_segment_only_task =
-        std::any_of(tasks.begin(), tasks.end(), [](const QueryBridgeSearchTask& task) {
-            return env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES",
-                                           task.index);
+        std::any_of(tasks.begin(), tasks.end(), [&](const QueryBridgeSearchTask& task) {
+            return query_bridge_index_segment_only(index_options, task.index);
         });
     if (batch_execution_options.parallel_task_rrt && !has_segment_only_task &&
         retry_options.no_path_retry_attempts == 0 &&
@@ -2151,7 +2147,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                    best_length,
                                    task.waypoint_path);
         const bool segment_only_task =
-            env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index);
+            query_bridge_index_segment_only(index_options, task.index);
         if (task.waypoint_path.empty() && segment_only_task &&
             retry_options.segment_only_retry_attempts > 0) {
             const auto retry_t0 = Clock::now();
