@@ -122,6 +122,7 @@ add_library(sbf_core STATIC
     src/planning_forest_database.cpp
     src/planning_forest_debug.cpp
     src/planning_forest_diagnostics.cpp
+    src/planning_forest_leaf_refine.cpp
     src/planning_forest_dynamic_cache.cpp
     src/planning_forest_dynamic_collision_cache.cpp
     src/planning_forest_dynamic_helpers.cpp
