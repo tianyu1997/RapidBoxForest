@@ -144,6 +144,8 @@ src/planning_forest_dynamic_cache.cpp
                                    dynamic segment fallback, and removed-box refill
                                    helpers
 src/planning_forest_overlay.cpp    partition overlay corridor helpers
+src/planning_forest_query.cpp      online query entry point, strict audit,
+                                   final simplify, and local repair
 src/planning_forest_query_utils.cpp
                                    query/path utility functions shared by graph,
                                    partition, OBB, and bridge stages
