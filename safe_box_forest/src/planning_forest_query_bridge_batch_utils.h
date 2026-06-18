@@ -43,6 +43,13 @@ struct QueryBridgeRetryOptions {
     bool post_rrt_skip_forced = false;
 };
 
+struct QueryBridgeParallelRrtOptions {
+    bool early_stop = false;
+    int early_stop_min_successes = 1;
+    double early_stop_ratio = 1.75;
+    double early_stop_additive = 0.75;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -77,6 +84,16 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env();
 
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options);
+
+QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_env();
+
+void record_query_bridge_parallel_rrt_diagnostics(StageContext& context,
+                                                  const QueryBridgeParallelRrtOptions& options);
+
+bool query_bridge_parallel_rrt_path_good_enough(const Eigen::VectorXd& start,
+                                                const Eigen::VectorXd& goal,
+                                                const std::vector<Eigen::VectorXd>& path,
+                                                const QueryBridgeParallelRrtOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

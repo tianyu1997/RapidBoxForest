@@ -1135,6 +1135,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     }
     const QueryBridgeRetryOptions retry_options = query_bridge_retry_options_from_env();
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
+    const QueryBridgeParallelRrtOptions parallel_rrt_options =
+        query_bridge_parallel_rrt_options_from_env();
+    record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_segment_fraction",
         bridge_acceptance.max_segment_fraction);
@@ -1156,28 +1159,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first_max_segment_fraction",
         partition_path_first_options.max_segment_fraction);
-    const bool parallel_rrt_early_stop =
-        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
-    const int parallel_rrt_early_stop_min_successes =
-        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES", 1));
-    const double parallel_rrt_early_stop_ratio =
-        std::max(1.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO", 1.75));
-    const double parallel_rrt_early_stop_additive =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE", 0.75));
-    batch_context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
-                                          parallel_rrt_early_stop ? 1.0 : 0.0);
     auto rrt_path_good_enough_for_task = [&](const QueryBridgeSearchTask& task,
                                              const std::vector<Eigen::VectorXd>& path) {
-        if (path.empty()) {
-            return false;
-        }
-        const double direct = (task.goal - task.start).norm();
-        if (direct <= 1e-9) {
-            return true;
-        }
-        const double length = path_length(path);
-        return length <= std::max(direct * parallel_rrt_early_stop_ratio,
-                                  direct + parallel_rrt_early_stop_additive);
+        return query_bridge_parallel_rrt_path_good_enough(task.start,
+                                                          task.goal,
+                                                          path,
+                                                          parallel_rrt_options);
     };
     auto query_bridge_forced = [&](const QueryBridgeSearchTask& task) {
         return query_bridge_forced_index(task.index);
@@ -1912,8 +1899,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && jobs.size() > 1) {
             std::shared_ptr<std::atomic<bool>> local_cancel =
-                parallel_rrt_early_stop ? std::make_shared<std::atomic<bool>>(false)
-                                        : batch_context.native_cancel_flag();
+                parallel_rrt_options.early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                                : batch_context.native_cancel_flag();
             std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0,
                                                   static_cast<int>(jobs.size()),
@@ -1926,18 +1913,19 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                              job.attempt,
                                              0,
                                              local_cancel);
-                if (parallel_rrt_early_stop &&
+                if (parallel_rrt_options.early_stop &&
                     rrt_path_good_enough_for_task(tasks[job.task_offset], path)) {
                     const int successes =
                         early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-                    if (successes >= parallel_rrt_early_stop_min_successes && local_cancel) {
+                    if (successes >= parallel_rrt_options.early_stop_min_successes &&
+                        local_cancel) {
                         local_cancel->store(true, std::memory_order_relaxed);
                     }
                 }
                 attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
                     std::move(path);
             });
-            if (parallel_rrt_early_stop) {
+            if (parallel_rrt_options.early_stop) {
                 batch_context.diagnostics().add_counter(
                     "query_bridge.parallel_rrt_early_stop_successes",
                     static_cast<double>(early_successes.load(std::memory_order_relaxed)));
@@ -2157,25 +2145,26 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
             std::shared_ptr<std::atomic<bool>> local_cancel =
-                parallel_rrt_early_stop ? std::make_shared<std::atomic<bool>>(false)
-                                        : batch_context.native_cancel_flag();
+                parallel_rrt_options.early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                                : batch_context.native_cancel_flag();
             std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
                 if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
                     return;
                 }
                 auto path = run_task_attempt(task, attempt, 0, local_cancel);
-                if (parallel_rrt_early_stop &&
+                if (parallel_rrt_options.early_stop &&
                     rrt_path_good_enough_for_task(task, path)) {
                     const int successes =
                         early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-                    if (successes >= parallel_rrt_early_stop_min_successes && local_cancel) {
+                    if (successes >= parallel_rrt_options.early_stop_min_successes &&
+                        local_cancel) {
                         local_cancel->store(true, std::memory_order_relaxed);
                     }
                 }
                 attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
             });
-            if (parallel_rrt_early_stop) {
+            if (parallel_rrt_options.early_stop) {
                 batch_context.diagnostics().add_counter(
                     "query_bridge.parallel_rrt_early_stop_successes",
                     static_cast<double>(early_successes.load(std::memory_order_relaxed)));

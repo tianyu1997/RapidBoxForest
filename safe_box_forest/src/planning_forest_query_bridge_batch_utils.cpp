@@ -1,5 +1,7 @@
 #include "planning_forest_query_bridge_batch_utils.h"
 
+#include <SBF/box_graph.h>
+
 #include "env_config.h"
 
 #include <algorithm>
@@ -120,6 +122,52 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
     }
     context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
                                     options.post_rrt_skip_forced ? 1.0 : 0.0);
+}
+
+QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_env() {
+    QueryBridgeParallelRrtOptions options;
+    options.early_stop =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
+    options.early_stop_min_successes =
+        std::max(1,
+                 detail::env_int_or_default(
+                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES",
+                     1));
+    options.early_stop_ratio =
+        std::max(1.0,
+                 detail::env_double_or_default(
+                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO",
+                     1.75));
+    options.early_stop_additive =
+        std::max(0.0,
+                 detail::env_double_or_default(
+                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE",
+                     0.75));
+    return options;
+}
+
+void record_query_bridge_parallel_rrt_diagnostics(
+    StageContext& context,
+    const QueryBridgeParallelRrtOptions& options) {
+    context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
+                                    options.early_stop ? 1.0 : 0.0);
+}
+
+bool query_bridge_parallel_rrt_path_good_enough(
+    const Eigen::VectorXd& start,
+    const Eigen::VectorXd& goal,
+    const std::vector<Eigen::VectorXd>& path,
+    const QueryBridgeParallelRrtOptions& options) {
+    if (path.empty()) {
+        return false;
+    }
+    const double direct = (goal - start).norm();
+    if (direct <= 1e-9) {
+        return true;
+    }
+    const double length = path_length(path);
+    return length <= std::max(direct * options.early_stop_ratio,
+                              direct + options.early_stop_additive);
 }
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
