@@ -1799,12 +1799,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             int attempts = 1;
             double task_start_ms = 0.0;
         };
-        struct PreparedJob {
-            std::size_t task_offset = 0;
-            int attempt = 0;
-        };
         std::vector<PreparedTask> prepared(tasks.size());
-        std::vector<PreparedJob> jobs;
+        std::vector<QueryBridgeSearchJob> jobs;
         for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
             auto& task = tasks[task_offset];
             prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
@@ -1841,23 +1837,23 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
                     return;
                 }
-                const PreparedJob& job = jobs[static_cast<std::size_t>(job_index)];
-                auto path = run_task_attempt(tasks[job.task_offset],
+                const QueryBridgeSearchJob& job = jobs[static_cast<std::size_t>(job_index)];
+                auto path = run_task_attempt(tasks[job.task_index],
                                              job.attempt,
                                              0,
                                              local_cancel);
-                maybe_stop_parallel_rrt_after_success(tasks[job.task_offset],
+                maybe_stop_parallel_rrt_after_success(tasks[job.task_index],
                                                       path,
                                                       early_successes,
                                                       local_cancel);
-                attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
+                attempt_paths[job.task_index][static_cast<std::size_t>(job.attempt)] =
                     std::move(path);
             });
             record_parallel_rrt_early_stop(local_cancel, early_successes);
         } else {
-            for (const PreparedJob& job : jobs) {
-                attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
-                    run_task_attempt(tasks[job.task_offset], job.attempt, 0);
+            for (const QueryBridgeSearchJob& job : jobs) {
+                attempt_paths[job.task_index][static_cast<std::size_t>(job.attempt)] =
+                    run_task_attempt(tasks[job.task_index], job.attempt, 0);
             }
         }
         const double rrt_ms = elapsed_ms_since(rrt_t0);
