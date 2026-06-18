@@ -134,7 +134,10 @@ src/grower_task_builder.cpp        RRT grower batched target sampling, task
                                    generation, frontier seed selection, and
                                    worker-domain filtering
 src/grower_trace.cpp               optional RRT grower JSON trace output
-src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
+src/leaf_sweep_grower.cpp          leaf-sweep coverage grower orchestration,
+                                   frontier materialization, group sweep, and
+                                   final composition
+src/leaf_sweep_grower_cluster.cpp  obstacle AABB clustering for leaf sweep
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
 src/adaptive_grid_partition_geometry.cpp
                                    pure geometry, distance, interval, and grid
