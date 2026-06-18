@@ -4,6 +4,8 @@
 
 #include <rbf/lect_database/split_policy.h>
 
+#include "env_config.h"
+
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -45,6 +47,15 @@ inline bool split_policy_supports_virtual_cells(const OracleSplitPolicyDescripto
     }
     return descriptor.strategy == lect_database::SplitStrategy::RoundRobin ||
            descriptor.strategy == lect_database::SplitStrategy::WidestRoot;
+}
+
+inline int binary_probe_depth_from_env(int start_depth, int effective_max_depth) {
+    int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+    if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
+        return probe_depth;
+    }
+    const int span = effective_max_depth - start_depth;
+    return span >= 4 ? start_depth + span / 2 : -1;
 }
 
 inline std::optional<VirtualSeedCell> virtual_seed_cell_at_depth(

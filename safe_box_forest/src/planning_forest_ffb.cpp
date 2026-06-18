@@ -6,14 +6,11 @@
 #include <limits>
 #include <vector>
 
-#include "env_config.h"
 #include "virtual_sparse_ffb.h"
 
 namespace rbf {
 
 namespace {
-
-using detail::env_int_or_default;
 
 bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals,
                                           const Eigen::Ref<const Eigen::VectorXd>& point,
@@ -264,13 +261,8 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
             int hi = effective_max_depth;
             int best_depth = -1;
             FindFreeBoxResult best;
-            int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
-            if (probe_depth < virtual_start_depth || probe_depth >= effective_max_depth) {
-                const int span = effective_max_depth - virtual_start_depth;
-                if (span >= 4) {
-                    probe_depth = virtual_start_depth + span / 2;
-                }
-            }
+            const int probe_depth =
+                detail::binary_probe_depth_from_env(virtual_start_depth, effective_max_depth);
             if (probe_depth >= virtual_start_depth && probe_depth < effective_max_depth) {
                 FindFreeBoxResult probe_candidate;
                 const BoxValidation probe_validation = validate_virtual_depth(probe_depth,
@@ -589,13 +581,8 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
         int lo = start_depth;
         int hi = effective_max_depth;
         FindFreeBoxResult best;
-        int probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
-        if (probe_depth < start_depth || probe_depth >= effective_max_depth) {
-            const int span = effective_max_depth - start_depth;
-            if (span >= 4) {
-                probe_depth = start_depth + span / 2;
-            }
-        }
+        const int probe_depth =
+            detail::binary_probe_depth_from_env(start_depth, effective_max_depth);
         if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
             FindFreeBoxResult probe_candidate;
             const BoxValidation probe_validation = validate_depth(probe_depth,
