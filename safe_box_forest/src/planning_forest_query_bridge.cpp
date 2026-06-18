@@ -2795,8 +2795,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     if (added > 0 &&
         source_box_id >= 0 &&
         target_box_id >= 0 &&
-        (legacy_query_boxcorridor_enabled() ||
-         box_only_path_connected_partition_first(source_box_id, target_box_id))) {
+        box_only_path_connected_partition_first(source_box_id, target_box_id)) {
         const int edge_id = add_segment_edge_partition_first(                                             source_box_id,
                                              target_box_id,
                                              corridor_path,
@@ -2877,8 +2876,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     if (added > 0 &&
         source_box_id >= 0 &&
         target_box_id >= 0 &&
-        (legacy_query_boxcorridor_enabled() ||
-         box_only_path_connected_partition_first(source_box_id, target_box_id))) {
+        box_only_path_connected_partition_first(source_box_id, target_box_id)) {
         const int edge_id = add_segment_edge_partition_first(	                                             source_box_id,
 	                                             target_box_id,
 	                                             corridor_path,

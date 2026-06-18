@@ -7,8 +7,6 @@
 
 namespace rbf {
 
-bool legacy_query_boxcorridor_enabled();
-
 double boundary_max_depth_failure_count_local(const StageContext& context);
 
 double diagnostic_map_value(const std::unordered_map<std::string, double>& diagnostics,

@@ -1,14 +1,8 @@
 #include "planning_forest_diagnostics.h"
 
 #include <algorithm>
-#include <cstdlib>
 
 namespace rbf {
-
-bool legacy_query_boxcorridor_enabled() {
-    const char* value = std::getenv("RBF_LEGACY_QUERY_BOX_CORRIDOR");
-    return value != nullptr && value[0] == '1';
-}
 
 double boundary_max_depth_failure_count_local(const StageContext& context) {
     const auto& diagnostics = context.diagnostics();
