@@ -107,6 +107,30 @@ Validated on 2026-06-18:
   ctest --test-dir build-public-final-check --output-on-failure
   ```
 
+- Clean public export C++ configure, build, and CTest passed from an out-of-tree
+  build directory. On this local machine, `nlohmann_json` was supplied from a
+  previously fetched source directory because the system CMake package was not
+  installed; the public CI installs `nlohmann-json3-dev` instead.
+
+  ```bash
+  python3 scripts/package_public_release.py \
+    --out-dir /tmp/RapidBoxForest-release-cpp-verify \
+    --force
+  NLOHMANN_JSON_SOURCE_DIR=/path/to/nlohmann_json-src
+  cmake -S /tmp/RapidBoxForest-release-cpp-verify/RapidBoxForest-public \
+    -B /tmp/RapidBoxForest-release-cpp-verify/build-cpp-localdeps \
+    -DRBF_BUILD_ENVELOPE=ON \
+    -DRBF_BUILD_LECT_DATABASE=ON \
+    -DRBF_BUILD_SBF=ON \
+    -DRBF_BUILD_TESTS=ON \
+    -DRBF_WITH_PYTHON=OFF \
+    -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+    "-DFETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON=${NLOHMANN_JSON_SOURCE_DIR}"
+  cmake --build /tmp/RapidBoxForest-release-cpp-verify/build-cpp-localdeps -j8
+  ctest --test-dir /tmp/RapidBoxForest-release-cpp-verify/build-cpp-localdeps \
+    --output-on-failure
+  ```
+
 - Public smoke execute passed with the default fast-core selection:
 
   ```bash
