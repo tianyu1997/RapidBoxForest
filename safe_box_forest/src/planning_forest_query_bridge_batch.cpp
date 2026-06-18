@@ -765,24 +765,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        return added;
 	    };
 	    auto try_hipac_transition_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
-	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
-	            !last_adaptive_partition_config_.hipac_online_transition_portal ||
-	            !partition_native_mode() ||
-	            !adaptive_partition_query_enabled_ ||
-	            !adaptive_partition_ ||
-	            adaptive_partition_->empty() ||
-	            task.waypoint_path.size() < 2 ||
-	            task.hipac_transition_resolves_used >=
-	                std::max(0, last_adaptive_partition_config_.hipac_transition_max_attempts_per_query)) {
+	        const QueryBridgeHipacTransitionGate transition_gate =
+	            query_bridge_hipac_transition_gate(
+	                last_adaptive_partition_config_,
+	                partition_native_mode(),
+	                adaptive_partition_query_enabled_,
+	                adaptive_partition_ && !adaptive_partition_->empty(),
+	                static_cast<int>(task.waypoint_path.size()),
+	                task.hipac_transition_resolves_used,
+	                static_cast<int>(task.index),
+	                task.query_index);
+	        if (transition_gate.disabled) {
 	            return 0;
 	        }
-	        const bool target_index =
-	            csv_index_list_contains(last_adaptive_partition_config_.hipac_transition_target_query_indices,
-	                                    static_cast<int>(task.index)) ||
-	            csv_index_list_contains(last_adaptive_partition_config_.hipac_transition_target_query_indices,
-	                                    task.query_index);
-	        if (!target_index) {
+	        if (transition_gate.target_rejected) {
 	            batch_context.diagnostics().add_counter("query_bridge.hipac_transition_target_rejects");
 	            return 0;
 	        }
@@ -832,8 +828,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
 	        int total_added = 0;
 	        int attempts = 0;
-	        const int attempt_cap =
-	            std::max(1, last_adaptive_partition_config_.hipac_transition_max_attempts_per_query);
+	        const int attempt_cap = transition_gate.attempt_cap;
 	        for (const auto& candidate : transition_candidates.candidates) {
 	            if (attempts >= attempt_cap ||
 	                task.hipac_transition_resolves_used >= attempt_cap) {

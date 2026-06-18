@@ -246,6 +246,42 @@ QueryBridgeHipacOnlineGate query_bridge_hipac_online_gate(
     return gate;
 }
 
+QueryBridgeHipacTransitionGate query_bridge_hipac_transition_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    bool adaptive_partition_query_enabled,
+    bool adaptive_partition_ready,
+    int waypoint_path_size,
+    int resolves_used,
+    int task_position_index,
+    int query_index) {
+    QueryBridgeHipacTransitionGate gate;
+    const int resolve_cap = std::max(0, config.hipac_transition_max_attempts_per_query);
+    gate.attempt_cap = std::max(1, config.hipac_transition_max_attempts_per_query);
+    if (!config.hipac_online_connectivity ||
+        !config.hipac_online_before_query_bridge ||
+        !config.hipac_online_transition_portal ||
+        !partition_native ||
+        !adaptive_partition_query_enabled ||
+        !adaptive_partition_ready ||
+        waypoint_path_size < 2 ||
+        resolves_used >= resolve_cap) {
+        gate.disabled = true;
+        return gate;
+    }
+    const bool target_index =
+        csv_index_list_contains(config.hipac_transition_target_query_indices,
+                                task_position_index) ||
+        csv_index_list_contains(config.hipac_transition_target_query_indices,
+                                query_index);
+    if (!target_index) {
+        gate.target_rejected = true;
+        return gate;
+    }
+    gate.enabled = true;
+    return gate;
+}
+
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,
     const std::vector<Eigen::VectorXd>& waypoint_path,

@@ -36,6 +36,13 @@ struct QueryBridgeHipacOnlineGate {
     double candidate_max_length = 0.0;
 };
 
+struct QueryBridgeHipacTransitionGate {
+    bool enabled = false;
+    bool disabled = false;
+    bool target_rejected = false;
+    int attempt_cap = 1;
+};
+
 struct QueryBridgeHipacTransitionCandidate {
     int source_box_id = -1;
     int target_box_id = -1;
@@ -263,6 +270,16 @@ QueryBridgeHipacOnlineGate query_bridge_hipac_online_gate(
     bool partition_native,
     int candidate_path_size,
     int resolves_used);
+
+QueryBridgeHipacTransitionGate query_bridge_hipac_transition_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    bool adaptive_partition_query_enabled,
+    bool adaptive_partition_ready,
+    int waypoint_path_size,
+    int resolves_used,
+    int task_position_index,
+    int query_index);
 
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,
