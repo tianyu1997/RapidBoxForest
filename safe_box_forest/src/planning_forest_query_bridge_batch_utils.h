@@ -232,6 +232,12 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
     bool forced,
     const QueryBridgeRetryOptions& options);
 
+QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
+    const QueryBridgeSearchTask& task,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options,
+    StageContext& context);
+
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 
 void record_query_bridge_acceptance_diagnostics(

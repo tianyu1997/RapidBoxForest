@@ -1203,20 +1203,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                task.direct_start_goal_satisfied ||
                current_query_good(task, true);
     };
-    auto prepare_task_attempts = [&](QueryBridgeSearchTask& task) {
-        QueryBridgeAttemptPlan plan =
-            query_bridge_attempt_plan(task,
-                                      query_bridge_index_forced(index_options, task.index),
-                                      retry_options);
-        if (plan.partition_path_first) {
-            record_query_bridge_partition_path_first_task(batch_context, task.index);
-        }
-        record_query_bridge_forced_attempts(batch_context,
-                                            task.index,
-                                            plan.forced,
-                                            plan.effective_attempts);
-        return plan;
-    };
     auto adopt_waypoint_after_rrt =
         [&](QueryBridgeSearchTask& task,
             std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
@@ -1564,7 +1550,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(probe_t0));
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-            const QueryBridgeAttemptPlan attempt_plan = prepare_task_attempts(task);
+            const QueryBridgeAttemptPlan attempt_plan =
+                query_bridge_prepare_attempt_plan(task,
+                                                  index_options,
+                                                  retry_options,
+                                                  batch_context);
             prepared[task_offset].forced = attempt_plan.forced;
             prepared[task_offset].attempts = attempt_plan.effective_attempts;
             for (int attempt = 0; attempt < prepared[task_offset].attempts; ++attempt) {
@@ -1681,7 +1671,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(probe_t0));
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-        const QueryBridgeAttemptPlan attempt_plan = prepare_task_attempts(task);
+        const QueryBridgeAttemptPlan attempt_plan =
+            query_bridge_prepare_attempt_plan(task,
+                                              index_options,
+                                              retry_options,
+                                              batch_context);
         if (attempt_plan.partition_path_first) {
             record_query_bridge_partition_path_first_rrt_skipped(batch_context,
                                                                  task.index);

@@ -326,6 +326,25 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
     return plan;
 }
 
+QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
+    const QueryBridgeSearchTask& task,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options,
+    StageContext& context) {
+    QueryBridgeAttemptPlan plan =
+        query_bridge_attempt_plan(task,
+                                  query_bridge_index_forced(index_options, task.index),
+                                  retry_options);
+    if (plan.partition_path_first) {
+        record_query_bridge_partition_path_first_task(context, task.index);
+    }
+    record_query_bridge_forced_attempts(context,
+                                        task.index,
+                                        plan.forced,
+                                        plan.effective_attempts);
+    return plan;
+}
+
 QueryBridgePartitionInitialPathDecision query_bridge_partition_initial_path_decision(
     const QueryResult& initial_query,
     const Eigen::VectorXd& start,
