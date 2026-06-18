@@ -1,7 +1,10 @@
-# Improve Workspace
+# Improve Workspace Historical Notes
 
-This workspace contains sidecar implementations and validation artifacts for
-RBF improvement plans.
+This is a historical note for the deleted `improve_workspace/` sidecar. The
+sidecar implementation is no longer an active independent code path; production
+relevant mechanisms have been integrated into the main `lect_database` and
+`safe_box_forest` modules. Do not run new experiments or validation from an
+`improve_workspace/` directory.
 
 Primary C-LECT source plan:
 
@@ -10,7 +13,7 @@ Primary C-LECT source plan:
 - Lines: `1439`
 - SHA-256: `a8b1a4947ef5b4dc669ea5048d459f19b71fbc3994d1b76462a7dc63403feae0`
 
-## Implemented In This Workspace
+## Former Sidecar Contents
 
 - `clect_sidecar/adaptive_sweep.py`: early-stop adaptive sweep, terminal cells,
   priority/relevance, local split scoring, targeted children, and no-good
@@ -87,13 +90,17 @@ Primary C-LECT source plan:
   anchor pairs, `P_attach`, `P_samecomp`, online mixed-cell refinement count,
   and online repair time.
 
-Validation entry point:
+Former validation entry point:
 
 ```bash
 python3 improve_workspace/tools/run_hipac_validation.py
 ```
 
-This writes:
+This command referred to the deleted sidecar and is retained only to identify
+historical artifacts. Current validation should use the main CMake/CTest and
+experiment runners.
+
+It wrote:
 
 - `improve_workspace/hipac_validation.json`
 - `improve_workspace/hipac_validation.md`
@@ -101,15 +108,15 @@ This writes:
 - `improve_workspace/hipac_experiment_suite.csv`
 - `improve_workspace/hipac_experiment_suite.md`
 
-## Validation
+## Former Validation
 
-Run the complete sidecar validation:
+The complete sidecar validation used to be:
 
 ```bash
 python3 improve_workspace/tools/run_sidecar_validation.py
 ```
 
-This writes:
+This command is obsolete after production integration. It wrote:
 
 - `improve_workspace/sidecar_validation.json`
 - `improve_workspace/synthetic_clect_benchmark.md`
