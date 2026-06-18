@@ -123,14 +123,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             : config_.connector.pave.find_free_box.max_depth);
     context.diagnostics().set_value("query_bridge.pave_ffb_depth",
                                     static_cast<double>(query_bridge_ffb_depth));
-    auto set_query_bridge_task_value = [&](const std::string& suffix, double value) {
-        if (query_index < 0) {
-            return;
-        }
-        context.diagnostics().set_value(
-            "query_bridge.batch_task." + std::to_string(query_index) + "." + suffix,
-            value);
-    };
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
     const QueryBridgeWaypointShortcutOptions waypoint_shortcut_options =
         query_bridge_waypoint_shortcut_options(direct_segment_after_rrt_candidate);
@@ -730,9 +722,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                           elapsed);
                 diagnostics.add_counter("query_bridge.hipac_promote_transition.ms_total",
                                         elapsed);
-                set_query_bridge_task_value("hipac_promote_transition_ms", elapsed);
+                query_bridge_set_task_value(context,
+                                            query_index,
+                                            "hipac_promote_transition_ms",
+                                            elapsed);
                 if (value > 0) {
-                    set_query_bridge_task_value("hipac_promote_transition_added",
+                    query_bridge_set_task_value(context,
+                                                query_index,
+                                                "hipac_promote_transition_added",
                                                 static_cast<double>(value));
                 }
                 if (reason != nullptr) {
@@ -949,7 +946,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                             mode);
                 diagnostics.add_counter("query_bridge.hipac_promote_transition.internal_boxes",
                                         static_cast<double>(local_path.size() - 2));
-                set_query_bridge_task_value("hipac_promote_transition_internal_boxes",
+                query_bridge_set_task_value(context,
+                                            query_index,
+                                            "hipac_promote_transition_internal_boxes",
                                             static_cast<double>(local_path.size() - 2));
                 invalidate_query_cache();
                 return 1;
@@ -1565,7 +1564,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context.diagnostics().set_value(
                 "query_bridge.direct_corridor_local_residual_overlay_connected",
                 locally_overlay_connected ? 1.0 : 0.0);
-            set_query_bridge_task_value("direct_corridor_local_residual_overlay_connected",
+            query_bridge_set_task_value(context,
+                                        query_index,
+                                        "direct_corridor_local_residual_overlay_connected",
                                         locally_overlay_connected ? 1.0 : 0.0);
             if (locally_overlay_connected) {
                 const bool add_full_residual_overlay_when_connected =

@@ -7,9 +7,15 @@
 
 #include <Eigen/Core>
 
+#include <string>
 #include <vector>
 
 namespace rbf {
+
+void query_bridge_set_task_value(StageContext& context,
+                                 int query_index,
+                                 const std::string& suffix,
+                                 double value);
 
 void query_bridge_apply_waypoint_shortcut(
     std::vector<Eigen::VectorXd>& corridor_path,

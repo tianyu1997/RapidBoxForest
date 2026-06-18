@@ -9,9 +9,7 @@
 
 namespace rbf {
 
-namespace {
-
-void set_query_bridge_task_value(StageContext& context,
+void query_bridge_set_task_value(StageContext& context,
                                  int query_index,
                                  const std::string& suffix,
                                  double value) {
@@ -22,8 +20,6 @@ void set_query_bridge_task_value(StageContext& context,
         "query_bridge.batch_task." + std::to_string(query_index) + "." + suffix,
         value);
 }
-
-} // namespace
 
 void query_bridge_apply_waypoint_shortcut(
     std::vector<Eigen::VectorXd>& corridor_path,
@@ -47,11 +43,11 @@ void query_bridge_apply_waypoint_shortcut(
                                 collision_shortcut_resolution(query_config));
     const double after_length = query_bridge_waypoint_length(shortened);
     context.diagnostics().add_counter("query_bridge.waypoint_shortcut_attempts");
-    set_query_bridge_task_value(context,
+    query_bridge_set_task_value(context,
                                 query_index,
                                 "waypoint_shortcut_before_length",
                                 before_length);
-    set_query_bridge_task_value(context,
+    query_bridge_set_task_value(context,
                                 query_index,
                                 "waypoint_shortcut_after_length",
                                 after_length);
@@ -66,18 +62,18 @@ void query_bridge_apply_waypoint_shortcut(
             context.diagnostics().add_counter("query_bridge.waypoint_shortcut_accepts");
             context.diagnostics().add_counter("query_bridge.waypoint_shortcut_delta",
                                               before_length - after_length);
-            set_query_bridge_task_value(context,
+            query_bridge_set_task_value(context,
                                         query_index,
                                         "waypoint_shortcut_accepted",
                                         1.0);
-            set_query_bridge_task_value(context,
+            query_bridge_set_task_value(context,
                                         query_index,
                                         "waypoint_shortcut_delta",
                                         before_length - after_length);
             corridor_path = std::move(shortened);
         } else {
             context.diagnostics().add_counter("query_bridge.waypoint_shortcut_audit_rejects");
-            set_query_bridge_task_value(context,
+            query_bridge_set_task_value(context,
                                         query_index,
                                         "waypoint_shortcut_audit_reject",
                                         1.0);
