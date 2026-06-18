@@ -8,6 +8,7 @@
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_corridor_utils.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
 
@@ -300,10 +301,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     using Clock = std::chrono::steady_clock;
     const auto batch_t0 = Clock::now();
     StageContext batch_context = StageContext::from_runtime(config_.runtime);
-    const bool scene_reusable_query_bridge_edges =
-        env_int_or_default("RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES", 0) != 0;
+    const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
     batch_context.diagnostics().set_value("query_bridge.scene_reusable_edges",
-                                          scene_reusable_query_bridge_edges ? 1.0 : 0.0);
+                                          edge_options.scene_reusable_edges ? 1.0 : 0.0);
     struct BatchBridgeDiagnosticsFlush {
         BuildProfile& profile;
         StageContext& context;
@@ -317,22 +317,26 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     };
     auto edge_query_index_for = [&](const QueryBridgeSearchTask& task) {
-        return scene_reusable_query_bridge_edges ? -1 : task.query_index;
+        return edge_options.scene_reusable_edges ? -1 : task.query_index;
     };
     const bool direct_start_goal_segment =
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_START_GOAL_SEGMENT", 1) != 0 &&
+        edge_options.direct_segment_after_rrt &&
+        edge_options.direct_start_goal_segment &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
     const bool fast_direct_segment_after_rrt =
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
-        env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        edge_options.direct_segment_after_rrt &&
+        edge_options.fast_direct_segment_after_rrt &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
     const double fast_direct_segment_after_rrt_min_length =
-        std::max(0.0,
-                 env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
-                                       0.0));
+        edge_options.direct_segment_after_rrt_min_length;
+    batch_context.diagnostics().set_value(
+        "query_bridge.direct_segment_after_rrt",
+        edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
+    batch_context.diagnostics().set_value(
+        "query_bridge.direct_segment_after_rrt_min_length",
+        edge_options.direct_segment_after_rrt_min_length);
     batch_context.diagnostics().set_value(
         "query_bridge.direct_start_goal_segment",
         direct_start_goal_segment ? 1.0 : 0.0);
@@ -403,9 +407,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
         candidate_paths.push_back(task.waypoint_path);
-        const bool fast_direct_shortcut =
-            env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SHORTCUT", 1) != 0;
-        if (fast_direct_shortcut && task.waypoint_path.size() > 2) {
+        if (edge_options.fast_direct_shortcut && task.waypoint_path.size() > 2) {
             const double before_length = path_length(task.waypoint_path);
             CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
             std::vector<Eigen::VectorXd> shortened =
@@ -430,9 +432,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_shortcut_delta"),
                     before_length - after_length);
             }
-            const int random_shortcut_iters = std::max(
-                0,
-                env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS", 0));
+            const int random_shortcut_iters = edge_options.fast_direct_random_shortcut_iters;
             const auto& random_source = candidate_paths.back();
             if (random_shortcut_iters > 0 && random_source.size() > 2U) {
                 const double random_before_length = path_length(random_source);
