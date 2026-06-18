@@ -1075,9 +1075,9 @@ offline quality--time references, not online stopping rules.
 \Needspace{8\baselineskip}
 Under these definitions, reusable builds are 0.166~s (\rbf{}), 20.040~s
 (PRM), and 355.425~s (IRIS-NP/GCS), excluding \rbf{} d23 prewarm, snapshot
-load, and resident memory. RRT-Connect is fastest on all five saved queries but
-has worse median path ratios than \rbf{}; BIT* is slower but gives better path
-ratios.
+load, and resident memory. RRT-Connect has the lowest median \(T\) on all five
+saved queries but worse median path ratios than \rbf{}; BIT* has higher median
+\(T\) than \rbf{} on all five queries but lower median path ratios.
 
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
@@ -1107,12 +1107,12 @@ because its saved-query audit outcomes did not support comparable timing and
 path-quality rows: hard rows had 0/100 successes for each robot, and medium rows had
 0/100 (IIWA), 30/100 (UR5), and 10/100 (Panda) successes. The comparison
 therefore focuses on online latency and path quality under shared catalogs.
-RRT-Connect has the
-lowest \onlineq{} in five of six operating points; the exception is Panda-Hard,
-where \rbf{} has the lower median \onlineq{}. RRT-Connect has higher median
-path ratios than \rbf{} in all six. With the scene forest reused, \rbf{} is
-faster than BIT* in all six cases; \(L/L^\star_{\mathrm{q}}\) matches BIT* to
-table precision for IIWA and is worse for UR5/Panda.
+RRT-Connect has the lowest median \onlineq{} in five of six operating points;
+the exception is Panda-Hard, where \rbf{} has the lower median \onlineq{}.
+RRT-Connect has higher median path ratios than \rbf{} in all six. With the
+scene forest reused, \rbf{} has lower median \onlineq{} than BIT* in all six
+cases; \(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision for IIWA and
+is worse for UR5/Panda.
 
 \subsection{Mechanism Studies}
 \label{sec:exp_mechanisms}
@@ -1135,7 +1135,7 @@ query bridge, connector, simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
-both cases. This checks scope, not query success after edits;
+both cases. The 0/8 diagnostic is a scope check, not evidence about query success after edits;
 Table~\ref{tab:tro-dynamic-update} reports local maintenance timing only,
 not timing for a complete pipeline that updates the scene and solves a query.
 
@@ -1155,8 +1155,9 @@ warm-cache depth-23 LECT replay on Shelf+IIWA yields a 0.166~s reusable build
 and 0.130~s \onlineq{}, whereas live HIFK-5 materialization takes 7.006~s. In
 saved random scenes, \rbf{} has lower \onlineq{} than BIT* at all six operating
 points in Table~\ref{tab:tro-random-summary}, while BIT* has lower, hence
-better, path ratios in the four UR5/Panda panels; the dynamic-update rows measure scene-cache
-maintenance rather than a complete pipeline that updates the scene and solves a query.
+better, path ratios in the four UR5/Panda cases. The dynamic-update rows measure
+scene-cache maintenance rather than a complete pipeline that updates the scene
+and solves a query.
 Within this scope, \rbf{} is a low-overhead method for constructing reusable
 regions for repeated queries.
 Remaining limitations are the lack of certificate coverage for repaired,
