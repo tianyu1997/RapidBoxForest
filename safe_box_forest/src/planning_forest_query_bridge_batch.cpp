@@ -23,6 +23,29 @@
 
 namespace rbf {
 
+namespace {
+
+bool query_bridge_current_query_good(
+    const RBFPlanningForest& forest,
+    const QueryBridgeSearchTask& task,
+    bool respect_forced,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
+    if (!query_bridge_should_check_current_query(task,
+                                                 respect_forced,
+                                                 index_options,
+                                                 retry_options)) {
+        return false;
+    }
+    return query_bridge_result_acceptable(forest.query(task.start, task.goal),
+                                          task.start,
+                                          task.goal,
+                                          bridge_acceptance);
+}
+
+}  // namespace
+
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
                                                    const std::vector<Eigen::VectorXd>& goals) {
     if (starts.size() != goals.size()) {
@@ -729,18 +752,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     record_query_bridge_partition_path_first_diagnostics(batch_context,
                                                         partition_path_first_options);
-    auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
-        if (!query_bridge_should_check_current_query(task,
-                                                     respect_forced,
-                                                     index_options,
-                                                     retry_options)) {
-            return false;
-        }
-        return query_bridge_result_acceptable(query(task.start, task.goal),
-                                              task.start,
-                                              task.goal,
-                                              bridge_acceptance);
-    };
     auto run_task_attempt = [&](const QueryBridgeSearchTask& task,
                                 int attempt,
                                 int override_fixed_iters,
@@ -1037,7 +1048,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     "query_bridge.waypoint_quality_fallback_added",
                     static_cast<double>(bridge_added));
             }
-            if (current_query_good(task, false)) {
+            if (query_bridge_current_query_good(*this,
+                                                task,
+                                                false,
+                                                index_options,
+                                                retry_options,
+                                                bridge_acceptance)) {
                 if (candidate_index > 0) {
                     batch_context.diagnostics().add_counter(
                         "query_bridge.waypoint_quality_fallback_successes");
@@ -1104,7 +1120,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 query_bridge_task_key(task.index, "waypoint_length"),
                 best_length);
             const auto second_probe_t0 = Clock::now();
-            if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
+            if (query_bridge_current_query_good(*this,
+                                                task,
+                                                !retry_options.post_rrt_skip_forced,
+                                                index_options,
+                                                retry_options,
+                                                bridge_acceptance)) {
                 record_query_bridge_batch_task_skipped_after_rrt(
                     batch_context,
                     task.index,
@@ -1230,7 +1251,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
             const auto probe_t0 = Clock::now();
             if (query_bridge_task_has_explicit_satisfaction(task) ||
-                current_query_good(task, true)) {
+                query_bridge_current_query_good(*this,
+                                                task,
+                                                true,
+                                                index_options,
+                                                retry_options,
+                                                bridge_acceptance)) {
                 prepared[task_offset].skipped = true;
                 record_query_bridge_batch_task_already_satisfied(
                     batch_context,
@@ -1351,7 +1377,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto task_t0 = Clock::now();
         const auto probe_t0 = Clock::now();
         if (query_bridge_task_has_explicit_satisfaction(task) ||
-            current_query_good(task, true)) {
+            query_bridge_current_query_good(*this,
+                                            task,
+                                            true,
+                                            index_options,
+                                            retry_options,
+                                            bridge_acceptance)) {
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,
                 task,
