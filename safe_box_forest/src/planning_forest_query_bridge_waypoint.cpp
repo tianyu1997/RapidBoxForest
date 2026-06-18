@@ -1772,141 +1772,46 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 ? assimilate_coverage_span_sum / static_cast<double>(assimilate_coverage_boxes)
                 : 0.0);
         if (detailed_direct_timing) {
-            context.diagnostics().add_counter("query_bridge.direct_corridor_transition_connected_ms",
-                                              transition_connected_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_transition_connected_calls",
-                                              static_cast<double>(transition_connected_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_bad_transitions_ms",
-                                              bad_transitions_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_bad_transitions_calls",
-                                              static_cast<double>(bad_transitions_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_ms",
-                                              current_cover_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_calls",
-                                              static_cast<double>(current_cover_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_partition_ms",
-                                              current_cover_partition_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_corridor_scan_ms",
-                                              current_cover_corridor_scan_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_current_cover_direct_index_ms",
-                                              current_cover_direct_index_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_duplicate_lookup_ms",
-                                              duplicate_lookup_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_duplicate_lookup_calls",
-                                              static_cast<double>(duplicate_lookup_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_total_ms",
-                                              commit_total_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_calls",
-                                              static_cast<double>(commit_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_dynamic_policy_ms",
-                                              commit_dynamic_policy_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_commit_partition_append_ms",
-                                              commit_partition_append_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_partition_append_calls",
-                                              static_cast<double>(direct_partition_append_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_partition_append_boxes",
-                                              static_cast<double>(direct_partition_append_boxes));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_calls",
-                                              static_cast<double>(assimilate_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_sample_scan_ms",
-                                              assimilate_sample_scan_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_local_hits",
-                                              static_cast<double>(assimilate_local_hits));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_full_scan_fallbacks",
-                                              static_cast<double>(assimilate_full_scan_fallbacks));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_local_sample_tests",
-                                              static_cast<double>(assimilate_local_sample_tests));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_candidate_build_ms",
-                                              assimilate_candidate_build_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_assimilate_adjacency_ms",
-                                              assimilate_adjacency_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_segment_insert_ms",
-                                              segment_insert_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_segment_insert_calls",
-                                              static_cast<double>(segment_insert_calls));
-            context.diagnostics().add_counter("query_bridge.direct_corridor_direct_task_build_ms",
-                                              direct_task_build_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_direct_loop_ms",
-                                              direct_loop_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_repair_loop_ms",
-                                              repair_loop_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_adaptive_loop_ms",
-                                              adaptive_loop_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_lateral_loop_ms",
-                                              lateral_loop_ms);
-            context.diagnostics().add_counter("query_bridge.direct_corridor_residual_segment_loop_ms",
-                                              residual_segment_loop_ms);
-            set_query_bridge_task_value("direct_corridor_transition_connected_ms",
-                                        transition_connected_ms);
-            set_query_bridge_task_value("direct_corridor_transition_connected_calls",
-                                        static_cast<double>(transition_connected_calls));
-            set_query_bridge_task_value("direct_corridor_bad_transitions_ms",
-                                        bad_transitions_ms);
-            set_query_bridge_task_value("direct_corridor_bad_transitions_calls",
-                                        static_cast<double>(bad_transitions_calls));
-            set_query_bridge_task_value("direct_corridor_current_cover_ms",
-                                        current_cover_ms);
-            set_query_bridge_task_value("direct_corridor_current_cover_calls",
-                                        static_cast<double>(current_cover_calls));
-            set_query_bridge_task_value("direct_corridor_current_cover_partition_ms",
-                                        current_cover_partition_ms);
-            set_query_bridge_task_value("direct_corridor_current_cover_corridor_scan_ms",
-                                        current_cover_corridor_scan_ms);
-            set_query_bridge_task_value("direct_corridor_current_cover_direct_index_ms",
-                                        current_cover_direct_index_ms);
-            set_query_bridge_task_value("direct_corridor_duplicate_lookup_ms",
-                                        duplicate_lookup_ms);
-            set_query_bridge_task_value("direct_corridor_duplicate_lookup_calls",
-                                        static_cast<double>(duplicate_lookup_calls));
-            set_query_bridge_task_value("direct_corridor_commit_total_ms",
-                                        commit_total_ms);
-            set_query_bridge_task_value("direct_corridor_commit_calls",
-                                        static_cast<double>(commit_calls));
-            set_query_bridge_task_value("direct_corridor_commit_dynamic_policy_ms",
-                                        commit_dynamic_policy_ms);
-            set_query_bridge_task_value("direct_corridor_commit_partition_append_ms",
-                                        commit_partition_append_ms);
-            set_query_bridge_task_value("direct_corridor_partition_append_calls",
-                                        static_cast<double>(direct_partition_append_calls));
-            set_query_bridge_task_value("direct_corridor_partition_append_boxes",
-                                        static_cast<double>(direct_partition_append_boxes));
-            set_query_bridge_task_value("direct_corridor_assimilate_calls",
-                                        static_cast<double>(assimilate_calls));
-            set_query_bridge_task_value("direct_corridor_assimilate_sample_scan_ms",
-                                        assimilate_sample_scan_ms);
-            set_query_bridge_task_value("direct_corridor_assimilate_local_hits",
-                                        static_cast<double>(assimilate_local_hits));
-            set_query_bridge_task_value("direct_corridor_assimilate_full_scan_fallbacks",
-                                        static_cast<double>(assimilate_full_scan_fallbacks));
-            set_query_bridge_task_value("direct_corridor_assimilate_local_sample_tests",
-                                        static_cast<double>(assimilate_local_sample_tests));
-            set_query_bridge_task_value("direct_corridor_assimilate_candidate_build_ms",
-                                        assimilate_candidate_build_ms);
-            set_query_bridge_task_value("direct_corridor_assimilate_adjacency_ms",
-                                        assimilate_adjacency_ms);
-            set_query_bridge_task_value("direct_corridor_segment_insert_ms",
-                                        segment_insert_ms);
-            set_query_bridge_task_value("direct_corridor_segment_insert_calls",
-                                        static_cast<double>(segment_insert_calls));
-            set_query_bridge_task_value("direct_corridor_direct_task_build_ms",
-                                        direct_task_build_ms);
-            set_query_bridge_task_value("direct_corridor_assimilate_coverage_span_max",
-                                        static_cast<double>(assimilate_coverage_span_max));
-            set_query_bridge_task_value(
-                "direct_corridor_assimilate_coverage_span_mean",
-                assimilate_coverage_boxes > 0
-                    ? assimilate_coverage_span_sum / static_cast<double>(assimilate_coverage_boxes)
-                    : 0.0);
-            set_query_bridge_task_value("direct_corridor_direct_loop_ms",
-                                        direct_loop_ms);
-            set_query_bridge_task_value("direct_corridor_repair_loop_ms",
-                                        repair_loop_ms);
-            set_query_bridge_task_value("direct_corridor_adaptive_loop_ms",
-                                        adaptive_loop_ms);
-            set_query_bridge_task_value("direct_corridor_lateral_loop_ms",
-                                        lateral_loop_ms);
-            set_query_bridge_task_value("direct_corridor_residual_segment_loop_ms",
-                                        residual_segment_loop_ms);
+            QueryBridgeDirectCorridorDetailedTimingStats timing_stats;
+            timing_stats.transition_connected_ms = transition_connected_ms;
+            timing_stats.bad_transitions_ms = bad_transitions_ms;
+            timing_stats.current_cover_ms = current_cover_ms;
+            timing_stats.current_cover_partition_ms = current_cover_partition_ms;
+            timing_stats.current_cover_corridor_scan_ms = current_cover_corridor_scan_ms;
+            timing_stats.current_cover_direct_index_ms = current_cover_direct_index_ms;
+            timing_stats.duplicate_lookup_ms = duplicate_lookup_ms;
+            timing_stats.commit_total_ms = commit_total_ms;
+            timing_stats.commit_dynamic_policy_ms = commit_dynamic_policy_ms;
+            timing_stats.commit_partition_append_ms = commit_partition_append_ms;
+            timing_stats.assimilate_sample_scan_ms = assimilate_sample_scan_ms;
+            timing_stats.assimilate_candidate_build_ms = assimilate_candidate_build_ms;
+            timing_stats.assimilate_adjacency_ms = assimilate_adjacency_ms;
+            timing_stats.segment_insert_ms = segment_insert_ms;
+            timing_stats.direct_task_build_ms = direct_task_build_ms;
+            timing_stats.direct_loop_ms = direct_loop_ms;
+            timing_stats.repair_loop_ms = repair_loop_ms;
+            timing_stats.adaptive_loop_ms = adaptive_loop_ms;
+            timing_stats.lateral_loop_ms = lateral_loop_ms;
+            timing_stats.residual_segment_loop_ms = residual_segment_loop_ms;
+            timing_stats.assimilate_coverage_span_sum = assimilate_coverage_span_sum;
+            timing_stats.transition_connected_calls = transition_connected_calls;
+            timing_stats.bad_transitions_calls = bad_transitions_calls;
+            timing_stats.current_cover_calls = current_cover_calls;
+            timing_stats.duplicate_lookup_calls = duplicate_lookup_calls;
+            timing_stats.commit_calls = commit_calls;
+            timing_stats.assimilate_calls = assimilate_calls;
+            timing_stats.assimilate_coverage_boxes = assimilate_coverage_boxes;
+            timing_stats.assimilate_coverage_span_max = assimilate_coverage_span_max;
+            timing_stats.segment_insert_calls = segment_insert_calls;
+            timing_stats.direct_partition_append_calls = direct_partition_append_calls;
+            timing_stats.direct_partition_append_boxes = direct_partition_append_boxes;
+            timing_stats.assimilate_local_hits = assimilate_local_hits;
+            timing_stats.assimilate_full_scan_fallbacks = assimilate_full_scan_fallbacks;
+            timing_stats.assimilate_local_sample_tests = assimilate_local_sample_tests;
+            query_bridge_record_direct_corridor_detailed_timing(
+                context,
+                query_index,
+                timing_stats);
         }
         auto [source_box_id, target_box_id] =
             locate_query_bridge_boxes(start, goal, context);

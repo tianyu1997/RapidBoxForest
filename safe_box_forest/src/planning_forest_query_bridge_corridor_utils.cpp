@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 
 namespace rbf {
 
@@ -110,6 +111,114 @@ double query_bridge_waypoint_length(const std::vector<Eigen::VectorXd>& path) {
         total += (path[index] - path[index - 1]).norm();
     }
     return total;
+}
+
+void query_bridge_record_direct_corridor_detailed_timing(
+    StageContext& context,
+    int query_index,
+    const QueryBridgeDirectCorridorDetailedTimingStats& stats) {
+    auto add = [&](const char* suffix, double value) {
+        context.diagnostics().add_counter(
+            std::string("query_bridge.direct_corridor_") + suffix,
+            value);
+    };
+    auto set_task = [&](const char* suffix, double value) {
+        if (query_index < 0) {
+            return;
+        }
+        context.diagnostics().set_value(
+            "query_bridge.batch_task." + std::to_string(query_index) +
+                ".direct_corridor_" + suffix,
+            value);
+    };
+
+    add("transition_connected_ms", stats.transition_connected_ms);
+    add("transition_connected_calls",
+        static_cast<double>(stats.transition_connected_calls));
+    add("bad_transitions_ms", stats.bad_transitions_ms);
+    add("bad_transitions_calls", static_cast<double>(stats.bad_transitions_calls));
+    add("current_cover_ms", stats.current_cover_ms);
+    add("current_cover_calls", static_cast<double>(stats.current_cover_calls));
+    add("current_cover_partition_ms", stats.current_cover_partition_ms);
+    add("current_cover_corridor_scan_ms", stats.current_cover_corridor_scan_ms);
+    add("current_cover_direct_index_ms", stats.current_cover_direct_index_ms);
+    add("duplicate_lookup_ms", stats.duplicate_lookup_ms);
+    add("duplicate_lookup_calls", static_cast<double>(stats.duplicate_lookup_calls));
+    add("commit_total_ms", stats.commit_total_ms);
+    add("commit_calls", static_cast<double>(stats.commit_calls));
+    add("commit_dynamic_policy_ms", stats.commit_dynamic_policy_ms);
+    add("commit_partition_append_ms", stats.commit_partition_append_ms);
+    add("partition_append_calls",
+        static_cast<double>(stats.direct_partition_append_calls));
+    add("partition_append_boxes",
+        static_cast<double>(stats.direct_partition_append_boxes));
+    add("assimilate_calls", static_cast<double>(stats.assimilate_calls));
+    add("assimilate_sample_scan_ms", stats.assimilate_sample_scan_ms);
+    add("assimilate_local_hits",
+        static_cast<double>(stats.assimilate_local_hits));
+    add("assimilate_full_scan_fallbacks",
+        static_cast<double>(stats.assimilate_full_scan_fallbacks));
+    add("assimilate_local_sample_tests",
+        static_cast<double>(stats.assimilate_local_sample_tests));
+    add("assimilate_candidate_build_ms", stats.assimilate_candidate_build_ms);
+    add("assimilate_adjacency_ms", stats.assimilate_adjacency_ms);
+    add("segment_insert_ms", stats.segment_insert_ms);
+    add("segment_insert_calls", static_cast<double>(stats.segment_insert_calls));
+    add("direct_task_build_ms", stats.direct_task_build_ms);
+    add("direct_loop_ms", stats.direct_loop_ms);
+    add("repair_loop_ms", stats.repair_loop_ms);
+    add("adaptive_loop_ms", stats.adaptive_loop_ms);
+    add("lateral_loop_ms", stats.lateral_loop_ms);
+    add("residual_segment_loop_ms", stats.residual_segment_loop_ms);
+
+    set_task("transition_connected_ms", stats.transition_connected_ms);
+    set_task("transition_connected_calls",
+             static_cast<double>(stats.transition_connected_calls));
+    set_task("bad_transitions_ms", stats.bad_transitions_ms);
+    set_task("bad_transitions_calls",
+             static_cast<double>(stats.bad_transitions_calls));
+    set_task("current_cover_ms", stats.current_cover_ms);
+    set_task("current_cover_calls", static_cast<double>(stats.current_cover_calls));
+    set_task("current_cover_partition_ms", stats.current_cover_partition_ms);
+    set_task("current_cover_corridor_scan_ms",
+             stats.current_cover_corridor_scan_ms);
+    set_task("current_cover_direct_index_ms", stats.current_cover_direct_index_ms);
+    set_task("duplicate_lookup_ms", stats.duplicate_lookup_ms);
+    set_task("duplicate_lookup_calls",
+             static_cast<double>(stats.duplicate_lookup_calls));
+    set_task("commit_total_ms", stats.commit_total_ms);
+    set_task("commit_calls", static_cast<double>(stats.commit_calls));
+    set_task("commit_dynamic_policy_ms", stats.commit_dynamic_policy_ms);
+    set_task("commit_partition_append_ms", stats.commit_partition_append_ms);
+    set_task("partition_append_calls",
+             static_cast<double>(stats.direct_partition_append_calls));
+    set_task("partition_append_boxes",
+             static_cast<double>(stats.direct_partition_append_boxes));
+    set_task("assimilate_calls", static_cast<double>(stats.assimilate_calls));
+    set_task("assimilate_sample_scan_ms", stats.assimilate_sample_scan_ms);
+    set_task("assimilate_local_hits",
+             static_cast<double>(stats.assimilate_local_hits));
+    set_task("assimilate_full_scan_fallbacks",
+             static_cast<double>(stats.assimilate_full_scan_fallbacks));
+    set_task("assimilate_local_sample_tests",
+             static_cast<double>(stats.assimilate_local_sample_tests));
+    set_task("assimilate_candidate_build_ms", stats.assimilate_candidate_build_ms);
+    set_task("assimilate_adjacency_ms", stats.assimilate_adjacency_ms);
+    set_task("segment_insert_ms", stats.segment_insert_ms);
+    set_task("segment_insert_calls", static_cast<double>(stats.segment_insert_calls));
+    set_task("direct_task_build_ms", stats.direct_task_build_ms);
+    set_task("assimilate_coverage_span_max",
+             static_cast<double>(stats.assimilate_coverage_span_max));
+    set_task("assimilate_coverage_span_mean",
+             stats.assimilate_coverage_boxes > 0
+                 ? stats.assimilate_coverage_span_sum /
+                       static_cast<double>(stats.assimilate_coverage_boxes)
+                 : 0.0);
+    set_task("direct_loop_ms", stats.direct_loop_ms);
+    set_task("repair_loop_ms", stats.repair_loop_ms);
+    set_task("adaptive_loop_ms", stats.adaptive_loop_ms);
+    set_task("lateral_loop_ms", stats.lateral_loop_ms);
+    set_task("residual_segment_loop_ms", stats.residual_segment_loop_ms);
 }
 
 std::vector<int> query_bridge_order_transitions_by_gap_length(
