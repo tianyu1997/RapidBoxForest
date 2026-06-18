@@ -127,7 +127,6 @@ add_library(sbf_core STATIC
     src/planning_forest_qroot_helpers.cpp
     src/planning_forest_qroot_growers.cpp
     src/planning_forest_query.cpp
-    src/planning_forest_query_bridge.cpp
     src/planning_forest_query_bridge_batch.cpp
     src/planning_forest_query_bridge_batch_options.cpp
     src/planning_forest_query_bridge_corridor_options.cpp
@@ -137,6 +136,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_batch_utils.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_pair.cpp
+    src/planning_forest_query_bridge_waypoint.cpp
     src/planning_forest_query_utils.cpp
     src/planning_forest_shortcut.cpp
     src/query.cpp

@@ -192,7 +192,7 @@ src/planning_forest_query_bridge_batch_utils.cpp
                                    query bridge batch task records and oracle
                                    counter aggregation, acceptance, and route
                                    scoring helpers
-src/planning_forest_query_bridge.cpp
+src/planning_forest_query_bridge_waypoint.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation
 src/planning_forest_query_bridge_corridor_utils.cpp
