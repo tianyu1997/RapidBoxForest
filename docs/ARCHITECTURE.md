@@ -133,6 +133,9 @@ src/adaptive_grid_partition.cpp    partition-native coverage/query data structur
 src/adaptive_grid_partition_geometry.cpp
                                    pure geometry, distance, interval, and grid
                                    utility routines used by the partition
+src/adaptive_grid_partition_overlay.cpp
+                                   overlay segment edges and overlay-aware
+                                   component queries for the partition
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
 src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
