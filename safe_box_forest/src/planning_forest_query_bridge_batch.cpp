@@ -1664,6 +1664,70 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             1.0);
         return false;
     };
+    auto finish_ready_waypoint_task =
+        [&](QueryBridgeSearchTask& task,
+            bool forced_task,
+            bool segment_only_task,
+            double best_length,
+            auto&& task_elapsed_ms) {
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "waypoint_length"),
+                best_length);
+            const auto second_probe_t0 = Clock::now();
+            if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
+                mark_batch_task_skipped_after_rrt(task,
+                                                  forced_task,
+                                                  second_probe_t0,
+                                                  task_elapsed_ms());
+                return;
+            }
+            batch_context.diagnostics().record_timing(
+                "query_bridge.batch_probe_ms_total",
+                elapsed_ms_since(second_probe_t0));
+            if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
+                                                       task)) {
+                task.hipac_candidate_path = task.waypoint_path;
+                try_hipac_online_sequence(task);
+                if (task.hipac_online_satisfied) {
+                    mark_hipac_after_rrt_skip(task, task_elapsed_ms());
+                    return;
+                }
+            }
+            const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
+            if (fast_direct_added > 0) {
+                added_by_query[task.index] += fast_direct_added;
+                batch_context.diagnostics().set_value(
+                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt"),
+                    1.0);
+                batch_context.diagnostics().set_value(
+                    query_bridge_task_key(task.index, "added"),
+                    static_cast<double>(added_by_query[task.index]));
+                batch_context.diagnostics().set_value(
+                    query_bridge_task_key(task.index, "total_ms"),
+                    task_elapsed_ms());
+                return;
+            }
+            if (segment_only_task) {
+                try_commit_segment_only_task(task);
+                batch_context.diagnostics().set_value(
+                    query_bridge_task_key(task.index, "total_ms"),
+                    task_elapsed_ms());
+                return;
+            }
+            const auto pave_t0 = Clock::now();
+            bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
+            const double pave_ms = elapsed_ms_since(pave_t0);
+            batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
+                                                      pave_ms);
+            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "pave_ms"),
+                                                  pave_ms);
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "added"),
+                static_cast<double>(added_by_query[task.index]));
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "total_ms"),
+                task_elapsed_ms());
+        };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1797,56 +1861,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
                 continue;
             }
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "waypoint_length"),
-                                                  best_length);
-            const auto second_probe_t0 = Clock::now();
-            if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
-                mark_batch_task_skipped_after_rrt(
-                    task,
-                    prepared[task_offset].forced,
-                    second_probe_t0,
-                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
-                continue;
-            }
-            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                      elapsed_ms_since(second_probe_t0));
-            if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
-                                                       task)) {
-                task.hipac_candidate_path = task.waypoint_path;
-                try_hipac_online_sequence(task);
-                if (task.hipac_online_satisfied) {
-                    mark_hipac_after_rrt_skip(
-                        task,
-                        elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
-                    continue;
-                }
-            }
-            const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
-            if (fast_direct_added > 0) {
-                added_by_query[task.index] += fast_direct_added;
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt"),
-                    1.0);
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "added"),
-                    static_cast<double>(added_by_query[task.index]));
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "total_ms"),
-                    elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
-                continue;
-            }
-            const auto pave_t0 = Clock::now();
-            bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
-            const double pave_ms = elapsed_ms_since(pave_t0);
-            batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
-                                                      pave_ms);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "pave_ms"),
-                                                  pave_ms);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "added"),
-                                                  static_cast<double>(added_by_query[task.index]));
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "total_ms"),
-                elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
+            finish_ready_waypoint_task(
+                task,
+                prepared[task_offset].forced,
+                false,
+                best_length,
+                [&]() {
+                    return elapsed_ms_since(batch_t0) -
+                           prepared[task_offset].task_start_ms;
+                });
         }
 
         batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
@@ -1936,56 +1959,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             mark_batch_task_no_path(task, elapsed_ms_since(task_t0));
             continue;
         }
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "waypoint_length"),
-                                              best_length);
-        const auto second_probe_t0 = Clock::now();
-        if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
-            mark_batch_task_skipped_after_rrt(task,
-                                              forced_task,
-                                              second_probe_t0,
-                                              elapsed_ms_since(task_t0));
-            continue;
-        }
-        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                  elapsed_ms_since(second_probe_t0));
-        if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
-                                                   task)) {
-            task.hipac_candidate_path = task.waypoint_path;
-            try_hipac_online_sequence(task);
-            if (task.hipac_online_satisfied) {
-                mark_hipac_after_rrt_skip(task, elapsed_ms_since(task_t0));
-                continue;
-            }
-        }
-        const int fast_direct_added = try_fast_direct_segment_after_rrt(task);
-        if (fast_direct_added > 0) {
-            added_by_query[task.index] += fast_direct_added;
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "fast_direct_segment_after_rrt"),
-                1.0);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "added"),
-                                                  static_cast<double>(added_by_query[task.index]));
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                                  elapsed_ms_since(task_t0));
-            continue;
-        }
-        if (segment_only_task) {
-            try_commit_segment_only_task(task);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                                  elapsed_ms_since(task_t0));
-            continue;
-        }
-        const auto pave_t0 = Clock::now();
-        bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
-        const double pave_ms = elapsed_ms_since(pave_t0);
-        batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
-                                                  pave_ms);
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "pave_ms"),
-                                              pave_ms);
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "added"),
-                                              static_cast<double>(added_by_query[task.index]));
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                              elapsed_ms_since(task_t0));
+        finish_ready_waypoint_task(task,
+                                   forced_task,
+                                   segment_only_task,
+                                   best_length,
+                                   [&]() { return elapsed_ms_since(task_t0); });
     }
 
     batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
