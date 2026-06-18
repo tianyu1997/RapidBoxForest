@@ -19,7 +19,6 @@
 #include <limits>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 namespace rbf {
@@ -793,21 +792,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_attempts");
 	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_attempt"),
 	                                              1.0);
-	        struct TransitionCandidate {
-	            int source_box_id = -1;
-	            int target_box_id = -1;
-	            int source_component = -1;
-	            int target_component = -1;
-	            int first_waypoint = 0;
-	            int last_waypoint = 0;
-	            Eigen::VectorXd source_point;
-	            Eigen::VectorXd target_point;
-	            std::vector<Eigen::VectorXd> local_path;
-	            double pair_distance = 0.0;
-	            double local_length = 0.0;
-	            int predicted_bridge_edges = 0;
-	            double score = -std::numeric_limits<double>::infinity();
-	        };
 	        const int stride =
 	            std::max(1, last_adaptive_partition_config_.hipac_transition_window_stride);
 	        const int candidate_limit =
@@ -820,130 +804,38 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            query_bridge_direct_corridor_runtime_options(
 	                task.query_index,
 	                config_.query.audit_segment_step).sample_step;
-	        std::unordered_map<int, int> component_by_box;
-	        const auto components = adaptive_partition_->component_box_ids_with_overlay();
-	        for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
-	            for (int box_id : components[component_index]) {
-	                component_by_box.emplace(box_id, static_cast<int>(component_index));
-	            }
-	        }
-
-	        std::vector<TransitionCandidate> candidates;
-	        candidates.reserve(static_cast<std::size_t>(candidate_limit));
-	        int gated = 0;
-	        int same_component_gated = 0;
-	        int distance_gated = 0;
-	        int edge_gated = 0;
-	        for (std::size_t begin = 0; begin + 1 < task.waypoint_path.size(); ++begin) {
-	            const std::size_t end =
-	                std::min(task.waypoint_path.size() - 1,
-	                         begin + static_cast<std::size_t>(stride));
-	            if (end <= begin) {
-	                continue;
-	            }
-	            const auto source_nearest =
-	                adaptive_partition_->nearest_boxes(task.waypoint_path[begin], {}, 1);
-	            const auto target_nearest =
-	                adaptive_partition_->nearest_boxes(task.waypoint_path[end], {}, 1);
-	            if (source_nearest.empty() || target_nearest.empty()) {
-	                ++gated;
-	                continue;
-	            }
-	            const auto& source = source_nearest.front();
-	            const auto& target = target_nearest.front();
-	            if (source.box_id < 0 || target.box_id < 0 ||
-	                source.box_id == target.box_id ||
-	                source.closest_point.size() == 0 ||
-	                target.closest_point.size() == 0 ||
-	                source.closest_point.size() != target.closest_point.size()) {
-	                ++gated;
-	                continue;
-	            }
-	            const int source_component =
-	                component_by_box.count(source.box_id) > 0 ? component_by_box[source.box_id] : -1;
-	            const int target_component =
-	                component_by_box.count(target.box_id) > 0 ? component_by_box[target.box_id] : -1;
-	            if (!last_adaptive_partition_config_.hipac_transition_allow_same_component &&
-	                source_component >= 0 &&
-	                source_component == target_component) {
-	                ++same_component_gated;
-	                continue;
-	            }
-	            const double pair_distance =
-	                (target.closest_point - source.closest_point).norm();
-	            if (max_pair_distance > 0.0 &&
-	                pair_distance > max_pair_distance + 1e-12) {
-	                ++distance_gated;
-	                continue;
-	            }
-	            double local_length = 0.0;
-	            for (std::size_t index = begin + 1; index <= end; ++index) {
-	                local_length += (task.waypoint_path[index] - task.waypoint_path[index - 1]).norm();
-	            }
-	            const int predicted_edges =
-	                static_cast<int>(std::ceil(local_length / sample_step));
-	            if (predicted_edges < min_predicted_edges) {
-	                ++edge_gated;
-	                continue;
-	            }
-	            TransitionCandidate candidate;
-	            candidate.source_box_id = source.box_id;
-	            candidate.target_box_id = target.box_id;
-	            candidate.source_component = source_component;
-	            candidate.target_component = target_component;
-	            candidate.first_waypoint = static_cast<int>(begin);
-	            candidate.last_waypoint = static_cast<int>(end);
-	            candidate.source_point = source.closest_point;
-	            candidate.target_point = target.closest_point;
-	            candidate.pair_distance = pair_distance;
-	            candidate.local_length = local_length;
-	            candidate.predicted_bridge_edges = predicted_edges;
-	            candidate.local_path.reserve(end - begin + 2);
-	            candidate.local_path.push_back(candidate.source_point);
-	            for (std::size_t index = begin + 1; index < end; ++index) {
-	                candidate.local_path.push_back(task.waypoint_path[index]);
-	            }
-	            candidate.local_path.push_back(candidate.target_point);
-	            candidate.score =
-	                static_cast<double>(predicted_edges) -
-	                0.25 * pair_distance -
-	                0.05 * static_cast<double>(std::abs(target_component - source_component));
-	            candidates.push_back(std::move(candidate));
-	        }
+	        const QueryBridgeHipacTransitionCandidateSet transition_candidates =
+	            query_bridge_select_hipac_transition_candidates(
+	                *adaptive_partition_,
+	                task.waypoint_path,
+	                stride,
+	                candidate_limit,
+	                min_predicted_edges,
+	                max_pair_distance,
+	                sample_step,
+	                last_adaptive_partition_config_.hipac_transition_allow_same_component);
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_candidates",
-	                                                static_cast<double>(candidates.size()));
+	                                                static_cast<double>(transition_candidates.candidates.size()));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated",
-	                                                static_cast<double>(gated + same_component_gated +
-	                                                                    distance_gated + edge_gated));
+	                                                static_cast<double>(transition_candidates.gated +
+	                                                                    transition_candidates.same_component_gated +
+	                                                                    transition_candidates.distance_gated +
+	                                                                    transition_candidates.edge_gated));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_same_component",
-	                                                static_cast<double>(same_component_gated));
+	                                                static_cast<double>(transition_candidates.same_component_gated));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_distance",
-	                                                static_cast<double>(distance_gated));
+	                                                static_cast<double>(transition_candidates.distance_gated));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_edges",
-	                                                static_cast<double>(edge_gated));
-	        if (candidates.empty()) {
+	                                                static_cast<double>(transition_candidates.edge_gated));
+	        if (transition_candidates.candidates.empty()) {
 	            return 0;
-	        }
-	        std::sort(candidates.begin(),
-	                  candidates.end(),
-	                  [](const TransitionCandidate& lhs, const TransitionCandidate& rhs) {
-	            if (std::abs(lhs.score - rhs.score) > 1e-12) {
-	                return lhs.score > rhs.score;
-	            }
-	            if (std::abs(lhs.local_length - rhs.local_length) > 1e-12) {
-	                return lhs.local_length > rhs.local_length;
-	            }
-	            return lhs.first_waypoint < rhs.first_waypoint;
-	        });
-	        if (static_cast<int>(candidates.size()) > candidate_limit) {
-	            candidates.resize(static_cast<std::size_t>(candidate_limit));
 	        }
 
 	        int total_added = 0;
 	        int attempts = 0;
 	        const int attempt_cap =
 	            std::max(1, last_adaptive_partition_config_.hipac_transition_max_attempts_per_query);
-	        for (const auto& candidate : candidates) {
+	        for (const auto& candidate : transition_candidates.candidates) {
 	            if (attempts >= attempt_cap ||
 	                task.hipac_transition_resolves_used >= attempt_cap) {
 	                break;

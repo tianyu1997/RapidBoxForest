@@ -11,6 +11,7 @@
 namespace rbf {
 
 struct AdaptiveGridPartitionComponentPair;
+class AdaptiveGridPartition;
 
 struct QueryBridgeAcceptanceThresholds {
     double max_segment_fraction = 0.25;
@@ -27,6 +28,30 @@ struct QueryBridgeHipacPrebridgeSelection {
     int start_component = -1;
     int goal_component = -1;
     double score = 0.0;
+};
+
+struct QueryBridgeHipacTransitionCandidate {
+    int source_box_id = -1;
+    int target_box_id = -1;
+    int source_component = -1;
+    int target_component = -1;
+    int first_waypoint = 0;
+    int last_waypoint = 0;
+    Eigen::VectorXd source_point;
+    Eigen::VectorXd target_point;
+    std::vector<Eigen::VectorXd> local_path;
+    double pair_distance = 0.0;
+    double local_length = 0.0;
+    int predicted_bridge_edges = 0;
+    double score = 0.0;
+};
+
+struct QueryBridgeHipacTransitionCandidateSet {
+    std::vector<QueryBridgeHipacTransitionCandidate> candidates;
+    int gated = 0;
+    int same_component_gated = 0;
+    int distance_gated = 0;
+    int edge_gated = 0;
 };
 
 struct QueryBridgePartitionPathFirstOptions {
@@ -226,6 +251,16 @@ QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
     double max_pair_distance,
     double route_weight,
     double pair_weight);
+
+QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
+    const AdaptiveGridPartition& partition,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    int stride,
+    int candidate_limit,
+    int min_predicted_edges,
+    double max_pair_distance,
+    double sample_step,
+    bool allow_same_component);
 
 std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
     const QueryBridgeSearchTask& task,

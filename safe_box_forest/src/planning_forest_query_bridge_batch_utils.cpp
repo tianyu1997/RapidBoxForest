@@ -230,6 +230,131 @@ QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
     return selection;
 }
 
+QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
+    const AdaptiveGridPartition& partition,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    int stride,
+    int candidate_limit,
+    int min_predicted_edges,
+    double max_pair_distance,
+    double sample_step,
+    bool allow_same_component) {
+    QueryBridgeHipacTransitionCandidateSet set;
+    if (waypoint_path.size() < 2) {
+        return set;
+    }
+
+    const auto components = partition.component_box_ids_with_overlay();
+    std::unordered_map<int, int> component_by_box;
+    for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
+        for (int box_id : components[component_index]) {
+            component_by_box.emplace(box_id, static_cast<int>(component_index));
+        }
+    }
+
+    const int effective_stride = std::max(1, stride);
+    const int effective_candidate_limit = std::max(1, candidate_limit);
+    const int effective_min_edges = std::max(0, min_predicted_edges);
+    const double effective_max_pair_distance = std::max(0.0, max_pair_distance);
+    const double effective_sample_step = std::max(1.0e-9, sample_step);
+
+    set.candidates.reserve(static_cast<std::size_t>(effective_candidate_limit));
+    for (std::size_t begin = 0; begin + 1 < waypoint_path.size(); ++begin) {
+        const std::size_t end =
+            std::min(waypoint_path.size() - 1,
+                     begin + static_cast<std::size_t>(effective_stride));
+        if (end <= begin) {
+            continue;
+        }
+        const auto source_nearest = partition.nearest_boxes(waypoint_path[begin], {}, 1);
+        const auto target_nearest = partition.nearest_boxes(waypoint_path[end], {}, 1);
+        if (source_nearest.empty() || target_nearest.empty()) {
+            ++set.gated;
+            continue;
+        }
+        const auto& source = source_nearest.front();
+        const auto& target = target_nearest.front();
+        if (source.box_id < 0 ||
+            target.box_id < 0 ||
+            source.box_id == target.box_id ||
+            source.closest_point.size() == 0 ||
+            target.closest_point.size() == 0 ||
+            source.closest_point.size() != target.closest_point.size()) {
+            ++set.gated;
+            continue;
+        }
+        const auto source_component_it = component_by_box.find(source.box_id);
+        const int source_component =
+            source_component_it == component_by_box.end() ? -1 : source_component_it->second;
+        const auto target_component_it = component_by_box.find(target.box_id);
+        const int target_component =
+            target_component_it == component_by_box.end() ? -1 : target_component_it->second;
+        if (!allow_same_component &&
+            source_component >= 0 &&
+            source_component == target_component) {
+            ++set.same_component_gated;
+            continue;
+        }
+        const double pair_distance = (target.closest_point - source.closest_point).norm();
+        if (effective_max_pair_distance > 0.0 &&
+            pair_distance > effective_max_pair_distance + 1e-12) {
+            ++set.distance_gated;
+            continue;
+        }
+        double local_length = 0.0;
+        for (std::size_t index = begin + 1; index <= end; ++index) {
+            local_length += (waypoint_path[index] - waypoint_path[index - 1]).norm();
+        }
+        const int predicted_edges =
+            static_cast<int>(std::ceil(local_length / effective_sample_step));
+        if (predicted_edges < effective_min_edges) {
+            ++set.edge_gated;
+            continue;
+        }
+
+        QueryBridgeHipacTransitionCandidate candidate;
+        candidate.source_box_id = source.box_id;
+        candidate.target_box_id = target.box_id;
+        candidate.source_component = source_component;
+        candidate.target_component = target_component;
+        candidate.first_waypoint = static_cast<int>(begin);
+        candidate.last_waypoint = static_cast<int>(end);
+        candidate.source_point = source.closest_point;
+        candidate.target_point = target.closest_point;
+        candidate.pair_distance = pair_distance;
+        candidate.local_length = local_length;
+        candidate.predicted_bridge_edges = predicted_edges;
+        candidate.local_path.reserve(end - begin + 2);
+        candidate.local_path.push_back(candidate.source_point);
+        for (std::size_t index = begin + 1; index < end; ++index) {
+            candidate.local_path.push_back(waypoint_path[index]);
+        }
+        candidate.local_path.push_back(candidate.target_point);
+        candidate.score =
+            static_cast<double>(predicted_edges) -
+            0.25 * pair_distance -
+            0.05 * static_cast<double>(std::abs(target_component - source_component));
+        set.candidates.push_back(std::move(candidate));
+    }
+
+    std::sort(set.candidates.begin(),
+              set.candidates.end(),
+              [](const QueryBridgeHipacTransitionCandidate& lhs,
+                 const QueryBridgeHipacTransitionCandidate& rhs) {
+        if (std::abs(lhs.score - rhs.score) > 1e-12) {
+            return lhs.score > rhs.score;
+        }
+        if (std::abs(lhs.local_length - rhs.local_length) > 1e-12) {
+            return lhs.local_length > rhs.local_length;
+        }
+        return lhs.first_waypoint < rhs.first_waypoint;
+    });
+    if (static_cast<int>(set.candidates.size()) > effective_candidate_limit) {
+        set.candidates.resize(static_cast<std::size_t>(effective_candidate_limit));
+    }
+    return set;
+}
+
 std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
     const QueryBridgeSearchTask& task,
     const Robot& audit_robot,
