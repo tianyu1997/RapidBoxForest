@@ -98,6 +98,7 @@ add_library(sbf_core STATIC
     src/grower_components.cpp
     src/grower_failure_cooling.cpp
     src/grower_frontier.cpp
+    src/grower_options.cpp
     src/grower_trace.cpp
     src/leaf_sweep_grower.cpp
     src/merger.cpp

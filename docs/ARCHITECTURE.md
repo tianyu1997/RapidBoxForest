@@ -127,6 +127,9 @@ src/grower_frontier.cpp            RRT grower frontier face selection, face
                                    memory, and seed tracing helpers
 src/grower_internal.h              grower-local shared commit, lookup, and
                                    diagnostics helpers
+src/grower_options.cpp             RRT grower depth-stage, component-connect
+                                   FFB option selection, and FFB/oracle
+                                   diagnostics helpers
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
