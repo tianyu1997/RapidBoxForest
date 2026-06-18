@@ -12,20 +12,14 @@
 #include "virtual_sparse_ffb.h"
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <memory>
-#include <optional>
-#include <queue>
-#include <random>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace rbf {
