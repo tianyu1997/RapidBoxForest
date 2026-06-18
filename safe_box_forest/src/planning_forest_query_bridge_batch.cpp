@@ -62,11 +62,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     const QueryBridgeAcceptanceThresholds bridge_acceptance =
         query_bridge_acceptance_thresholds_from_env();
-    auto query_result_good = [&](const QueryResult& current,
-                                 const Eigen::VectorXd& start,
-                                 const Eigen::VectorXd& goal) {
-        return query_bridge_result_acceptable(current, start, goal, bridge_acceptance);
-    };
     const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
     const QueryBridgePartitionPathFirstOptions partition_path_first_options =
         query_bridge_partition_path_first_options_from_env(partition_native_mode());
@@ -83,7 +78,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (!forced_task || partition_path_first_options.enabled) {
             initial_query = query(starts[index], goals[index]);
             has_initial_query = true;
-            if (!forced_task && query_result_good(initial_query, starts[index], goals[index])) {
+            if (!forced_task &&
+                query_bridge_result_acceptable(initial_query,
+                                               starts[index],
+                                               goals[index],
+                                               bridge_acceptance)) {
                 query_bridge_mark_task_skip(last_build_, index, 1.0, "initial_good");
                 continue;
             }
@@ -544,7 +543,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                              static_cast<double>(added));
 	        added_by_query[task.index] += added;
 	        const QueryResult probe_after_prebridge = query(task.start, task.goal);
-	        if (query_result_good(probe_after_prebridge, task.start, task.goal)) {
+	        if (query_bridge_result_acceptable(probe_after_prebridge,
+	                                           task.start,
+	                                           task.goal,
+	                                           bridge_acceptance)) {
 	            task.hipac_online_satisfied = true;
 	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_satisfied");
 	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_satisfied"),
@@ -652,7 +654,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                              static_cast<double>(added));
 	        added_by_query[task.index] += added;
 	        const QueryResult probe_after_hipac = query(task.start, task.goal);
-	        if (query_result_good(probe_after_hipac, task.start, task.goal)) {
+	        if (query_bridge_result_acceptable(probe_after_hipac,
+	                                           task.start,
+	                                           task.goal,
+	                                           bridge_acceptance)) {
 	            task.hipac_online_satisfied = true;
 	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_satisfied");
 	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_satisfied"),
@@ -769,7 +774,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                    query_bridge_task_key(task.index, "hipac_transition_probe_path_length"),
 	                    probe_after_transition.path_length);
 	            }
-	            if (query_result_good(probe_after_transition, task.start, task.goal)) {
+	            if (query_bridge_result_acceptable(probe_after_transition,
+	                                               task.start,
+	                                               task.goal,
+	                                               bridge_acceptance)) {
 	                task.hipac_online_satisfied = true;
 	                batch_context.diagnostics().add_counter("query_bridge.hipac_transition_satisfied");
 	                batch_context.diagnostics().set_value(query_bridge_task_key(task.index,
@@ -863,7 +871,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                      retry_options)) {
             return false;
         }
-        return query_result_good(query(task.start, task.goal), task.start, task.goal);
+        return query_bridge_result_acceptable(query(task.start, task.goal),
+                                              task.start,
+                                              task.goal,
+                                              bridge_acceptance);
     };
     auto run_task_attempt = [&](const QueryBridgeSearchTask& task,
                                 int attempt,
