@@ -658,6 +658,14 @@ private:
 											  bool skip_if_connected,
 											  int query_index = -1,
 											  BuildProfile* profile = nullptr);
+	int try_promote_query_repair_to_hipac(
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		int bridge_added,
+		int query_index,
+		int batch_task_index,
+		StageContext& context);
 	void reset_oracle(Scene scene);
 	void reserve_existing_boxes();
 	void rebuild_adjacency();

@@ -698,43 +698,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                              transition_ms);
 	        return total_added;
 	    };
-	    auto maybe_promote_query_repair = [&](const QueryBridgeSearchTask& task,
-	                                          int bridge_added) -> int {
-	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
-	            !last_adaptive_partition_config_.hipac_promote_query_repairs ||
-	            !partition_native_mode() ||
-	            bridge_added <= 0 ||
-	            task.waypoint_path.size() < 2) {
-	            return 0;
-	        }
-	        const auto promote_t0 = Clock::now();
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_promote_attempts");
-	        const int promoted = add_partition_portal_corridor_overlay(task.start,
-	                                                                   task.goal,
-	                                                                   task.waypoint_path,
-	                                                                   "query_bridge.hipac_promote",
-	                                                                   true,
-	                                                                   false,
-	                                                                   query_bridge_edge_query_index(scene_reusable_edges, task),
-	                                                                   &last_build_);
-	        const double promote_ms = elapsed_ms_since(promote_t0);
-	        batch_context.diagnostics().record_timing("query_bridge.hipac_promote_ms_total",
-	                                                  promote_ms);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_promote_ms_total",
-	                                                promote_ms);
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_promote_ms"),
-	                                              promote_ms);
-	        if (promoted > 0) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_promote_added",
-	                                                    static_cast<double>(promoted));
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_promote_added"),
-	                                                  static_cast<double>(promoted));
-	            added_by_query[task.index] += promoted;
-	        } else {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_promote_failures");
-	        }
-	        return promoted;
-	    };
     auto try_hipac_online_sequence = [&](QueryBridgeSearchTask& task) {
         try_hipac_online_bridge(task);
         if (!task.hipac_online_satisfied) {
@@ -1055,7 +1018,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                 task.query_index);
             total_added += bridge_added;
             added_accumulator += bridge_added;
-            maybe_promote_query_repair(task, bridge_added);
+            const int promoted = try_promote_query_repair_to_hipac(
+                task.start,
+                task.goal,
+                task.waypoint_path,
+                bridge_added,
+                query_bridge_edge_query_index(scene_reusable_edges, task),
+                static_cast<int>(task.index),
+                batch_context);
+            if (promoted > 0) {
+                added_by_query[task.index] += promoted;
+            }
             accumulate_query_bridge_direct_corridor_totals(last_build_,
                                                            batch_context,
                                                            task.index);
