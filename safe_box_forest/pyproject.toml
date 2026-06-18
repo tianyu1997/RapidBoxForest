@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sbf"
+version = "0.1.0"
+description = "Standalone SafeBoxForest package"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+	{ name = "Yu Tian", email = "ty1997@link.cuhk.edu.hk" },
+	{ name = "Hongliang Ren" },
+]
+classifiers = [
+	"Programming Language :: Python :: 3",
+	"Programming Language :: C++",
+	"License :: OSI Approved :: MIT License",
+	"Operating System :: POSIX :: Linux",
+]
+dependencies = [
+	"numpy>=1.24",
+]
+
+[project.urls]
+Repository = "https://github.com/tianyu1997/sbf-standalone"
+Issues = "https://github.com/tianyu1997/sbf-standalone/issues"
+Documentation = "https://github.com/tianyu1997/sbf-standalone/tree/main/docs"
+Paper = "https://github.com/tianyu1997/sbf-standalone/tree/main/doc/paper/tro_rewrite_2026"
+
+[tool.setuptools]
+package-dir = {"" = "python"}
+
+[tool.setuptools.packages.find]
+where = ["python"]
+
+[tool.setuptools.package-data]
+sbf = ["data/*.json"]

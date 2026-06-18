@@ -1,0 +1,79 @@
+#pragma once
+/// @file incremental_context.h
+/// @brief Stateful envelope computation with reusable source-local caches.
+
+#include <link_interval_envelope/endpoint.h>
+#include <link_interval_envelope/envelope.h>
+#include <link_interval_envelope/robot.h>
+#include <link_interval_envelope/types.h>
+
+#include <sbf/core/fk_state.h>
+
+#include <memory>
+#include <vector>
+
+namespace link_interval_envelope {
+
+struct IncrementalEnvelopeResult {
+    rbf::EndpointIAABBResult endpoint;
+    rbf::LinkEnvelope envelope;
+    double endpoint_time_us = 0.0;
+    double envelope_time_us = 0.0;
+    int changed_dim = -1;
+    bool used_incremental_fk = false;
+    bool used_source_incremental_state = false;
+    bool reused_fk = false;
+    bool reused_endpoint_cache = false;
+};
+
+/// Stateful context that keeps reusable source-local state: the previous
+/// v6-compatible rbf::FKState for sources that need it internally, reusable
+/// CritSample state, and AA-backed IFK/HIFK incremental state.
+///
+/// The FKState layout is intentionally the same as `cpp/v6/include/rbf/core/fk_state.h`
+/// in this repository snapshot. C++ callers can pass the exposed `fk_state()` to
+/// low-level functions that expect this standalone package's `rbf::FKState`.
+class IncrementalEnvelopeContext {
+public:
+    IncrementalEnvelopeContext(
+        rbf::Robot robot,
+        rbf::EndpointSourceConfig endpoint_config = {},
+        rbf::EnvelopeTypeConfig envelope_config = {});
+    ~IncrementalEnvelopeContext();
+
+    IncrementalEnvelopeContext(IncrementalEnvelopeContext&&) noexcept;
+    IncrementalEnvelopeContext& operator=(IncrementalEnvelopeContext&&) noexcept;
+
+    IncrementalEnvelopeContext(const IncrementalEnvelopeContext&) = delete;
+    IncrementalEnvelopeContext& operator=(const IncrementalEnvelopeContext&) = delete;
+
+    IncrementalEnvelopeResult compute(
+        const std::vector<rbf::Interval>& intervals,
+        int changed_dim = -1);
+
+    void reset();
+
+    const rbf::Robot& robot() const { return robot_; }
+    const rbf::EndpointSourceConfig& endpoint_config() const { return endpoint_config_; }
+    const rbf::EnvelopeTypeConfig& envelope_config() const { return envelope_config_; }
+    const rbf::FKState& fk_state() const { return fk_state_; }
+    rbf::FKState& fk_state() { return fk_state_; }
+    const std::vector<rbf::Interval>& last_intervals() const { return last_intervals_; }
+    bool has_valid_fk() const { return fk_state_.valid; }
+
+private:
+    rbf::Robot robot_;
+    rbf::EndpointSourceConfig endpoint_config_;
+    rbf::EnvelopeTypeConfig envelope_config_;
+    rbf::FKState fk_state_;
+    std::vector<rbf::Interval> last_intervals_;
+
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+    int infer_changed_dim(const std::vector<rbf::Interval>& intervals) const;
+    rbf::EndpointIAABBResult endpoint_from_current_fk() const;
+    rbf::EndpointIAABBResult endpoint_from_crit_cache() const;
+};
+
+}  // namespace link_interval_envelope

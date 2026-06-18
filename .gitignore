@@ -1,0 +1,95 @@
+# Build outputs
+build*/
+*/build*/
+cmake-build-*/
+*/cmake-build-*/
+CMakeFiles/
+*/CMakeFiles/
+CMakeCache.txt
+*/CMakeCache.txt
+cmake_install.cmake
+*/cmake_install.cmake
+CTestTestfile.cmake
+*/CTestTestfile.cmake
+Testing/
+*/Testing/
+_deps/
+*/_deps/
+
+# Compiled artifacts
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.o
+*.obj
+*.pyc
+__pycache__/
+
+# Generated metadata
+compile_commands.json
+.cache/
+.pytest_cache/
+/tmp/
+
+# LaTeX intermediate files
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.xdv
+*.out
+*.blg
+*.bcf
+*.run.xml
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
+
+# Local editor/system files
+.vscode/
+.idea/
+.DS_Store
+
+# Generated experiment outputs
+/outputs/
+**/outputs/
+.sbf_lect_database/
+**/.sbf_lect_database/
+
+# Local cache bundles and release scratch artifacts
+/*.tar.zst
+/*_support_hull.tar.gz
+/*_support_hull.tar.zst
+/cache_artifacts*.json
+/cache_directory_sha256.json
+_*
+rbf_v2/
+**/rbf_v2/
+
+# Local experiment result notes and scratch workspaces
+/improve_workspace/**/__pycache__/
+/improve_workspace/**/*.pyc
+/improve_workspace/figures/
+/improve_workspace/production_bridge/
+/improve_workspace/production_clect_ablation/
+/improve_workspace/*.csv
+/improve_workspace/*.json
+/improve_workspace/*.md
+!/improve_workspace/README.md
+!/improve_workspace/patch_proposals/
+!/improve_workspace/patch_proposals/*.md
+/docs/improve*.md
+/docs/exp*_status_*.md
+/docs/exp*_results_*.md
+/docs/exp*_result_*.md
+/docs/exp*_summary_*.md
+/docs/EXP*_STATUS_*.md
+/docs/EXP*_RESULTS_*.md
+/docs/EXP*_RESULT_*.md
+/docs/EXP*_SUMMARY_*.md

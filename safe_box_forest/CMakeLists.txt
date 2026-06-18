@@ -1,0 +1,193 @@
+cmake_minimum_required(VERSION 3.20)
+project(SafeBoxForest VERSION 0.1.0 LANGUAGES CXX)
+
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(SBF_BUILD_TESTS "Build SBF C++ tests" ON)
+option(SBF_BUILD_EXPERIMENTS "Build SBF lightweight experiment drivers" OFF)
+option(SBF_WITH_PYTHON "Build SBF Python extension" ON)
+option(SBF_INSTALL_CMAKE_PACKAGE "Install SBF CMake package export files" OFF)
+set(SBF_LECT_DATABASE_MODULE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../lect_database" CACHE PATH "Path to the sibling lect_database module")
+
+if(NOT EXISTS "${SBF_LECT_DATABASE_MODULE_DIR}/CMakeLists.txt"
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase/CMakeLists.txt")
+    set(SBF_LECT_DATABASE_MODULE_DIR
+        "${CMAKE_CURRENT_SOURCE_DIR}/../LECTDatabase"
+        CACHE PATH "Path to the sibling lect_database module" FORCE)
+endif()
+
+if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
+    find_package(LECTDatabase QUIET)
+endif()
+
+if(NOT TARGET LECTDatabase::core AND NOT TARGET lect_database_core)
+    if(EXISTS "${SBF_LECT_DATABASE_MODULE_DIR}/CMakeLists.txt")
+        set(LECTDB_BUILD_TESTS OFF CACHE BOOL "Disable LECTDatabase tests for nested SBF builds" FORCE)
+        set(LECTDB_BUILD_TOOLS OFF CACHE BOOL "Disable LECTDatabase tools for nested SBF builds" FORCE)
+        add_subdirectory("${SBF_LECT_DATABASE_MODULE_DIR}" "${CMAKE_BINARY_DIR}/lect_database")
+    else()
+        message(FATAL_ERROR "LECTDatabase::core was not found. Set SBF_LECT_DATABASE_MODULE_DIR to the sibling lect_database module.")
+    endif()
+endif()
+
+if(TARGET LECTDatabase::core)
+    set(SBF_LECTDB_CORE_TARGET LECTDatabase::core)
+else()
+    set(SBF_LECTDB_CORE_TARGET lect_database_core)
+endif()
+
+if(TARGET LECTDatabase::sbf_adapter)
+    set(SBF_LECTDB_ADAPTER_TARGET LECTDatabase::sbf_adapter)
+elseif(TARGET lect_database_sbf_adapter)
+    set(SBF_LECTDB_ADAPTER_TARGET lect_database_sbf_adapter)
+else()
+    set(SBF_LECTDB_ADAPTER_TARGET "")
+endif()
+
+if(TARGET LECTDatabase::online_cache)
+    set(SBF_LECTDB_CACHE_TARGET LECTDatabase::online_cache)
+else()
+    set(SBF_LECTDB_CACHE_TARGET lect_database_online_cache)
+endif()
+
+find_package(Threads REQUIRED)
+
+if(SBF_WITH_PYTHON)
+    include(FetchContent)
+    set(PYBIND11_FINDPYTHON ON CACHE BOOL "Use CMake FindPython for pybind11" FORCE)
+    find_package(Python3 COMPONENTS Interpreter Development.Module REQUIRED)
+    find_package(ompl REQUIRED HINTS /usr/share/ompl/cmake)
+    find_package(pybind11 2.12 QUIET)
+    if(NOT pybind11_FOUND)
+        if(FETCHCONTENT_FULLY_DISCONNECTED)
+            message(FATAL_ERROR
+                "pybind11 was not found and FetchContent is fully disconnected. "
+                "Install pybind11, set CMAKE_PREFIX_PATH, or configure with network access.")
+        endif()
+        FetchContent_Declare(
+            pybind11
+            GIT_REPOSITORY https://github.com/pybind/pybind11.git
+            GIT_TAG        v2.12.0
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(pybind11)
+    endif()
+endif()
+
+set(SBF_INCLUDE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include)
+set(SBF_LECTDB_INCLUDE_DIR ${SBF_LECT_DATABASE_MODULE_DIR}/include)
+
+add_library(sbf_core STATIC
+    src/adaptive_grid_partition.cpp
+    src/box_graph.cpp
+    src/connector.cpp
+    src/find_free_box.cpp
+    src/grower.cpp
+    src/leaf_sweep_grower.cpp
+    src/merger.cpp
+    src/query.cpp
+    src/runtime.cpp
+    src/safe_box_forest.cpp
+)
+add_library(SBF::core ALIAS sbf_core)
+set_target_properties(sbf_core PROPERTIES EXPORT_NAME core)
+
+target_include_directories(sbf_core PUBLIC
+    $<BUILD_INTERFACE:${SBF_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${SBF_LECTDB_INCLUDE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(sbf_core PUBLIC
+    $<BUILD_INTERFACE:${SBF_LECTDB_CORE_TARGET}>
+    Threads::Threads
+)
+
+if(SBF_LECTDB_ADAPTER_TARGET)
+    target_link_libraries(sbf_core PUBLIC ${SBF_LECTDB_ADAPTER_TARGET})
+endif()
+
+if(SBF_LECTDB_CACHE_TARGET)
+    target_link_libraries(sbf_core PUBLIC ${SBF_LECTDB_CACHE_TARGET})
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(sbf_core PRIVATE -Wall -Wextra -Wpedantic -O3)
+endif()
+
+if(SBF_WITH_PYTHON)
+    pybind11_add_module(_sbf_cpp python/bindings.cpp)
+    target_link_libraries(_sbf_cpp PRIVATE sbf_core ${OMPL_LIBRARIES})
+    target_include_directories(_sbf_cpp PRIVATE ${SBF_INCLUDE_DIR} ${OMPL_INCLUDE_DIRS})
+    set_target_properties(_sbf_cpp PROPERTIES
+        LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/sbf
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/sbf
+    )
+
+    add_custom_target(sbf_python_package ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CMAKE_CURRENT_SOURCE_DIR}/python/sbf
+                ${CMAKE_BINARY_DIR}/python/sbf
+        DEPENDS _sbf_cpp
+        COMMENT "Copying SBF Python package"
+    )
+endif()
+
+if(SBF_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
+
+if(SBF_BUILD_EXPERIMENTS)
+    add_executable(sbf_toy_bench experiments/toy_bench.cpp)
+    target_link_libraries(sbf_toy_bench PRIVATE sbf_core)
+    add_executable(tro2026_graph_equivalence_benchmark experiments/tro2026_graph_equivalence_benchmark.cpp)
+    target_link_libraries(tro2026_graph_equivalence_benchmark PRIVATE sbf_core)
+    if(SBF_BUILD_TESTS)
+        add_test(NAME sbf_toy_bench COMMAND sbf_toy_bench)
+        add_test(NAME tro2026_graph_equivalence_benchmark COMMAND tro2026_graph_equivalence_benchmark --nx 8 --ny 6 --nz 2)
+    endif()
+endif()
+
+set(SBF_INSTALL_EXPORT_ARGS)
+if(SBF_INSTALL_CMAKE_PACKAGE)
+    list(APPEND SBF_INSTALL_EXPORT_ARGS EXPORT SBFTargets)
+endif()
+
+install(TARGETS sbf_core
+    ${SBF_INSTALL_EXPORT_ARGS}
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+if(SBF_INSTALL_CMAKE_PACKAGE)
+    install(EXPORT SBFTargets
+        FILE SBFTargets.cmake
+        NAMESPACE SBF::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SBF
+    )
+
+    configure_package_config_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/SBFConfig.cmake.in
+        ${CMAKE_CURRENT_BINARY_DIR}/SBFConfig.cmake
+        INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SBF
+    )
+    write_basic_package_version_file(
+        ${CMAKE_CURRENT_BINARY_DIR}/SBFConfigVersion.cmake
+        VERSION ${PROJECT_VERSION}
+        COMPATIBILITY SameMajorVersion
+    )
+    install(FILES
+        ${CMAKE_CURRENT_BINARY_DIR}/SBFConfig.cmake
+        ${CMAKE_CURRENT_BINARY_DIR}/SBFConfigVersion.cmake
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/SBF
+    )
+endif()

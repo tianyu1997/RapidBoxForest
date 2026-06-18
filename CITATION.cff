@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use RapidBoxForest in research, please cite the software and the associated TRO manuscript."
+title: "RapidBoxForest"
+type: software
+authors:
+version: "v0.1.0"
+date-released: "2026-06-18"
+  - family-names: Tian
+    given-names: Yu
+    affiliation: The Chinese University of Hong Kong
+    email: ty1997@link.cuhk.edu.hk
+  - family-names: Ren
+    given-names: Hongliang
+    affiliation: The Chinese University of Hong Kong
+license: MIT
+repository-code: "https://github.com/tianyu1997/RapidBoxForest"
+url: "https://github.com/tianyu1997/RapidBoxForest"
+abstract: "RapidBoxForest is a reusable box-region motion-planning workspace with interval link envelopes, persistent LECT evidence, and SafeBoxForest planning experiments for repeated-query manipulator planning."
+keywords:
+  - robotics
+  - motion planning
+  - interval arithmetic
+  - collision checking
+  - reusable planning

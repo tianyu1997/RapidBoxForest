@@ -1,0 +1,16 @@
+name: rapidboxforest
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - cmake
+  - compilers
+  - make
+  - eigen
+  - nlohmann_json
+  - pybind11
+  - matplotlib
+  - numpy
+  - scipy
+  - tqdm
+  - pip
