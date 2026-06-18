@@ -156,14 +156,14 @@ finite-cover OBB-corridor unions (OBB: oriented bounding box); paths that are
 repaired, shortened, post-processed, or derived from \mbox{filter-only} evidence
 require independent query validation.
 Saved-catalog experiments use audit-separated timing and explicit cache
-accounting. On Shelf+IIWA, warm-cache depth-23 LECT replay has a 0.166~s median
-reusable-build time, with 0.130~s median \onlineq{} (per-query online time) and
-0.164~s median five-query amortized time; live hierarchical interval forward
-kinematics (\mbox{HIFK-5}) materialization takes 7.006~s. At the saved-catalog
-random-scene operating points, \rbf{} has lower median \onlineq{} than the
-Batch Informed Trees (BIT*) reference rows in all six robot--difficulty cases,
-while BIT* has lower, hence better, median audited path ratios than \rbf{} in
-the four UR5/Panda cases.
+accounting. On Shelf+IIWA, warm-cache depth-23 LECT replay gives a 0.166~s
+median reusable build, 0.130~s median \onlineq{} (per-query online time), and
+0.164~s median five-query amortized time; live \mbox{HIFK-5} (hierarchical
+interval forward kinematics) materialization takes 7.006~s. On random scenes,
+\mbox{RRT-Connect} has lower median \onlineq{} in five of six cases but higher
+audited path ratios in all six; \rbf{} has lower median \onlineq{} than
+BIT* (Batch Informed Trees) in all six, while BIT* has better ratios in the
+four UR5/Panda cases.
 In a maintenance-only scene-cache study, leaf-sweep insertions show a
 153.3--207.5$\times$ speedup and removals show a
 943.6--3354.0$\times$ speedup relative to a 15-obstacle warm scene-cache
