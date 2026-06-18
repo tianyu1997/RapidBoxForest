@@ -121,6 +121,8 @@ src/runtime.cpp                    runtime budget, deadline, and diagnostics hel
 src/find_free_box.cpp              seed-to-certified-box search service
 src/grower.cpp                     RRT-style forest grower implementation
 src/frontwave_grower.cpp           frontwave coverage grower implementation
+src/grower_failure_cooling.cpp     RRT grower failure-cooling and hard-frontier
+                                   stop-loss policy
 src/grower_internal.h              grower-local shared commit, lookup, and
                                    diagnostics helpers
 src/grower_trace.cpp               optional RRT grower JSON trace output

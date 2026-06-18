@@ -91,6 +91,7 @@ add_library(sbf_core STATIC
     src/find_free_box.cpp
     src/frontwave_grower.cpp
     src/grower.cpp
+    src/grower_failure_cooling.cpp
     src/grower_trace.cpp
     src/leaf_sweep_grower.cpp
     src/merger.cpp
