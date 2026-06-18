@@ -1358,6 +1358,40 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return total_added;
     };
+    auto mark_batch_task_already_satisfied = [&](const QueryBridgeSearchTask& task,
+                                                 Clock::time_point probe_t0) {
+        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
+        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                  elapsed_ms_since(probe_t0));
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped"),
+                                              1.0);
+        if (task.hipac_online_satisfied) {
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "skipped_by_hipac_online"),
+                1.0);
+        }
+        if (task.direct_start_goal_satisfied) {
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "skipped_by_direct_start_goal_segment"),
+                1.0);
+        }
+    };
+    auto mark_batch_task_skipped_after_rrt = [&](const QueryBridgeSearchTask& task,
+                                                 bool forced_task,
+                                                 Clock::time_point probe_t0,
+                                                 double total_ms) {
+        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+        if (forced_task) {
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_forced_tasks_skipped_after_rrt");
+        }
+        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
+                                                  elapsed_ms_since(probe_t0));
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped_after_rrt"),
+                                              1.0);
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
+                                              total_ms);
+    };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1388,21 +1422,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task.direct_start_goal_satisfied ||
                 current_query_good(task, true)) {
                 prepared[task_offset].skipped = true;
-                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
-                batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                          elapsed_ms_since(probe_t0));
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped"),
-                                                      1.0);
-                if (task.hipac_online_satisfied) {
-                    batch_context.diagnostics().set_value(
-                        query_bridge_task_key(task.index, "skipped_by_hipac_online"),
-                        1.0);
-                }
-                if (task.direct_start_goal_satisfied) {
-                    batch_context.diagnostics().set_value(
-                        query_bridge_task_key(task.index, "skipped_by_direct_start_goal_segment"),
-                        1.0);
-                }
+                mark_batch_task_already_satisfied(task, probe_t0);
                 continue;
             }
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
@@ -1547,17 +1567,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                   best_length);
             const auto second_probe_t0 = Clock::now();
             if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
-                batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
-                if (prepared[task_offset].forced) {
-                    batch_context.diagnostics().add_counter(
-                        "query_bridge.batch_forced_tasks_skipped_after_rrt");
-                }
-                batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                          elapsed_ms_since(second_probe_t0));
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped_after_rrt"),
-                                                      1.0);
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "total_ms"),
+                mark_batch_task_skipped_after_rrt(
+                    task,
+                    prepared[task_offset].forced,
+                    second_probe_t0,
                     elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
                 continue;
             }
@@ -1607,29 +1620,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return finish_batch_bridge();
     }
 
-	    for (auto& task : tasks) {
-	        const auto task_t0 = Clock::now();
-	        const auto probe_t0 = Clock::now();
-	        if (task.hipac_online_satisfied ||
-                task.direct_start_goal_satisfied ||
-                current_query_good(task, true)) {
-	            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
-	            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-	                                                      elapsed_ms_since(probe_t0));
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped"),
-	                                                  1.0);
-	            if (task.hipac_online_satisfied) {
-	                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped_by_hipac_online"),
-	                                                      1.0);
-	            }
-                if (task.direct_start_goal_satisfied) {
-                    batch_context.diagnostics().set_value(
-                        query_bridge_task_key(task.index, "skipped_by_direct_start_goal_segment"),
-                        1.0);
-                }
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-	                                                  elapsed_ms_since(task_t0));
-	            continue;
+    for (auto& task : tasks) {
+        const auto task_t0 = Clock::now();
+        const auto probe_t0 = Clock::now();
+        if (task.hipac_online_satisfied ||
+            task.direct_start_goal_satisfied ||
+            current_query_good(task, true)) {
+            mark_batch_task_already_satisfied(task, probe_t0);
+            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
+                                                  elapsed_ms_since(task_t0));
+            continue;
         }
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(probe_t0));
@@ -1879,17 +1879,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               best_length);
         const auto second_probe_t0 = Clock::now();
         if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
-            batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
-            if (forced_task) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.batch_forced_tasks_skipped_after_rrt");
-            }
-            batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                      elapsed_ms_since(second_probe_t0));
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped_after_rrt"),
-                                                  1.0);
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                                  elapsed_ms_since(task_t0));
+            mark_batch_task_skipped_after_rrt(task,
+                                              forced_task,
+                                              second_probe_t0,
+                                              elapsed_ms_since(task_t0));
             continue;
         }
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
