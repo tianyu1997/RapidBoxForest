@@ -79,34 +79,14 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     context.diagnostics().set_value("query_bridge.direct_start_goal_segment",
                                     direct_start_goal_segment ? 1.0 : 0.0);
     if (direct_start_goal_segment) {
-        std::vector<Eigen::VectorXd> direct_path{start, goal};
-        context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_attempts");
-        const PathAuditCheck audit =
-            audit_waypoint_path(direct_path,
-                                checker,
-                                config_.query.audit_resolution,
-                                config_.query.audit_segment_step);
-        if (audit.passed) {
-            const int edge_id = add_segment_edge_partition_first(
-                start_box_id,
-                goal_box_id,
-                direct_path,
-                SegmentEdgeType::QueryBridge,
-                config_.query.audit_resolution,
-                SegmentEdgeValidation::CollisionChecked,
-                true,
-                -1);
-            if (edge_id >= 0) {
-                context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_edges");
-                invalidate_query_cache();
-                sync_adaptive_partition_segment_edges(&last_build_,
-                                                       "query_bridge.direct_start_goal_segment");
-                refresh_adaptive_partition_diagnostics(&last_build_);
-                return 1;
-            }
-            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_add_fail");
-        } else {
-            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_audit_rejects");
+        const int added = try_add_query_direct_start_goal_segment_edge(start_box_id,
+                                                                       goal_box_id,
+                                                                       start,
+                                                                       goal,
+                                                                       context,
+                                                                       -1);
+        if (added > 0) {
+            return added;
         }
     }
     RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);

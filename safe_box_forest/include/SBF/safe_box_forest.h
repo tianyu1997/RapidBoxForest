@@ -583,6 +583,14 @@ private:
 													double audited_path_length,
 													int query_index,
 													bool enabled);
+	int try_add_query_direct_start_goal_segment_edge(
+		int source_box_id,
+		int target_box_id,
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		StageContext& context,
+		int query_index,
+		int batch_task_index = -1);
 	int try_add_query_residual_segment_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,

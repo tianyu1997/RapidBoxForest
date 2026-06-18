@@ -4,6 +4,7 @@
 
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
+#include "planning_forest_query_bridge_batch_utils.h"
 
 #include <algorithm>
 #include <string>
@@ -102,6 +103,66 @@ int RBFPlanningForest::try_add_query_direct_segment_after_rrt_edge(
     context.diagnostics().add_counter(
         "query_bridge.direct_segment_after_rrt_add_fail");
     return 0;
+}
+
+int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
+    int source_box_id,
+    int target_box_id,
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    StageContext& context,
+    int query_index,
+    int batch_task_index) {
+    const auto add_task_counter = [&](const std::string& suffix) {
+        if (batch_task_index >= 0) {
+            context.diagnostics().add_counter(
+                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix));
+        }
+    };
+    if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_start_goal_segment_missing_endpoint");
+        return 0;
+    }
+    std::vector<Eigen::VectorXd> direct_path{start, goal};
+    context.diagnostics().add_counter(
+        "query_bridge.direct_start_goal_segment_attempts");
+    add_task_counter("direct_start_goal_segment_attempts");
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    const PathAuditCheck audit =
+        audit_waypoint_path(direct_path,
+                            checker,
+                            config_.query.audit_resolution,
+                            config_.query.audit_segment_step);
+    if (!audit.passed) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_start_goal_segment_audit_rejects");
+        add_task_counter("direct_start_goal_segment_audit_rejects");
+        return 0;
+    }
+    const int edge_id = add_segment_edge_partition_first(
+        source_box_id,
+        target_box_id,
+        direct_path,
+        SegmentEdgeType::QueryBridge,
+        config_.query.audit_resolution,
+        SegmentEdgeValidation::CollisionChecked,
+        true,
+        query_index);
+    if (edge_id < 0) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_start_goal_segment_add_fail");
+        add_task_counter("direct_start_goal_segment_add_fail");
+        return 0;
+    }
+    context.diagnostics().add_counter(
+        "query_bridge.direct_start_goal_segment_edges");
+    add_task_counter("direct_start_goal_segment_edges");
+    invalidate_query_cache();
+    sync_adaptive_partition_segment_edges(&last_build_,
+                                          "query_bridge.direct_start_goal_segment");
+    refresh_adaptive_partition_diagnostics(&last_build_);
+    return 1;
 }
 
 int RBFPlanningForest::try_add_query_residual_segment_edge(

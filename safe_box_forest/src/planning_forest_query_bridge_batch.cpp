@@ -240,50 +240,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 "query_bridge.direct_start_goal_segment_missing_endpoint");
             return 0;
         }
-        std::vector<Eigen::VectorXd> direct_path{task.start, task.goal};
-        batch_context.diagnostics().add_counter(
-            "query_bridge.direct_start_goal_segment_attempts");
-        batch_context.diagnostics().add_counter(
-            query_bridge_task_key(task.index, "direct_start_goal_segment_attempts"));
-        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-        const PathAuditCheck audit =
-            audit_waypoint_path(direct_path,
-                                checker,
-                                config_.query.audit_resolution,
-                                config_.query.audit_segment_step);
-        if (!audit.passed) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.direct_start_goal_segment_audit_rejects");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "direct_start_goal_segment_audit_rejects"));
-            return 0;
-        }
-        const int edge_id = add_segment_edge_partition_first(
+        const int added = try_add_query_direct_start_goal_segment_edge(
             source_box_id,
             target_box_id,
-            direct_path,
-            SegmentEdgeType::QueryBridge,
-            config_.query.audit_resolution,
-            SegmentEdgeValidation::CollisionChecked,
-            true,
-            query_bridge_edge_query_index(scene_reusable_edges, task));
-        if (edge_id < 0) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.direct_start_goal_segment_add_fail");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "direct_start_goal_segment_add_fail"));
-            return 0;
-        }
-        task.direct_start_goal_satisfied = true;
-        batch_context.diagnostics().add_counter(
-            "query_bridge.direct_start_goal_segment_edges");
-        batch_context.diagnostics().add_counter(
-            query_bridge_task_key(task.index, "direct_start_goal_segment_edges"));
-        invalidate_query_cache();
-        sync_adaptive_partition_segment_edges(&last_build_,
-                                               "query_bridge.direct_start_goal_segment");
-        refresh_adaptive_partition_diagnostics(&last_build_);
-        return 1;
+            task.start,
+            task.goal,
+            batch_context,
+            query_bridge_edge_query_index(scene_reusable_edges, task),
+            static_cast<int>(task.index));
+        task.direct_start_goal_satisfied = added > 0;
+        return added;
     };
     auto try_fast_direct_segment_after_rrt = [&](QueryBridgeSearchTask& task) -> int {
         if (!fast_direct_segment_after_rrt || task.waypoint_path.empty()) {
