@@ -163,6 +163,14 @@ void record_query_bridge_direct_line_fallback_diagnostics(
     StageContext& context,
     const QueryBridgeDirectLineFallbackOptions& options);
 
+std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(
+    const QueryBridgeSearchTask& task,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const QueryConfig& query_config,
+    const QueryBridgeDirectLineFallbackOptions& options,
+    StageContext& context);
+
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
 
 QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env();
@@ -196,6 +204,16 @@ double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
 double query_bridge_point_polyline_distance_sq(
     const Eigen::VectorXd& point,
     const std::vector<Eigen::VectorXd>& path);
+
+std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
+    const QueryBridgeSearchTask& task,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const QueryConfig& query_config,
+    const std::vector<Interval>& planning_domain,
+    const QueryBridgeDetourOptions& options,
+    int rng_seed_base,
+    StageContext& context);
 
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,

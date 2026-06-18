@@ -1230,238 +1230,25 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         query_bridge_direct_line_fallback_options_from_env();
     record_query_bridge_direct_line_fallback_diagnostics(batch_context, direct_line_options);
     auto direct_line_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        if (!direct_line_options.enabled) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        batch_context.diagnostics().add_counter(
-            "query_bridge.direct_line_on_no_path_attempts");
-        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-        std::vector<Eigen::VectorXd> path{task.start, task.goal};
-        const PathAuditCheck audit =
-            audit_waypoint_path(path,
-                                checker,
-                                config_.query.audit_resolution,
-                                config_.query.audit_segment_step);
-        if (!audit.passed) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.direct_line_on_no_path_rejects");
-            return std::vector<Eigen::VectorXd>{};
-        }
-        batch_context.diagnostics().add_counter(
-            "query_bridge.direct_line_on_no_path_successes");
-        return path;
+        return query_bridge_direct_line_fallback_path(task,
+                                                      audit_robot_,
+                                                      scene_,
+                                                      config_.query,
+                                                      direct_line_options,
+                                                      batch_context);
     };
     const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
     record_query_bridge_detour_diagnostics(batch_context, detour_options);
+    const auto detour_planning_domain = oracle_->planning_intervals();
     auto deterministic_detour_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        if (!detour_options.enabled ||
-            task.start.size() != task.goal.size() ||
-            task.start.size() <= 0) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        const auto domain = oracle_->planning_intervals();
-        if (static_cast<int>(domain.size()) != task.start.size()) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-        const Eigen::VectorXd delta = task.goal - task.start;
-        const double direct_length = delta.norm();
-        if (direct_length <= 1e-9) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        std::vector<int> dims(static_cast<std::size_t>(task.start.size()));
-        std::iota(dims.begin(), dims.end(), 0);
-        std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
-            const double lhs_width = std::max(1e-9, domain[static_cast<std::size_t>(lhs)].width());
-            const double rhs_width = std::max(1e-9, domain[static_cast<std::size_t>(rhs)].width());
-            const double lhs_along = std::abs(delta[lhs]) / lhs_width;
-            const double rhs_along = std::abs(delta[rhs]) / rhs_width;
-            if (std::abs(lhs_along - rhs_along) > 1e-12) {
-                return lhs_along < rhs_along;
-            }
-            return lhs < rhs;
-        });
-        const int dim_limit = std::min<int>(detour_options.dims,
-                                            static_cast<int>(dims.size()));
-        const int rounds = detour_options.rounds;
-        const int max_candidates = detour_options.max_candidates;
-        const bool multi_axis_detour = detour_options.multi_axis;
-        const int random_candidates = detour_options.random_candidates;
-        const double base_offset = detour_options.offset;
-        const double two_bend_alpha = detour_options.two_bend_alpha;
-        const Eigen::VectorXd mid = 0.5 * (task.start + task.goal);
-        double best_length = std::numeric_limits<double>::infinity();
-        std::vector<Eigen::VectorXd> best_path;
-        int candidates = 0;
-        auto clamp_to_domain = [&](Eigen::VectorXd point) {
-            for (int dim = 0; dim < point.size(); ++dim) {
-                point[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
-                                      std::max(domain[static_cast<std::size_t>(dim)].lo,
-                                               point[dim]));
-            }
-            return point;
-        };
-        auto try_path = [&](std::vector<Eigen::VectorXd> path) {
-            if (candidates >= max_candidates) {
-                return;
-            }
-            ++candidates;
-            batch_context.diagnostics().add_counter(
-                "query_bridge.detour_on_no_path_candidates");
-            double length = path_length(path);
-            if (!std::isfinite(length) || length + 1e-12 >= best_length) {
-                return;
-            }
-            const PathAuditCheck audit =
-                audit_waypoint_path(path,
-                                    checker,
-                                    config_.query.audit_resolution,
-                                    config_.query.audit_segment_step);
-            if (!audit.passed) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.detour_on_no_path_rejects");
-                return;
-            }
-            best_length = length;
-            best_path = std::move(path);
-        };
-        for (int item = 0; item < dim_limit && candidates < max_candidates; ++item) {
-            const int dim = dims[static_cast<std::size_t>(item)];
-            const double width = domain[static_cast<std::size_t>(dim)].width();
-            for (int round = 1; round <= rounds && candidates < max_candidates; ++round) {
-                const double magnitude = std::min(0.45 * std::max(0.0, width),
-                                                  base_offset * static_cast<double>(round));
-                if (magnitude <= 1e-9) {
-                    continue;
-                }
-                for (double sign : {1.0, -1.0}) {
-                    Eigen::VectorXd single = mid;
-                    single[dim] += sign * magnitude;
-                    single = clamp_to_domain(std::move(single));
-                    if ((single - mid).norm() > 1e-9) {
-                        try_path({task.start, single, task.goal});
-                    }
-                    if (candidates >= max_candidates) {
-                        break;
-                    }
-                    Eigen::VectorXd first = task.start + two_bend_alpha * delta;
-                    Eigen::VectorXd second = task.start + (1.0 - two_bend_alpha) * delta;
-                    first[dim] += sign * magnitude;
-                    second[dim] += sign * magnitude;
-                    first = clamp_to_domain(std::move(first));
-                    second = clamp_to_domain(std::move(second));
-                    if ((first - (task.start + two_bend_alpha * delta)).norm() > 1e-9 ||
-                        (second - (task.start + (1.0 - two_bend_alpha) * delta)).norm() > 1e-9) {
-                        try_path({task.start, first, second, task.goal});
-                    }
-                    if (candidates >= max_candidates) {
-                        break;
-                    }
-                }
-            }
-        }
-        if (multi_axis_detour && dim_limit >= 2) {
-            for (int first_item = 0; first_item < dim_limit && candidates < max_candidates; ++first_item) {
-                const int first_dim = dims[static_cast<std::size_t>(first_item)];
-                const double first_width = domain[static_cast<std::size_t>(first_dim)].width();
-                for (int second_item = first_item + 1;
-                     second_item < dim_limit && candidates < max_candidates;
-                     ++second_item) {
-                    const int second_dim = dims[static_cast<std::size_t>(second_item)];
-                    const double second_width = domain[static_cast<std::size_t>(second_dim)].width();
-                    for (int round = 1; round <= rounds && candidates < max_candidates; ++round) {
-                        const double first_mag = std::min(0.35 * std::max(0.0, first_width),
-                                                          base_offset * static_cast<double>(round));
-                        const double second_mag = std::min(0.35 * std::max(0.0, second_width),
-                                                           base_offset * static_cast<double>(round));
-                        if (first_mag <= 1e-9 || second_mag <= 1e-9) {
-                            continue;
-                        }
-                        for (double first_sign : {1.0, -1.0}) {
-                            for (double second_sign : {1.0, -1.0}) {
-                                Eigen::VectorXd single = mid;
-                                single[first_dim] += first_sign * first_mag;
-                                single[second_dim] += second_sign * second_mag;
-                                single = clamp_to_domain(std::move(single));
-                                if ((single - mid).norm() > 1e-9) {
-                                    try_path({task.start, single, task.goal});
-                                }
-                                if (candidates >= max_candidates) {
-                                    break;
-                                }
-                                Eigen::VectorXd first = task.start + two_bend_alpha * delta;
-                                Eigen::VectorXd second = task.start + (1.0 - two_bend_alpha) * delta;
-                                first[first_dim] += first_sign * first_mag;
-                                first[second_dim] += second_sign * second_mag;
-                                second[first_dim] += first_sign * first_mag;
-                                second[second_dim] += second_sign * second_mag;
-                                first = clamp_to_domain(std::move(first));
-                                second = clamp_to_domain(std::move(second));
-                                try_path({task.start, first, second, task.goal});
-                                if (candidates >= max_candidates) {
-                                    break;
-                                }
-                            }
-                            if (candidates >= max_candidates) {
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if (random_candidates > 0 && dim_limit > 0 && candidates < max_candidates) {
-            const int random_budget = std::min(random_candidates, max_candidates - candidates);
-            std::mt19937 rng(static_cast<std::uint32_t>(
-                derived_planner_seed(config_.grower.rng_seed,
-                                     kSeedBatchBridgeOffset,
-                                     task.index,
-                                     task.query_index,
-                                     41443)));
-            std::uniform_int_distribution<int> dim_pick(0, dim_limit - 1);
-            std::uniform_real_distribution<double> unit(-1.0, 1.0);
-            const double max_scale = std::max(1.0, static_cast<double>(rounds));
-            for (int sample = 0; sample < random_budget && candidates < max_candidates; ++sample) {
-                const int first_dim = dims[static_cast<std::size_t>(dim_pick(rng))];
-                int second_dim = first_dim;
-                if (dim_limit > 1) {
-                    for (int guard = 0; guard < 4 && second_dim == first_dim; ++guard) {
-                        second_dim = dims[static_cast<std::size_t>(dim_pick(rng))];
-                    }
-                }
-                Eigen::VectorXd offset = Eigen::VectorXd::Zero(task.start.size());
-                auto apply_random_dim = [&](int dim) {
-                    const double width = domain[static_cast<std::size_t>(dim)].width();
-                    const double limit = std::min(0.35 * std::max(0.0, width),
-                                                  base_offset * max_scale);
-                    if (limit > 1e-9) {
-                        offset[dim] += unit(rng) * limit;
-                    }
-                };
-                apply_random_dim(first_dim);
-                if (second_dim != first_dim) {
-                    apply_random_dim(second_dim);
-                }
-                if (offset.norm() <= 1e-9) {
-                    continue;
-                }
-                if ((sample & 1) == 0) {
-                    Eigen::VectorXd single = clamp_to_domain(mid + offset);
-                    try_path({task.start, single, task.goal});
-                } else {
-                    Eigen::VectorXd first = clamp_to_domain(task.start + two_bend_alpha * delta + offset);
-                    Eigen::VectorXd second = clamp_to_domain(task.start + (1.0 - two_bend_alpha) * delta + offset);
-                    try_path({task.start, first, second, task.goal});
-                }
-            }
-        }
-        batch_context.diagnostics().add_counter(
-            "query_bridge.detour_on_no_path_attempts");
-        if (!best_path.empty()) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.detour_on_no_path_successes");
-        }
-        return best_path;
+        return query_bridge_deterministic_detour_fallback_path(task,
+                                                              audit_robot_,
+                                                              scene_,
+                                                              config_.query,
+                                                              detour_planning_domain,
+                                                              detour_options,
+                                                              config_.grower.rng_seed,
+                                                              batch_context);
     };
     auto maybe_apply_detour_path = [&](const QueryBridgeSearchTask& task,
                                        double& best_length,
