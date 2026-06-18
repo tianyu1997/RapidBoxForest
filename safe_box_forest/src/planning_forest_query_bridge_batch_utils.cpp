@@ -7,9 +7,11 @@
 #include <SBF/box_graph.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <string>
@@ -220,6 +222,51 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
                      static_cast<int>(options.local_radius_schedule.size()) + 1);
     }
     return plan;
+}
+
+std::shared_ptr<std::atomic<bool>> query_bridge_parallel_rrt_cancel_flag(
+    const QueryBridgeParallelRrtOptions& options,
+    const std::shared_ptr<std::atomic<bool>>& fallback_cancel) {
+    return options.early_stop
+        ? std::make_shared<std::atomic<bool>>(false)
+        : fallback_cancel;
+}
+
+bool query_bridge_parallel_rrt_cancelled(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+    return cancel_flag && cancel_flag->load(std::memory_order_relaxed);
+}
+
+void query_bridge_maybe_stop_parallel_rrt_after_success(
+    bool path_good_enough,
+    const QueryBridgeParallelRrtOptions& options,
+    std::atomic<int>& early_successes,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+    if (!options.early_stop || !path_good_enough) {
+        return;
+    }
+    const int successes =
+        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
+    if (successes >= options.early_stop_min_successes && cancel_flag) {
+        cancel_flag->store(true, std::memory_order_relaxed);
+    }
+}
+
+void record_query_bridge_parallel_rrt_early_stop(
+    StageContext& context,
+    const QueryBridgeParallelRrtOptions& options,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::atomic<int>& early_successes) {
+    if (!options.early_stop) {
+        return;
+    }
+    context.diagnostics().add_counter(
+        "query_bridge.parallel_rrt_early_stop_successes",
+        static_cast<double>(early_successes.load(std::memory_order_relaxed)));
+    context.diagnostics().add_counter(
+        query_bridge_parallel_rrt_cancelled(cancel_flag)
+            ? "query_bridge.parallel_rrt_early_stop_triggered"
+            : "query_bridge.parallel_rrt_early_stop_not_triggered");
 }
 
 std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(

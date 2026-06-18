@@ -5,6 +5,8 @@
 
 #include <Eigen/Core>
 
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -250,6 +252,25 @@ bool query_bridge_parallel_rrt_path_good_enough(const Eigen::VectorXd& start,
                                                 const Eigen::VectorXd& goal,
                                                 const std::vector<Eigen::VectorXd>& path,
                                                 const QueryBridgeParallelRrtOptions& options);
+
+std::shared_ptr<std::atomic<bool>> query_bridge_parallel_rrt_cancel_flag(
+    const QueryBridgeParallelRrtOptions& options,
+    const std::shared_ptr<std::atomic<bool>>& fallback_cancel);
+
+bool query_bridge_parallel_rrt_cancelled(
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag);
+
+void query_bridge_maybe_stop_parallel_rrt_after_success(
+    bool path_good_enough,
+    const QueryBridgeParallelRrtOptions& options,
+    std::atomic<int>& early_successes,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag);
+
+void record_query_bridge_parallel_rrt_early_stop(
+    StageContext& context,
+    const QueryBridgeParallelRrtOptions& options,
+    const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+    const std::atomic<int>& early_successes);
 
 QueryBridgeDetourOptions query_bridge_detour_options_from_env();
 
