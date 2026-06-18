@@ -88,4 +88,11 @@ std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
     std::size_t layer_count,
     bool group_residual_gaps);
 
+std::vector<QueryBridgeResidualMilestone> query_bridge_compact_residual_milestones(
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<std::vector<int>>& sample_layers,
+    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
+    int box_count,
+    QueryBridgeLocalDsu& dsu);
+
 }  // namespace rbf

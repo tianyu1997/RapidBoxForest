@@ -361,4 +361,50 @@ std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
     return gap_groups;
 }
 
+std::vector<QueryBridgeResidualMilestone> query_bridge_compact_residual_milestones(
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<std::vector<int>>& sample_layers,
+    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
+    int box_count,
+    QueryBridgeLocalDsu& dsu) {
+    std::vector<QueryBridgeResidualMilestone> milestones;
+    milestones.reserve(samples.size() + repair_milestones.size());
+    for (std::size_t sample_index = 0; sample_index < sample_layers.size(); ++sample_index) {
+        const auto& layer = sample_layers[sample_index];
+        if (!layer.empty()) {
+            milestones.push_back({static_cast<double>(sample_index),
+                                  samples[sample_index],
+                                  layer.front()});
+        }
+    }
+    for (const auto& milestone : repair_milestones) {
+        if (milestone.box_index >= 0 && milestone.box_index < box_count) {
+            milestones.push_back(milestone);
+        }
+    }
+    std::stable_sort(milestones.begin(),
+                     milestones.end(),
+                     [](const QueryBridgeResidualMilestone& lhs,
+                        const QueryBridgeResidualMilestone& rhs) {
+                         if (std::abs(lhs.param - rhs.param) > 1e-9) {
+                             return lhs.param < rhs.param;
+                         }
+                         return lhs.box_index < rhs.box_index;
+                     });
+    std::vector<QueryBridgeResidualMilestone> compact;
+    compact.reserve(milestones.size());
+    for (const auto& milestone : milestones) {
+        if (milestone.box_index < 0) {
+            continue;
+        }
+        if (!compact.empty() &&
+            std::abs(compact.back().param - milestone.param) <= 1e-9 &&
+            dsu.find(compact.back().box_index) == dsu.find(milestone.box_index)) {
+            continue;
+        }
+        compact.push_back(milestone);
+    }
+    return compact;
+}
+
 }  // namespace rbf

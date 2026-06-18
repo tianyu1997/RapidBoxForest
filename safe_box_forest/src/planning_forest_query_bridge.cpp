@@ -1890,45 +1890,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 return false;
             };
             if (residual_milestone_segments) {
-                std::vector<QueryBridgeResidualMilestone> milestones;
-                milestones.reserve(samples.size() + repair_milestones.size());
-                for (std::size_t sample_index = 0; sample_index < sample_layers.size(); ++sample_index) {
-                    const auto& layer = sample_layers[sample_index];
-                    if (!layer.empty()) {
-                        milestones.push_back(
-                            {static_cast<double>(sample_index),
-                             samples[sample_index],
-                             layer.front()});
-                    }
-                }
-                for (const auto& milestone : repair_milestones) {
-                    if (milestone.box_index >= 0 &&
-                        milestone.box_index < static_cast<int>(boxes_.size())) {
-                        milestones.push_back(milestone);
-                    }
-                }
-                std::stable_sort(milestones.begin(),
-                                 milestones.end(),
-                                 [](const QueryBridgeResidualMilestone& lhs,
-                                    const QueryBridgeResidualMilestone& rhs) {
-                                     if (std::abs(lhs.param - rhs.param) > 1e-9) {
-                                         return lhs.param < rhs.param;
-                                     }
-                                     return lhs.box_index < rhs.box_index;
-                                 });
-                std::vector<QueryBridgeResidualMilestone> compact;
-                compact.reserve(milestones.size());
-                for (const auto& milestone : milestones) {
-                    if (milestone.box_index < 0) {
-                        continue;
-                    }
-                    if (!compact.empty() &&
-                        std::abs(compact.back().param - milestone.param) <= 1e-9 &&
-                        dsu.find(compact.back().box_index) == dsu.find(milestone.box_index)) {
-                        continue;
-                    }
-                    compact.push_back(milestone);
-                }
+                const std::vector<QueryBridgeResidualMilestone> compact =
+                    query_bridge_compact_residual_milestones(samples,
+                                                             sample_layers,
+                                                             repair_milestones,
+                                                             static_cast<int>(boxes_.size()),
+                                                             dsu);
                 context.diagnostics().set_value(
                     "query_bridge.direct_corridor_residual_milestones",
                     static_cast<double>(compact.size()));
@@ -1947,41 +1914,41 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                             sample_gap);
                 }
             } else {
-            while (!pending_gap_groups.empty()) {
-                const auto gap_group = pending_gap_groups.back();
-                pending_gap_groups.pop_back();
-                const int lhs_sample =
-                    query_bridge_nearest_nonempty_layer(sample_layers, gap_group.first, -1);
-                const int rhs_sample =
-                    query_bridge_nearest_nonempty_layer(sample_layers, gap_group.second + 1, 1);
-                if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
-                    continue;
-                }
-                const auto& lhs_layer = sample_layers[static_cast<std::size_t>(lhs_sample)];
-                const auto& rhs_layer = sample_layers[static_cast<std::size_t>(rhs_sample)];
-                if (lhs_layer.empty() || rhs_layer.empty()) {
-                    continue;
-                }
-                const int lhs_index = lhs_layer.front();
-                const int rhs_index = rhs_layer.front();
-                const auto lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
-                const auto rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
-                const bool inserted = insert_residual_segment(lhs_index,
-                                                              rhs_index,
-                                                              lhs_point,
-                                                              rhs_point,
-                                                              rhs_sample - lhs_sample);
-                if (!inserted) {
-                    if (group_residual_gaps && gap_group.first < gap_group.second) {
-                        const int mid = (gap_group.first + gap_group.second) / 2;
-                        pending_gap_groups.emplace_back(mid + 1, gap_group.second);
-                        pending_gap_groups.emplace_back(gap_group.first, mid);
-                        context.diagnostics().add_counter(
-                            "query_bridge.direct_corridor_segment_group_splits");
+                while (!pending_gap_groups.empty()) {
+                    const auto gap_group = pending_gap_groups.back();
+                    pending_gap_groups.pop_back();
+                    const int lhs_sample =
+                        query_bridge_nearest_nonempty_layer(sample_layers, gap_group.first, -1);
+                    const int rhs_sample =
+                        query_bridge_nearest_nonempty_layer(sample_layers, gap_group.second + 1, 1);
+                    if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
+                        continue;
                     }
-                    continue;
+                    const auto& lhs_layer = sample_layers[static_cast<std::size_t>(lhs_sample)];
+                    const auto& rhs_layer = sample_layers[static_cast<std::size_t>(rhs_sample)];
+                    if (lhs_layer.empty() || rhs_layer.empty()) {
+                        continue;
+                    }
+                    const int lhs_index = lhs_layer.front();
+                    const int rhs_index = rhs_layer.front();
+                    const auto lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
+                    const auto rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
+                    const bool inserted = insert_residual_segment(lhs_index,
+                                                                  rhs_index,
+                                                                  lhs_point,
+                                                                  rhs_point,
+                                                                  rhs_sample - lhs_sample);
+                    if (!inserted) {
+                        if (group_residual_gaps && gap_group.first < gap_group.second) {
+                            const int mid = (gap_group.first + gap_group.second) / 2;
+                            pending_gap_groups.emplace_back(mid + 1, gap_group.second);
+                            pending_gap_groups.emplace_back(gap_group.first, mid);
+                            context.diagnostics().add_counter(
+                                "query_bridge.direct_corridor_segment_group_splits");
+                        }
+                        continue;
+                    }
                 }
-            }
             }
             if (detailed_direct_timing) {
                 residual_segment_loop_ms =
