@@ -130,6 +130,9 @@ src/grower_internal.h              grower-local shared commit, lookup, and
 src/grower_options.cpp             RRT grower depth-stage, component-connect
                                    FFB option selection, and FFB/oracle
                                    diagnostics helpers
+src/grower_task_builder.cpp        RRT grower batched target sampling, task
+                                   generation, frontier seed selection, and
+                                   worker-domain filtering
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
