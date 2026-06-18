@@ -554,13 +554,18 @@ private:
 										const RRTConnectConfig& bridge_rrt,
 										int query_index = -1,
 										bool allow_residual_segments = true);
-	int try_add_query_box_corridor_edge(int source_box_id,
-										int target_box_id,
-										const std::vector<Eigen::VectorXd>& waypoint_path,
-										double segment_resolution,
-										int query_index);
-	int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
-													int target_box_id,
+		int try_add_query_box_corridor_edge(int source_box_id,
+											int target_box_id,
+											const std::vector<Eigen::VectorXd>& waypoint_path,
+											double segment_resolution,
+											int query_index);
+		int add_verified_query_box_corridor_edge(int source_box_id,
+												 int target_box_id,
+												 const std::vector<Eigen::VectorXd>& waypoint_path,
+												 double segment_resolution,
+												 int query_index);
+		int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
+														int target_box_id,
 													const std::vector<Eigen::VectorXd>& waypoint_path,
 													const RRTConnectConfig& bridge_rrt,
 													const CollisionChecker& checker,

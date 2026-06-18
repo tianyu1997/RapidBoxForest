@@ -1535,16 +1535,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             try_adopt_certified_subchain(source_box_id,
                                          target_box_id,
                                          "box_connected");
-            const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                                 target_box_id,
-                                                                 corridor_path,
-                                                                 SegmentEdgeType::BoxCorridor,
-                                                                 bridge_rrt.segment_resolution,
-                                                                 SegmentEdgeValidation::CollisionChecked,
-                                                                 false,
-                                                                 bridge_edge_query_index);
-            if (edge_id >= 0) {
-                invalidate_query_cache();
+            const int edge_added = add_verified_query_box_corridor_edge(
+                source_box_id,
+                target_box_id,
+                corridor_path,
+                bridge_rrt.segment_resolution,
+                bridge_edge_query_index);
+            if (edge_added > 0) {
                 return finish_query_bridge_direct_corridor(
                     boxes_before_direct_corridor,
                     direct_added + repair_added + local_segment_edges_added + 1);

@@ -20,6 +20,22 @@ int RBFPlanningForest::try_add_query_box_corridor_edge(
         !box_only_path_connected_partition_first(source_box_id, target_box_id)) {
         return -1;
     }
+    return add_verified_query_box_corridor_edge(source_box_id,
+                                                target_box_id,
+                                                waypoint_path,
+                                                segment_resolution,
+                                                query_index);
+}
+
+int RBFPlanningForest::add_verified_query_box_corridor_edge(
+    int source_box_id,
+    int target_box_id,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    double segment_resolution,
+    int query_index) {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return -1;
+    }
     const int edge_id = add_segment_edge_partition_first(source_box_id,
                                                          target_box_id,
                                                          waypoint_path,
