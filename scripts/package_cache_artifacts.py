@@ -139,6 +139,7 @@ def main() -> int:
         raise SystemExit(f"output manifest exists: {output_manifest_path} (pass --force)")
 
     packaged: list[dict[str, Any]] = []
+    archive_by_cache_dir: dict[Path, dict[str, Any]] = {}
     for artifact in artifacts:
         artifact_id = str(artifact["id"])
         expected_unpack_path = artifact.get("expected_unpack_path")
@@ -154,26 +155,42 @@ def main() -> int:
         if not (cache_dir / snapshot_rel).exists():
             raise SystemExit(f"{artifact_id}: missing cache snapshot: {cache_dir / snapshot_rel}")
 
-        archive_name = artifact_archive_name(artifact)
-        archive_path = out_dir / archive_name
-        if archive_path.exists():
-            if not args.force:
-                raise SystemExit(f"archive exists: {archive_path} (pass --force)")
-            archive_path.unlink()
-        create_tar_gz(cache_dir, archive_path, arc_prefix=Path(expected_unpack_path))
-        directory_sha = stable_directory_sha256(cache_dir)
-        archive_sha = sha256_file(archive_path)
+        cache_key = cache_dir.resolve()
+        archive_metadata = archive_by_cache_dir.get(cache_key)
+        if archive_metadata is None:
+            archive_name = artifact_archive_name(artifact)
+            archive_path = out_dir / archive_name
+            if archive_path.exists():
+                if not args.force:
+                    raise SystemExit(f"archive exists: {archive_path} (pass --force)")
+                archive_path.unlink()
+            create_tar_gz(cache_dir, archive_path, arc_prefix=Path(expected_unpack_path))
+            directory_sha = stable_directory_sha256(cache_dir)
+            archive_sha = sha256_file(archive_path)
+            archive_metadata = {
+                "archive_name": archive_name,
+                "archive_path": archive_path,
+                "archive_sha": archive_sha,
+                "directory_sha": directory_sha,
+                "size_bytes": archive_path.stat().st_size,
+            }
+            archive_by_cache_dir[cache_key] = archive_metadata
+            print(f"packaged {artifact_id}: {archive_path} sha256={archive_sha}")
+        else:
+            archive_path = archive_metadata["archive_path"]
+            print(f"reused {artifact_id}: {archive_path} sha256={archive_metadata['archive_sha']}")
+
+        archive_name = str(archive_metadata["archive_name"])
         artifact.setdefault("archive", {})
         artifact["archive"]["file_name"] = archive_name
         artifact["archive"]["url"] = (
             f"{args.url_base.rstrip('/')}/{archive_name}" if args.url_base else "TODO-upload-url"
         )
-        artifact["archive"]["sha256"] = archive_sha
-        artifact["archive"]["size_bytes"] = archive_path.stat().st_size
+        artifact["archive"]["sha256"] = str(archive_metadata["archive_sha"])
+        artifact["archive"]["size_bytes"] = int(archive_metadata["size_bytes"])
         artifact.setdefault("unpacked", {})
-        artifact["unpacked"]["directory_sha256"] = directory_sha
+        artifact["unpacked"]["directory_sha256"] = str(archive_metadata["directory_sha"])
         packaged.append(artifact)
-        print(f"packaged {artifact_id}: {archive_path} sha256={archive_sha}")
 
     output_manifest = {
         "schema_version": int(manifest.get("schema_version", 1)),

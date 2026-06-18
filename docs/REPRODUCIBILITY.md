@@ -380,11 +380,14 @@ python3 scripts/package_cache_artifacts.py \
   --force
 ```
 
-This creates one `.tar.gz` per selected cache and writes
-`outputs/cache_artifacts/cache_artifacts.json`. Without `--url-base`, archive
-URLs remain `TODO-upload-url`; after upload, rerun with `--url-base` or edit the
-URL fields, then validate without `--allow-placeholders`. `--url-base` must be
-an HTTPS URL so the generated manifest is suitable for public release checks.
+This creates one `.tar.gz` per unique selected cache directory and writes
+`outputs/cache_artifacts/cache_artifacts.json`. If two manifest entries share
+the same `expected_unpack_path`, they intentionally reuse the same archive file
+and checksum instead of duplicating a large cache bundle. Without `--url-base`,
+archive URLs remain `TODO-upload-url`; after upload, rerun with `--url-base` or
+edit the URL fields, then validate without `--allow-placeholders`. `--url-base`
+must be an HTTPS URL so the generated manifest is suitable for public release
+checks.
 
 ## Active Paper Assets
 

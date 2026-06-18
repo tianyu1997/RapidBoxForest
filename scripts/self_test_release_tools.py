@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import gzip
 import hashlib
 import io
@@ -45,38 +46,40 @@ def run(command: list[str], *, cwd: Path, expect_success: bool = True) -> subpro
 
 
 def write_fake_manifest(path: Path) -> None:
+    artifact = {
+        "id": "fake_cache",
+        "role": "smoke-test",
+        "required_for": ["release-tool-self-test"],
+        "robot": "iiwa",
+        "endpoint_source": "AAFK",
+        "envelope": "support_hull",
+        "depth": 23,
+        "depth_semantics": "LECT canonical tree depth",
+        "split_schedule": [5, 3, 0, 5],
+        "canonical_mode": True,
+        "coverage_domain": "smoke",
+        "expected_unpack_path": "outputs/fake_cache",
+        "build_command": ["echo", "smoke"],
+        "archive": {
+            "file_name": "TODO-upload-file.tar.gz",
+            "url": "TODO-upload-url",
+            "sha256": "TODO-upload-sha256",
+            "size_bytes": "TODO-upload-size",
+        },
+        "unpacked": {
+            "manifest_relative_path": "manifest.json",
+            "snapshot_relative_path": "lect_snapshot",
+            "directory_sha256": "TODO-directory-sha256",
+        },
+    }
+    duplicate_artifact = copy.deepcopy(artifact)
+    duplicate_artifact["id"] = "fake_cache_alias"
+    duplicate_artifact["role"] = "smoke-test-alias"
     path.write_text(
         json.dumps(
             {
                 "schema_version": 1,
-                "artifacts": [
-                    {
-                        "id": "fake_cache",
-                        "role": "smoke-test",
-                        "required_for": ["release-tool-self-test"],
-                        "robot": "iiwa",
-                        "endpoint_source": "AAFK",
-                        "envelope": "support_hull",
-                        "depth": 23,
-                        "depth_semantics": "LECT canonical tree depth",
-                        "split_schedule": [5, 3, 0, 5],
-                        "canonical_mode": True,
-                        "coverage_domain": "smoke",
-                        "expected_unpack_path": "outputs/fake_cache",
-                        "build_command": ["echo", "smoke"],
-                        "archive": {
-                            "file_name": "TODO-upload-file.tar.gz",
-                            "url": "TODO-upload-url",
-                            "sha256": "TODO-upload-sha256",
-                            "size_bytes": "TODO-upload-size",
-                        },
-                        "unpacked": {
-                            "manifest_relative_path": "manifest.json",
-                            "snapshot_relative_path": "lect_snapshot",
-                            "directory_sha256": "TODO-directory-sha256",
-                        },
-                    }
-                ],
+                "artifacts": [artifact, duplicate_artifact],
             },
             indent=2,
             sort_keys=True,
@@ -267,6 +270,16 @@ def run_self_test(repo_root: Path, tmp_root: Path) -> None:
         cwd=repo_root,
     )
     filled_manifest = out_dir / "cache_artifacts.json"
+    archive_paths = sorted(out_dir.glob("*.tar.gz"))
+    if len(archive_paths) != 1:
+        raise RuntimeError(f"expected one deduplicated cache archive, got {len(archive_paths)}: {archive_paths}")
+    filled_data = json.loads(filled_manifest.read_text(encoding="utf-8"))
+    filled_artifacts = filled_data["artifacts"]
+    if len(filled_artifacts) != 2:
+        raise RuntimeError(f"expected two filled cache artifacts, got {len(filled_artifacts)}")
+    archive_names = {artifact["archive"]["file_name"] for artifact in filled_artifacts}
+    if len(archive_names) != 1:
+        raise RuntimeError(f"duplicate cache artifacts should reuse one archive, got {archive_names}")
     run(
         [
             sys.executable,

@@ -374,6 +374,10 @@ Validated on 2026-06-18:
      --force
    ```
 
+   The packager creates one archive per unique cache directory. Manifest entries
+   that share `expected_unpack_path` reuse the same archive file and checksum,
+   which avoids uploading duplicate IIWA cache bundles for Exp.4 and Exp.6.
+
    Upload the archives, fill or regenerate the HTTPS URL fields, then validate
    the filled manifest before release. The filled manifest must not contain
    placeholders and must use exact 64-character lowercase SHA256 values. With
