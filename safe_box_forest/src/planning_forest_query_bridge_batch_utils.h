@@ -344,6 +344,17 @@ void record_query_bridge_batch_task_no_path(StageContext& context,
                                             std::size_t index,
                                             double total_ms);
 
+void record_query_bridge_batch_task_already_satisfied(
+    StageContext& context,
+    const QueryBridgeSearchTask& task,
+    double probe_ms);
+
+void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
+                                                      std::size_t index,
+                                                      bool forced_task,
+                                                      double probe_ms,
+                                                      double total_ms);
+
 double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
                                               const Eigen::VectorXd& a,
                                               const Eigen::VectorXd& b);

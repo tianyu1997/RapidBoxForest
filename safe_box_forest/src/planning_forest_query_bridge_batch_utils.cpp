@@ -225,6 +225,39 @@ void record_query_bridge_batch_task_no_path(StageContext& context,
     context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
 }
 
+void record_query_bridge_batch_task_already_satisfied(
+    StageContext& context,
+    const QueryBridgeSearchTask& task,
+    double probe_ms) {
+    context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
+    context.diagnostics().record_timing("query_bridge.batch_probe_ms_total", probe_ms);
+    context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped"), 1.0);
+    if (task.hipac_online_satisfied) {
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "skipped_by_hipac_online"),
+            1.0);
+    }
+    if (task.direct_start_goal_satisfied) {
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "skipped_by_direct_start_goal_segment"),
+            1.0);
+    }
+}
+
+void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
+                                                      std::size_t index,
+                                                      bool forced_task,
+                                                      double probe_ms,
+                                                      double total_ms) {
+    context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
+    if (forced_task) {
+        context.diagnostics().add_counter("query_bridge.batch_forced_tasks_skipped_after_rrt");
+    }
+    context.diagnostics().record_timing("query_bridge.batch_probe_ms_total", probe_ms);
+    context.diagnostics().set_value(query_bridge_task_key(index, "skipped_after_rrt"), 1.0);
+    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
+}
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
