@@ -89,6 +89,7 @@ add_library(sbf_core STATIC
     src/box_graph.cpp
     src/connector.cpp
     src/find_free_box.cpp
+    src/frontwave_grower.cpp
     src/grower.cpp
     src/grower_trace.cpp
     src/leaf_sweep_grower.cpp

@@ -119,7 +119,10 @@ Current source-file boundaries:
 ```text
 src/runtime.cpp                    runtime budget, deadline, and diagnostics helpers
 src/find_free_box.cpp              seed-to-certified-box search service
-src/grower.cpp                     forest grower implementations
+src/grower.cpp                     RRT-style forest grower implementation
+src/frontwave_grower.cpp           frontwave coverage grower implementation
+src/grower_internal.h              grower-local shared commit, lookup, and
+                                   diagnostics helpers
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
