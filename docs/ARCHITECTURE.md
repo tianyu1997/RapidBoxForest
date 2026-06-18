@@ -123,6 +123,8 @@ src/grower.cpp                     RRT-style forest grower implementation
 src/frontwave_grower.cpp           frontwave coverage grower implementation
 src/grower_failure_cooling.cpp     RRT grower failure-cooling and hard-frontier
                                    stop-loss policy
+src/grower_frontier.cpp            RRT grower frontier face selection, face
+                                   memory, and seed tracing helpers
 src/grower_internal.h              grower-local shared commit, lookup, and
                                    diagnostics helpers
 src/grower_trace.cpp               optional RRT grower JSON trace output
