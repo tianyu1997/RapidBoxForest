@@ -370,6 +370,72 @@ void select_query_bridge_attempt_paths(
     }
 }
 
+void adopt_query_bridge_waypoint_after_rrt(
+    QueryBridgeSearchTask& task,
+    std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
+    int improve_attempts,
+    double& best_length,
+    const QueryBridgeHybridizeAttemptOptions& hybrid_options,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeDirectLineFallbackOptions& direct_line_options,
+    const QueryBridgeDetourOptions& detour_options,
+    const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
+    const std::vector<Interval>& detour_planning_domain,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context) {
+    select_query_bridge_attempt_paths(task,
+                                      attempt_paths_for_task,
+                                      best_length,
+                                      hybrid_options,
+                                      retry_options,
+                                      audit_robot,
+                                      scene,
+                                      config,
+                                      context);
+    if (task.waypoint_path.empty()) {
+        auto direct_path = query_bridge_direct_line_fallback_path(
+            task,
+            audit_robot,
+            scene,
+            config.query,
+            direct_line_options,
+            context);
+        if (!direct_path.empty()) {
+            best_length = path_length(direct_path);
+            task.waypoint_path = std::move(direct_path);
+            context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "direct_line_on_no_path"),
+                1.0);
+        }
+    }
+    if (query_bridge_maybe_apply_detour_path(task,
+                                             audit_robot,
+                                             scene,
+                                             config.query,
+                                             detour_planning_domain,
+                                             detour_options,
+                                             config.grower.rng_seed,
+                                             context,
+                                             best_length,
+                                             task.waypoint_path)) {
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "detour_on_no_path"),
+            1.0);
+    }
+    improve_query_bridge_waypoint_if_needed(task,
+                                            improve_attempts,
+                                            best_length,
+                                            task.waypoint_path,
+                                            quality_retry_options,
+                                            retry_options,
+                                            audit_robot,
+                                            scene,
+                                            config,
+                                            context);
+}
+
 template <typename OnlineBridge, typename TransitionPortal, typename PrebridgePortal>
 bool run_query_bridge_hipac_online_sequence(
     QueryBridgeSearchTask& task,
@@ -674,61 +740,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
     }
 
-    auto adopt_waypoint_after_rrt =
-        [&](QueryBridgeSearchTask& task,
-            std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
-            int improve_attempts,
-            double& best_length) {
-            select_query_bridge_attempt_paths(task,
-                                              attempt_paths_for_task,
-                                              best_length,
-                                              hybrid_options,
-                                              retry_options,
-                                              audit_robot_,
-                                              scene_,
-                                              config_,
-                                              batch_context);
-            if (task.waypoint_path.empty()) {
-                auto direct_path = query_bridge_direct_line_fallback_path(
-                    task,
-                    audit_robot_,
-                    scene_,
-                    config_.query,
-                    direct_line_options,
-                    batch_context);
-                if (!direct_path.empty()) {
-                    best_length = path_length(direct_path);
-                    task.waypoint_path = std::move(direct_path);
-                    batch_context.diagnostics().set_value(
-                        query_bridge_task_key(task.index, "direct_line_on_no_path"),
-                        1.0);
-                }
-            }
-            if (query_bridge_maybe_apply_detour_path(task,
-                                                     audit_robot_,
-                                                     scene_,
-                                                     config_.query,
-                                                     detour_planning_domain,
-                                                     detour_options,
-                                                     config_.grower.rng_seed,
-                                                     batch_context,
-                                                     best_length,
-                                                     task.waypoint_path)) {
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "detour_on_no_path"),
-                    1.0);
-            }
-            improve_query_bridge_waypoint_if_needed(task,
-                                                    improve_attempts,
-                                                    best_length,
-                                                    task.waypoint_path,
-                                                    quality_retry_options,
-                                                    retry_options,
-                                                    audit_robot_,
-                                                    scene_,
-                                                    config_,
-                                                    batch_context);
-        };
     auto finish_ready_waypoint_task =
         [&](QueryBridgeSearchTask& task,
             bool forced_task,
@@ -966,10 +977,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 record_query_bridge_partition_path_first_rrt_skipped(batch_context,
                                                                      task.index);
             }
-            adopt_waypoint_after_rrt(task,
-                                     attempt_paths[task_offset],
-                                     prepared[task_offset].attempts,
-                                     best_length);
+            adopt_query_bridge_waypoint_after_rrt(task,
+                                                  attempt_paths[task_offset],
+                                                  prepared[task_offset].attempts,
+                                                  best_length,
+                                                  hybrid_options,
+                                                  retry_options,
+                                                  direct_line_options,
+                                                  detour_options,
+                                                  quality_retry_options,
+                                                  detour_planning_domain,
+                                                  audit_robot_,
+                                                  scene_,
+                                                  config_,
+                                                  batch_context);
             if (task.waypoint_path.empty()) {
                 record_query_bridge_batch_task_no_path(
                     batch_context,
@@ -1050,10 +1071,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
             best_length = path_length(task.waypoint_path);
         }
-        adopt_waypoint_after_rrt(task,
-                                 attempt_paths,
-                                 attempt_plan.base_attempts,
-                                 best_length);
+        adopt_query_bridge_waypoint_after_rrt(task,
+                                              attempt_paths,
+                                              attempt_plan.base_attempts,
+                                              best_length,
+                                              hybrid_options,
+                                              retry_options,
+                                              direct_line_options,
+                                              detour_options,
+                                              quality_retry_options,
+                                              detour_planning_domain,
+                                              audit_robot_,
+                                              scene_,
+                                              config_,
+                                              batch_context);
         const bool segment_only_task =
             query_bridge_index_segment_only(index_options, task.index);
         if (segment_only_task) {
