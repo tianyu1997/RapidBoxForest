@@ -13,77 +13,17 @@
 
 #include "adaptive_grid_partition_options.h"
 #include "planning_forest_audit.h"
+#include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_utils.h"
 
 namespace rbf {
 
 namespace {
 
-const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
-    for (const auto& box : boxes) {
-        if (box.id == box_id) {
-            return &box;
-        }
-    }
-    return nullptr;
-}
-
-bool box_contains_box_exact_local(const BoxNode& outer, const BoxNode& inner) {
-    if (outer.n_dims() != inner.n_dims()) {
-        return false;
-    }
-    for (int dim = 0; dim < outer.n_dims(); ++dim) {
-        if (outer.joint_intervals[dim].lo > inner.joint_intervals[dim].lo ||
-            outer.joint_intervals[dim].hi < inner.joint_intervals[dim].hi) {
-            return false;
-        }
-    }
-    return outer.id != inner.id;
-}
-
-double interval_point_gap_local(const Interval& interval, double value) {
-    if (value < interval.lo) {
-        return interval.lo - value;
-    }
-    if (value > interval.hi) {
-        return value - interval.hi;
-    }
-    return 0.0;
-}
-
-double intervals_point_gap_local(const std::vector<Interval>& intervals,
-                                 const Eigen::Ref<const Eigen::VectorXd>& point) {
-    if (point.size() != static_cast<int>(intervals.size())) {
-        return std::numeric_limits<double>::infinity();
-    }
-    double gap = 0.0;
-    for (int dim = 0; dim < point.size(); ++dim) {
-        gap = std::max(gap, interval_point_gap_local(intervals[static_cast<std::size_t>(dim)], point[dim]));
-    }
-    return gap;
-}
-
-bool intervals_contain_point_local(const std::vector<Interval>& intervals,
-                                   const Eigen::Ref<const Eigen::VectorXd>& point,
-                                   double tolerance) {
-    return intervals_point_gap_local(intervals, point) <= tolerance;
-}
-
-bool box_contains_point_exact_local(const BoxNode& box, const Eigen::Ref<const Eigen::VectorXd>& point) {
-    if (box.n_dims() != point.size()) {
-        return false;
-    }
-    for (int dim = 0; dim < box.n_dims(); ++dim) {
-        if (point[dim] < box.joint_intervals[dim].lo || point[dim] > box.joint_intervals[dim].hi) {
-            return false;
-        }
-    }
-    return true;
-}
-
 bool point_covered_by_existing_box_local(const std::vector<BoxNode>& boxes,
                                          const Eigen::Ref<const Eigen::VectorXd>& point) {
     return std::any_of(boxes.begin(), boxes.end(), [&](const BoxNode& box) {
-        return box_contains_point_exact_local(box, point);
+        return intervals_contain_point_strict_local(box.joint_intervals, point);
     });
 }
 
@@ -124,36 +64,6 @@ void merge_diagnostic_snapshot_local(std::unordered_map<std::string, double>& di
     for (const auto& [key, value] : snapshot) {
         diagnostics[key] += value;
     }
-}
-
-bool intervals_subset_local(const std::vector<Interval>& inner,
-                            const std::vector<Interval>& outer,
-                            double tolerance = 0.0) {
-    if (inner.size() != outer.size()) {
-        return false;
-    }
-    for (std::size_t dim = 0; dim < inner.size(); ++dim) {
-        if (inner[dim].lo < outer[dim].lo - tolerance ||
-            inner[dim].hi > outer[dim].hi + tolerance) {
-            return false;
-        }
-    }
-    return true;
-}
-
-bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals,
-                                          const Eigen::Ref<const Eigen::VectorXd>& point,
-                                          double tolerance = 0.0) {
-    if (point.size() != static_cast<int>(intervals.size())) {
-        return false;
-    }
-    for (int dim = 0; dim < point.size(); ++dim) {
-        if (point[dim] < intervals[static_cast<std::size_t>(dim)].lo - tolerance ||
-            point[dim] > intervals[static_cast<std::size_t>(dim)].hi + tolerance) {
-            return false;
-        }
-    }
-    return true;
 }
 
 int containing_domain_index(const std::vector<BoxNode>& domains,
@@ -431,25 +341,6 @@ void remove_adjacency_nodes(AdjacencyGraph& graph, const std::unordered_set<int>
     }
 }
 
-void connect_incremental_boxes(AdjacencyGraph& graph,
-                               const std::vector<BoxNode>& boxes,
-                               std::size_t first_new_index,
-                               double tolerance) {
-    if (first_new_index >= boxes.size()) {
-        return;
-    }
-    for (const auto& box : boxes) {
-        graph[box.id];
-    }
-    for (std::size_t i = first_new_index; i < boxes.size(); ++i) {
-        for (std::size_t j = 0; j < i; ++j) {
-            if (boxes_connected(boxes[j], boxes[i], tolerance)) {
-                append_local_edge(graph, boxes[j].id, boxes[i].id);
-            }
-        }
-    }
-}
-
 bool intervals_overlap_local(const std::vector<Interval>& lhs,
                              const std::vector<Interval>& rhs,
                              double tolerance) {
@@ -533,32 +424,6 @@ void rebuild_local_adjacency(AdjacencyGraph& graph,
             append_local_edge(graph, id, neighbor);
         }
     }
-}
-
-bool allow_dynamic_commit(BoxOracle& oracle,
-                          FindFreeBoxResult& result,
-                          BoxCommitPolicy policy) {
-    if (result.validation_detail.safety_status == BoxSafetyStatus::CertifiedFree) {
-        return true;
-    }
-    if (result.validation_detail.safety_status != BoxSafetyStatus::ProvisionalFree) {
-        return false;
-    }
-    if (policy == BoxCommitPolicy::CommitCertifiedOnly) {
-        return false;
-    }
-    if (policy == BoxCommitPolicy::CommitProvisionalAllowed) {
-        return true;
-    }
-    if (policy == BoxCommitPolicy::AuditBeforeCommit) {
-        if (oracle.validate_intervals(result.intervals)) {
-            result.validation_detail.safety_status = BoxSafetyStatus::CertifiedFree;
-            result.validation_detail.strict_audit_required = false;
-            return true;
-        }
-        return false;
-    }
-    return false;
 }
 
 } // namespace
@@ -1055,7 +920,7 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - adjacency_t0).count();
         profile.diagnostics["delete.adjacency_checks"] += 1.0;
         box.parent_box_id = adjacent_parent;
-        const BoxNode* parent = find_box_by_id_local(boxes_, adjacent_parent);
+        const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
         box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : box.id;
         box.safety_status = BoxSafetyStatus::CertifiedFree;
         box.strict_audit_required = false;
@@ -1220,7 +1085,7 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - adjacency_t0).count();
         profile.diagnostics["delete.adjacency_checks"] += 1.0;
         box.parent_box_id = adjacent_parent;
-        const BoxNode* parent = find_box_by_id_local(boxes_, adjacent_parent);
+        const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
         box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : box.id;
         box.safety_status = BoxSafetyStatus::CertifiedFree;
         box.strict_audit_required = false;
@@ -1515,8 +1380,8 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
         if (!survives) {
             segment_edges_removed_audit += 1;
             if (!partition_native_mode()) {
-                const BoxNode* source_box = find_box_by_id_local(boxes_, edge.source_box_id);
-                const BoxNode* target_box = find_box_by_id_local(boxes_, edge.target_box_id);
+                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
                 if (source_box == nullptr || target_box == nullptr ||
                     !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
                     remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
@@ -1707,8 +1572,8 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
         if (!survives) {
             segment_edges_removed_audit += 1;
             if (!partition_native_mode()) {
-                const BoxNode* source_box = find_box_by_id_local(boxes_, edge.source_box_id);
-                const BoxNode* target_box = find_box_by_id_local(boxes_, edge.target_box_id);
+                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
+                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
                 if (source_box == nullptr || target_box == nullptr ||
                     !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
                     remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
@@ -1942,7 +1807,7 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
             return;
         }
         box.parent_box_id = adjacent_parent;
-        const BoxNode* parent = find_box_by_id_local(boxes_, adjacent_parent);
+        const BoxNode* parent = find_box_by_id(boxes_, adjacent_parent);
         box.root_id = parent != nullptr && parent->root_id >= 0 ? parent->root_id : adjacent_parent;
         oracle_->reserve_node(box.tree_id, box.id);
         boxes_.push_back(box);
