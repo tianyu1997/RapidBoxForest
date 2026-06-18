@@ -154,6 +154,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_waypoint.cpp
     src/planning_forest_query_utils.cpp
     src/planning_forest_shortcut.cpp
+    src/planning_forest_subtractive.cpp
     src/query.cpp
     src/runtime.cpp
 )
