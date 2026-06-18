@@ -20,8 +20,8 @@ local paths, and discarded implementation attempts.
   environment for source users.
 - `docs/REPRODUCIBILITY.md` documents smoke/full experiment workflows, cache
   policy, generated paper assets, and the paper asset manifest.
-- `docs/cache_artifacts.example.json` records the external LECT cache artifact
-  schema and expected unpack paths for paper-facing warm caches.
+- `docs/cache_artifacts.example.json` records the optional local LECT cache
+  artifact schema and expected unpack paths for paper-facing warm caches.
 - `.gitignore` excludes build products, experiment outputs, local LECT caches,
   Python caches, and common LaTeX intermediates.
 - Current paper asset generation no longer requires the removed
@@ -44,14 +44,13 @@ local paths, and discarded implementation attempts.
   manuscript, verify release helper scripts, or, after Python bindings are
   built, smoke execute.
 - `scripts/check_cache_artifacts.py` validates filled cache-artifact manifests
-  and can verify local cache archives plus expected unpack directories before
-  publishing an exact reproduction bundle.
+  and can verify local cache archives plus expected unpack directories.
 - `scripts/package_cache_artifacts.py` packages selected local LECT cache
   directories and writes a filled cache artifact manifest with archive and
   unpacked-directory SHA256 values.
-- `scripts/fill_cache_artifact_urls.py` rewrites archive URLs in an already
-  packaged cache-artifact manifest after the archives are uploaded, without
-  rebuilding large tarballs.
+- `scripts/fill_cache_artifact_urls.py` can rewrite archive URLs in an already
+  packaged cache-artifact manifest if a separate cache bundle is published
+  outside git.
 - `scripts/check_paper_result_sources.py` validates
   `paper/generated/tro_table_generation_manifest.json`, generated paper asset
   hashes, source-artifact references, and optional local `outputs/` artifacts.
@@ -364,10 +363,9 @@ Validated on 2026-06-18:
    - compiled `paper/sbf_tro_2026.pdf`, if the release should include a
      rendered manuscript preview.
 
-6. If large LECT caches are required for exact timing reproduction, publish
-   them outside git and record download URLs, SHA256 hashes, and expected
-   unpack paths in a filled copy of `docs/cache_artifacts.example.json`.
-   Use the cache packager to create archives and a filled manifest:
+6. Large LECT caches are generated locally and must remain outside git. If a
+   local exact-timing cache bundle is needed, use the cache packager to create
+   archives and a filled manifest:
 
    ```bash
    python3 scripts/package_cache_artifacts.py \
@@ -380,10 +378,11 @@ Validated on 2026-06-18:
    The packager creates one archive per unique cache directory. Manifest entries
    that share `expected_unpack_path` reuse the same archive file and checksum,
    which avoids uploading duplicate IIWA cache bundles for Exp.4 and Exp.6.
+   Use `--archive-format tar.zst --zstd-level 10` for large local cache bundles
+   when smaller archive size is more important than gzip portability.
 
-   Upload the archives, fill or regenerate the HTTPS URL fields, then validate
-   the filled manifest before release. If the archives are already packaged,
-   rewrite URLs without rebuilding them:
+   If a separate cache bundle is later published outside git, rewrite URLs
+   without rebuilding the archives:
 
    ```bash
    python3 scripts/fill_cache_artifact_urls.py \
@@ -393,26 +392,20 @@ Validated on 2026-06-18:
      --force
    ```
 
-   The filled manifest must not contain placeholders and must use exact
-   64-character lowercase SHA256 values. With `--verify-local`, the checker
-   recomputes each unpacked cache directory hash and rejects stale or mismatched
-   `unpacked.directory_sha256` entries:
+   With `--verify-local`, the checker recomputes each unpacked cache directory
+   hash and rejects stale or mismatched `unpacked.directory_sha256` entries:
 
    ```bash
    python3 scripts/check_cache_artifacts.py \
      path/to/cache_artifacts.json \
      --repo-root . \
-     --archive-dir path/to/downloaded/cache_archives \
+     --archive-dir path/to/local/cache_archives \
      --verify-local
    ```
 
-   The current strict-release blocker is this filled external cache manifest:
-   using the checked-in example manifest in strict mode fails on TODO fields for
-   `exp04_iiwa_d23_aafk_support_hull`,
-   `exp04_iiwa_d23_critsample_support_hull`,
-   `exp06_iiwa_d23_support_hull`, `exp06_ur5_d20_support_hull`, and
-   `exp06_panda_d20_support_hull`. Fill or replace those records before the
-   final strict release check.
+   Keep the filled manifest and cache archives outside git. The checked-in
+   example manifest intentionally keeps TODO fields and is accepted by release
+   readiness checks as a template when no `--cache-manifest` is supplied.
 
 7. If a full paper artifact bundle is published with `outputs/`, validate the
    generated result-source manifest against the unpacked artifacts:
@@ -467,8 +460,6 @@ Validated on 2026-06-18:
       --repo-url https://github.com/<owner>/RapidBoxForest \
       --version v0.1.0 \
       --release-date YYYY-MM-DD \
-      --cache-manifest path/to/cache_artifacts.json \
-      --cache-archive-dir path/to/downloaded/cache_archives \
       --strict-metadata \
       --force
     ```
@@ -514,17 +505,15 @@ Validated on 2026-06-18:
       --run-smoke-execute
     ```
 
-15. After the public repository URL and external cache artifact bundle are
-    available, run strict release readiness from the initialized public git
-    tree. This assumes citation metadata was written by
-    `init_public_repository.py`, and strict mode verifies that all files listed
-    in `PUBLIC_RELEASE_MANIFEST.json` are git-tracked:
+15. After the public repository URL is available, run strict release readiness
+    from the initialized public git tree. This assumes citation metadata was
+    written by `init_public_repository.py`, and strict mode verifies that all
+    files listed in `PUBLIC_RELEASE_MANIFEST.json` are git-tracked:
 
     ```bash
     python3 /tmp/RapidBoxForest-public-git/scripts/check_release_readiness.py \
       --repo-root /tmp/RapidBoxForest-public-git \
       --public-tree /tmp/RapidBoxForest-public-git \
-      --cache-manifest path/to/cache_artifacts.json \
       --package-manifest /tmp/RapidBoxForest-release/RapidBoxForest-public.package.json \
       --strict
     ```

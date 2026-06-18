@@ -50,18 +50,16 @@ This creates a temporary fake cache artifact, verifies the cache packager and
 checker, and confirms that key negative cases fail as expected without using
 real LECT caches.
 
-Use strict mode only after the public repository URL and filled external cache
-artifact manifest are available. If the private development checkout keeps
-template citation metadata, run strict readiness from the initialized public git
-tree that was created by `init_public_repository.py`. Strict mode also verifies
-that all files listed in `PUBLIC_RELEASE_MANIFEST.json` are git-tracked:
+Use strict mode only after the public repository URL is available. If the
+private development checkout keeps template citation metadata, run strict
+readiness from the initialized public git tree that was created by
+`init_public_repository.py`. Strict mode also verifies that all files listed in
+`PUBLIC_RELEASE_MANIFEST.json` are git-tracked:
 
 ```bash
 python3 /tmp/RapidBoxForest-public-git/scripts/check_release_readiness.py \
   --repo-root /tmp/RapidBoxForest-public-git \
   --public-tree /tmp/RapidBoxForest-public-git \
-  --cache-manifest path/to/cache_artifacts.json \
-  --cache-archive-dir path/to/downloaded/cache_archives \
   --package-manifest /tmp/RapidBoxForest-release/RapidBoxForest-public.package.json \
   --strict
 ```
@@ -74,8 +72,6 @@ python3 scripts/package_public_release.py \
   --repo-url https://github.com/<owner>/RapidBoxForest \
   --version v0.1.0 \
   --release-date YYYY-MM-DD \
-  --cache-manifest path/to/cache_artifacts.json \
-  --cache-archive-dir path/to/downloaded/cache_archives \
   --strict-metadata \
   --force
 ```
@@ -94,21 +90,16 @@ The `--strict-metadata` flag requires a real repository URL, version, and
 release date for final release packages. Add `--doi` when that identifier is
 available; the package step refreshes `PUBLIC_RELEASE_MANIFEST.json` after
 writing citation metadata and runs strict citation validation when `--repo-url`
-is provided. When `--cache-manifest` is provided, the filled external LECT cache
-artifact metadata is validated and its SHA256 is recorded in the package
-manifest. Add `--cache-archive-dir` when the downloaded cache archives are
-available; this validates archive file names, byte sizes, and SHA256 values
-against the filled cache manifest. Omit `--cache-manifest`,
-`--cache-archive-dir`, and `--strict-metadata` only for source-only template
-checks before artifact publication.
+is provided. Large LECT caches are local/generated artifacts by default; omit
+`--cache-manifest` and `--cache-archive-dir` for the normal source release. If a
+separate local cache bundle is being checked, pass `--cache-manifest` and
+optionally `--cache-archive-dir` to validate and record its SHA256 metadata.
 
 To check an existing package independently:
 
 ```bash
 python3 scripts/check_public_package.py \
   /tmp/RapidBoxForest-release/RapidBoxForest-public.package.json \
-  --cache-manifest path/to/cache_artifacts.json \
-  --require-cache-archives-checked \
   --require-release-tools-checked \
   --strict-metadata
 ```
@@ -325,18 +316,17 @@ python3 experiments/run_tro2026.py \
 ```
 
 Large LECT caches are generated under `outputs/` and are intentionally not
-tracked. The Exp.4 Shelf+IIWA warm-cache artifact is capped at canonical depth
-23. If a cache is missing, regenerate it with the experiment-specific cache
-builder and keep the resulting path and SHA256 in the manifest rather than
-committing the cache directory itself.
+tracked or synchronized to the public git remote. The Exp.4 Shelf+IIWA
+warm-cache artifact is capped at canonical depth 23. If a cache is missing,
+regenerate it with the experiment-specific cache builder. Keep local cache
+paths, archives, and checksum manifests outside git.
 
 The public repository includes `docs/cache_artifacts.example.json` as the
-template for external cache artifacts. It records the artifact id, robot,
+template for optional local cache artifact checks. It records the artifact id, robot,
 envelope, endpoint source, canonical depth, split schedule, expected unpack
 path, rebuild command, archive checksum, and unpacked-directory checksum. Keep
-the example file in git with `TODO` placeholders; publish a filled manifest
-next to the actual cache archives when preparing an exact timing reproduction
-bundle.
+the example file in git with `TODO` placeholders; create a filled manifest only
+when you need to validate a local cache bundle.
 
 Validate the template from a source checkout with:
 
@@ -346,30 +336,30 @@ python3 scripts/check_cache_artifacts.py \
   --allow-placeholders
 ```
 
-After downloading or regenerating the real caches, validate the filled manifest
-and expected unpack paths with:
+After regenerating the real caches, validate the filled manifest and expected
+unpack paths with:
 
 ```bash
 python3 scripts/check_cache_artifacts.py \
   path/to/cache_artifacts.json \
   --repo-root . \
-  --archive-dir path/to/downloaded/cache_archives \
+  --archive-dir path/to/local/cache_archives \
   --verify-local \
   --write-directory-sha256 outputs/cache_directory_sha256.json
 ```
 
 The checker intentionally fails on `TODO` fields unless `--allow-placeholders`
-is passed. This prevents a public artifact bundle from silently claiming exact
-reproduction without URLs and SHA256 hashes. Filled manifests must use HTTPS
-archive URLs, plain archive filenames such as `.tar.gz`, `.tgz`, or `.tar.zst`,
-positive byte sizes, and exact 64-character lowercase SHA256 values. When
-`--archive-dir` is provided, the checker validates each local archive file
-against `archive.file_name`, `archive.size_bytes`, and `archive.sha256`. When
-`--verify-local` is enabled, the checker also recomputes the unpacked cache
-directory SHA256 and rejects manifests whose `unpacked.directory_sha256` does
-not match the local directory contents.
+is passed. Filled manifests must use HTTPS archive URLs, plain archive filenames
+such as `.tar.gz`, `.tgz`, or `.tar.zst`, positive byte sizes, and exact
+64-character lowercase SHA256 values. When `--archive-dir` is provided, the
+checker validates each local archive file against `archive.file_name`,
+`archive.size_bytes`, and `archive.sha256`. When `--verify-local` is enabled,
+the checker also recomputes the unpacked cache directory SHA256 and rejects
+manifests whose `unpacked.directory_sha256` does not match the local directory
+contents.
 
-To package local cache directories and create a filled manifest before upload:
+To package local cache directories and create a filled manifest for local
+validation:
 
 ```bash
 python3 scripts/package_cache_artifacts.py \
@@ -386,13 +376,27 @@ the same `expected_unpack_path`, they intentionally reuse the same archive file
 and checksum instead of duplicating a large cache bundle. The cache packager uses
 deterministic gzip level 1 by default because these LECT bundles are large; pass
 `--gzip-compresslevel` if a smaller archive is more important than packaging
-time. Without `--url-base`, archive URLs remain `TODO-upload-url`; after upload,
-rerun with `--url-base` or edit the URL fields, then validate without
-`--allow-placeholders`. `--url-base` must be an HTTPS URL so the generated
-manifest is suitable for public release checks.
+time. Without `--url-base`, archive URLs remain `TODO-upload-url`; this is fine
+for local-only archives when validating with `--allow-placeholders`.
 
-If the archives were already packaged locally and only the upload URL changed,
-rewrite the manifest URLs without re-running the expensive archive step:
+For local archive bundles where size matters, prefer zstd:
+
+```bash
+python3 scripts/package_cache_artifacts.py \
+  docs/cache_artifacts.example.json \
+  --repo-root . \
+  --out-dir outputs/cache_artifacts \
+  --archive-format tar.zst \
+  --zstd-level 10 \
+  --force
+```
+
+The checker accepts `.tar.gz`, `.tgz`, and `.tar.zst` cache archives. The
+packager keeps gzip as the default for portability; `.tar.zst` requires the
+`zstd` command-line tool.
+
+If you later decide to publish a separate cache bundle outside git, rewrite the
+manifest URLs without re-running the expensive archive step:
 
 ```bash
 python3 scripts/fill_cache_artifact_urls.py \

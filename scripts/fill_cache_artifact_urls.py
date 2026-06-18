@@ -17,9 +17,9 @@ URL_RE = re.compile(r"^https://[^ \t\r\n]+$")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Rewrite archive.url fields in a filled cache artifact manifest after "
-            "the cache archives have been uploaded. This does not repackage caches "
-            "or modify SHA256/size fields."
+            "Rewrite archive.url fields in a filled cache artifact manifest if "
+            "a separate cache bundle is published outside git. This does not "
+            "repackage caches or modify SHA256/size fields."
         )
     )
     parser.add_argument("manifest", type=Path, help="Filled cache artifact manifest to read.")

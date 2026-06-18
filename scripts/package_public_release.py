@@ -39,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--cache-manifest",
         type=Path,
         default=None,
-        help="Optional filled external cache artifact manifest to validate and record in the package manifest.",
+        help="Optional filled local cache artifact manifest to validate and record in the package manifest.",
     )
     parser.add_argument(
         "--cache-archive-dir",

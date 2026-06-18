@@ -61,6 +61,13 @@ compile_commands.json
 **/outputs/
 .sbf_lect_database/
 **/.sbf_lect_database/
+
+# Local cache bundles and release scratch artifacts
+/*.tar.zst
+/*_support_hull.tar.gz
+/*_support_hull.tar.zst
+/cache_artifacts*.json
+/cache_directory_sha256.json
 _*
 rbf_v2/
 **/rbf_v2/

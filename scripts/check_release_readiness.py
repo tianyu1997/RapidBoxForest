@@ -83,7 +83,11 @@ def parse_args() -> argparse.Namespace:
         "--cache-manifest",
         type=Path,
         default=None,
-        help="Optional filled cache artifact manifest. Defaults to docs/cache_artifacts.example.json in non-strict template mode.",
+        help=(
+            "Optional filled cache artifact manifest. If omitted, only the "
+            "docs/cache_artifacts.example.json template is checked and TODO "
+            "placeholders are allowed."
+        ),
     )
     parser.add_argument(
         "--cache-archive-dir",
@@ -100,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--strict",
         action="store_true",
-        help="Require final public URLs and filled external cache artifact metadata.",
+        help="Require final public source metadata. Cache artifact metadata is strict only when --cache-manifest is supplied.",
     )
     parser.add_argument(
         "--tracking-only",
@@ -302,7 +306,7 @@ def check_cache_manifest(root: Path, manifest: Path | None, *, strict: bool, arc
     if not manifest_path.is_absolute():
         manifest_path = root / manifest_path
     command = [sys.executable, "scripts/check_cache_artifacts.py", str(manifest_path)]
-    if not strict and manifest is None:
+    if manifest is None:
         command.append("--allow-placeholders")
     if archive_dir is not None:
         archive_dir_path = archive_dir if archive_dir.is_absolute() else root / archive_dir

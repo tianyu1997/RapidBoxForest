@@ -7,6 +7,7 @@ import gzip
 import hashlib
 import io
 import json
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -323,6 +324,50 @@ def run_self_test(repo_root: Path, tmp_root: Path) -> None:
         ],
         cwd=repo_root,
     )
+
+    if shutil.which("zstd"):
+        zstd_out_dir = tmp_root / "out_zstd"
+        zstd_out_dir.mkdir(parents=True)
+        run(
+            [
+                sys.executable,
+                "scripts/package_cache_artifacts.py",
+                str(template_manifest),
+                "--repo-root",
+                str(fake_repo),
+                "--out-dir",
+                str(zstd_out_dir),
+                "--archive-format",
+                "tar.zst",
+                "--zstd-level",
+                "3",
+                "--url-base",
+                "https://artifacts.example.org/rbf",
+                "--force",
+            ],
+            cwd=repo_root,
+        )
+        zstd_manifest = zstd_out_dir / "cache_artifacts.json"
+        zstd_archive_paths = sorted(zstd_out_dir.glob("*.tar.zst"))
+        if len(zstd_archive_paths) != 1:
+            raise RuntimeError(f"expected one deduplicated zstd cache archive, got {len(zstd_archive_paths)}")
+        zstd_data = json.loads(zstd_manifest.read_text(encoding="utf-8"))
+        zstd_names = {artifact["archive"]["file_name"] for artifact in zstd_data["artifacts"]}
+        if zstd_names != {"fake_cache.tar.zst"}:
+            raise RuntimeError(f"unexpected zstd archive names: {zstd_names}")
+        run(
+            [
+                sys.executable,
+                "scripts/check_cache_artifacts.py",
+                str(zstd_manifest),
+                "--repo-root",
+                str(fake_repo),
+                "--archive-dir",
+                str(zstd_out_dir),
+                "--verify-local",
+            ],
+            cwd=repo_root,
+        )
 
     for mutation in ("archive_sha", "archive_size", "directory_sha"):
         bad_manifest = out_dir / f"cache_artifacts.bad_{mutation}.json"

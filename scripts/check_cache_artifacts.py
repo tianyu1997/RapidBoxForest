@@ -39,7 +39,7 @@ REQUIRED_UNPACKED_FIELDS = {"manifest_relative_path", "snapshot_relative_path", 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Validate external LECT cache artifact metadata.")
+    parser = argparse.ArgumentParser(description="Validate optional local LECT cache artifact metadata.")
     parser.add_argument(
         "manifest",
         type=Path,

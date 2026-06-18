@@ -156,7 +156,6 @@ python3 scripts/package_public_release.py \
   --repo-url https://github.com/<owner>/RapidBoxForest \
   --version v0.1.0 \
   --release-date YYYY-MM-DD \
-  --cache-manifest path/to/cache_artifacts.json \
   --strict-metadata \
   --force
 ```
@@ -165,10 +164,10 @@ This writes `RapidBoxForest-public.tar.gz` and a companion schema-v2 package
 manifest with the archive SHA256, exported file counts, tar member count,
 duplicate-entry count, `release_tools_checked`, and `cache_archives_checked`;
 the package step also verifies that the archive matches the manifest and has no
-duplicate tar entries. Add `--doi` when that identifier is available. Omit
-`--cache-manifest` and `--strict-metadata` only for source-only template checks
-before the external LECT cache artifacts and final release identifiers have
-been published.
+duplicate tar entries. Add `--doi` when that identifier is available. Large
+LECT caches are local/generated artifacts and are ignored by git; pass
+`--cache-manifest` only when validating a separately prepared local cache
+artifact bundle.
 
 After the public repository URL is known, update citation metadata before the
 final strict release check:

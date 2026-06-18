@@ -162,8 +162,8 @@ reusable-build time, with 0.130~s median \onlineq{} (per-query online time) and
 kinematics (\mbox{HIFK-5}) materialization takes 7.006~s. At the saved-catalog
 random-scene operating points, \rbf{} has lower median \onlineq{} than the
 Batch Informed Trees (BIT*) reference rows in all six robot--difficulty cases,
-while BIT* has lower median audited path ratios than \rbf{} in the four
-UR5/Panda cases.
+while BIT* has lower, hence better, median audited path ratios than \rbf{} in
+the four UR5/Panda cases.
 In a maintenance-only scene-cache study, leaf-sweep insertions show a
 153.3--207.5$\times$ speedup and removals show a
 943.6--3354.0$\times$ speedup relative to the 15-obstacle warm-build baseline.
@@ -631,11 +631,11 @@ scene tests.
 % ==============================================================================
 \section{Lifelong Envelope Cache Tree}\label{sec:lect}
 
-LECT is a replay layer below the scene-level \rbf{} cache. It stores
-scene-independent endpoint and link-envelope evidence keyed by robot kinematics
-and joint intervals. Obstacle tests, box labels, graph connectivity, and query
-outcomes remain scene-local. A replay hit supplies geometry only; every replayed
-envelope must still be checked against the current obstacle set.
+LECT replays geometry below the scene-level \rbf{} cache; it does not cache
+scene-validity decisions. It stores scene-independent endpoint and link-envelope
+evidence keyed by robot kinematics and joint intervals. Obstacle tests, box
+labels, graph connectivity, and query outcomes remain scene-local, and every
+replayed envelope is checked against the current obstacle set.
 
 \subsection{Cache Key and Split Policy}\label{sec:lect_design}
 
@@ -649,7 +649,8 @@ bounds, not scene-validation labels or graph edges.
 An envelope record is replay-compatible only when the robot model, endpoint
 source, envelope representation, split descriptor, link radii, and active-link
 set match the current build. The split policy is also part of this descriptor;
-alternative policies are separate cache settings. For a parent interval $I$, let
+alternative policies are separate cache settings; descriptor matches reuse
+geometry bounds, not scene-validity labels. For a parent interval $I$, let
 $I_d^{-}$ and $I_d^{+}$ be the two children
 obtained by splitting joint dimension $d$ at its midpoint. Define the cumulative
 downstream envelope volume as
@@ -740,8 +741,8 @@ Fig.~\ref{fig:overview} illustrates the planning layer. \rbf{} builds a
 scene-specific set of policy-accepted joint boxes and stores their adjacency as a
 typed corridor graph. This pair is the scene cache: while the obstacle set is
 unchanged, later queries use box membership and graph search instead of
-rebuilding the cover. LECT supplies reusable kinematics-keyed evidence, but every
-policy-accepted scene box is still checked against the current obstacles.
+rebuilding the cover. LECT remains a separate kinematics-keyed evidence store;
+every policy-accepted scene box is still checked against the current obstacles.
 
 A box is an axis-aligned joint interval
 $B=[l^{(1)},u^{(1)}]\times\cdots\times[l^{(n)},u^{(n)}]\subseteq\Q$.
@@ -847,10 +848,12 @@ connect to the forest
 
 \begin{samepage}
 After consolidation, $G$ has policy-accepted vertices and edge types
-$(E_{\cap},E_{\varepsilon},E_s,E_o,E_{\pi})$. Only $E_{\cap}$, $E_o$,
-and $E_{\pi}$ can be certified corridor or portal edges, and only when backed by
-conservative region checks; $E_{\varepsilon}$, $E_s$, and other outputs require
-query validation. The edge label alone is therefore not a certificate.
+$E_{\cap}$ (overlap/contact), $E_{\varepsilon}$ (tolerance gap), $E_s$
+(segment), $E_o$ (finite-cover OBB corridor), and $E_{\pi}$ (repair witness).
+Only $E_{\cap}$, $E_o$, and $E_{\pi}$ can be certified corridor or portal edges,
+and only when backed by conservative region checks; $E_{\varepsilon}$, $E_s$,
+and other outputs require query validation. The edge label alone is therefore
+not a certificate.
 \end{samepage}
 
 \begin{samepage}
@@ -892,21 +895,20 @@ collision-free.
 \noindent\emph{Scope.}
 The theorem establishes collision-freedom only for paths contained in
 conservatively validated regions. It does not establish coverage or
-completeness: missed paths can arise from finite depth or refinement budget,
-axis-aligned boxes around narrow passages, non-vanishing envelope
-overapproximation, or bridge and repair limits. Paths using uncovered space,
-residual non-corridor segments, smoothing, or boxes admitted by
-non-conservative filters are accepted only after independent query validation.
+completeness: finite depth, axis-aligned boxes, envelope overapproximation, and
+bridge or repair limits can miss paths. Paths using uncovered space, residual
+non-corridor segments, smoothing, or boxes admitted by non-conservative filters
+are accepted only after independent query validation.
 
 \subsection{Dynamic Obstacle Updates}
 \label{sec:dynamic_update_method}
 
-For obstacle edits, robot kinematics and LECT records stay fixed; scene labels,
-forest membership, and graph edges are updated locally. Deletions may promote
-cached blocked domains after edited-scene validation. Insertions invalidate
-conflicting boxes and scene-local typed witnesses, then run bounded local
-refill. The update is local by design: it updates the represented forest rather
-than exhaustively rediscovering every newly collision-free region.
+For obstacle edits, robot kinematics and compatible LECT records stay fixed;
+scene labels, forest membership, and graph edges are updated locally. Deletions
+may promote cached blocked domains after edited-scene validation. Insertions
+invalidate conflicting boxes and scene-local typed witnesses, then run bounded
+local refill. The update is local by design: it updates the represented forest
+rather than exhaustively rediscovering every newly collision-free region.
 
 \begin{algorithm}[H]
 \caption{Obstacle deletion promotion and insertion refill.}
@@ -995,7 +997,8 @@ creation and loading costs, resident memory, and offline setup amortization are
 outside those rows. Here d23 denotes the registered depth-23 LECT snapshot:
 16,777,215~records, 12.75\,GiB on disk, and 958.079~s \mbox{prewarm} time.
 Except for \mbox{Live HIFK-5}, Table~\ref{tab:tro-shelf-ablation} rows replay
-compatible d23 evidence; that row materializes \mbox{HIFK-5} evidence live.
+compatible d23 evidence; the \mbox{Live HIFK-5} row materializes HIFK-5
+evidence live.
 The b100 label denotes the registered 100-box Shelf operating
 point. The baseline row uses the SupportHull representation with the standard
 AABB broadphase. Cache reuse requires matching robot model,
@@ -1112,10 +1115,10 @@ rules.
 
 \Needspace{8\baselineskip}
 Under these definitions, reusable builds are 0.166~s (\rbf{}), 20.040~s
-(PRM), and 355.425~s (\mbox{IRIS-NP/GCS}). The \rbf{} number excludes d23
-prewarm, snapshot load, and resident memory. In per-query \(T\),
-\mbox{RRT-Connect} is lower than \rbf{} on each of the five Shelf query rows but
-has higher \(L/L^\star\), while BIT* has higher median \(T\) and lower
+(PRM), and 355.425~s (\mbox{IRIS-NP/GCS}). The \rbf{} build excludes d23
+prewarm, snapshot loading costs, and resident memory. In the per-query \(T\)
+columns, \mbox{RRT-Connect} is faster than \rbf{} on all five Shelf queries but
+has higher, hence worse, \(L/L^\star\); BIT* is slower than \rbf{} but has lower
 \(L/L^\star\). This is a scoped timing--quality comparison for the saved
 five-query cycle, not a universal amortization claim.
 
@@ -1137,7 +1140,7 @@ rather than as a post-pruning sample count.
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
-random rows use LECT caches and anchors tied to each robot rather than
+\rbf{} random rows use LECT caches and anchors tied to each robot rather than
 Shelf-specific assets. Each \rbf{} row in Table~\ref{tab:tro-random-summary}
 uses the OBB-corridor profile and passes the fixed audit on the reported saved
 query set. Repair witnesses contribute to accepted paths only after conversion into
@@ -1153,12 +1156,11 @@ Fig.~\ref{fig:tro_random_tradeoff}; the comparison reports \onlineq{} and
 audited path ratios for \rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared
 catalogs.
 \mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
-points;
-the exception is Panda-Hard, where \rbf{} has the lower median \onlineq{}.
-\mbox{RRT-Connect} has higher median audited path ratios than \rbf{} in all
-six. With the scene forest reused, \rbf{} has lower median \onlineq{} than
-BIT* in all six cases; \(L/L^\star_{\mathrm{q}}\) matches BIT* to table
-precision in the two IIWA rows and is higher in the four UR5/Panda rows.
+points; Panda-Hard is the exception. \mbox{RRT-Connect}'s median audited path
+ratio is higher, hence worse, than \rbf{} in all six. With the scene forest
+reused, \rbf{} has lower median \onlineq{} than BIT* in all six cases;
+\(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision in the two IIWA rows
+and is higher in the four UR5/Panda rows.
 
 \subsection{Mechanism Studies}
 \label{sec:exp_mechanisms}

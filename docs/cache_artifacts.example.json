@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Template for external LECT cache artifacts required for exact paper timing reproduction. Replace TODO fields before publishing artifacts.",
+  "description": "Template for optional local LECT cache artifact validation. Caches are generated under outputs/ and are not tracked in git.",
   "artifacts": [
     {
       "id": "exp04_iiwa_d23_aafk_support_hull",
