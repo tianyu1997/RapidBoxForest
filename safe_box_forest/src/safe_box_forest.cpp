@@ -19432,57 +19432,6 @@ RebuildProfile RBFPlanningForest::remove_obstacle_suffix_and_regrow(int target_o
     return profile;
 }
 
-void RBFPlanningForest::clear_forest() {
-    boxes_.clear();
-    raw_boxes_.clear();
-    adjacency_.clear();
-    segment_edges_.clear();
-    adaptive_partition_.reset();
-    adaptive_partition_query_enabled_ = false;
-    has_adaptive_partition_config_ = false;
-    clear_dynamic_collision_cache();
-    if (oracle_) {
-        oracle_->clear_reservations();
-    }
-    invalidate_query_cache();
-}
-
-void RBFPlanningForest::reset_oracle(Scene scene) {
-    if (!online_cache_) {
-        throw std::runtime_error("SBF online envelope cache is not initialised");
-    }
-    online_cache_->clear_payloads();
-    oracle_ = std::make_unique<DatabaseBoxOracle>(
-        robot_, *online_cache_, std::move(scene), config_.endpoint_source, config_.envelope_type, config_.validation,
-        external_evidence_source_, direct_external_evidence_database_);
-    // Preserve the interval-keyed endpoint cache across oracle resets so it
-    // persists across queries (endpoints are scene-independent). The cache is
-    // memory-bounded by the validation config (OOM guard).
-    if (shared_endpoint_cache_) {
-        oracle_->set_shared_endpoint_cache(shared_endpoint_cache_);
-    } else {
-        shared_endpoint_cache_ = oracle_->shared_endpoint_cache();
-    }
-}
-
-void RBFPlanningForest::reserve_existing_boxes() {
-    if (!oracle_) {
-        return;
-    }
-    oracle_->clear_reservations();
-    for (const auto& box : boxes_) {
-        if (box.tree_id >= 0) {
-            oracle_->reserve_node(box.tree_id, box.id);
-        }
-    }
-}
-
-void RBFPlanningForest::rebuild_adjacency() {
-    adjacency_ = compute_adjacency(boxes_, config_.query.adjacency_tolerance);
-    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
-    invalidate_query_cache();
-}
-
 int RBFPlanningForest::add_partition_box_corridor_overlay(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -20759,34 +20708,6 @@ int RBFPlanningForest::add_segment_edge_partition_first(
         invalidate_query_cache();
     }
     return edge_id;
-}
-
-void RBFPlanningForest::invalidate_query_cache() const {
-    query_cache_dirty_ = true;
-    partition_last_query_cache_.valid = false;
-}
-
-const QueryGraphCache& RBFPlanningForest::query_cache() const {
-    if (partition_native_mode() &&
-        env_int_or_default("RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE", 0) == 0) {
-        throw std::logic_error(
-            "partition_native mode forbids QueryGraphCache fallback; "
-            "use AdaptiveGridPartition query/locate/connect APIs instead "
-            "or set RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE=1 for legacy debugging");
-    }
-    if (query_cache_dirty_) {
-        query_cache_ = build_query_graph_cache(boxes_, adjacency_, segment_edges_);
-        query_cache_dirty_ = false;
-    }
-    return query_cache_;
-}
-
-int RBFPlanningForest::next_box_id() const {
-    int next = 0;
-    for (const auto& box : boxes_) {
-        next = std::max(next, box.id + 1);
-    }
-    return next;
 }
 
 }  // namespace rbf
