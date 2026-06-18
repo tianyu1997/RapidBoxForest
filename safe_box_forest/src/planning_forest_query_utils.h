@@ -124,10 +124,6 @@ std::vector<Eigen::VectorXd> densify_waypoint_path_local(const std::vector<Eigen
 
 bool csv_index_list_contains(const std::string& csv, int value);
 
-int env_index_list_value_or_default(const char* name,
-                                    std::size_t position,
-                                    int fallback);
-
 int derived_planner_seed(int base_seed,
                          int offset,
                          int attempt = 0,

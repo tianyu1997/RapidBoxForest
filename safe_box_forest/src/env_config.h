@@ -10,6 +10,11 @@
 
 namespace rbf::detail {
 
+inline std::string env_string_or_empty(const char* name) {
+    const char* raw = std::getenv(name);
+    return raw != nullptr ? std::string(raw) : std::string();
+}
+
 inline int env_int_or_default(const char* name, int fallback) {
     const char* raw = std::getenv(name);
     if (raw == nullptr || raw[0] == '\0') {
@@ -66,12 +71,11 @@ inline double env_indexed_double_or_default(const char* prefix, int index, doubl
     return env_double_or_default(indexed.c_str(), fallback);
 }
 
-inline bool env_index_list_contains(const char* name, std::size_t target) {
-    const char* raw = std::getenv(name);
-    if (raw == nullptr || raw[0] == '\0') {
+inline bool csv_nonnegative_index_contains(const std::string& csv, std::size_t target) {
+    if (csv.empty()) {
         return false;
     }
-    std::stringstream stream(raw);
+    std::stringstream stream(csv);
     std::string item;
     while (std::getline(stream, item, ',')) {
         item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
@@ -88,6 +92,42 @@ inline bool env_index_list_contains(const char* name, std::size_t target) {
         }
     }
     return false;
+}
+
+inline bool env_index_list_contains(const char* name, std::size_t target) {
+    return csv_nonnegative_index_contains(env_string_or_empty(name), target);
+}
+
+inline int csv_position_int_or_default(const std::string& csv,
+                                       std::size_t position,
+                                       int fallback) {
+    if (csv.empty()) {
+        return fallback;
+    }
+    std::stringstream stream(csv);
+    std::string item;
+    std::size_t index = 0;
+    while (std::getline(stream, item, ',')) {
+        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
+            return std::isspace(c) != 0;
+        }), item.end());
+        if (index == position) {
+            if (item.empty()) {
+                return fallback;
+            }
+            char* end = nullptr;
+            const long value = std::strtol(item.c_str(), &end, 10);
+            return end != item.c_str() ? static_cast<int>(value) : fallback;
+        }
+        ++index;
+    }
+    return fallback;
+}
+
+inline int env_index_list_value_or_default(const char* name,
+                                           std::size_t position,
+                                           int fallback) {
+    return csv_position_int_or_default(env_string_or_empty(name), position, fallback);
 }
 
 inline std::vector<int> env_int_list_or_empty(const char* name) {

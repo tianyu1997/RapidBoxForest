@@ -833,34 +833,6 @@ bool csv_index_list_contains(const std::string& csv, int value) {
     return false;
 }
 
-int env_index_list_value_or_default(const char* name, std::size_t position, int fallback) {
-    const char* raw = std::getenv(name);
-    if (raw == nullptr || raw[0] == '\0') {
-        return fallback;
-    }
-    std::stringstream stream(raw);
-    std::string item;
-    std::size_t index = 0;
-    while (std::getline(stream, item, ',')) {
-        item.erase(std::remove_if(item.begin(), item.end(), [](unsigned char c) {
-            return std::isspace(c) != 0;
-        }), item.end());
-        if (index == position) {
-            if (item.empty()) {
-                return fallback;
-            }
-            char* end = nullptr;
-            const long value = std::strtol(item.c_str(), &end, 10);
-            if (end != item.c_str()) {
-                return static_cast<int>(value);
-            }
-            return fallback;
-        }
-        ++index;
-    }
-    return fallback;
-}
-
 int derived_planner_seed(int base_seed,
                          int offset,
                          int attempt,
