@@ -559,6 +559,15 @@ private:
 										const std::vector<Eigen::VectorXd>& waypoint_path,
 										double segment_resolution,
 										int query_index);
+	int try_add_query_residual_segment_edge(int source_box_id,
+											int target_box_id,
+											const std::vector<Eigen::VectorXd>& waypoint_path,
+											const RRTConnectConfig& bridge_rrt,
+											const CollisionChecker& checker,
+											StageContext& context,
+											double depth_failures_before,
+											int query_index,
+											bool enabled);
 	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
 										   const Eigen::Ref<const Eigen::VectorXd>& goal,
 										   const std::vector<Eigen::VectorXd>& waypoint_path,
