@@ -5,6 +5,7 @@
 
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_path_utils.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_utils.h"
@@ -12,18 +13,12 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cmath>
-#include <cstdint>
 #include <limits>
-#include <memory>
-#include <optional>
 #include <queue>
-#include <random>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <vector>
 
 namespace rbf {
@@ -115,45 +110,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
     const QueryBridgeWaypointShortcutOptions waypoint_shortcut_options =
         query_bridge_waypoint_shortcut_options(direct_segment_after_rrt_candidate);
-    context.diagnostics().set_value("query_bridge.waypoint_shortcut_enabled",
-                                    waypoint_shortcut_options.enabled ? 1.0 : 0.0);
-    if (waypoint_shortcut_options.enabled && corridor_path.size() > 2) {
-        using Clock = std::chrono::steady_clock;
-        const auto shortcut_t0 = Clock::now();
-        const double before_length = query_bridge_waypoint_length(corridor_path);
-        std::vector<Eigen::VectorXd> shortened =
-            collision_shortcut_path(corridor_path,
-                                    checker,
-                                    collision_shortcut_resolution(config_.query));
-        const double after_length = query_bridge_waypoint_length(shortened);
-        context.diagnostics().add_counter("query_bridge.waypoint_shortcut_attempts");
-        set_query_bridge_task_value("waypoint_shortcut_before_length", before_length);
-        set_query_bridge_task_value("waypoint_shortcut_after_length", after_length);
-        if (!shortened.empty() &&
-            after_length + waypoint_shortcut_options.min_gain < before_length) {
-            const PathAuditCheck shortcut_audit =
-                audit_waypoint_path(shortened,
-                                    checker,
-                                    config_.query.audit_resolution,
-                                    config_.query.audit_segment_step);
-            if (shortcut_audit.passed) {
-                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_accepts");
-                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_delta",
-                                                  before_length - after_length);
-                set_query_bridge_task_value("waypoint_shortcut_accepted", 1.0);
-                set_query_bridge_task_value("waypoint_shortcut_delta",
-                                            before_length - after_length);
-                corridor_path = std::move(shortened);
-            } else {
-                context.diagnostics().add_counter("query_bridge.waypoint_shortcut_audit_rejects");
-                set_query_bridge_task_value("waypoint_shortcut_audit_reject", 1.0);
-            }
-        }
-        context.diagnostics().record_timing(
-            "query_bridge.waypoint_shortcut_ms_total",
-            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                      shortcut_t0).count());
-    }
+    query_bridge_apply_waypoint_shortcut(corridor_path,
+                                         checker,
+                                         config_.query,
+                                         waypoint_shortcut_options,
+                                         context,
+                                         query_index);
     auto locate_box_linear = [&](const Eigen::Ref<const Eigen::VectorXd>& point) {
         for (const auto& box : boxes_) {
             if (intervals_contain_point_local(box.joint_intervals,
@@ -248,63 +210,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         query_bridge_internal_simplify_enabled(direct_segment_after_rrt_candidate);
     context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
                                     bridge_internal_simplify ? 1.0 : 0.0);
-    if (bridge_internal_simplify &&
-        config_.query.final_rrt_simplify &&
-        config_.query.final_rrt_simplify_timeout_ms > 0.0 &&
-        corridor_path.size() >= 2) {
-        using Clock = std::chrono::steady_clock;
-        const auto simplify_t0 = Clock::now();
-        auto elapsed_ms = [&]() {
-            return std::chrono::duration<double, std::milli>(Clock::now() -
-                                                             simplify_t0)
-                .count();
-        };
-        RRTConnectConfig simplify_config = config_.connector.rrt;
-        simplify_config.max_iters =
-            std::max(1, config_.query.final_rrt_simplify_max_iters);
-        simplify_config.segment_resolution =
-            std::max(simplify_config.segment_resolution,
-                     config_.query.audit_resolution);
-        simplify_config.segment_step = config_.query.audit_segment_step;
-        simplify_config.shortcut_path = true;
-        const int attempts = std::max(1, config_.query.final_rrt_simplify_attempts);
-        double best_length = query_bridge_waypoint_length(corridor_path);
-        for (int attempt = 0; attempt < attempts; ++attempt) {
-            const double remaining_ms =
-                config_.query.final_rrt_simplify_timeout_ms - elapsed_ms();
-            if (remaining_ms <= 0.0) {
-                break;
-            }
-            const int attempts_left = attempts - attempt;
-            simplify_config.timeout_ms =
-                std::max(1.0, remaining_ms / static_cast<double>(attempts_left));
-            const int simplify_seed =
-                derived_planner_seed(config_.grower.rng_seed,
-                                     kSeedBridgeSimplifyOffset,
-                                     attempt);
-            auto candidate = rrt_connect(start,
+    query_bridge_apply_internal_simplify(start,
                                          goal,
+                                         corridor_path,
                                          checker,
                                          audit_robot_,
-                                         simplify_config,
-                                         simplify_seed);
-            if (candidate.empty()) {
-                continue;
-            }
-            const double candidate_length = query_bridge_waypoint_length(candidate);
-            if (candidate_length + 1e-12 >= best_length) {
-                continue;
-            }
-            if (audit_waypoint_path(candidate,
-                                    checker,
-                                    config_.query.audit_resolution,
-                                    config_.query.audit_segment_step)
-                    .passed) {
-                best_length = candidate_length;
-                corridor_path = std::move(candidate);
-            }
-        }
-    }
+                                         config_.connector.rrt,
+                                         config_.query,
+                                         config_.grower.rng_seed,
+                                         bridge_internal_simplify);
     int dense_repair_added = 0;
     bool dense_repair_attempted = false;
     const double audited_bridge_length = query_bridge_waypoint_length(corridor_path);
