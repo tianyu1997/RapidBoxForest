@@ -1,11 +1,29 @@
 #include "planning_forest_query_bridge_batch_utils.h"
 
+#include "env_config.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
 #include <string>
 
 namespace rbf {
+
+QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env() {
+    QueryBridgeAcceptanceThresholds thresholds;
+    thresholds.max_segment_fraction = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION", 0.25));
+    thresholds.path_ratio =
+        std::max(0.0, detail::env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO", 1.50));
+    thresholds.path_additive = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_ADDITIVE", 0.75));
+    thresholds.max_path_length = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH", 4.5));
+    return thresholds;
+}
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

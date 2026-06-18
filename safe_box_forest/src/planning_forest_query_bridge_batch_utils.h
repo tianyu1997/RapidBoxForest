@@ -42,6 +42,8 @@ struct QueryBridgeSearchJob {
     int attempt = 0;
 };
 
+QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
+
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after);

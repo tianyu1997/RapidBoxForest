@@ -75,19 +75,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     oracle_counters_before = oracle_->counters();
     oracle_counters_before_valid = true;
 
-    const double bridge_accept_segment_fraction =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION", 0.25));
-    const double bridge_accept_path_ratio =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO", 1.50));
-    const double bridge_accept_path_additive =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_PATH_ADDITIVE", 0.75));
-    const double bridge_accept_max_path_length =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH", 4.5));
-    const QueryBridgeAcceptanceThresholds bridge_acceptance{
-        bridge_accept_segment_fraction,
-        bridge_accept_path_ratio,
-        bridge_accept_path_additive,
-        bridge_accept_max_path_length};
+    const QueryBridgeAcceptanceThresholds bridge_acceptance =
+        query_bridge_acceptance_thresholds_from_env();
     auto query_result_good = [&](const QueryResult& current,
                                  const Eigen::VectorXd& start,
                                  const Eigen::VectorXd& goal) {
@@ -254,21 +243,21 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 segment_fraction <= partition_path_first_max_segment_fraction;
             const bool length_reasonable =
                 direct <= 1e-9 ||
-                initial_query.path_length <= std::max(direct * bridge_accept_path_ratio,
-                                                      direct + bridge_accept_path_additive) ||
-                initial_query.path_length <= bridge_accept_max_path_length;
+                initial_query.path_length <= std::max(direct * bridge_acceptance.path_ratio,
+                                                      direct + bridge_acceptance.path_additive) ||
+                initial_query.path_length <= bridge_acceptance.max_path_length;
             if (!segment_reasonable) {
                 last_build_.diagnostics["query_bridge.partition_path_first_reject_segment"] += 1.0;
             }
             if (!length_reasonable) {
                 last_build_.diagnostics["query_bridge.partition_path_first_reject_length"] += 1.0;
             }
-	            if (segment_reasonable && (length_reasonable || partition_path_first_allow_long)) {
-	                task.waypoint_path = initial_query.path;
-	                task.waypoint_path_from_partition_query = true;
-	                if (task.hipac_candidate_path.empty()) {
-	                    task.hipac_candidate_path = initial_query.path;
-	                }
+            if (segment_reasonable && (length_reasonable || partition_path_first_allow_long)) {
+                task.waypoint_path = initial_query.path;
+                task.waypoint_path_from_partition_query = true;
+                if (task.hipac_candidate_path.empty()) {
+                    task.hipac_candidate_path = initial_query.path;
+                }
 	                last_build_.diagnostics["query_bridge.partition_path_first_accepted"] += 1.0;
 	            }
         }
@@ -1154,16 +1143,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         skip_deferred_short_edges ? 1.0 : 0.0);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_segment_fraction",
-        bridge_accept_segment_fraction);
+        bridge_acceptance.max_segment_fraction);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_path_ratio",
-        bridge_accept_path_ratio);
+        bridge_acceptance.path_ratio);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_path_additive",
-        bridge_accept_path_additive);
+        bridge_acceptance.path_additive);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_max_path_length",
-        bridge_accept_max_path_length);
+        bridge_acceptance.max_path_length);
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first",
         partition_path_first ? 1.0 : 0.0);
