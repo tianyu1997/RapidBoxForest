@@ -848,16 +848,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return task.hipac_online_satisfied;
     };
-    auto mark_hipac_after_rrt_skip = [&](const QueryBridgeSearchTask& task,
-                                         double total_ms) {
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_tasks_skipped_by_hipac_after_rrt");
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "skipped_by_hipac_after_rrt"),
-            1.0);
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                              total_ms);
-    };
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));
     if (direct_start_goal_segment) {
@@ -1503,7 +1493,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task.hipac_candidate_path = task.waypoint_path;
                 try_hipac_online_sequence(task);
                 if (task.hipac_online_satisfied) {
-                    mark_hipac_after_rrt_skip(task, task_elapsed_ms());
+                    record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
+                        batch_context,
+                        task.index,
+                        task_elapsed_ms());
                     return;
                 }
             }

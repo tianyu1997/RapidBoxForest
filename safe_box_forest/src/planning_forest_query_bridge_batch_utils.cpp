@@ -258,6 +258,19 @@ void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
     context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
 }
 
+void record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
+    StageContext& context,
+    std::size_t index,
+    double total_ms) {
+    context.diagnostics().add_counter(
+        "query_bridge.batch_tasks_skipped_by_hipac_after_rrt");
+    context.diagnostics().set_value(
+        query_bridge_task_key(index, "skipped_by_hipac_after_rrt"),
+        1.0);
+    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"),
+                                    total_ms);
+}
+
 void record_query_bridge_forced_attempts(StageContext& context,
                                          std::size_t index,
                                          bool forced_task,

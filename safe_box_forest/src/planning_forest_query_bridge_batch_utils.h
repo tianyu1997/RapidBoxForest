@@ -355,6 +355,11 @@ void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
                                                       double probe_ms,
                                                       double total_ms);
 
+void record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
+    StageContext& context,
+    std::size_t index,
+    double total_ms);
+
 void record_query_bridge_forced_attempts(StageContext& context,
                                          std::size_t index,
                                          bool forced_task,
