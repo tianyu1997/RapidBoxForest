@@ -93,6 +93,7 @@ add_library(sbf_core STATIC
     src/leaf_sweep_grower.cpp
     src/merger.cpp
     src/planning_forest_core.cpp
+    src/planning_forest_dynamic_cache.cpp
     src/planning_forest_partition.cpp
     src/query.cpp
     src/runtime.cpp
