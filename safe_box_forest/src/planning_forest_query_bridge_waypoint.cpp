@@ -23,6 +23,43 @@
 
 namespace rbf {
 
+namespace {
+
+ChainPaveConfig make_dense_query_bridge_pave_config(const ChainPaveConfig& base,
+                                                    int ffb_depth) {
+    ChainPaveConfig config = base;
+    config.max_chain = std::max(config.max_chain, 256);
+    config.refine_covered_waypoints = true;
+    config.fill_gaps = true;
+    config.find_free_box.max_depth = ffb_depth;
+    config.gap_fill_sample_step = 0.0025;
+    config.gap_fill_time_budget_ms = 0.0;
+    config.gap_fill_max_ffb_calls = -1;
+    config.gap_fill_min_arc_gain = 0.0;
+    config.require_connected_chain = true;
+    return config;
+}
+
+ChainPaveConfig make_deferred_query_bridge_pave_config(const ChainPaveConfig& base,
+                                                       int ffb_depth,
+                                                       bool short_local_bridge) {
+    ChainPaveConfig config = base;
+    config.max_chain = std::max(config.max_chain, 256);
+    config.refine_covered_waypoints = true;
+    config.fill_gaps = true;
+    config.find_free_box.max_depth = ffb_depth;
+    config.gap_fill_sample_step = std::min(config.gap_fill_sample_step, 0.02);
+    config.gap_fill_time_budget_ms =
+        std::max(config.gap_fill_time_budget_ms, short_local_bridge ? 350.0 : 200.0);
+    config.gap_fill_max_ffb_calls =
+        std::max(config.gap_fill_max_ffb_calls, short_local_bridge ? 768 : 512);
+    config.gap_fill_min_arc_gain = 0.0;
+    config.require_connected_chain = true;
+    return config;
+}
+
+} // namespace
+
 int RBFPlanningForest::try_add_query_box_corridor_edge(
     int source_box_id,
     int target_box_id,
@@ -2229,16 +2266,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     }
     if (dense_box_corridor_candidate && !partition_native_mode()) {
         dense_repair_attempted = true;
-        ChainPaveConfig dense_config = config_.connector.pave;
-        dense_config.max_chain = std::max(dense_config.max_chain, 256);
-        dense_config.refine_covered_waypoints = true;
-        dense_config.fill_gaps = true;
-        dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
-        dense_config.gap_fill_sample_step = 0.0025;
-        dense_config.gap_fill_time_budget_ms = 0.0;
-        dense_config.gap_fill_max_ffb_calls = -1;
-        dense_config.gap_fill_min_arc_gain = 0.0;
-        dense_config.require_connected_chain = true;
+        ChainPaveConfig dense_config =
+            make_dense_query_bridge_pave_config(config_.connector.pave,
+                                                query_bridge_ffb_depth);
         const std::size_t boxes_before_dense = boxes_.size();
         dense_repair_added = chain_pave_along_path(
             corridor_path,
@@ -2270,20 +2300,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return finish_bridge(dense_repair_added + box_corridor_edges_added);
         }
     }
-    ChainPaveConfig pave_config = config_.connector.pave;
-    if (defer_query_segment_edge) {
-        pave_config.max_chain = std::max(pave_config.max_chain, 256);
-        pave_config.refine_covered_waypoints = true;
-        pave_config.fill_gaps = true;
-        pave_config.find_free_box.max_depth = query_bridge_ffb_depth;
-        pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
-        pave_config.gap_fill_time_budget_ms =
-            std::max(pave_config.gap_fill_time_budget_ms, short_local_bridge ? 350.0 : 200.0);
-        pave_config.gap_fill_max_ffb_calls =
-            std::max(pave_config.gap_fill_max_ffb_calls, short_local_bridge ? 768 : 512);
-        pave_config.gap_fill_min_arc_gain = 0.0;
-        pave_config.require_connected_chain = true;
-    }
+    ChainPaveConfig pave_config =
+        defer_query_segment_edge
+            ? make_deferred_query_bridge_pave_config(config_.connector.pave,
+                                                     query_bridge_ffb_depth,
+                                                     short_local_bridge)
+            : config_.connector.pave;
     int added = 0;
     if (!partition_native_mode()) {
         const std::size_t boxes_before_forward = boxes_.size();
@@ -2321,16 +2343,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
     }
     if (dense_box_corridor_candidate && !dense_repair_attempted && !partition_native_mode()) {
-        ChainPaveConfig dense_config = config_.connector.pave;
-        dense_config.max_chain = std::max(dense_config.max_chain, 256);
-        dense_config.refine_covered_waypoints = true;
-        dense_config.fill_gaps = true;
-        dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
-        dense_config.gap_fill_sample_step = 0.0025;
-        dense_config.gap_fill_time_budget_ms = 0.0;
-        dense_config.gap_fill_max_ffb_calls = -1;
-        dense_config.gap_fill_min_arc_gain = 0.0;
-        dense_config.require_connected_chain = true;
+        ChainPaveConfig dense_config =
+            make_dense_query_bridge_pave_config(config_.connector.pave,
+                                                query_bridge_ffb_depth);
         const std::size_t boxes_before_dense_retry = boxes_.size();
         dense_repair_added = chain_pave_along_path(
             corridor_path,
