@@ -148,7 +148,10 @@ src/adaptive_grid_partition_overlay.cpp
 src/adaptive_grid_partition_keys.h
                                    internal grid hash keys for partition merge,
                                    broadphase, and adjacency indices
-src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
+src/box_graph.cpp                  explicit box adjacency, graph cache,
+                                   Dijkstra/search, and waypoint extraction
+src/box_graph_edges.cpp            segment-edge, portal-corridor, and
+                                   segment-edge adjacency helpers
 src/connector.cpp                  island connector orchestration, frontier
                                    bridge, point-gap fallback, and bridge
                                    commit loop
