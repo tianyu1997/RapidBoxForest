@@ -55,6 +55,20 @@ int RBFPlanningForest::refresh_query_bridge_box_or_anchor(
     return -1;
 }
 
+void RBFPlanningForest::sync_query_bridge_partition_boxes(
+    std::size_t& partition_refresh_base,
+    const char* diagnostic_prefix) {
+    if (partition_native_mode() &&
+        adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        boxes_.size() > partition_refresh_base) {
+        append_adaptive_partition_boxes(partition_refresh_base,
+                                        &last_build_,
+                                        diagnostic_prefix);
+        partition_refresh_base = boxes_.size();
+    }
+}
+
 std::pair<int, int> RBFPlanningForest::locate_query_bridge_boxes(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,

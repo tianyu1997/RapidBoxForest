@@ -67,17 +67,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                  const Eigen::VectorXd& goal) {
         return query_bridge_result_acceptable(current, start, goal, bridge_acceptance);
     };
-    auto catch_up_query_bridge_partition = [&](const char* diagnostic_prefix) {
-        if (partition_native_mode() &&
-            adaptive_partition_query_enabled_ &&
-            adaptive_partition_ &&
-            boxes_.size() > partition_refresh_base) {
-            append_adaptive_partition_boxes(partition_refresh_base,
-                                            &last_build_,
-                                            diagnostic_prefix);
-            partition_refresh_base = boxes_.size();
-        }
-    };
     const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
     auto query_bridge_forced_index = [&](std::size_t index) {
         return query_bridge_index_forced(index_options, index);
@@ -114,7 +103,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (goal_box_id < 0) {
             goal_box_id = anchor_query_endpoint_box_with_diagnostics(goals[index]);
         }
-        catch_up_query_bridge_partition("query_bridge.endpoint_anchor");
+        sync_query_bridge_partition_boxes(partition_refresh_base,
+                                          "query_bridge.endpoint_anchor");
         if (start_box_id >= 0) {
             start_box_id = refresh_query_bridge_box_or_anchor(start_box_id,
                                                               starts[index],

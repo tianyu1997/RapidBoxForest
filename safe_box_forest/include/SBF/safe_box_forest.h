@@ -548,6 +548,8 @@ private:
 	int refresh_query_bridge_box_or_anchor(int anchor_box_id,
 										   const Eigen::Ref<const Eigen::VectorXd>& point,
 										   const char* endpoint_name);
+	void sync_query_bridge_partition_boxes(std::size_t& partition_refresh_base,
+										   const char* diagnostic_prefix);
 	bool box_only_path_connected_partition_first(int source_box_id,
 												 int target_box_id) const;
 	bool overlay_path_connected_partition_first(int source_box_id,
