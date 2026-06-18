@@ -1219,147 +1219,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                        best_length,
                                        task.waypoint_path);
         };
-    auto run_segment_only_retry = [&](QueryBridgeSearchTask& task,
-                                      int first_attempt,
-                                      double& best_length) {
-        if (!task.waypoint_path.empty() ||
-            retry_options.segment_only_retry_attempts <= 0) {
-            return;
-        }
-        const auto retry_t0 = Clock::now();
-        int retry_successes = 0;
-        for (int retry = 0; retry < retry_options.segment_only_retry_attempts; ++retry) {
-            query_bridge_adopt_retry_path_if_better(
-                task,
-                run_task_attempt(task, first_attempt + retry, 0),
-                best_length,
-                retry_successes);
-            if (retry_successes > 0 && retry_options.no_path_retry_stop_on_first_success) {
-                break;
-            }
-        }
-        const double retry_ms = elapsed_ms_since(retry_t0);
-        batch_context.diagnostics().record_timing(
-            "query_bridge.batch_segment_only_retry_ms_total",
-            retry_ms);
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_segment_only_retry_attempts",
-            static_cast<double>(retry_options.segment_only_retry_attempts));
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_segment_only_retry_successes",
-            static_cast<double>(retry_successes));
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "segment_only_retry_attempts"),
-            static_cast<double>(retry_options.segment_only_retry_attempts));
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "segment_only_retry_ms"),
-            retry_ms);
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "segment_only_retry_successes"),
-            static_cast<double>(retry_successes));
-    };
-    auto run_no_path_retries = [&](QueryBridgeSearchTask& task,
-                                   int first_attempt,
-                                   double& best_length) {
-        if (!task.waypoint_path.empty() ||
-            (retry_options.no_path_retry_attempts <= 0 &&
-             retry_options.no_path_retry_budget_stages == 0)) {
-            return;
-        }
-        int retry_attempt_offset = first_attempt;
-        int retry_attempts_total = 0;
-        int retry_successes_total = 0;
-        double retry_ms_total = 0.0;
-        auto run_no_path_retry_stage = [&](int stage_index,
-                                           int stage_attempts,
-                                           int stage_fixed_iters,
-                                           bool adaptive_stage) {
-            const int effective_stage_attempts = std::max(0, stage_attempts);
-            if (effective_stage_attempts == 0 || !task.waypoint_path.empty()) {
-                return;
-            }
-            const auto retry_t0 = Clock::now();
-            int retry_successes = 0;
-            int retry_attempts_run = 0;
-            for (int retry = 0; retry < effective_stage_attempts; ++retry) {
-                query_bridge_adopt_retry_path_if_better(
-                    task,
-                    run_task_attempt(task,
-                                     retry_attempt_offset + retry,
-                                     stage_fixed_iters),
-                    best_length,
-                    retry_successes);
-                retry_attempts_run += 1;
-                if (retry_successes > 0 &&
-                    retry_options.no_path_retry_stop_on_first_success) {
-                    break;
-                }
-            }
-            retry_attempt_offset += effective_stage_attempts;
-            retry_attempts_total += retry_attempts_run;
-            retry_successes_total += retry_successes;
-            const double retry_ms = elapsed_ms_since(retry_t0);
-            retry_ms_total += retry_ms;
-            const std::string key_prefix =
-                stage_index == 0
-                    ? query_bridge_task_key(task.index, "no_path_retry_")
-                    : query_bridge_task_key(
-                          task.index,
-                          "no_path_retry_stage." + std::to_string(stage_index) + ".");
-            batch_context.diagnostics().set_value(
-                key_prefix + "attempts",
-                static_cast<double>(effective_stage_attempts));
-            batch_context.diagnostics().set_value(
-                key_prefix + "attempts_run",
-                static_cast<double>(retry_attempts_run));
-            batch_context.diagnostics().set_value(
-                key_prefix + "successes",
-                static_cast<double>(retry_successes));
-            batch_context.diagnostics().set_value(
-                key_prefix + "fixed_iters",
-                static_cast<double>(stage_fixed_iters));
-            batch_context.diagnostics().set_value(key_prefix + "ms", retry_ms);
-            if (adaptive_stage) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.batch_no_path_retry_adaptive_attempts",
-                    static_cast<double>(retry_attempts_run));
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.batch_no_path_retry_adaptive_successes",
-                    static_cast<double>(retry_successes));
-                batch_context.diagnostics().record_timing(
-                    "query_bridge.batch_no_path_retry_adaptive_ms_total",
-                    retry_ms);
-            }
-        };
-        run_no_path_retry_stage(0, retry_options.no_path_retry_attempts, 0, false);
-        for (std::size_t stage = 0;
-             task.waypoint_path.empty() && stage < retry_options.no_path_retry_budget_stages;
-             ++stage) {
-            run_no_path_retry_stage(
-                static_cast<int>(stage) + 1,
-                retry_options.no_path_retry_budget_attempts[stage],
-                retry_options.no_path_retry_budget_iters[stage],
-                true);
-        }
-        batch_context.diagnostics().record_timing(
-            "query_bridge.batch_no_path_retry_ms_total",
-            retry_ms_total);
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_no_path_retry_attempts",
-            static_cast<double>(retry_attempts_total));
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_no_path_retry_successes",
-            static_cast<double>(retry_successes_total));
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "no_path_retry_attempts"),
-            static_cast<double>(retry_attempts_total));
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "no_path_retry_ms"),
-            retry_ms_total);
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "no_path_retry_successes"),
-            static_cast<double>(retry_successes_total));
-    };
     auto try_commit_segment_only_task = [&](QueryBridgeSearchTask& task) {
         const int source_box_id = locate_box_partition_first(
             task.start,
@@ -1686,9 +1545,25 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const bool segment_only_task =
             query_bridge_index_segment_only(index_options, task.index);
         if (segment_only_task) {
-            run_segment_only_retry(task, attempt_plan.base_attempts, best_length);
+            query_bridge_run_segment_only_retry(
+                task,
+                attempt_plan.base_attempts,
+                best_length,
+                retry_options,
+                [&](int attempt, int fixed_iters) {
+                    return run_task_attempt(task, attempt, fixed_iters);
+                },
+                batch_context);
         } else {
-            run_no_path_retries(task, attempt_plan.base_attempts, best_length);
+            query_bridge_run_no_path_retries(
+                task,
+                attempt_plan.base_attempts,
+                best_length,
+                retry_options,
+                [&](int attempt, int fixed_iters) {
+                    return run_task_attempt(task, attempt, fixed_iters);
+                },
+                batch_context);
         }
         if (task.waypoint_path.empty()) {
             record_query_bridge_batch_task_no_path(batch_context,

@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -400,6 +401,25 @@ void query_bridge_adopt_retry_path_if_better(
     std::vector<Eigen::VectorXd> retry_path,
     double& best_length,
     int& retry_successes);
+
+using QueryBridgeRetryPathRunner =
+    std::function<std::vector<Eigen::VectorXd>(int attempt, int fixed_iters)>;
+
+void query_bridge_run_segment_only_retry(
+    QueryBridgeSearchTask& task,
+    int first_attempt,
+    double& best_length,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeRetryPathRunner& run_task_attempt,
+    StageContext& context);
+
+void query_bridge_run_no_path_retries(
+    QueryBridgeSearchTask& task,
+    int first_attempt,
+    double& best_length,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeRetryPathRunner& run_task_attempt,
+    StageContext& context);
 
 int query_bridge_edge_query_index(bool scene_reusable_edges,
                                   const QueryBridgeSearchTask& task);
