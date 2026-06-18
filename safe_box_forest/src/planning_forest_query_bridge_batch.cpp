@@ -649,133 +649,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        return added;
 	    };
 	    auto try_hipac_transition_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        const QueryBridgeHipacTransitionGate transition_gate =
-	            query_bridge_hipac_transition_gate(
-	                last_adaptive_partition_config_,
-	                partition_native_mode(),
-	                adaptive_partition_query_enabled_,
-	                adaptive_partition_ && !adaptive_partition_->empty(),
-	                static_cast<int>(task.waypoint_path.size()),
-	                task.hipac_transition_resolves_used,
-	                static_cast<int>(task.index),
-	                task.query_index);
-	        if (transition_gate.disabled) {
-	            return 0;
-	        }
-	        if (transition_gate.target_rejected) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_transition_target_rejects");
-	            return 0;
-	        }
-
-	        const auto transition_t0 = QueryBridgeClock::now();
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_attempts");
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_attempt"),
-	                                              1.0);
-	        const int stride =
-	            std::max(1, last_adaptive_partition_config_.hipac_transition_window_stride);
-	        const int candidate_limit =
-	            std::max(1, last_adaptive_partition_config_.hipac_transition_candidate_limit);
-	        const int min_predicted_edges =
-	            std::max(0, last_adaptive_partition_config_.hipac_transition_min_predicted_bridge_edges);
-	        const double max_pair_distance =
-	            std::max(0.0, last_adaptive_partition_config_.hipac_transition_max_pair_distance);
-	        const double sample_step =
-	            query_bridge_direct_corridor_runtime_options(
-	                task.query_index,
-	                config_.query.audit_segment_step).sample_step;
-	        const QueryBridgeHipacTransitionCandidateSet transition_candidates =
-	            query_bridge_select_hipac_transition_candidates(
-	                *adaptive_partition_,
-	                task.waypoint_path,
-	                stride,
-	                candidate_limit,
-	                min_predicted_edges,
-	                max_pair_distance,
-	                sample_step,
-	                last_adaptive_partition_config_.hipac_transition_allow_same_component);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_candidates",
-	                                                static_cast<double>(transition_candidates.candidates.size()));
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated",
-	                                                static_cast<double>(transition_candidates.gated +
-	                                                                    transition_candidates.same_component_gated +
-	                                                                    transition_candidates.distance_gated +
-	                                                                    transition_candidates.edge_gated));
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_same_component",
-	                                                static_cast<double>(transition_candidates.same_component_gated));
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_distance",
-	                                                static_cast<double>(transition_candidates.distance_gated));
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_gated_edges",
-	                                                static_cast<double>(transition_candidates.edge_gated));
-	        if (transition_candidates.candidates.empty()) {
-	            return 0;
-	        }
-
-	        int total_added = 0;
-	        int attempts = 0;
-	        const int attempt_cap = transition_gate.attempt_cap;
-	        for (const auto& candidate : transition_candidates.candidates) {
-	            if (attempts >= attempt_cap ||
-	                task.hipac_transition_resolves_used >= attempt_cap) {
-	                break;
-	            }
-	            ++attempts;
-	            task.hipac_transition_resolves_used += 1;
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_transition_portal_attempts");
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_predicted_edges"),
-	                                                  static_cast<double>(candidate.predicted_bridge_edges));
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_pair_distance"),
-	                                                  candidate.pair_distance);
-	            const int added = add_partition_portal_corridor_overlay(candidate.source_point,
-	                                                                    candidate.target_point,
-	                                                                    candidate.local_path,
-	                                                                    "query_bridge.hipac_online_transition",
-	                                                                    false,
-	                                                                    false,
-	                                                                    query_bridge_edge_query_index(scene_reusable_edges, task),
-	                                                                    &last_build_);
-	            if (added <= 0) {
-	                batch_context.diagnostics().add_counter("query_bridge.hipac_transition_failures");
-	                continue;
-	            }
-	            total_added += added;
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_transition_added",
-	                                                    static_cast<double>(added));
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_added"),
-	                                                  static_cast<double>(added));
+	        const int added = try_hipac_transition_portal_task(
+	            task,
+	            bridge_acceptance,
+	            batch_context,
+	            query_bridge_edge_query_index(scene_reusable_edges, task));
+	        if (added > 0) {
 	            added_by_query[task.index] += added;
-	            const QueryResult probe_after_transition = query(task.start, task.goal);
-	            if (probe_after_transition.success &&
-	                probe_after_transition.audit_passed &&
-	                !probe_after_transition.path.empty()) {
-	                task.waypoint_path = probe_after_transition.path;
-	                task.hipac_candidate_path = probe_after_transition.path;
-	                batch_context.diagnostics().add_counter(
-	                    "query_bridge.hipac_transition_probe_path_adopted");
-	                batch_context.diagnostics().set_value(
-	                    query_bridge_task_key(task.index, "hipac_transition_probe_path_length"),
-	                    probe_after_transition.path_length);
-	            }
-	            if (query_bridge_result_acceptable(probe_after_transition,
-	                                               task.start,
-	                                               task.goal,
-	                                               bridge_acceptance)) {
-	                task.hipac_online_satisfied = true;
-	                batch_context.diagnostics().add_counter("query_bridge.hipac_transition_satisfied");
-	                batch_context.diagnostics().set_value(query_bridge_task_key(task.index,
-	                                                               "hipac_transition_satisfied"),
-	                                                      1.0);
-	                break;
-	            }
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_transition_not_sufficient");
 	        }
-	        const double transition_ms = query_bridge_elapsed_ms_since(transition_t0);
-	        batch_context.diagnostics().record_timing("query_bridge.hipac_transition_ms_total",
-	                                                  transition_ms);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_transition_ms_total",
-	                                                transition_ms);
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_transition_ms"),
-	                                              transition_ms);
-	        return total_added;
+	        return added;
 	    };
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));

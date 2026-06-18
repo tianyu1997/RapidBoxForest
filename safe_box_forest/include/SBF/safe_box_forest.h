@@ -693,6 +693,11 @@ private:
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		StageContext& context,
 		int query_index);
+	int try_hipac_transition_portal_task(
+		QueryBridgeSearchTask& task,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		StageContext& context,
+		int query_index);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,
