@@ -1379,32 +1379,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             config_.connector.rrt_segment_edges) {
             const auto residual_segment_loop_t0 =
                 detailed_direct_timing ? Clock::now() : Clock::time_point{};
-            const bool group_residual_gaps =
-                direct_corridor_options.group_residual_gaps;
-            const std::vector<std::pair<int, int>> gap_groups =
-                query_bridge_group_residual_gap_transitions(final_bad,
-                                                            sample_layers.size(),
-                                                            group_residual_gaps);
-            context.diagnostics().set_value(
-                "query_bridge.direct_corridor_segment_gap_groups",
-                static_cast<double>(gap_groups.size()));
-            std::vector<std::pair<int, int>> pending_gap_groups;
-            pending_gap_groups.reserve(gap_groups.size());
-            for (auto it = gap_groups.rbegin(); it != gap_groups.rend(); ++it) {
-                pending_gap_groups.push_back(*it);
-            }
-            const bool residual_milestone_segments =
-                direct_corridor_options.residual_milestone_segments;
-            context.diagnostics().set_value(
-                "query_bridge.direct_corridor_residual_milestone_segments",
-                residual_milestone_segments ? 1.0 : 0.0);
-            context.diagnostics().set_value(
-                "query_bridge.direct_corridor_repair_milestones",
-                static_cast<double>(repair_milestones.size()));
             auto insert_residual_segment = [&](int lhs_index,
                                                int rhs_index,
-                                               Eigen::VectorXd lhs_point,
-                                               Eigen::VectorXd rhs_point,
+                                               const Eigen::VectorXd& lhs_point,
+                                               const Eigen::VectorXd& rhs_point,
                                                int sample_gap) {
                 if (lhs_index < 0 || rhs_index < 0 ||
                     lhs_index >= static_cast<int>(boxes_.size()) ||
@@ -1414,7 +1392,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 if (dsu.find(lhs_index) == dsu.find(rhs_index)) {
                     return false;
                 }
-                std::vector<Eigen::VectorXd> gap_path{std::move(lhs_point), std::move(rhs_point)};
+                std::vector<Eigen::VectorXd> gap_path{lhs_point, rhs_point};
                 const auto segment_audit_t0 = Clock::now();
                 const PathAuditCheck gap_audit =
                     audit_waypoint_path(gap_path,
@@ -1454,67 +1432,17 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
                 return false;
             };
-            if (residual_milestone_segments) {
-                const std::vector<QueryBridgeResidualMilestone> compact =
-                    query_bridge_compact_residual_milestones(samples,
-                                                             sample_layers,
-                                                             repair_milestones,
-                                                             static_cast<int>(boxes_.size()),
-                                                             dsu);
-                context.diagnostics().set_value(
-                    "query_bridge.direct_corridor_residual_milestones",
-                    static_cast<double>(compact.size()));
-                for (std::size_t index = 0; index + 1 < compact.size(); ++index) {
-                    const auto& lhs = compact[index];
-                    const auto& rhs = compact[index + 1];
-                    if (rhs.param <= lhs.param + 1e-9) {
-                        continue;
-                    }
-                    const int sample_gap = static_cast<int>(
-                        std::ceil(std::max(0.0, rhs.param - lhs.param)));
-                    insert_residual_segment(lhs.box_index,
-                                            rhs.box_index,
-                                            lhs.point,
-                                            rhs.point,
-                                            sample_gap);
-                }
-            } else {
-                while (!pending_gap_groups.empty()) {
-                    const auto gap_group = pending_gap_groups.back();
-                    pending_gap_groups.pop_back();
-                    const int lhs_sample =
-                        query_bridge_nearest_nonempty_layer(sample_layers, gap_group.first, -1);
-                    const int rhs_sample =
-                        query_bridge_nearest_nonempty_layer(sample_layers, gap_group.second + 1, 1);
-                    if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
-                        continue;
-                    }
-                    const auto& lhs_layer = sample_layers[static_cast<std::size_t>(lhs_sample)];
-                    const auto& rhs_layer = sample_layers[static_cast<std::size_t>(rhs_sample)];
-                    if (lhs_layer.empty() || rhs_layer.empty()) {
-                        continue;
-                    }
-                    const int lhs_index = lhs_layer.front();
-                    const int rhs_index = rhs_layer.front();
-                    const auto lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
-                    const auto rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
-                    const bool inserted = insert_residual_segment(lhs_index,
-                                                                  rhs_index,
-                                                                  lhs_point,
-                                                                  rhs_point,
-                                                                  rhs_sample - lhs_sample);
-                    if (!inserted) {
-                        if (group_residual_gaps && gap_group.first < gap_group.second) {
-                            const int mid = (gap_group.first + gap_group.second) / 2;
-                            pending_gap_groups.emplace_back(mid + 1, gap_group.second);
-                            pending_gap_groups.emplace_back(gap_group.first, mid);
-                            context.diagnostics().add_counter(
-                                "query_bridge.direct_corridor_segment_group_splits");
-                        }
-                        continue;
-                    }
-                }
-            }
+            query_bridge_run_residual_segment_gap_pass(
+                context,
+                samples,
+                sample_layers,
+                repair_milestones,
+                final_bad,
+                static_cast<int>(boxes_.size()),
+                direct_corridor_options.group_residual_gaps,
+                direct_corridor_options.residual_milestone_segments,
+                dsu,
+                insert_residual_segment);
             if (detailed_direct_timing) {
                 residual_segment_loop_ms =
                     std::chrono::duration<double, std::milli>(Clock::now() -

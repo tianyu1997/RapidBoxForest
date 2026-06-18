@@ -853,6 +853,104 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     return stats;
 }
 
+void query_bridge_run_residual_segment_gap_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<std::vector<int>>& sample_layers,
+    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
+    const std::vector<int>& final_bad,
+    int box_count,
+    bool group_residual_gaps,
+    bool residual_milestone_segments,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int,
+                             int,
+                             const Eigen::VectorXd&,
+                             const Eigen::VectorXd&,
+                             int)>& insert_segment) {
+    const std::vector<std::pair<int, int>> gap_groups =
+        query_bridge_group_residual_gap_transitions(final_bad,
+                                                    sample_layers.size(),
+                                                    group_residual_gaps);
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_segment_gap_groups",
+        static_cast<double>(gap_groups.size()));
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_residual_milestone_segments",
+        residual_milestone_segments ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_repair_milestones",
+        static_cast<double>(repair_milestones.size()));
+
+    if (residual_milestone_segments) {
+        const std::vector<QueryBridgeResidualMilestone> compact =
+            query_bridge_compact_residual_milestones(samples,
+                                                     sample_layers,
+                                                     repair_milestones,
+                                                     box_count,
+                                                     dsu);
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_residual_milestones",
+            static_cast<double>(compact.size()));
+        for (std::size_t index = 0; index + 1 < compact.size(); ++index) {
+            const auto& lhs = compact[index];
+            const auto& rhs = compact[index + 1];
+            if (rhs.param <= lhs.param + 1e-9) {
+                continue;
+            }
+            const int sample_gap = static_cast<int>(
+                std::ceil(std::max(0.0, rhs.param - lhs.param)));
+            insert_segment(lhs.box_index,
+                           rhs.box_index,
+                           lhs.point,
+                           rhs.point,
+                           sample_gap);
+        }
+        return;
+    }
+
+    std::vector<std::pair<int, int>> pending_gap_groups;
+    pending_gap_groups.reserve(gap_groups.size());
+    for (auto it = gap_groups.rbegin(); it != gap_groups.rend(); ++it) {
+        pending_gap_groups.push_back(*it);
+    }
+    while (!pending_gap_groups.empty()) {
+        const auto gap_group = pending_gap_groups.back();
+        pending_gap_groups.pop_back();
+        const int lhs_sample =
+            query_bridge_nearest_nonempty_layer(sample_layers, gap_group.first, -1);
+        const int rhs_sample =
+            query_bridge_nearest_nonempty_layer(sample_layers, gap_group.second + 1, 1);
+        if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
+            continue;
+        }
+        const auto& lhs_layer = sample_layers[static_cast<std::size_t>(lhs_sample)];
+        const auto& rhs_layer = sample_layers[static_cast<std::size_t>(rhs_sample)];
+        if (lhs_layer.empty() || rhs_layer.empty()) {
+            continue;
+        }
+        const int lhs_index = lhs_layer.front();
+        const int rhs_index = rhs_layer.front();
+        const Eigen::VectorXd& lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
+        const Eigen::VectorXd& rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
+        const bool inserted = insert_segment(lhs_index,
+                                             rhs_index,
+                                             lhs_point,
+                                             rhs_point,
+                                             rhs_sample - lhs_sample);
+        if (!inserted) {
+            if (group_residual_gaps && gap_group.first < gap_group.second) {
+                const int mid = (gap_group.first + gap_group.second) / 2;
+                pending_gap_groups.emplace_back(mid + 1, gap_group.second);
+                pending_gap_groups.emplace_back(gap_group.first, mid);
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_segment_group_splits");
+            }
+            continue;
+        }
+    }
+}
+
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
     std::vector<double> fractions;
     if (subdivisions <= 1) {

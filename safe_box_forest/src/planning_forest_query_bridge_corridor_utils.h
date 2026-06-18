@@ -317,6 +317,22 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
                                                        int)>& commit_box,
     bool detailed_timing);
 
+void query_bridge_run_residual_segment_gap_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<std::vector<int>>& sample_layers,
+    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
+    const std::vector<int>& final_bad,
+    int box_count,
+    bool group_residual_gaps,
+    bool residual_milestone_segments,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int,
+                             int,
+                             const Eigen::VectorXd&,
+                             const Eigen::VectorXd&,
+                             int)>& insert_segment);
+
 QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
