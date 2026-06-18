@@ -148,8 +148,8 @@ constructing and recertifying general collision-free convex regions can be
 costly in cluttered workcells.
 RapidBoxForest (\rbf{}) uses axis-aligned joint boxes as the reusable region
 primitive: it checks boxes with endpoint-to-link swept-capsule bounds, organizes
-boxes accepted by the scene-validation policy into a scene-level forest and
-typed corridor graph, and stores kinematics-keyed envelope evidence in a
+boxes that pass the configured scene-validation policy into a scene-level forest
+and typed corridor graph, and stores kinematics-keyed envelope evidence in a
 Lifelong Envelope Cache Tree (LECT) separately from scene labels.
 Certificates are conditional: they apply only to conservative box unions or
 finite-cover OBB-corridor unions (OBB: oriented bounding box); paths that are
@@ -234,10 +234,11 @@ construction~\cite{lavalle2006planning,lavalle1998rapidly,
 kavraki1996probabilistic,karaman2011sampling}, but their reusable structures
 are typically zero-volume roadmaps or query trees.
 
-\rbf{} takes a middle position between these families. It grows axis-aligned
-joint-space boxes, checks them with link-envelope bounds, connects
-policy-accepted boxes into a typed corridor graph, and reuses that graph across
-later queries. The trade-off is explicit: boxes are less expressive than more
+\rbf{} occupies a scoped middle ground between these families. It grows
+axis-aligned joint-space boxes, checks them with link-envelope bounds, connects
+boxes that pass the configured scene-validation policy into a typed corridor
+graph, and reuses that graph across later queries. The trade-off is explicit:
+boxes are less expressive than more
 general convex covers, but they simplify validation, graph building, updates,
 and multi-query reuse.
 
@@ -245,10 +246,11 @@ and multi-query reuse.
 Let $\Q\subset\Real^n$ be the joint-limit box of a fixed manipulator and let
 $\calO\subset\Real^3$ be the current workspace obstacle set. Given a set or
 stream of queries $(q_s,q_g)\in\Q^2$, \rbf{} builds a finite family of
-policy-accepted configuration-space (\cspace{}) boxes and an adjacency graph
-over those boxes. The design goal is to reduce scene-construction and
-maintenance overhead while retaining reusable volumetric planning structure and
-conservative evidence where the stated validation policy supports it.
+configuration-space (\cspace{}) boxes that pass the configured scene-validation
+policy, called policy-accepted boxes below, and an adjacency graph over those
+boxes. The design goal is to reduce scene-construction and maintenance overhead
+while retaining reusable volumetric planning structure and conservative evidence
+where the stated validation policy supports it.
 
 The geometric core adapts classical endpoint bounding. For rounded links,
 endpoint envelopes bound endpoint trajectories over a joint box; their
@@ -322,7 +324,7 @@ interval-kinematics primitives used in related continuous-collision-detection
 pipelines~\cite{blackmore1992swept,abdel2006swept,
 gottschalk1996obbtree,larsen1999fast,gilbert1988fast,bergen1999gjk,
 pan2012fcl,moore2009introduction,jaulin2001applied,snyder1992interval,
-merlet2004solving,merlet2009interval}. Redon \etal{} apply this pipeline to
+merlet2004solving,merlet2009interval}. Redon \etal{} combine such primitives for
 articulated-body continuous collision detection over time
 steps~\cite{redon2004ccd_avatar,redon2005fast_artic}; related Taylor-model and
 safety methods use similar swept-sphere
