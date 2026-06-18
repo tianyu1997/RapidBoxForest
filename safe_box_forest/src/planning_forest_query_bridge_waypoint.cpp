@@ -1683,94 +1683,41 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
         const double direct_corridor_elapsed_ms =
             std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        context.diagnostics().set_value("query_bridge.direct_corridor_ms",
-                                        direct_corridor_elapsed_ms);
-        context.diagnostics().add_counter("query_bridge.direct_corridor_ms_total",
-                                          direct_corridor_elapsed_ms);
-        context.diagnostics().set_value("query_bridge.direct_corridor_samples",
-                                        static_cast<double>(samples.size()));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_samples_total",
-                                          static_cast<double>(samples.size()));
-        context.diagnostics().set_value("query_bridge.direct_corridor_ffb_calls",
-                                        static_cast<double>(direct_calls));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_ffb_calls_total",
-                                          static_cast<double>(direct_calls));
-        context.diagnostics().set_value("query_bridge.direct_corridor_direct_ffb_ms",
-                                        direct_ffb_ms);
-        context.diagnostics().set_value("query_bridge.direct_corridor_repair_ffb_ms",
-                                        repair_ffb_ms);
-        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_ffb_ms",
-                                        adaptive_repair_ffb_ms);
-        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_ffb_ms",
-                                        lateral_repair_ffb_ms);
-        context.diagnostics().set_value("query_bridge.direct_corridor_segment_audit_ms",
-                                        residual_segment_audit_ms);
-        const int all_ffb_calls =
-            direct_calls + repair_calls + adaptive_repair_calls + lateral_repair_calls;
-        context.diagnostics().set_value("query_bridge.direct_corridor_all_ffb_calls",
-                                        static_cast<double>(all_ffb_calls));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_all_ffb_calls_total",
-                                          static_cast<double>(all_ffb_calls));
-        context.diagnostics().set_value("query_bridge.direct_corridor_added",
-                                        static_cast<double>(direct_added));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_added_total",
-                                          static_cast<double>(direct_added));
-        context.diagnostics().set_value("query_bridge.direct_corridor_repair_calls",
-                                        static_cast<double>(repair_calls));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_repair_calls_total",
-                                          static_cast<double>(repair_calls));
-        context.diagnostics().set_value("query_bridge.direct_corridor_repair_added",
-                                        static_cast<double>(repair_added));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_repair_added_total",
-                                          static_cast<double>(repair_added));
-        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_calls",
-                                        static_cast<double>(adaptive_repair_calls));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_adaptive_repair_calls_total",
-            static_cast<double>(adaptive_repair_calls));
-        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_added",
-                                        static_cast<double>(adaptive_repair_added));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_adaptive_repair_added_total",
-            static_cast<double>(adaptive_repair_added));
-        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_enabled",
-                                        lateral_repair ? 1.0 : 0.0);
-        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_calls",
-                                        static_cast<double>(lateral_repair_calls));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_lateral_repair_calls_total",
-            static_cast<double>(lateral_repair_calls));
-        context.diagnostics().set_value("query_bridge.direct_corridor_lateral_repair_added",
-                                        static_cast<double>(lateral_repair_added));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_lateral_repair_added_total",
-            static_cast<double>(lateral_repair_added));
-        context.diagnostics().set_value("query_bridge.direct_corridor_adaptive_repair_max_subdivisions",
-                                        static_cast<double>(adaptive_repair_max_subdivisions_used));
-        context.diagnostics().set_value("query_bridge.direct_corridor_repair_subdivisions",
-                                        static_cast<double>(subdivisions));
-        context.diagnostics().set_value("query_bridge.direct_corridor_bad_initial",
-                                        static_cast<double>(initial_bad.size()));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_bad_initial_total",
-                                          static_cast<double>(initial_bad.size()));
-        context.diagnostics().set_value("query_bridge.direct_corridor_bad_final",
-                                        static_cast<double>(final_bad.size()));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_bad_final_total",
-                                          static_cast<double>(final_bad.size()));
-        context.diagnostics().set_value("query_bridge.direct_corridor_segment_edges",
-                                        static_cast<double>(local_segment_edges_added));
-        context.diagnostics().add_counter("query_bridge.direct_corridor_segment_edges_total",
-                                          static_cast<double>(local_segment_edges_added));
-        context.diagnostics().set_value("query_bridge.direct_corridor_segment_gap_samples_max",
-                                        static_cast<double>(local_segment_gap_samples_max));
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_assimilate_coverage_span_max",
-            static_cast<double>(assimilate_coverage_span_max));
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_assimilate_coverage_span_mean",
-            assimilate_coverage_boxes > 0
-                ? assimilate_coverage_span_sum / static_cast<double>(assimilate_coverage_boxes)
-                : 0.0);
+        auto [source_box_id, target_box_id] =
+            locate_query_bridge_boxes(start, goal, context);
+        const bool local_corridor_connected =
+            final_bad.empty() && endpoint_layers_connected();
+
+        QueryBridgeDirectCorridorSummaryStats summary_stats;
+        summary_stats.elapsed_ms = direct_corridor_elapsed_ms;
+        summary_stats.direct_ffb_ms = direct_ffb_ms;
+        summary_stats.repair_ffb_ms = repair_ffb_ms;
+        summary_stats.adaptive_repair_ffb_ms = adaptive_repair_ffb_ms;
+        summary_stats.lateral_repair_ffb_ms = lateral_repair_ffb_ms;
+        summary_stats.residual_segment_audit_ms = residual_segment_audit_ms;
+        summary_stats.assimilate_coverage_span_sum = assimilate_coverage_span_sum;
+        summary_stats.sample_count = samples.size();
+        summary_stats.direct_calls = direct_calls;
+        summary_stats.repair_calls = repair_calls;
+        summary_stats.adaptive_repair_calls = adaptive_repair_calls;
+        summary_stats.lateral_repair_calls = lateral_repair_calls;
+        summary_stats.direct_added = direct_added;
+        summary_stats.repair_added = repair_added;
+        summary_stats.adaptive_repair_added = adaptive_repair_added;
+        summary_stats.lateral_repair_added = lateral_repair_added;
+        summary_stats.adaptive_repair_max_subdivisions_used =
+            adaptive_repair_max_subdivisions_used;
+        summary_stats.repair_subdivisions = subdivisions;
+        summary_stats.initial_bad_count = static_cast<int>(initial_bad.size());
+        summary_stats.final_bad_count = static_cast<int>(final_bad.size());
+        summary_stats.local_segment_edges_added = local_segment_edges_added;
+        summary_stats.local_segment_gap_samples_max = local_segment_gap_samples_max;
+        summary_stats.assimilate_coverage_boxes = assimilate_coverage_boxes;
+        summary_stats.assimilate_coverage_span_max = assimilate_coverage_span_max;
+        summary_stats.lateral_repair_enabled = lateral_repair;
+        summary_stats.local_corridor_connected = local_corridor_connected;
+        query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
+
         if (detailed_direct_timing) {
             QueryBridgeDirectCorridorDetailedTimingStats timing_stats;
             timing_stats.transition_connected_ms = transition_connected_ms;
@@ -1813,74 +1760,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 query_index,
                 timing_stats);
         }
-        auto [source_box_id, target_box_id] =
-            locate_query_bridge_boxes(start, goal, context);
-        const bool local_corridor_connected =
-            final_bad.empty() && endpoint_layers_connected();
-        context.diagnostics().set_value("query_bridge.direct_corridor_local_connected",
-                                        local_corridor_connected ? 1.0 : 0.0);
-        set_query_bridge_task_value("direct_corridor_ms",
-                                    direct_corridor_elapsed_ms);
-        set_query_bridge_task_value("direct_corridor_samples",
-                                    static_cast<double>(samples.size()));
-        set_query_bridge_task_value("direct_corridor_ffb_calls",
-                                    static_cast<double>(direct_calls));
-        set_query_bridge_task_value("direct_corridor_direct_ffb_ms",
-                                    direct_ffb_ms);
-        set_query_bridge_task_value("direct_corridor_repair_ffb_ms",
-                                    repair_ffb_ms);
-        set_query_bridge_task_value("direct_corridor_adaptive_repair_ffb_ms",
-                                    adaptive_repair_ffb_ms);
-        set_query_bridge_task_value("direct_corridor_lateral_repair_ffb_ms",
-                                    lateral_repair_ffb_ms);
-        set_query_bridge_task_value("direct_corridor_segment_audit_ms",
-                                    residual_segment_audit_ms);
-        set_query_bridge_task_value("direct_corridor_all_ffb_calls",
-                                    static_cast<double>(all_ffb_calls));
-        set_query_bridge_task_value("direct_corridor_added",
-                                    static_cast<double>(direct_added));
-        set_query_bridge_task_value("direct_corridor_repair_calls",
-                                    static_cast<double>(repair_calls));
-        set_query_bridge_task_value("direct_corridor_repair_added",
-                                    static_cast<double>(repair_added));
-        set_query_bridge_task_value("direct_corridor_adaptive_repair_calls",
-                                    static_cast<double>(adaptive_repair_calls));
-        set_query_bridge_task_value("direct_corridor_adaptive_repair_added",
-                                    static_cast<double>(adaptive_repair_added));
-        set_query_bridge_task_value("direct_corridor_lateral_repair_calls",
-                                    static_cast<double>(lateral_repair_calls));
-        set_query_bridge_task_value("direct_corridor_lateral_repair_added",
-                                    static_cast<double>(lateral_repair_added));
-        set_query_bridge_task_value("direct_corridor_bad_initial",
-                                    static_cast<double>(initial_bad.size()));
-        set_query_bridge_task_value("direct_corridor_bad_final",
-                                    static_cast<double>(final_bad.size()));
-        set_query_bridge_task_value("direct_corridor_segment_edges",
-                                    static_cast<double>(local_segment_edges_added));
-        set_query_bridge_task_value("direct_corridor_local_connected",
-                                    local_corridor_connected ? 1.0 : 0.0);
-        auto set_direct_corridor_ffb_diag = [&](const std::string& ffb_key,
-                                                const std::string& suffix) {
-            set_query_bridge_task_value(
-                "direct_corridor_" + suffix,
-                context.diagnostics().value("ffb." + ffb_key, 0.0));
-        };
-        set_direct_corridor_ffb_diag("find_calls", "ffb_find_calls");
-        set_direct_corridor_ffb_diag("binary_requested", "ffb_binary_requested");
-        set_direct_corridor_ffb_diag("virtual_sparse_binary_attempts",
-                                     "ffb_virtual_sparse_binary_attempts");
-        set_direct_corridor_ffb_diag("virtual_sparse_binary_successes",
-                                     "ffb_virtual_sparse_binary_successes");
-        set_direct_corridor_ffb_diag("virtual_sparse_binary_probes",
-                                     "ffb_virtual_sparse_binary_probes");
-        set_direct_corridor_ffb_diag("binary_materialized_fallback_calls",
-                                     "ffb_binary_materialized_fallback_calls");
-        set_direct_corridor_ffb_diag("binary_blocked_adaptive_depths",
-                                     "ffb_binary_blocked_adaptive_depths");
-        set_direct_corridor_ffb_diag("binary_virtual_unsupported",
-                                     "ffb_binary_virtual_unsupported");
-        set_direct_corridor_ffb_diag("linear_descent_calls",
-                                     "ffb_linear_descent_calls");
         if (final_bad.empty() &&
             source_box_id >= 0 &&
             target_box_id >= 0 &&
