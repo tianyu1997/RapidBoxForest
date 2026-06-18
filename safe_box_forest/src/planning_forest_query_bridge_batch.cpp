@@ -340,81 +340,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               return true;
                                           }),
                               candidate_paths.end());
-        if (candidate_paths.empty() ||
-            !(path_length(candidate_paths.front()) >= fast_direct_segment_after_rrt_min_length)) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_length_rejects");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_length_rejects"));
-            return 0;
-        }
         const int source_box_id = locate_query_bridge_box(task.start);
         const int target_box_id = locate_query_bridge_box(task.goal);
-        if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_missing_endpoint");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_missing_endpoint"));
-            return 0;
-        }
-        CollisionChecker strict_checker = make_audit_checker(audit_robot_, scene_, config_.query);
-        int edge_id = -1;
-        double added_length = std::numeric_limits<double>::infinity();
-        for (std::size_t candidate_index = 0; candidate_index < candidate_paths.size(); ++candidate_index) {
-            const auto& candidate_path = candidate_paths[candidate_index];
-            if (path_length(candidate_path) + 1e-12 < fast_direct_segment_after_rrt_min_length) {
-                continue;
-            }
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_add_candidates");
-            const PathAuditCheck candidate_audit =
-                audit_waypoint_path(candidate_path,
-                                    strict_checker,
-                                    config_.query.audit_resolution,
-                                    config_.query.audit_segment_step);
-            if (!candidate_audit.passed) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.fast_direct_segment_after_rrt_candidate_audit_rejects");
-                batch_context.diagnostics().add_counter(
-                    query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_candidate_audit_rejects"));
-                continue;
-            }
-            edge_id = add_segment_edge_partition_first(
-                source_box_id,
-                target_box_id,
-                candidate_path,
-                SegmentEdgeType::QueryBridge,
-                task.bridge_rrt.segment_resolution,
-                SegmentEdgeValidation::CollisionChecked,
-                true,
-                query_bridge_edge_query_index(scene_reusable_edges, task));
-            if (edge_id >= 0) {
-                added_length = path_length(candidate_path);
-                if (candidate_index > 0) {
-                    batch_context.diagnostics().add_counter(
-                        "query_bridge.fast_direct_segment_after_rrt_fallback_candidate_success");
-                }
-                break;
-            }
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_add_candidate_fail");
-        }
-        if (edge_id < 0) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.fast_direct_segment_after_rrt_add_fail");
-            batch_context.diagnostics().add_counter(
-                query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_add_fail"));
-            return 0;
-        }
-        invalidate_query_cache();
-        batch_context.diagnostics().add_counter(
-            "query_bridge.fast_direct_segment_after_rrt_edges");
-        batch_context.diagnostics().add_counter(
-            query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_edges"));
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "fast_direct_segment_after_rrt_length"),
-            added_length);
-        return 1;
+        return try_add_query_fast_direct_segment_after_rrt_edge(
+            source_box_id,
+            target_box_id,
+            candidate_paths,
+            task.bridge_rrt,
+            batch_context,
+            fast_direct_segment_after_rrt_min_length,
+            query_bridge_edge_query_index(scene_reusable_edges, task),
+            static_cast<int>(task.index));
     };
 	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
 	        const QueryBridgeHipacPrebridgeGate prebridge_gate =

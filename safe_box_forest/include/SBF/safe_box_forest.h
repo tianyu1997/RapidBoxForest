@@ -591,6 +591,15 @@ private:
 		StageContext& context,
 		int query_index,
 		int batch_task_index = -1);
+	int try_add_query_fast_direct_segment_after_rrt_edge(
+		int source_box_id,
+		int target_box_id,
+		const std::vector<std::vector<Eigen::VectorXd>>& candidate_paths,
+		const RRTConnectConfig& bridge_rrt,
+		StageContext& context,
+		double min_length,
+		int query_index,
+		int batch_task_index = -1);
 	int try_add_query_residual_segment_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,

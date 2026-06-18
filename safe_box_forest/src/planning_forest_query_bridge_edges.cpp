@@ -7,6 +7,7 @@
 #include "planning_forest_query_bridge_batch_utils.h"
 
 #include <algorithm>
+#include <limits>
 #include <string>
 
 namespace rbf {
@@ -162,6 +163,99 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     sync_adaptive_partition_segment_edges(&last_build_,
                                           "query_bridge.direct_start_goal_segment");
     refresh_adaptive_partition_diagnostics(&last_build_);
+    return 1;
+}
+
+int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
+    int source_box_id,
+    int target_box_id,
+    const std::vector<std::vector<Eigen::VectorXd>>& candidate_paths,
+    const RRTConnectConfig& bridge_rrt,
+    StageContext& context,
+    double min_length,
+    int query_index,
+    int batch_task_index) {
+    const auto add_task_counter = [&](const std::string& suffix, double value = 1.0) {
+        if (batch_task_index >= 0) {
+            context.diagnostics().add_counter(
+                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
+                value);
+        }
+    };
+    const auto set_task_value = [&](const std::string& suffix, double value) {
+        if (batch_task_index >= 0) {
+            context.diagnostics().set_value(
+                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
+                value);
+        }
+    };
+    if (candidate_paths.empty() ||
+        !(path_length(candidate_paths.front()) >= min_length)) {
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_length_rejects");
+        add_task_counter("fast_direct_segment_after_rrt_length_rejects");
+        return 0;
+    }
+    if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_missing_endpoint");
+        add_task_counter("fast_direct_segment_after_rrt_missing_endpoint");
+        return 0;
+    }
+    CollisionChecker strict_checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    int edge_id = -1;
+    double added_length = std::numeric_limits<double>::infinity();
+    for (std::size_t candidate_index = 0;
+         candidate_index < candidate_paths.size();
+         ++candidate_index) {
+        const auto& candidate_path = candidate_paths[candidate_index];
+        if (path_length(candidate_path) + 1e-12 < min_length) {
+            continue;
+        }
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_add_candidates");
+        const PathAuditCheck candidate_audit =
+            audit_waypoint_path(candidate_path,
+                                strict_checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (!candidate_audit.passed) {
+            context.diagnostics().add_counter(
+                "query_bridge.fast_direct_segment_after_rrt_candidate_audit_rejects");
+            add_task_counter("fast_direct_segment_after_rrt_candidate_audit_rejects");
+            continue;
+        }
+        edge_id = add_segment_edge_partition_first(
+            source_box_id,
+            target_box_id,
+            candidate_path,
+            SegmentEdgeType::QueryBridge,
+            bridge_rrt.segment_resolution,
+            SegmentEdgeValidation::CollisionChecked,
+            true,
+            query_index);
+        if (edge_id >= 0) {
+            added_length = path_length(candidate_path);
+            if (candidate_index > 0) {
+                context.diagnostics().add_counter(
+                    "query_bridge.fast_direct_segment_after_rrt_fallback_candidate_success");
+            }
+            break;
+        }
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_add_candidate_fail");
+    }
+    if (edge_id < 0) {
+        context.diagnostics().add_counter(
+            "query_bridge.fast_direct_segment_after_rrt_add_fail");
+        add_task_counter("fast_direct_segment_after_rrt_add_fail");
+        return 0;
+    }
+    invalidate_query_cache();
+    context.diagnostics().add_counter(
+        "query_bridge.fast_direct_segment_after_rrt_edges");
+    add_task_counter("fast_direct_segment_after_rrt_edges");
+    set_task_value("fast_direct_segment_after_rrt_length", added_length);
     return 1;
 }
 
