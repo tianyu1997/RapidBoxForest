@@ -87,6 +87,7 @@ set(SBF_LECTDB_INCLUDE_DIR ${SBF_LECT_DATABASE_MODULE_DIR}/include)
 add_library(sbf_core STATIC
     src/adaptive_grid_partition.cpp
     src/adaptive_grid_partition_geometry.cpp
+    src/adaptive_grid_partition_indices.cpp
     src/adaptive_grid_partition_overlay.cpp
     src/box_graph.cpp
     src/connector.cpp
