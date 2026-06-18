@@ -130,6 +130,8 @@ src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
                                    construction
+src/planning_forest_debug.cpp      debug chain-pave entry points and explicit
+                                   query-corridor refinement helpers
 src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
                                    survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods

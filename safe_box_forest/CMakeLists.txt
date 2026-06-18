@@ -96,6 +96,7 @@ add_library(sbf_core STATIC
     src/planning_forest_build.cpp
     src/planning_forest_core.cpp
     src/planning_forest_database.cpp
+    src/planning_forest_debug.cpp
     src/planning_forest_dynamic_cache.cpp
     src/planning_forest_overlay.cpp
     src/planning_forest_partition.cpp
