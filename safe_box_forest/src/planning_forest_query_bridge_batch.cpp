@@ -1728,6 +1728,41 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 query_bridge_task_key(task.index, "total_ms"),
                 task_elapsed_ms());
         };
+    auto make_parallel_rrt_cancel_flag = [&]() {
+        return parallel_rrt_options.early_stop
+            ? std::make_shared<std::atomic<bool>>(false)
+            : batch_context.native_cancel_flag();
+    };
+    auto maybe_stop_parallel_rrt_after_success =
+        [&](const QueryBridgeSearchTask& task,
+            const std::vector<Eigen::VectorXd>& path,
+            std::atomic<int>& early_successes,
+            const std::shared_ptr<std::atomic<bool>>& local_cancel) {
+            if (!parallel_rrt_options.early_stop ||
+                !rrt_path_good_enough_for_task(task, path)) {
+                return;
+            }
+            const int successes =
+                early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
+            if (successes >= parallel_rrt_options.early_stop_min_successes &&
+                local_cancel) {
+                local_cancel->store(true, std::memory_order_relaxed);
+            }
+        };
+    auto record_parallel_rrt_early_stop =
+        [&](const std::shared_ptr<std::atomic<bool>>& local_cancel,
+            const std::atomic<int>& early_successes) {
+            if (!parallel_rrt_options.early_stop) {
+                return;
+            }
+            batch_context.diagnostics().add_counter(
+                "query_bridge.parallel_rrt_early_stop_successes",
+                static_cast<double>(early_successes.load(std::memory_order_relaxed)));
+            batch_context.diagnostics().add_counter(
+                local_cancel && local_cancel->load(std::memory_order_relaxed)
+                    ? "query_bridge.parallel_rrt_early_stop_triggered"
+                    : "query_bridge.parallel_rrt_early_stop_not_triggered");
+        };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1787,8 +1822,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && jobs.size() > 1) {
             std::shared_ptr<std::atomic<bool>> local_cancel =
-                parallel_rrt_options.early_stop ? std::make_shared<std::atomic<bool>>(false)
-                                                : batch_context.native_cancel_flag();
+                make_parallel_rrt_cancel_flag();
             std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0,
                                                   static_cast<int>(jobs.size()),
@@ -1801,27 +1835,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                              job.attempt,
                                              0,
                                              local_cancel);
-                if (parallel_rrt_options.early_stop &&
-                    rrt_path_good_enough_for_task(tasks[job.task_offset], path)) {
-                    const int successes =
-                        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-                    if (successes >= parallel_rrt_options.early_stop_min_successes &&
-                        local_cancel) {
-                        local_cancel->store(true, std::memory_order_relaxed);
-                    }
-                }
+                maybe_stop_parallel_rrt_after_success(tasks[job.task_offset],
+                                                      path,
+                                                      early_successes,
+                                                      local_cancel);
                 attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
                     std::move(path);
             });
-            if (parallel_rrt_options.early_stop) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.parallel_rrt_early_stop_successes",
-                    static_cast<double>(early_successes.load(std::memory_order_relaxed)));
-                batch_context.diagnostics().add_counter(
-                    local_cancel && local_cancel->load(std::memory_order_relaxed)
-                        ? "query_bridge.parallel_rrt_early_stop_triggered"
-                        : "query_bridge.parallel_rrt_early_stop_not_triggered");
-            }
+            record_parallel_rrt_early_stop(local_cancel, early_successes);
         } else {
             for (const PreparedJob& job : jobs) {
                 attempt_paths[job.task_offset][static_cast<std::size_t>(job.attempt)] =
@@ -1905,34 +1926,20 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto rrt_t0 = Clock::now();
         if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
             std::shared_ptr<std::atomic<bool>> local_cancel =
-                parallel_rrt_options.early_stop ? std::make_shared<std::atomic<bool>>(false)
-                                                : batch_context.native_cancel_flag();
+                make_parallel_rrt_cancel_flag();
             std::atomic<int> early_successes{0};
             batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
                 if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
                     return;
                 }
                 auto path = run_task_attempt(task, attempt, 0, local_cancel);
-                if (parallel_rrt_options.early_stop &&
-                    rrt_path_good_enough_for_task(task, path)) {
-                    const int successes =
-                        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-                    if (successes >= parallel_rrt_options.early_stop_min_successes &&
-                        local_cancel) {
-                        local_cancel->store(true, std::memory_order_relaxed);
-                    }
-                }
+                maybe_stop_parallel_rrt_after_success(task,
+                                                      path,
+                                                      early_successes,
+                                                      local_cancel);
                 attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
             });
-            if (parallel_rrt_options.early_stop) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.parallel_rrt_early_stop_successes",
-                    static_cast<double>(early_successes.load(std::memory_order_relaxed)));
-                batch_context.diagnostics().add_counter(
-                    local_cancel && local_cancel->load(std::memory_order_relaxed)
-                        ? "query_bridge.parallel_rrt_early_stop_triggered"
-                        : "query_bridge.parallel_rrt_early_stop_not_triggered");
-            }
+            record_parallel_rrt_early_stop(local_cancel, early_successes);
         } else {
             for (int attempt = 0; attempt < effective_attempts; ++attempt) {
                 attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt, 0);
