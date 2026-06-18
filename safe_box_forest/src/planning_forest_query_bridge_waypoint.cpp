@@ -743,30 +743,24 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 return finish_adopt(0);
             }
             adopt_certified_subchain_attempted = true;
-            if (!last_adaptive_partition_config_.hipac_online_connectivity ||
-                !last_adaptive_partition_config_.hipac_promote_transition_slices ||
-                last_adaptive_partition_config_.hipac_promote_transition_max_attempts_per_query <= 0 ||
-                !partition_native_mode() ||
-                source_box_id < 0 ||
-                target_box_id < 0 ||
-                source_box_id == target_box_id) {
+            const QueryBridgeHipacPromotionGate promotion_gate =
+                query_bridge_hipac_promotion_gate(last_adaptive_partition_config_,
+                                                  partition_native_mode(),
+                                                  source_box_id,
+                                                  target_box_id,
+                                                  query_index);
+            if (promotion_gate.disabled) {
                 diagnostics.add_counter("query_bridge.hipac_promote_transition.disabled");
                 return finish_adopt(0);
             }
-            const bool target_index =
-                csv_index_list_contains(
-                    last_adaptive_partition_config_.hipac_promote_transition_target_query_indices,
-                    query_index);
-            if (!target_index) {
+            if (promotion_gate.target_rejected) {
                 diagnostics.add_counter("query_bridge.hipac_promote_transition.target_rejects");
                 return finish_adopt(0);
             }
             diagnostics.add_counter("query_bridge.hipac_promote_transition.attempts");
 
-            const int min_boxes =
-                std::max(1, last_adaptive_partition_config_.hipac_promote_transition_min_boxes);
-            const int max_boxes =
-                std::max(min_boxes, last_adaptive_partition_config_.hipac_promote_transition_max_boxes);
+            const int min_boxes = promotion_gate.min_boxes;
+            const int max_boxes = promotion_gate.max_boxes;
             const BoxNode* source_box_ptr = find_box_by_id(boxes_, source_box_id);
             const BoxNode* target_box_ptr = find_box_by_id(boxes_, target_box_id);
             if (source_box_ptr == nullptr || target_box_ptr == nullptr) {

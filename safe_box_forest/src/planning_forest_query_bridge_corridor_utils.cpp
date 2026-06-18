@@ -1,5 +1,9 @@
 #include "planning_forest_query_bridge_corridor_utils.h"
 
+#include <SBF/safe_box_forest.h>
+
+#include "planning_forest_query_utils.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -482,6 +486,34 @@ std::pair<std::vector<int>, int> query_bridge_internal_local_components(
         ++component_count;
     }
     return {std::move(component_id), component_count};
+}
+
+QueryBridgeHipacPromotionGate query_bridge_hipac_promotion_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    int source_box_id,
+    int target_box_id,
+    int query_index) {
+    QueryBridgeHipacPromotionGate gate;
+    gate.min_boxes = std::max(1, config.hipac_promote_transition_min_boxes);
+    gate.max_boxes = std::max(gate.min_boxes, config.hipac_promote_transition_max_boxes);
+    if (!config.hipac_online_connectivity ||
+        !config.hipac_promote_transition_slices ||
+        config.hipac_promote_transition_max_attempts_per_query <= 0 ||
+        !partition_native ||
+        source_box_id < 0 ||
+        target_box_id < 0 ||
+        source_box_id == target_box_id) {
+        gate.disabled = true;
+        return gate;
+    }
+    if (!csv_index_list_contains(config.hipac_promote_transition_target_query_indices,
+                                 query_index)) {
+        gate.target_rejected = true;
+        return gate;
+    }
+    gate.eligible = true;
+    return gate;
 }
 
 std::vector<QueryBridgeLocalSliceCandidate> query_bridge_component_slice_candidates(

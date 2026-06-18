@@ -14,6 +14,8 @@
 
 namespace rbf {
 
+struct AdaptiveLeafSweepConfig;
+
 struct QueryBridgeResidualMilestone {
     double param = 0.0;
     Eigen::VectorXd point;
@@ -95,6 +97,14 @@ struct QueryBridgeLocalSliceCandidate {
     int last = -1;
     int count = 0;
     int span = 0;
+};
+
+struct QueryBridgeHipacPromotionGate {
+    bool eligible = false;
+    bool disabled = false;
+    bool target_rejected = false;
+    int min_boxes = 1;
+    int max_boxes = 1;
 };
 
 struct QueryBridgeRepairSubdivisionOptions {
@@ -279,6 +289,13 @@ std::pair<std::vector<int>, int> query_bridge_internal_local_components(
     const std::vector<std::vector<int>>& local_adj,
     int local_source,
     int local_target);
+
+QueryBridgeHipacPromotionGate query_bridge_hipac_promotion_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    int source_box_id,
+    int target_box_id,
+    int query_index);
 
 std::vector<QueryBridgeLocalSliceCandidate> query_bridge_component_slice_candidates(
     const std::vector<int>& component_id,
