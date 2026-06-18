@@ -44,6 +44,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-id", action="append", default=[], help="Artifact id to package. Repeatable. Defaults to all artifacts.")
     parser.add_argument("--url-base", default=None, help="Optional base URL used to fill archive.url for each generated archive.")
     parser.add_argument("--manifest-name", default="cache_artifacts.json", help="Output filled manifest filename.")
+    parser.add_argument(
+        "--gzip-compresslevel",
+        type=int,
+        default=1,
+        choices=range(1, 10),
+        metavar="1-9",
+        help="Deterministic gzip compression level. Level 1 is fastest and is the default for large LECT caches.",
+    )
     parser.add_argument("--force", action="store_true", help="Replace existing archives or output manifest.")
     return parser.parse_args()
 
@@ -92,9 +100,15 @@ def add_tree_to_tar(tar: tarfile.TarFile, source_dir: Path, *, arc_prefix: Path)
                 tar.addfile(info, stream)
 
 
-def create_tar_gz(source_dir: Path, archive_path: Path, *, arc_prefix: Path) -> None:
+def create_tar_gz(source_dir: Path, archive_path: Path, *, arc_prefix: Path, compresslevel: int) -> None:
     with archive_path.open("wb") as raw_stream:
-        with gzip.GzipFile(filename="", mode="wb", fileobj=raw_stream, mtime=0) as gzip_stream:
+        with gzip.GzipFile(
+            filename="",
+            mode="wb",
+            fileobj=raw_stream,
+            mtime=0,
+            compresslevel=compresslevel,
+        ) as gzip_stream:
             with tarfile.open(fileobj=gzip_stream, mode="w") as tar:
                 add_tree_to_tar(tar, source_dir, arc_prefix=arc_prefix)
 
@@ -164,7 +178,12 @@ def main() -> int:
                 if not args.force:
                     raise SystemExit(f"archive exists: {archive_path} (pass --force)")
                 archive_path.unlink()
-            create_tar_gz(cache_dir, archive_path, arc_prefix=Path(expected_unpack_path))
+            create_tar_gz(
+                cache_dir,
+                archive_path,
+                arc_prefix=Path(expected_unpack_path),
+                compresslevel=int(args.gzip_compresslevel),
+            )
             directory_sha = stable_directory_sha256(cache_dir)
             archive_sha = sha256_file(archive_path)
             archive_metadata = {

@@ -383,11 +383,13 @@ python3 scripts/package_cache_artifacts.py \
 This creates one `.tar.gz` per unique selected cache directory and writes
 `outputs/cache_artifacts/cache_artifacts.json`. If two manifest entries share
 the same `expected_unpack_path`, they intentionally reuse the same archive file
-and checksum instead of duplicating a large cache bundle. Without `--url-base`,
-archive URLs remain `TODO-upload-url`; after upload, rerun with `--url-base` or
-edit the URL fields, then validate without `--allow-placeholders`. `--url-base`
-must be an HTTPS URL so the generated manifest is suitable for public release
-checks.
+and checksum instead of duplicating a large cache bundle. The cache packager uses
+deterministic gzip level 1 by default because these LECT bundles are large; pass
+`--gzip-compresslevel` if a smaller archive is more important than packaging
+time. Without `--url-base`, archive URLs remain `TODO-upload-url`; after upload,
+rerun with `--url-base` or edit the URL fields, then validate without
+`--allow-placeholders`. `--url-base` must be an HTTPS URL so the generated
+manifest is suitable for public release checks.
 
 ## Active Paper Assets
 
