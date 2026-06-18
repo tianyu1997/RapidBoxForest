@@ -603,6 +603,66 @@ QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
     return stats;
 }
 
+QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<int>& transitions,
+    const std::vector<double>& fractions,
+    const std::function<bool(int)>& transition_connected,
+    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
+    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const Eigen::VectorXd&,
+                                                       int)>& commit_box,
+    bool detailed_timing) {
+    using Clock = std::chrono::steady_clock;
+    QueryBridgeSubdivisionRepairStats stats;
+    const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
+    for (int transition : transitions) {
+        if (transition_connected(transition)) {
+            continue;
+        }
+        const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
+        const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
+        for (double u : fractions) {
+            if (transition_connected(transition)) {
+                break;
+            }
+            const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
+            if (seed_covered(seed)) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_repair_skip_covered");
+                continue;
+            }
+            const auto ffb_t0 = Clock::now();
+            FindFreeBoxResult result = find_box(seed, transition);
+            stats.ffb_ms +=
+                std::chrono::duration<double, std::milli>(Clock::now() - ffb_t0).count();
+            stats.calls += 1;
+            const QueryBridgeFfbTaskCommitResult commit =
+                commit_box(std::move(result), seed, transition);
+            if (commit.box_index >= 0) {
+                if (std::find(stats.committed_indices.begin(),
+                              stats.committed_indices.end(),
+                              commit.box_index) == stats.committed_indices.end()) {
+                    stats.committed_indices.push_back(commit.box_index);
+                }
+                if (commit.added_box) {
+                    stats.added += 1;
+                }
+                if (transition_connected(transition)) {
+                    break;
+                }
+            }
+        }
+    }
+    if (detailed_timing) {
+        stats.loop_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
+    }
+    return stats;
+}
+
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
     std::vector<double> fractions;
     if (subdivisions <= 1) {

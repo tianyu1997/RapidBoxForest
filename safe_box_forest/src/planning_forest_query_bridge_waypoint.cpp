@@ -1255,56 +1255,35 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int repair_calls = 0;
         int repair_added = 0;
         const auto initial_bad = bad_transitions();
-        const auto repair_loop_t0 =
-            detailed_direct_timing ? Clock::now() : Clock::time_point{};
         if (subdivisions > 1) {
-            for (int transition : initial_bad) {
-                if (transition_connected(transition)) {
-                    continue;
-                }
-                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
-                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
-                for (double u : fractions) {
-                    if (transition_connected(transition)) {
-                        break;
-                    }
-                    const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
-                    if (current_boxes_cover_point(seed)) {
-                        context.diagnostics().add_counter(
-                            "query_bridge.direct_corridor_repair_skip_covered");
-                        continue;
-                    }
-                    const auto repair_ffb_t0 = Clock::now();
-                    const FindFreeBoxResult result = find_free_box_in_domain(
-                        seed,
-                        direct_planning_domain,
-                        context,
-                        direct_options);
-                    repair_ffb_ms +=
-                        std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                  repair_ffb_t0).count();
-                    repair_calls += 1;
-                    const std::size_t before_boxes = boxes_.size();
-                    const int box_index = commit_result(std::move(result), seed, transition);
-                    if (box_index >= 0) {
-                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
-                            repair_indices.end()) {
-                            repair_indices.push_back(box_index);
-                        }
-                        if (boxes_.size() > before_boxes) {
-                            repair_added += 1;
-                        }
-                        if (transition_connected(transition)) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        if (detailed_direct_timing) {
-            repair_loop_ms =
-                std::chrono::duration<double, std::milli>(Clock::now() -
-                                                          repair_loop_t0).count();
+            const QueryBridgeSubdivisionRepairStats repair_stats =
+                query_bridge_run_subdivision_repair_pass(
+                    context,
+                    samples,
+                    initial_bad,
+                    fractions,
+                    transition_connected,
+                    current_boxes_cover_point,
+                    [&](const Eigen::VectorXd& seed, int) {
+                        return find_free_box_in_domain(seed,
+                                                       direct_planning_domain,
+                                                       context,
+                                                       direct_options);
+                    },
+                    [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
+                        const std::size_t before_boxes = boxes_.size();
+                        const int box_index = commit_result(std::move(result), seed, transition);
+                        return QueryBridgeFfbTaskCommitResult{box_index,
+                                                              boxes_.size() > before_boxes};
+                    },
+                    detailed_direct_timing);
+            repair_calls = repair_stats.calls;
+            repair_added = repair_stats.added;
+            repair_ffb_ms = repair_stats.ffb_ms;
+            repair_loop_ms = repair_stats.loop_ms;
+            repair_indices.insert(repair_indices.end(),
+                                  repair_stats.committed_indices.begin(),
+                                  repair_stats.committed_indices.end());
         }
         std::vector<int> final_bad = bad_transitions();
         auto bad_transition_fraction = [&](const std::vector<int>& transitions) {

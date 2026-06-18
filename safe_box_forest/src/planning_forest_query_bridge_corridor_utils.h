@@ -61,6 +61,14 @@ struct QueryBridgeFfbTaskExecutionStats {
     double loop_ms = 0.0;
 };
 
+struct QueryBridgeSubdivisionRepairStats {
+    int calls = 0;
+    int added = 0;
+    double ffb_ms = 0.0;
+    double loop_ms = 0.0;
+    std::vector<int> committed_indices;
+};
+
 struct QueryBridgeRepairSubdivisionOptions {
     int base_subdivisions = 0;
     int subdivisions = 0;
@@ -260,6 +268,19 @@ QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
     const std::function<FindFreeBoxResult(const QueryBridgeDirectFfbTask&)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const QueryBridgeDirectFfbTask&)>& commit_box,
+    bool detailed_timing);
+
+QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<int>& transitions,
+    const std::vector<double>& fractions,
+    const std::function<bool(int)>& transition_connected,
+    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
+    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const Eigen::VectorXd&,
+                                                       int)>& commit_box,
     bool detailed_timing);
 
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
