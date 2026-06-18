@@ -101,9 +101,10 @@ TEXT_SUFFIXES = {
 }
 
 BROKEN_REFERENCE_RE = re.compile(
-    rb"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|github\.com/tianyu1997/SafeBoxForest)"
+    rb"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|improve_workspace|github\.com/tianyu1997/SafeBoxForest)"
 )
 BROKEN_REFERENCE_ALLOWLIST = {
+    ".gitignore",
     "scripts/export_public_release.py",
     "scripts/check_public_release.py",
     "scripts/check_release_readiness.py",

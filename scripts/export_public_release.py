@@ -67,6 +67,8 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "experiments/exp04_shelf_leaf_rrt/study_ts_cs_box_cover.py",
     "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
     "openai-skills/**",
+    "improve_workspace/**",
+    "**/improve_workspace/**",
     "outputs/**",
     "**/outputs/**",
     ".sbf_lect_database/**",
@@ -129,6 +131,8 @@ ARCHIVE_PATTERNS = (
     "experiments/exp04_shelf_leaf_rrt/scan_full_root_depths.py",
     "experiments/exp04_shelf_leaf_rrt/study_ts_cs_box_cover.py",
     "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
+    "improve_workspace/**",
+    "**/improve_workspace/**",
 )
 
 

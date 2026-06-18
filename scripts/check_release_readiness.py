@@ -56,7 +56,7 @@ TRACKED_GENERATED_PATTERNS = (
 )
 
 STALE_REFERENCE_RE = re.compile(
-    r"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|github\.com/tianyu1997/SafeBoxForest)",
+    r"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|improve_workspace|github\.com/tianyu1997/SafeBoxForest)",
     re.IGNORECASE,
 )
 
