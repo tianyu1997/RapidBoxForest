@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <vector>
 
+#include "adaptive_grid_partition_options.h"
 #include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_utils.h"
@@ -228,7 +229,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         partition_native_mode() &&
         adaptive_partition_query_enabled_ &&
         adaptive_partition_ &&
-        env_int_or_default("RBF_PARTITION_LAST_QUERY_CACHE", 0) != 0;
+        partition_last_query_cache_enabled_from_env();
     auto same_vector = [](const Eigen::VectorXd& lhs,
                           const Eigen::Ref<const Eigen::VectorXd>& rhs) {
         return lhs.size() == rhs.size() &&

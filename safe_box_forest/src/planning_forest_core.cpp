@@ -7,11 +7,9 @@
 #include <stdexcept>
 #include <utility>
 
-#include "env_config.h"
+#include "adaptive_grid_partition_options.h"
 
 namespace rbf {
-
-using detail::env_int_or_default;
 
 void RBFPlanningForest::clear_forest() {
     boxes_.clear();
@@ -71,7 +69,7 @@ void RBFPlanningForest::invalidate_query_cache() const {
 
 const QueryGraphCache& RBFPlanningForest::query_cache() const {
     if (partition_native_mode() &&
-        env_int_or_default("RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE", 0) == 0) {
+        !partition_native_graph_query_cache_allowed_from_env()) {
         throw std::logic_error(
             "partition_native mode forbids QueryGraphCache fallback; "
             "use AdaptiveGridPartition query/locate/connect APIs instead "
