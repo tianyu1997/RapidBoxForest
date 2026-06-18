@@ -24,6 +24,9 @@
 namespace rbf {
 
 struct QueryBridgeAcceptanceThresholds;
+struct QueryBridgeBatchExecutionOptions;
+struct QueryBridgeIndexOptions;
+struct QueryBridgeRetryOptions;
 struct QueryBridgeSearchTask;
 
 struct DynamicUpdateConfig {
@@ -715,6 +718,15 @@ private:
 		StageContext& context,
 		bool scene_reusable_edges,
 		bool enabled);
+	int run_query_bridge_waypoint_fallbacks(
+		QueryBridgeSearchTask& task,
+		int& added_for_task,
+		StageContext& context,
+		bool scene_reusable_edges,
+		const QueryBridgeIndexOptions& index_options,
+		const QueryBridgeRetryOptions& retry_options,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		const QueryBridgeBatchExecutionOptions& batch_options);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,

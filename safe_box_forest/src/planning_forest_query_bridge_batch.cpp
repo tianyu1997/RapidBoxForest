@@ -617,81 +617,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
     }
 
-    auto bridge_query_with_waypoint_fallbacks =
-        [&](QueryBridgeSearchTask& task,
-            int& added_accumulator) -> int {
-        std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
-        if (!task.waypoint_path.empty()) {
-            candidate_paths.push_back(&task.waypoint_path);
-        }
-        for (const auto& fallback : task.waypoint_fallback_paths) {
-            if (!fallback.empty()) {
-                candidate_paths.push_back(&fallback);
-            }
-        }
-        int total_added = 0;
-        for (std::size_t candidate_index = 0;
-             candidate_index < candidate_paths.size();
-             ++candidate_index) {
-            const auto& candidate_path = *candidate_paths[candidate_index];
-            if (candidate_path.empty()) {
-                continue;
-            }
-            if (candidate_index > 0) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.waypoint_quality_fallback_attempts");
-                batch_context.diagnostics().add_counter(
-                    query_bridge_task_key(task.index, "waypoint_quality_fallback_attempts"));
-            }
-            const int bridge_added =
-                bridge_query_with_waypoint_path(task.start,
-                                                task.goal,
-                                                candidate_path,
-                                                task.short_local_bridge,
-                                                task.bridge_rrt,
-                                                task.query_index);
-            total_added += bridge_added;
-            added_accumulator += bridge_added;
-            const int promoted = try_promote_query_repair_to_hipac(
-                task.start,
-                task.goal,
-                task.waypoint_path,
-                bridge_added,
-                query_bridge_edge_query_index(scene_reusable_edges, task),
-                static_cast<int>(task.index),
-                batch_context);
-            if (promoted > 0) {
-                added_by_query[task.index] += promoted;
-            }
-            accumulate_query_bridge_direct_corridor_totals(last_build_,
-                                                           batch_context,
-                                                           task.index);
-            if (candidate_index > 0) {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.waypoint_quality_fallback_added",
-                    static_cast<double>(bridge_added));
-            }
-            if (query_bridge_current_query_good(*this,
-                                                task,
-                                                false,
-                                                index_options,
-                                                retry_options,
-                                                bridge_acceptance)) {
-                if (candidate_index > 0) {
-                    batch_context.diagnostics().add_counter(
-                        "query_bridge.waypoint_quality_fallback_successes");
-                    batch_context.diagnostics().set_value(
-                        query_bridge_task_key(task.index, "waypoint_quality_fallback_success"),
-                        1.0);
-                    task.waypoint_path = candidate_path;
-                }
-                if (!batch_execution_options.evaluate_all_fallback_paths) {
-                    break;
-                }
-            }
-        }
-        return total_added;
-    };
     auto adopt_waypoint_after_rrt =
         [&](QueryBridgeSearchTask& task,
             std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
@@ -835,7 +760,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 return;
             }
             const auto pave_t0 = QueryBridgeClock::now();
-            bridge_query_with_waypoint_fallbacks(task, added_by_query[task.index]);
+            run_query_bridge_waypoint_fallbacks(task,
+                                                added_by_query[task.index],
+                                                batch_context,
+                                                scene_reusable_edges,
+                                                index_options,
+                                                retry_options,
+                                                bridge_acceptance,
+                                                batch_execution_options);
             const double pave_ms = query_bridge_elapsed_ms_since(pave_t0);
             batch_context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                                       pave_ms);

@@ -621,6 +621,95 @@ void RBFPlanningForest::run_query_bridge_direct_start_goal_segments(
     }
 }
 
+int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
+    QueryBridgeSearchTask& task,
+    int& added_for_task,
+    StageContext& context,
+    bool scene_reusable_edges,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+    const QueryBridgeBatchExecutionOptions& batch_options) {
+    std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
+    if (!task.waypoint_path.empty()) {
+        candidate_paths.push_back(&task.waypoint_path);
+    }
+    for (const auto& fallback : task.waypoint_fallback_paths) {
+        if (!fallback.empty()) {
+            candidate_paths.push_back(&fallback);
+        }
+    }
+
+    int total_added = 0;
+    for (std::size_t candidate_index = 0;
+         candidate_index < candidate_paths.size();
+         ++candidate_index) {
+        const auto& candidate_path = *candidate_paths[candidate_index];
+        if (candidate_path.empty()) {
+            continue;
+        }
+        if (candidate_index > 0U) {
+            context.diagnostics().add_counter(
+                "query_bridge.waypoint_quality_fallback_attempts");
+            context.diagnostics().add_counter(
+                query_bridge_task_key(task.index,
+                                      "waypoint_quality_fallback_attempts"));
+        }
+        const int bridge_added =
+            bridge_query_with_waypoint_path(task.start,
+                                            task.goal,
+                                            candidate_path,
+                                            task.short_local_bridge,
+                                            task.bridge_rrt,
+                                            task.query_index);
+        total_added += bridge_added;
+        added_for_task += bridge_added;
+        const int promoted = try_promote_query_repair_to_hipac(
+            task.start,
+            task.goal,
+            task.waypoint_path,
+            bridge_added,
+            query_bridge_edge_query_index(scene_reusable_edges, task),
+            static_cast<int>(task.index),
+            context);
+        if (promoted > 0) {
+            added_for_task += promoted;
+        }
+        accumulate_query_bridge_direct_corridor_totals(last_build_,
+                                                       context,
+                                                       task.index);
+        if (candidate_index > 0U) {
+            context.diagnostics().add_counter(
+                "query_bridge.waypoint_quality_fallback_added",
+                static_cast<double>(bridge_added));
+        }
+        const bool should_check =
+            query_bridge_should_check_current_query(task,
+                                                    false,
+                                                    index_options,
+                                                    retry_options);
+        if (should_check &&
+            query_bridge_result_acceptable(query(task.start, task.goal),
+                                           task.start,
+                                           task.goal,
+                                           bridge_acceptance)) {
+            if (candidate_index > 0U) {
+                context.diagnostics().add_counter(
+                    "query_bridge.waypoint_quality_fallback_successes");
+                context.diagnostics().set_value(
+                    query_bridge_task_key(task.index,
+                                          "waypoint_quality_fallback_success"),
+                    1.0);
+                task.waypoint_path = candidate_path;
+            }
+            if (!batch_options.evaluate_all_fallback_paths) {
+                break;
+            }
+        }
+    }
+    return total_added;
+}
+
 int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     int source_box_id,
     int target_box_id,
