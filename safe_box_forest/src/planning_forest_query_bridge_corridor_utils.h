@@ -34,6 +34,34 @@ struct QueryBridgeDirectFfbTaskBuildResult {
     int uncovered_gap_groups = 0;
 };
 
+struct QueryBridgeDirectFfbTaskRuntimeOptions {
+    QueryBridgeDirectFfbTaskBuildOptions build;
+    bool coverage_order_direct_tasks = true;
+};
+
+struct QueryBridgeRepairSubdivisionOptions {
+    int base_subdivisions = 0;
+    int subdivisions = 0;
+    std::vector<double> fractions;
+};
+
+struct QueryBridgeAdaptiveRepairOptions {
+    int priority_mode = 1;
+    bool enabled = true;
+    double target_segment_fraction = 0.0;
+    int max_subdivisions = 0;
+    double fine_step = 0.0;
+    int max_calls = 0;
+};
+
+struct QueryBridgeLateralRepairOptions {
+    bool enabled = false;
+    int dims = 0;
+    int rounds = 1;
+    int max_calls = 0;
+    double offset = 0.0;
+};
+
 struct QueryBridgeLocalDsu {
     std::vector<int> parent;
 
@@ -73,7 +101,19 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
     const std::vector<bool>& covered,
     const QueryBridgeDirectFfbTaskBuildOptions& options);
 
+QueryBridgeDirectFfbTaskRuntimeOptions query_bridge_direct_ffb_task_runtime_options(
+    std::size_t sample_count);
+
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
+
+QueryBridgeRepairSubdivisionOptions query_bridge_repair_subdivision_options(int query_index);
+
+QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_index,
+                                                                      int subdivisions,
+                                                                      double audit_step,
+                                                                      double sample_step);
+
+QueryBridgeLateralRepairOptions query_bridge_lateral_repair_options(double sample_step);
 
 std::vector<Eigen::VectorXd> query_bridge_lateral_candidates(
     const Eigen::VectorXd& seed,

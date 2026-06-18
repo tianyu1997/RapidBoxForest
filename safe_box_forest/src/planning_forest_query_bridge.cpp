@@ -1448,28 +1448,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         double adaptive_repair_ffb_ms = 0.0;
         double lateral_repair_ffb_ms = 0.0;
         double residual_segment_audit_ms = 0.0;
-        const int max_transition_hint =
-            std::max(0, static_cast<int>(samples.size()) - 2);
-        const bool grouped_direct_seeds =
-            env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_GROUPED_SEEDS", 0) != 0;
-        const int max_group_seeds =
-            std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_SEEDS_PER_GAP", 3));
-        const bool coverage_order_direct_tasks =
-            env_int_or_default("RBF_QUERY_BRIDGE_COVERAGE_ORDER_DIRECT_TASKS", 1) != 0;
-        const bool center_out_direct_tasks =
-            !coverage_order_direct_tasks &&
-            env_int_or_default("RBF_QUERY_BRIDGE_CENTER_OUT_DIRECT_TASKS", 1) != 0;
+        const QueryBridgeDirectFfbTaskRuntimeOptions direct_task_options =
+            query_bridge_direct_ffb_task_runtime_options(samples.size());
         const auto direct_task_build_t0 =
             detailed_direct_timing ? Clock::now() : Clock::time_point{};
         const QueryBridgeDirectFfbTaskBuildResult direct_task_build =
             query_bridge_build_direct_ffb_tasks(
                 samples,
                 covered,
-                QueryBridgeDirectFfbTaskBuildOptions{
-                    max_transition_hint,
-                    max_group_seeds,
-                    grouped_direct_seeds,
-                    center_out_direct_tasks});
+                direct_task_options.build);
         const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_build.tasks;
         const int uncovered_gap_groups = direct_task_build.uncovered_gap_groups;
         if (detailed_direct_timing) {
@@ -1478,18 +1465,18 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                           direct_task_build_t0).count();
         }
         context.diagnostics().set_value("query_bridge.direct_corridor_direct_grouped_seeds",
-                                        grouped_direct_seeds ? 1.0 : 0.0);
+                                        direct_task_options.build.grouped_direct_seeds ? 1.0 : 0.0);
         context.diagnostics().set_value("query_bridge.direct_corridor_coverage_order_direct_tasks",
-                                        coverage_order_direct_tasks ? 1.0 : 0.0);
+                                        direct_task_options.coverage_order_direct_tasks ? 1.0 : 0.0);
         context.diagnostics().set_value("query_bridge.direct_corridor_center_out_direct_tasks",
-                                        center_out_direct_tasks ? 1.0 : 0.0);
+                                        direct_task_options.build.center_out_direct_tasks ? 1.0 : 0.0);
         context.diagnostics().set_value("query_bridge.direct_corridor_ffb_start_depth",
                                         static_cast<double>(std::max(direct_options.start_depth,
                                                                     direct_options.skip_to_depth)));
         context.diagnostics().set_value("query_bridge.direct_corridor_uncovered_gap_groups",
                                         static_cast<double>(uncovered_gap_groups));
         context.diagnostics().set_value("query_bridge.direct_corridor_direct_max_seeds_per_gap",
-                                        static_cast<double>(max_group_seeds));
+                                        static_cast<double>(direct_task_options.build.max_group_seeds));
         context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
                                         static_cast<double>(direct_tasks.size()));
         const auto direct_loop_t0 =
@@ -1522,15 +1509,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 std::chrono::duration<double, std::milli>(Clock::now() -
                                                           direct_loop_t0).count();
         }
-        std::vector<double> fractions;
-        const int base_subdivisions =
-            env_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS", 6);
-        const int subdivisions =
-            std::max(0,
-                     env_indexed_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS",
-                                                query_index,
-                                                base_subdivisions));
-        fractions = query_bridge_center_ordered_fractions(subdivisions);
+        const QueryBridgeRepairSubdivisionOptions repair_subdivision_options =
+            query_bridge_repair_subdivision_options(query_index);
+        const int subdivisions = repair_subdivision_options.subdivisions;
+        const std::vector<double>& fractions = repair_subdivision_options.fractions;
         int repair_calls = 0;
         int repair_added = 0;
         const auto initial_bad = bad_transitions();
@@ -1592,8 +1574,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                     audited_bridge_length,
                                                     waypoint_length(samples));
         };
-        const int adaptive_repair_priority_mode =
-            env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY", 1);
+        const QueryBridgeAdaptiveRepairOptions adaptive_repair_options =
+            query_bridge_adaptive_repair_options(query_index,
+                                                 subdivisions,
+                                                 audit_step,
+                                                 sample_step);
+        const int adaptive_repair_priority_mode = adaptive_repair_options.priority_mode;
         auto order_adaptive_repair_transitions =
             [&](const std::vector<int>& transitions) {
                 return query_bridge_order_transitions_by_gap_length(samples,
@@ -1603,13 +1589,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int adaptive_repair_calls = 0;
         int adaptive_repair_added = 0;
         int adaptive_repair_max_subdivisions_used = subdivisions;
-        const bool adaptive_step_repair =
-            env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR", 1) != 0;
+        const bool adaptive_step_repair = adaptive_repair_options.enabled;
         const double adaptive_target_segment_fraction =
-            std::max(0.0,
-                     env_double_or_default(
-                         "RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION",
-                         0.0));
+            adaptive_repair_options.target_segment_fraction;
         const double adaptive_initial_bad_fraction =
             bad_transition_fraction(final_bad);
         context.diagnostics().set_value(
@@ -1624,21 +1606,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (adaptive_step_repair && !final_bad.empty()) {
             const auto adaptive_loop_t0 =
                 detailed_direct_timing ? Clock::now() : Clock::time_point{};
-            const int adaptive_max_subdivisions = std::max(
-                subdivisions + 1,
-                env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS",
-                                   std::max(2, subdivisions * 2)));
-            const double adaptive_fine_step = std::max(
-                1e-4,
-                env_double_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP",
-                                      std::max(audit_step, sample_step * 0.5)));
-            const int adaptive_max_calls = std::max(
-                0,
-                env_indexed_int_or_default(
-                    "RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
-                    query_index,
-                    env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS",
-                                       std::numeric_limits<int>::max())));
+            const int adaptive_max_subdivisions = adaptive_repair_options.max_subdivisions;
+            const double adaptive_fine_step = adaptive_repair_options.fine_step;
+            const int adaptive_max_calls = adaptive_repair_options.max_calls;
             std::vector<int> ordered_final_bad =
                 order_adaptive_repair_transitions(final_bad);
             for (int transition : ordered_final_bad) {
@@ -1721,27 +1691,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             bad_transition_fraction(final_bad));
         int lateral_repair_calls = 0;
         int lateral_repair_added = 0;
-        const bool lateral_repair =
-            env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR", 0) != 0;
+        const QueryBridgeLateralRepairOptions lateral_repair_options =
+            query_bridge_lateral_repair_options(sample_step);
+        const bool lateral_repair = lateral_repair_options.enabled;
         if (lateral_repair && !final_bad.empty()) {
             const auto lateral_loop_t0 =
                 detailed_direct_timing ? Clock::now() : Clock::time_point{};
-            const int lateral_dims = std::max(
-                0,
-                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_DIMS", 2));
-            const int lateral_rounds = std::max(
-                1,
-                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_ROUNDS", 1));
-            const int lateral_max_calls = std::max(
-                0,
-                env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_MAX_CALLS", 24));
-            const double lateral_offset = std::max(
-                1e-6,
-                env_double_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_OFFSET",
-                                      std::max(0.01, sample_step * 0.25)));
             const auto domain = oracle_->planning_intervals();
             for (int transition : final_bad) {
-                if (lateral_repair_calls >= lateral_max_calls) {
+                if (lateral_repair_calls >= lateral_repair_options.max_calls) {
                     break;
                 }
                 if (transition_connected(transition) ||
@@ -1757,10 +1715,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                      query_bridge_lateral_candidates(seed,
                                                      direction,
                                                      domain,
-                                                     lateral_dims,
-                                                     lateral_rounds,
-                                                     lateral_offset)) {
-                    if (lateral_repair_calls >= lateral_max_calls) {
+                                                     lateral_repair_options.dims,
+                                                     lateral_repair_options.rounds,
+                                                     lateral_repair_options.offset)) {
+                    if (lateral_repair_calls >= lateral_repair_options.max_calls) {
                         break;
                     }
                     if (transition_connected(transition)) {
