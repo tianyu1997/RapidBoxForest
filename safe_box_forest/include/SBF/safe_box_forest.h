@@ -559,6 +559,16 @@ private:
 										const std::vector<Eigen::VectorXd>& waypoint_path,
 										double segment_resolution,
 										int query_index);
+	int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
+													int target_box_id,
+													const std::vector<Eigen::VectorXd>& waypoint_path,
+													const RRTConnectConfig& bridge_rrt,
+													const CollisionChecker& checker,
+													StageContext& context,
+													double original_path_length,
+													double audited_path_length,
+													int query_index,
+													bool enabled);
 	int try_add_query_residual_segment_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,

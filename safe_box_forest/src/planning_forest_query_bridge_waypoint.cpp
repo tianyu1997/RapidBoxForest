@@ -241,44 +241,19 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     const double audited_bridge_length = query_bridge_waypoint_length(corridor_path);
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_final_length",
                                     audited_bridge_length);
-    if (direct_segment_after_rrt_candidate) {
-        context.diagnostics().add_counter(
-            "query_bridge.direct_segment_after_rrt_final_attempts");
-        context.diagnostics().add_counter(
-            "query_bridge.direct_segment_after_rrt_shortening_delta",
-            std::max(0.0, bridge_waypoint_length - audited_bridge_length));
-        const PathAuditCheck segment_audit =
-            audit_waypoint_path(corridor_path,
-                                checker,
-                                config_.query.audit_resolution,
-                                config_.query.audit_segment_step);
-        if (!segment_audit.passed) {
-            context.diagnostics().add_counter(
-                "query_bridge.direct_segment_after_rrt_audit_rejects");
-        } else {
-            const int edge_id = add_segment_edge_partition_first(
-                start_box_id,
-                goal_box_id,
-                corridor_path,
-                SegmentEdgeType::QueryBridge,
-                bridge_rrt.segment_resolution,
-                SegmentEdgeValidation::CollisionChecked,
-                true,
-                bridge_edge_query_index);
-            if (edge_id >= 0) {
-                direct_segment_edges_added += 1;
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_segment_after_rrt_edges");
-                invalidate_query_cache();
-                sync_adaptive_partition_segment_edges(
-                    &last_build_,
-                    "query_bridge.direct_segment_after_rrt");
-                refresh_adaptive_partition_diagnostics(&last_build_);
-                return finish_bridge(direct_segment_edges_added);
-            }
-            context.diagnostics().add_counter(
-                "query_bridge.direct_segment_after_rrt_add_fail");
-        }
+    direct_segment_edges_added =
+        try_add_query_direct_segment_after_rrt_edge(start_box_id,
+                                                    goal_box_id,
+                                                    corridor_path,
+                                                    bridge_rrt,
+                                                    checker,
+                                                    context,
+                                                    bridge_waypoint_length,
+                                                    audited_bridge_length,
+                                                    bridge_edge_query_index,
+                                                    direct_segment_after_rrt_candidate);
+    if (direct_segment_edges_added > 0) {
+        return finish_bridge(direct_segment_edges_added);
     }
     const double direct_corridor_audit_step = config_.query.audit_segment_step > 0.0
         ? config_.query.audit_segment_step
