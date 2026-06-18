@@ -138,6 +138,8 @@ src/adaptive_grid_partition_overlay.cpp
                                    component queries for the partition
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
 src/connector.cpp                  island connector and chain-pave logic
+src/grower_components.cpp          root/component grouping and distance
+                                   helpers for RRT grower connectivity
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
 src/planning_forest_adaptive_build.cpp
