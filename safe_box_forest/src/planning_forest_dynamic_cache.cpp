@@ -72,6 +72,55 @@ void record_segment_fallback_partition_stats(RebuildProfile& profile,
         static_cast<double>(partition_stats.overlay_edges);
 }
 
+struct SegmentEdgePruneStats {
+    int before = 0;
+    int removed_dead_endpoint = 0;
+    int audited = 0;
+    int removed_audit = 0;
+    double audit_ms = 0.0;
+};
+
+SegmentEdgePruneStats prune_insert_segment_edges(std::vector<SegmentEdge>& segment_edges,
+                                                 const std::vector<BoxNode>& boxes,
+                                                 AdjacencyGraph& adjacency,
+                                                 const CollisionChecker& updated_checker,
+                                                 const QueryConfig& query_config,
+                                                 bool partition_native) {
+    using Clock = std::chrono::steady_clock;
+    SegmentEdgePruneStats stats;
+    std::unordered_set<int> live_box_ids;
+    live_box_ids.reserve(boxes.size());
+    for (const auto& box : boxes) {
+        live_box_ids.insert(box.id);
+    }
+    stats.before = static_cast<int>(segment_edges.size());
+    segment_edges.erase(std::remove_if(segment_edges.begin(), segment_edges.end(), [&](const SegmentEdge& edge) {
+        if (live_box_ids.find(edge.source_box_id) == live_box_ids.end() ||
+            live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
+            stats.removed_dead_endpoint += 1;
+            return true;
+        }
+        const auto edge_t0 = Clock::now();
+        stats.audited += 1;
+        const bool survives = segment_edge_survives_scene(
+            edge, updated_checker, query_config.audit_resolution, query_config.audit_segment_step);
+        stats.audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
+        if (!survives) {
+            stats.removed_audit += 1;
+            if (!partition_native) {
+                const BoxNode* source_box = find_box_by_id(boxes, edge.source_box_id);
+                const BoxNode* target_box = find_box_by_id(boxes, edge.target_box_id);
+                if (source_box == nullptr || target_box == nullptr ||
+                    !boxes_connected(*source_box, *target_box, query_config.adjacency_tolerance)) {
+                    remove_local_edge(adjacency, edge.source_box_id, edge.target_box_id);
+                }
+            }
+        }
+        return !survives;
+    }), segment_edges.end());
+    return stats;
+}
+
 int containing_domain_index(const std::vector<BoxNode>& domains,
                             const Eigen::Ref<const Eigen::VectorXd>& point,
                             double tolerance) {
@@ -655,45 +704,19 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
             ++i;
         }
     }
-    std::unordered_set<int> live_box_ids;
-    live_box_ids.reserve(boxes_.size());
-    for (const auto& box : boxes_) {
-        live_box_ids.insert(box.id);
-    }
-    const int segment_edges_before = static_cast<int>(segment_edges_.size());
-    int segment_edges_removed_dead_endpoint = 0;
-    int segment_edges_audited = 0;
-    int segment_edges_removed_audit = 0;
-    double segment_edge_audit_ms = 0.0;
-    segment_edges_.erase(std::remove_if(segment_edges_.begin(), segment_edges_.end(), [&](const SegmentEdge& edge) {
-        if (live_box_ids.find(edge.source_box_id) == live_box_ids.end() ||
-            live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
-            segment_edges_removed_dead_endpoint += 1;
-            return true;
-        }
-        const auto edge_t0 = Clock::now();
-        segment_edges_audited += 1;
-        const bool survives = segment_edge_survives_scene(
-            edge, updated_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
-        segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
-        if (!survives) {
-            segment_edges_removed_audit += 1;
-            if (!partition_native_mode()) {
-                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
-                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
-                if (source_box == nullptr || target_box == nullptr ||
-                    !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
-                    remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
-                }
-            }
-        }
-        return !survives;
-    }), segment_edges_.end());
-    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_edges_before);
-    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] = static_cast<double>(segment_edges_removed_dead_endpoint);
-    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_edges_audited);
-    profile.diagnostics["insert.segment_edges_removed_audit"] = static_cast<double>(segment_edges_removed_audit);
-    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_edge_audit_ms;
+    const auto segment_stats = prune_insert_segment_edges(segment_edges_,
+                                                          boxes_,
+                                                          adjacency_,
+                                                          updated_checker,
+                                                          config_.query,
+                                                          partition_native_mode());
+    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_stats.before);
+    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] =
+        static_cast<double>(segment_stats.removed_dead_endpoint);
+    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_stats.audited);
+    profile.diagnostics["insert.segment_edges_removed_audit"] =
+        static_cast<double>(segment_stats.removed_audit);
+    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_stats.audit_ms;
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 
     scene_ = std::move(updated_scene);
@@ -847,45 +870,19 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
         }
     }
 
-    std::unordered_set<int> live_box_ids;
-    live_box_ids.reserve(boxes_.size());
-    for (const auto& box : boxes_) {
-        live_box_ids.insert(box.id);
-    }
-    const int segment_edges_before = static_cast<int>(segment_edges_.size());
-    int segment_edges_removed_dead_endpoint = 0;
-    int segment_edges_audited = 0;
-    int segment_edges_removed_audit = 0;
-    double segment_edge_audit_ms = 0.0;
-    segment_edges_.erase(std::remove_if(segment_edges_.begin(), segment_edges_.end(), [&](const SegmentEdge& edge) {
-        if (live_box_ids.find(edge.source_box_id) == live_box_ids.end() ||
-            live_box_ids.find(edge.target_box_id) == live_box_ids.end()) {
-            segment_edges_removed_dead_endpoint += 1;
-            return true;
-        }
-        const auto edge_t0 = Clock::now();
-        segment_edges_audited += 1;
-        const bool survives = segment_edge_survives_scene(
-            edge, updated_checker, config_.query.audit_resolution, config_.query.audit_segment_step);
-        segment_edge_audit_ms += std::chrono::duration<double, std::milli>(Clock::now() - edge_t0).count();
-        if (!survives) {
-            segment_edges_removed_audit += 1;
-            if (!partition_native_mode()) {
-                const BoxNode* source_box = find_box_by_id(boxes_, edge.source_box_id);
-                const BoxNode* target_box = find_box_by_id(boxes_, edge.target_box_id);
-                if (source_box == nullptr || target_box == nullptr ||
-                    !boxes_connected(*source_box, *target_box, config_.query.adjacency_tolerance)) {
-                    remove_local_edge(adjacency_, edge.source_box_id, edge.target_box_id);
-                }
-            }
-        }
-        return !survives;
-    }), segment_edges_.end());
-    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_edges_before);
-    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] = static_cast<double>(segment_edges_removed_dead_endpoint);
-    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_edges_audited);
-    profile.diagnostics["insert.segment_edges_removed_audit"] = static_cast<double>(segment_edges_removed_audit);
-    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_edge_audit_ms;
+    const auto segment_stats = prune_insert_segment_edges(segment_edges_,
+                                                          boxes_,
+                                                          adjacency_,
+                                                          updated_checker,
+                                                          config_.query,
+                                                          partition_native_mode());
+    profile.diagnostics["insert.segment_edges_before"] = static_cast<double>(segment_stats.before);
+    profile.diagnostics["insert.segment_edges_removed_dead_endpoint"] =
+        static_cast<double>(segment_stats.removed_dead_endpoint);
+    profile.diagnostics["insert.segment_edges_audited"] = static_cast<double>(segment_stats.audited);
+    profile.diagnostics["insert.segment_edges_removed_audit"] =
+        static_cast<double>(segment_stats.removed_audit);
+    profile.diagnostics["insert.segment_edge_audit_ms"] = segment_stats.audit_ms;
     profile.collision_check_ms = std::chrono::duration<double, std::milli>(Clock::now() - check_t0).count();
 
     scene_ = std::move(updated_scene);
