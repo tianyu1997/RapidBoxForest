@@ -79,4 +79,17 @@ inline bool partition_query_component_prune_enabled_from_env() {
 	return detail::env_int_or_default("RBF_PARTITION_QUERY_COMPONENT_PRUNE", 0) != 0;
 }
 
+inline int partition_containment_bucket_bits_from_env() {
+	return std::clamp(
+		detail::env_int_or_default("RBF_PARTITION_CONTAINMENT_BUCKET_BITS", 10),
+		1,
+		20);
+}
+
+inline std::uint64_t partition_containment_max_bins_per_cell_from_env() {
+	return static_cast<std::uint64_t>(std::max(
+		16,
+		detail::env_int_or_default("RBF_PARTITION_CONTAINMENT_MAX_BINS_PER_CELL", 256)));
+}
+
 }  // namespace rbf

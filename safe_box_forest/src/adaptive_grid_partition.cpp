@@ -470,12 +470,9 @@ AdaptiveGridPartitionMergeResult AdaptiveGridPartition::merge_boxes(
 		if (selected_dims.empty()) {
 			result.containment_skipped = static_cast<int>(cells_.size());
 		} else {
-			const int bucket_bits = std::clamp(
-				env_int_or_default("RBF_PARTITION_CONTAINMENT_BUCKET_BITS", 10),
-				1,
-				20);
-			const std::uint64_t max_bins_per_cell = static_cast<std::uint64_t>(
-				std::max(16, env_int_or_default("RBF_PARTITION_CONTAINMENT_MAX_BINS_PER_CELL", 256)));
+			const int bucket_bits = partition_containment_bucket_bits_from_env();
+			const std::uint64_t max_bins_per_cell =
+				partition_containment_max_bins_per_cell_from_env();
 			auto coarse_coord = [&](const GridRange& range, int dim, bool upper) {
 				const int split_count = split_counts_[static_cast<std::size_t>(dim)];
 				const int shift = std::max(0, split_count - bucket_bits);
