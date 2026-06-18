@@ -1499,61 +1499,51 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             "query_bridge.detour_candidate_selected");
         return true;
     };
-    const bool waypoint_quality_retry =
-        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY", 0) != 0;
-    const int waypoint_quality_retry_attempts = std::max(
-        0,
-        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS", 4));
-    const int waypoint_quality_retry_iters = std::max(
-        0,
-        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ITERS", 0));
-    const double waypoint_quality_max_ratio = std::max(
-        1.0,
-        env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO", 2.0));
-    const double waypoint_quality_max_additive = std::max(
-        0.0,
-        env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_ADDITIVE", 0.75));
-    batch_context.diagnostics().set_value(
-        "query_bridge.waypoint_quality_retry",
-        waypoint_quality_retry ? 1.0 : 0.0);
-	    auto improve_waypoint_if_needed = [&](QueryBridgeSearchTask& task,
-	                                          int attempts_already_used,
-	                                          double& best_length,
-	                                          std::vector<Eigen::VectorXd>& waypoint_path) {
-        if (!waypoint_quality_retry ||
-            waypoint_quality_retry_attempts <= 0 ||
+    const QueryBridgeWaypointQualityRetryOptions quality_retry_options =
+        query_bridge_waypoint_quality_retry_options_from_env();
+    record_query_bridge_waypoint_quality_retry_diagnostics(batch_context,
+                                                           quality_retry_options);
+    auto improve_waypoint_if_needed = [&](QueryBridgeSearchTask& task,
+                                          int attempts_already_used,
+                                          double& best_length,
+                                          std::vector<Eigen::VectorXd>& waypoint_path) {
+        if (!quality_retry_options.enabled ||
+            quality_retry_options.attempts <= 0 ||
             waypoint_path.empty()) {
             return;
         }
-        const double direct = (task.goal - task.start).norm();
-        const double limit = std::max(direct * waypoint_quality_max_ratio,
-                                      direct + waypoint_quality_max_additive);
-        if (!(best_length > limit)) {
+        if (!query_bridge_waypoint_quality_retry_needed(task.start,
+                                                        task.goal,
+                                                        best_length,
+                                                        quality_retry_options)) {
             return;
         }
+        const double direct = (task.goal - task.start).norm();
+        const double limit = std::max(direct * quality_retry_options.max_ratio,
+                                      direct + quality_retry_options.max_additive);
         batch_context.diagnostics().add_counter(
             "query_bridge.waypoint_quality_retry_tasks");
         const auto retry_t0 = Clock::now();
         int retry_successes = 0;
         std::vector<std::vector<Eigen::VectorXd>> retry_paths(
-            static_cast<std::size_t>(waypoint_quality_retry_attempts));
+            static_cast<std::size_t>(quality_retry_options.attempts));
         if (batch_context.executor().n_threads() > 1 &&
-            waypoint_quality_retry_attempts > 1) {
+            quality_retry_options.attempts > 1) {
             batch_context.executor().parallel_for(
                 0,
-                waypoint_quality_retry_attempts,
+                quality_retry_options.attempts,
                 [&](int retry) {
                     retry_paths[static_cast<std::size_t>(retry)] =
                         run_task_attempt(task,
                                          attempts_already_used + retry,
-                                         waypoint_quality_retry_iters);
+                                         quality_retry_options.iters);
                 });
         } else {
-            for (int retry = 0; retry < waypoint_quality_retry_attempts; ++retry) {
+            for (int retry = 0; retry < quality_retry_options.attempts; ++retry) {
                 retry_paths[static_cast<std::size_t>(retry)] =
                     run_task_attempt(task,
                                      attempts_already_used + retry,
-                                     waypoint_quality_retry_iters);
+                                     quality_retry_options.iters);
             }
         }
         for (auto& retry_path : retry_paths) {
@@ -1575,13 +1565,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
         }
         if (batch_context.executor().n_threads() > 1 &&
-            waypoint_quality_retry_attempts > 1) {
+            quality_retry_options.attempts > 1) {
             batch_context.diagnostics().add_counter(
                 "query_bridge.waypoint_quality_retry_parallel_batches");
         }
         batch_context.diagnostics().add_counter(
             "query_bridge.waypoint_quality_retry_attempts",
-            static_cast<double>(waypoint_quality_retry_attempts));
+            static_cast<double>(quality_retry_options.attempts));
         batch_context.diagnostics().add_counter(
             "query_bridge.waypoint_quality_retry_successes",
             static_cast<double>(retry_successes));
@@ -1589,10 +1579,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().add_counter(
                 "query_bridge.waypoint_quality_retry_fixed");
         }
-	        batch_context.diagnostics().record_timing(
-	            "query_bridge.waypoint_quality_retry_ms_total",
-	            elapsed_ms_since(retry_t0));
-	    };
+        batch_context.diagnostics().record_timing(
+            "query_bridge.waypoint_quality_retry_ms_total",
+            elapsed_ms_since(retry_t0));
+    };
     auto select_attempt_paths = [&](QueryBridgeSearchTask& task,
                                     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
                                     double& best_length) {

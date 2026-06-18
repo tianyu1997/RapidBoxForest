@@ -209,6 +209,43 @@ void record_query_bridge_detour_diagnostics(StageContext& context,
                                     options.candidate ? 1.0 : 0.0);
 }
 
+QueryBridgeWaypointQualityRetryOptions query_bridge_waypoint_quality_retry_options_from_env() {
+    QueryBridgeWaypointQualityRetryOptions options;
+    options.enabled =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY", 0) != 0;
+    options.attempts = std::max(
+        0,
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS", 4));
+    options.iters = std::max(
+        0,
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ITERS", 0));
+    options.max_ratio = std::max(
+        1.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO", 2.0));
+    options.max_additive = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_ADDITIVE", 0.75));
+    return options;
+}
+
+void record_query_bridge_waypoint_quality_retry_diagnostics(
+    StageContext& context,
+    const QueryBridgeWaypointQualityRetryOptions& options) {
+    context.diagnostics().set_value("query_bridge.waypoint_quality_retry",
+                                    options.enabled ? 1.0 : 0.0);
+}
+
+bool query_bridge_waypoint_quality_retry_needed(
+    const Eigen::VectorXd& start,
+    const Eigen::VectorXd& goal,
+    double best_length,
+    const QueryBridgeWaypointQualityRetryOptions& options) {
+    const double direct = (goal - start).norm();
+    const double limit = std::max(direct * options.max_ratio,
+                                  direct + options.max_additive);
+    return best_length > limit;
+}
+
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after) {

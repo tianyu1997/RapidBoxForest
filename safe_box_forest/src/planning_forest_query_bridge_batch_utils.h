@@ -63,6 +63,14 @@ struct QueryBridgeDetourOptions {
     double two_bend_alpha = 0.35;
 };
 
+struct QueryBridgeWaypointQualityRetryOptions {
+    bool enabled = false;
+    int attempts = 4;
+    int iters = 0;
+    double max_ratio = 2.0;
+    double max_additive = 0.75;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -112,6 +120,18 @@ QueryBridgeDetourOptions query_bridge_detour_options_from_env();
 
 void record_query_bridge_detour_diagnostics(StageContext& context,
                                             const QueryBridgeDetourOptions& options);
+
+QueryBridgeWaypointQualityRetryOptions query_bridge_waypoint_quality_retry_options_from_env();
+
+void record_query_bridge_waypoint_quality_retry_diagnostics(
+    StageContext& context,
+    const QueryBridgeWaypointQualityRetryOptions& options);
+
+bool query_bridge_waypoint_quality_retry_needed(
+    const Eigen::VectorXd& start,
+    const Eigen::VectorXd& goal,
+    double best_length,
+    const QueryBridgeWaypointQualityRetryOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
