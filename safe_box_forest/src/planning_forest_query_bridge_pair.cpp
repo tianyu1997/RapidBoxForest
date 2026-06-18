@@ -1,0 +1,198 @@
+#include <SBF/safe_box_forest.h>
+
+#include <SBF/box_graph.h>
+#include <SBF/connector.h>
+
+#include "env_config.h"
+#include "planning_forest_audit.h"
+#include "planning_forest_diagnostics.h"
+#include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_utils.h"
+#include "virtual_sparse_ffb.h"
+
+#include <algorithm>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <limits>
+#include <memory>
+#include <optional>
+#include <queue>
+#include <random>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+namespace rbf {
+
+using detail::env_double_list_or_empty;
+using detail::env_double_or_default;
+using detail::env_index_list_contains;
+using detail::env_indexed_double_or_default;
+using detail::env_indexed_int_or_default;
+using detail::env_int_list_or_empty;
+using detail::env_int_or_default;
+
+int RBFPlanningForest::bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,
+                                const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    if (boxes_.empty() || !oracle_) {
+        return 0;
+    }
+    QueryResult current = query(start, goal);
+    if (current.success && current.repair_count == 0) {
+        const double direct = (goal - start).norm();
+        const bool graph_only = current.segment_edges_used == 0;
+        const bool short_enough =
+            direct <= 1e-9 ||
+            current.path_length <= std::max(direct * 1.35, direct + 0.35);
+        if (graph_only && short_enough) {
+            return 0;
+        }
+    }
+    return bridge_query_known_needed(start, goal);
+}
+
+int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::VectorXd>& start,
+                                             const Eigen::Ref<const Eigen::VectorXd>& goal) {
+    if (boxes_.empty() || !oracle_) {
+        return 0;
+    }
+    StageContext context = StageContext::from_runtime(config_.runtime);
+    struct QueryBridgeDiagnosticsFlush {
+        BuildProfile& profile;
+        StageContext& context;
+        ~QueryBridgeDiagnosticsFlush() {
+            for (const auto& [key, value] : context.diagnostics().snapshot()) {
+                profile.diagnostics[key] = value;
+            }
+        }
+    } diagnostics_flush{last_build_, context};
+    int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
+    if (start_box_id < 0) {
+        start_box_id = anchor_query_endpoint_box(start, context);
+    }
+    if (start_box_id < 0) {
+        return 0;
+    }
+    int goal_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
+    if (goal_box_id < 0) {
+        goal_box_id = anchor_query_endpoint_box(goal, context);
+    }
+    if (goal_box_id < 0 || goal_box_id == start_box_id) {
+        return 0;
+    }
+    CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    const bool direct_start_goal_segment =
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
+        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_START_GOAL_SEGMENT", 1) != 0 &&
+        config_.connector.segment_edges_enabled &&
+        config_.connector.rrt_segment_edges;
+    context.diagnostics().set_value("query_bridge.direct_start_goal_segment",
+                                    direct_start_goal_segment ? 1.0 : 0.0);
+    if (direct_start_goal_segment) {
+        std::vector<Eigen::VectorXd> direct_path{start, goal};
+        context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_attempts");
+        const PathAuditCheck audit =
+            audit_waypoint_path(direct_path,
+                                checker,
+                                config_.query.audit_resolution,
+                                config_.query.audit_segment_step);
+        if (audit.passed) {
+            const int edge_id = add_segment_edge_partition_first(
+                start_box_id,
+                goal_box_id,
+                direct_path,
+                SegmentEdgeType::QueryBridge,
+                config_.query.audit_resolution,
+                SegmentEdgeValidation::CollisionChecked,
+                true,
+                -1);
+            if (edge_id >= 0) {
+                context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_edges");
+                invalidate_query_cache();
+                sync_adaptive_partition_segment_edges(&last_build_,
+                                                       "query_bridge.direct_start_goal_segment");
+                refresh_adaptive_partition_diagnostics(&last_build_);
+                return 1;
+            }
+            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_add_fail");
+        } else {
+            context.diagnostics().add_counter("query_bridge.direct_start_goal_segment_audit_rejects");
+        }
+    }
+    RRTConnectConfig bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
+    bridge_rrt.segment_resolution = std::max(bridge_rrt.segment_resolution, config_.query.audit_resolution);
+    const double bridge_distance = (goal - start).norm();
+    const bool short_local_bridge = bridge_distance > 0.55 && bridge_distance < 0.85;
+    std::vector<RRTConnectConfig> short_local_profiles;
+    if (short_local_bridge) {
+        bridge_rrt.step_size = std::min(bridge_rrt.step_size, 0.25);
+        bridge_rrt.goal_bias = 0.08;
+        bridge_rrt.local_sampling_radius =
+            bridge_rrt.local_sampling_radius > 0.0
+                ? std::min(bridge_rrt.local_sampling_radius, 0.85)
+                : 0.85;
+        auto add_profile = [&](double step_size, double goal_bias, double radius) {
+            RRTConnectConfig profile = bridge_rrt;
+            profile.step_size = step_size;
+            profile.goal_bias = goal_bias;
+            profile.local_sampling_radius = radius;
+            profile.shortcut_path = true;
+            short_local_profiles.push_back(std::move(profile));
+        };
+        add_profile(0.25, 0.08, 0.90);
+        add_profile(0.50, 0.20, 1.00);
+        add_profile(0.35, 0.10, 1.00);
+        add_profile(0.25, 0.08, 0.45);
+        context.diagnostics().add_counter("query_bridge.short_local_profile");
+        context.diagnostics().set_value("query_bridge.short_local_step_size",
+                                        bridge_rrt.step_size);
+        context.diagnostics().set_value("query_bridge.short_local_goal_bias",
+                                        bridge_rrt.goal_bias);
+        context.diagnostics().set_value("query_bridge.short_local_radius",
+                                        bridge_rrt.local_sampling_radius);
+        context.diagnostics().set_value("query_bridge.short_local_profiles",
+                                        static_cast<double>(short_local_profiles.size()));
+    }
+    const int bridge_attempts =
+        std::max(1, config_.connector.max_pairs_per_gap);
+    const int run_seed = config_.grower.rng_seed;
+    const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
+    context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
+    context.diagnostics().set_value("query_bridge.seed_base", static_cast<double>(bridge_seed_base));
+    const double bridge_rrt_clearance =
+        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+    Robot bridge_rrt_robot = make_sbf_clearance_robot(audit_robot_, bridge_rrt_clearance);
+    CollisionChecker bridge_rrt_checker =
+        bridge_rrt_clearance > 0.0
+            ? CollisionChecker(bridge_rrt_robot, scene_)
+            : checker;
+    context.diagnostics().set_value("query_bridge.rrt_clearance", bridge_rrt_clearance);
+    auto waypoint_path = best_audited_rrt_bridge_path(start,
+                                                      goal,
+                                                      bridge_rrt_checker,
+                                                      bridge_rrt_robot,
+                                                      context,
+                                                      bridge_rrt,
+                                                      bridge_attempts,
+                                                      config_.connector.per_pair_timeout_ms * bridge_attempts,
+                                                      bridge_seed_base,
+                                                      config_.query.audit_resolution,
+                                                      config_.query.audit_segment_step,
+                                                      short_local_profiles.empty() ? nullptr : &short_local_profiles,
+                                                      short_local_bridge ? 1 : 7919);
+    if (waypoint_path.empty()) {
+        return 0;
+    }
+    return bridge_query_with_waypoint_path(start,
+                                           goal,
+                                           waypoint_path,
+                                           short_local_bridge,
+                                           bridge_rrt);
+}
+
+} // namespace rbf
