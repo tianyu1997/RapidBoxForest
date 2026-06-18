@@ -13,6 +13,7 @@
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_keys.h"
 #include "env_config.h"
+#include "query_graph_cost_options.h"
 
 namespace rbf {
 
@@ -2055,10 +2056,8 @@ std::vector<int> AdaptiveGridPartition::shortcut_sequence(
 	if (sequence.size() <= 2) {
 		return sequence;
 	}
-	const bool cost_aware_shortcut =
-		env_int_or_default("RBF_QUERY_SHORTCUT_COST_AWARE", 1) != 0;
-	const double shortcut_cost_factor =
-		std::max(1.0, env_double_or_default("RBF_QUERY_SHORTCUT_COST_FACTOR", 1.05));
+	const QueryShortcutCostOptions shortcut_options =
+		query_shortcut_cost_options_from_env(true);
 	auto transition_cost = [&](int lhs_box_id, int rhs_box_id) {
 		const auto lhs_it = cell_by_box_id.find(lhs_box_id);
 		const auto rhs_it = cell_by_box_id.find(rhs_box_id);
@@ -2077,7 +2076,7 @@ std::vector<int> AdaptiveGridPartition::shortcut_sequence(
 		return total;
 	};
 	auto shortcut_acceptable = [&](std::size_t begin, std::size_t end, int bridge_box_id) {
-		if (!cost_aware_shortcut) {
+		if (!shortcut_options.cost_aware) {
 			return true;
 		}
 		const double original_cost = sequence_cost(begin, end);
@@ -2087,7 +2086,7 @@ std::vector<int> AdaptiveGridPartition::shortcut_sequence(
 			: transition_cost(sequence[begin], sequence[end]);
 		return std::isfinite(original_cost) &&
 			   std::isfinite(shortcut_cost) &&
-			   shortcut_cost <= original_cost * shortcut_cost_factor + 1e-9;
+			   shortcut_cost <= original_cost * shortcut_options.cost_factor + 1e-9;
 	};
 	auto neighbor_box_set = [&](int box_id) {
 		std::unordered_set<int> out;
@@ -2206,22 +2205,9 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 	representative[static_cast<std::size_t>(start_cell)] = start;
 	open.push({start_cell, heuristic(start_cell)});
 	const int max_expansions = std::max(0, options.max_expansions);
-	const double box_transition_penalty =
-		std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_EDGE_COST_PENALTY", 0.0));
-	const double box_nonprogress_penalty =
-		std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_NONPROGRESS_PENALTY", 0.0));
-	const double box_line_deviation_penalty =
-		std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY", 0.0));
-	const double query_bridge_penalty =
-		std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_EDGE_COST_PENALTY", 0.0));
-	const int active_query_index = env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
-	const double foreign_query_edge_penalty =
-		active_query_index >= 0
-			? std::max(0.0,
-					   env_double_or_default("RBF_QUERY_FOREIGN_EDGE_COST_PENALTY", 0.0))
-			: 0.0;
+	const QueryGraphCostOptions cost_options = query_graph_cost_options_from_env();
 	const bool line_deviation_enabled =
-		box_line_deviation_penalty > 0.0 &&
+		cost_options.box_line_deviation_penalty > 0.0 &&
 		start.size() == goal.size() &&
 		start.size() > 0;
 	auto edge_line_deviation = [&](const OverlayEdge& edge,
@@ -2287,17 +2273,18 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 																	   goal,
 																	   options.adjacency_tolerance);
 			const double transition_length = (current_rep - next_rep).norm();
-			double edge_cost = transition_length + 1e-6 + box_transition_penalty;
-			if (box_nonprogress_penalty > 0.0 &&
+			double edge_cost = transition_length + 1e-6 +
+							   cost_options.box_transition_penalty;
+			if (cost_options.box_nonprogress_penalty > 0.0 &&
 				goal.size() == current_rep.size() &&
 				goal.size() == next_rep.size()) {
 				const double current_goal_distance = (current_rep - goal).norm();
 				const double next_goal_distance = (next_rep - goal).norm();
-				edge_cost += box_nonprogress_penalty *
+				edge_cost += cost_options.box_nonprogress_penalty *
 							 std::max(0.0, next_goal_distance - current_goal_distance);
 			}
 			if (line_deviation_enabled) {
-				edge_cost += box_line_deviation_penalty *
+				edge_cost += cost_options.box_line_deviation_penalty *
 							 distance_to_line(next_rep, start, goal) *
 							 std::max(transition_length, 1e-6);
 			}
@@ -2321,7 +2308,7 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 					? edge.length
 					: (current_rep - next_rep).norm();
 				if (line_deviation_enabled) {
-					edge_cost += box_line_deviation_penalty *
+					edge_cost += cost_options.box_line_deviation_penalty *
 								 edge_line_deviation(edge, next_rep) *
 								 std::max(edge.length, 1e-6);
 				}
@@ -2331,12 +2318,12 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 					edge_cost += 100.0;
 				}
 				if (partition_counts_as_query_repair_edge(edge.type)) {
-					edge_cost += query_bridge_penalty;
+					edge_cost += cost_options.query_bridge_penalty;
 				}
-				if (foreign_query_edge_penalty > 0.0 &&
+				if (cost_options.foreign_query_edge_penalty > 0.0 &&
 					edge.query_index >= 0 &&
-					edge.query_index != active_query_index) {
-					edge_cost += foreign_query_edge_penalty;
+					edge.query_index != cost_options.active_query_index) {
+					edge_cost += cost_options.foreign_query_edge_penalty;
 				}
 				if (edge.strict_audit_required &&
 					edge.type == SegmentEdgeType::QueryBridge &&

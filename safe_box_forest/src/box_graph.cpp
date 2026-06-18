@@ -16,6 +16,7 @@
 #include <unordered_set>
 
 #include "env_config.h"
+#include "query_graph_cost_options.h"
 
 namespace rbf {
 namespace {
@@ -871,22 +872,9 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
     dist[start_box_id] = 0.0;
     representative[start_box_id] = box_ptr(start_box_id)->center();
     open.push({start_box_id, heuristic(start_box_id)});
-    const double box_transition_penalty =
-        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_EDGE_COST_PENALTY", 0.0));
-    const double box_nonprogress_penalty =
-        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_NONPROGRESS_PENALTY", 0.0));
-    const double box_line_deviation_penalty =
-        std::max(0.0, env_double_or_default("RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY", 0.0));
-    const double query_bridge_penalty =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_EDGE_COST_PENALTY", 0.0));
-    const int active_query_index = env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
-    const double foreign_query_edge_penalty =
-        active_query_index >= 0
-            ? std::max(0.0,
-                       env_double_or_default("RBF_QUERY_FOREIGN_EDGE_COST_PENALTY", 0.0))
-            : 0.0;
+    const QueryGraphCostOptions cost_options = query_graph_cost_options_from_env();
     const bool line_deviation_enabled =
-        box_line_deviation_penalty > 0.0 &&
+        cost_options.box_line_deviation_penalty > 0.0 &&
         start_point.size() == goal_point.size() &&
         start_point.size() > 0;
     const Eigen::VectorXd query_delta =
@@ -942,17 +930,18 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             const Eigen::VectorXd current_rep = representative.at(current);
             Eigen::VectorXd next_rep = transition_waypoint_toward_goal(*current_box, *next_box, current_rep, goal_point);
             const double transition_length = (current_rep - next_rep).norm();
-            double edge_cost = transition_length + 1e-6 + box_transition_penalty;
-            if (box_nonprogress_penalty > 0.0 &&
+            double edge_cost = transition_length + 1e-6 +
+                               cost_options.box_transition_penalty;
+            if (cost_options.box_nonprogress_penalty > 0.0 &&
                 goal_point.size() == current_rep.size() &&
                 goal_point.size() == next_rep.size()) {
                 const double current_goal_distance = (current_rep - goal_point).norm();
                 const double next_goal_distance = (next_rep - goal_point).norm();
-                edge_cost += box_nonprogress_penalty *
+                edge_cost += cost_options.box_nonprogress_penalty *
                              std::max(0.0, next_goal_distance - current_goal_distance);
             }
             if (line_deviation_enabled) {
-                edge_cost += box_line_deviation_penalty *
+                edge_cost += cost_options.box_line_deviation_penalty *
                              distance_to_query_line(next_rep) *
                              std::max(transition_length, 1e-6);
             }
@@ -964,7 +953,7 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
             if (edge != nullptr) {
                 edge_cost = edge->length > 0.0 ? edge->length : edge_cost;
                 if (line_deviation_enabled) {
-                    edge_cost += box_line_deviation_penalty *
+                    edge_cost += cost_options.box_line_deviation_penalty *
                                  edge_line_deviation(*edge, next_box->center()) *
                                  std::max(edge->length, 1e-6);
                 }
@@ -974,12 +963,12 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
                     edge_cost += 100.0;
                 }
                 if (counts_as_query_repair_edge(edge->type)) {
-                    edge_cost += query_bridge_penalty;
+                    edge_cost += cost_options.query_bridge_penalty;
                 }
-                if (foreign_query_edge_penalty > 0.0 &&
+                if (cost_options.foreign_query_edge_penalty > 0.0 &&
                     edge->query_index >= 0 &&
-                    edge->query_index != active_query_index) {
-                    edge_cost += foreign_query_edge_penalty;
+                    edge->query_index != cost_options.active_query_index) {
+                    edge_cost += cost_options.foreign_query_edge_penalty;
                 }
                 if (edge->strict_audit_required &&
                     edge->type == SegmentEdgeType::QueryBridge &&
@@ -1031,11 +1020,8 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
         return sequence;
     }
 
-    const bool cost_aware_shortcut =
-        env_int_or_default("RBF_QUERY_SHORTCUT_COST_AWARE", 1) != 0 &&
-        cache.boxes != nullptr;
-    const double shortcut_cost_factor =
-        std::max(1.0, env_double_or_default("RBF_QUERY_SHORTCUT_COST_FACTOR", 1.05));
+    const QueryShortcutCostOptions shortcut_options =
+        query_shortcut_cost_options_from_env(cache.boxes != nullptr);
     auto transition_cost = [&](int lhs, int rhs) {
         if (const SegmentEdge* edge = find_segment_edge(cache, lhs, rhs)) {
             return edge->length > 0.0 ? edge->length : 0.0;
@@ -1062,7 +1048,7 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
     auto shortcut_acceptable = [&](std::size_t begin,
                                    std::size_t end,
                                    int bridge) {
-        if (!cost_aware_shortcut) {
+        if (!shortcut_options.cost_aware) {
             return true;
         }
         const double original_cost = sequence_cost(begin, end);
@@ -1073,7 +1059,7 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const Q
                 : transition_cost(sequence[begin], sequence[end]);
         return std::isfinite(original_cost) &&
                std::isfinite(shortcut_cost) &&
-               shortcut_cost <= original_cost * shortcut_cost_factor + 1e-9;
+               shortcut_cost <= original_cost * shortcut_options.cost_factor + 1e-9;
     };
 
     std::vector<int> shortened;
