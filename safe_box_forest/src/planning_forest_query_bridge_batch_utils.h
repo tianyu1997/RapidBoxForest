@@ -13,6 +13,8 @@
 
 namespace rbf {
 
+struct QueryBridgeDetourOptions;
+
 struct QueryBridgeAcceptanceThresholds {
     double max_segment_fraction = 0.25;
     double path_ratio = 1.50;
@@ -67,19 +69,6 @@ struct QueryBridgeParallelRrtOptions {
     int early_stop_min_successes = 1;
     double early_stop_ratio = 1.75;
     double early_stop_additive = 0.75;
-};
-
-struct QueryBridgeDetourOptions {
-    bool enabled = false;
-    bool candidate = false;
-    double replace_factor = 1.0;
-    int dims = 4;
-    int rounds = 2;
-    int max_candidates = 32;
-    bool multi_axis = false;
-    int random_candidates = 0;
-    double offset = 0.35;
-    double two_bend_alpha = 0.35;
 };
 
 struct QueryBridgeWaypointQualityRetryOptions {
@@ -296,11 +285,6 @@ void record_query_bridge_parallel_rrt_early_stop(
     const std::shared_ptr<std::atomic<bool>>& cancel_flag,
     const std::atomic<int>& early_successes);
 
-QueryBridgeDetourOptions query_bridge_detour_options_from_env();
-
-void record_query_bridge_detour_diagnostics(StageContext& context,
-                                            const QueryBridgeDetourOptions& options);
-
 QueryBridgeWaypointQualityRetryOptions query_bridge_waypoint_quality_retry_options_from_env();
 
 void record_query_bridge_waypoint_quality_retry_diagnostics(
@@ -416,28 +400,6 @@ void query_bridge_run_no_path_retries(
 
 int query_bridge_edge_query_index(bool scene_reusable_edges,
                                   const QueryBridgeSearchTask& task);
-
-std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
-    const QueryBridgeSearchTask& task,
-    const Robot& audit_robot,
-    const Scene& scene,
-    const QueryConfig& query_config,
-    const std::vector<Interval>& planning_domain,
-    const QueryBridgeDetourOptions& options,
-    int rng_seed_base,
-    StageContext& context);
-
-bool query_bridge_maybe_apply_detour_path(
-    const QueryBridgeSearchTask& task,
-    const Robot& audit_robot,
-    const Scene& scene,
-    const QueryConfig& query_config,
-    const std::vector<Interval>& planning_domain,
-    const QueryBridgeDetourOptions& options,
-    int rng_seed_base,
-    StageContext& context,
-    double& best_length,
-    std::vector<Eigen::VectorXd>& waypoint_path);
 
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,
