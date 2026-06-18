@@ -114,6 +114,39 @@ void query_bridge_configure_short_local_profiles(
     add_profile(0.25, 0.08, 0.45);
 }
 
+RRTConnectConfig query_bridge_rrt_config_for_attempt(
+    const QueryBridgeSearchTask& task,
+    int attempt,
+    int scheduled_attempt,
+    int override_fixed_iters,
+    double default_timeout_ms,
+    const QueryBridgeRetryOptions& options) {
+    RRTConnectConfig config =
+        task.short_local_profiles.empty()
+            ? task.bridge_rrt
+            : task.short_local_profiles[
+                  static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
+    if (!options.local_radius_schedule.empty() &&
+        attempt >= 0 &&
+        static_cast<std::size_t>(attempt) < options.local_radius_schedule.size()) {
+        const double scheduled_radius =
+            options.local_radius_schedule[static_cast<std::size_t>(attempt)];
+        if (scheduled_radius >= 0.0) {
+            config.local_sampling_radius = scheduled_radius;
+        }
+    }
+    config.optimize_after_first_iters = options.rrt_optimize_after_first_iters;
+    const int effective_fixed_iters =
+        override_fixed_iters > 0 ? override_fixed_iters : options.rrt_fixed_iters;
+    if (effective_fixed_iters > 0) {
+        config.max_iters = effective_fixed_iters;
+        config.timeout_ms = options.rrt_fixed_timeout_ms;
+    } else {
+        config.timeout_ms = std::max(1.0, default_timeout_ms);
+    }
+    return config;
+}
+
 void query_bridge_mark_task_skip(BuildProfile& profile,
                                  std::size_t index,
                                  double code,

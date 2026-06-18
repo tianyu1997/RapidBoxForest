@@ -913,28 +913,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 ? CollisionChecker(bridge_robot, scene_)
                 : make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
-            task.short_local_profiles.empty()
-                ? task.bridge_rrt
-                : task.short_local_profiles[
-                      static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
-        if (!retry_options.local_radius_schedule.empty() &&
-            attempt >= 0 &&
-            static_cast<std::size_t>(attempt) < retry_options.local_radius_schedule.size()) {
-            const double scheduled_radius =
-                retry_options.local_radius_schedule[static_cast<std::size_t>(attempt)];
-            if (scheduled_radius >= 0.0) {
-                config.local_sampling_radius = scheduled_radius;
-            }
-        }
-        config.optimize_after_first_iters = retry_options.rrt_optimize_after_first_iters;
-        const int effective_fixed_iters =
-            override_fixed_iters > 0 ? override_fixed_iters : retry_options.rrt_fixed_iters;
-        if (effective_fixed_iters > 0) {
-            config.max_iters = effective_fixed_iters;
-            config.timeout_ms = retry_options.rrt_fixed_timeout_ms;
-        } else {
-            config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
-        }
+            query_bridge_rrt_config_for_attempt(task,
+                                                attempt,
+                                                scheduled_attempt,
+                                                override_fixed_iters,
+                                                config_.connector.per_pair_timeout_ms,
+                                                retry_options);
         std::vector<Eigen::VectorXd> path = rrt_connect(
             task.start,
             task.goal,

@@ -189,6 +189,14 @@ void query_bridge_configure_short_local_profiles(
     RRTConnectConfig& bridge_rrt,
     std::vector<RRTConnectConfig>& short_local_profiles);
 
+RRTConnectConfig query_bridge_rrt_config_for_attempt(
+    const QueryBridgeSearchTask& task,
+    int attempt,
+    int scheduled_attempt,
+    int override_fixed_iters,
+    double default_timeout_ms,
+    const QueryBridgeRetryOptions& options);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
