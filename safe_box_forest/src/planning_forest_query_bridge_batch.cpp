@@ -579,23 +579,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	    };
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));
-    if (direct_start_goal_segment) {
-        for (auto& task : tasks) {
-            if (task.direct_start_goal_satisfied) {
-                continue;
-            }
-            const int added = try_add_query_direct_start_goal_segment_for_points(
-                task.start,
-                task.goal,
-                batch_context,
-                query_bridge_edge_query_index(scene_reusable_edges, task),
-                static_cast<int>(task.index));
-            task.direct_start_goal_satisfied = added > 0;
-            if (added > 0) {
-                added_by_query[task.index] += added;
-            }
-        }
-    }
+    run_query_bridge_direct_start_goal_segments(tasks,
+                                                added_by_query,
+                                                batch_context,
+                                                scene_reusable_edges,
+                                                direct_start_goal_segment);
     const QueryBridgeRetryOptions retry_options = query_bridge_retry_options_from_env();
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
     const QueryBridgeBatchExecutionOptions batch_execution_options =

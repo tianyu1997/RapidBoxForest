@@ -595,6 +595,32 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_for_points(
                                                        batch_task_index);
 }
 
+void RBFPlanningForest::run_query_bridge_direct_start_goal_segments(
+    std::vector<QueryBridgeSearchTask>& tasks,
+    std::vector<int>& added_by_query,
+    StageContext& context,
+    bool scene_reusable_edges,
+    bool enabled) {
+    if (!enabled) {
+        return;
+    }
+    for (auto& task : tasks) {
+        if (task.direct_start_goal_satisfied) {
+            continue;
+        }
+        const int added = try_add_query_direct_start_goal_segment_for_points(
+            task.start,
+            task.goal,
+            context,
+            query_bridge_edge_query_index(scene_reusable_edges, task),
+            static_cast<int>(task.index));
+        task.direct_start_goal_satisfied = added > 0;
+        if (added > 0) {
+            added_by_query[task.index] += added;
+        }
+    }
+}
+
 int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     int source_box_id,
     int target_box_id,

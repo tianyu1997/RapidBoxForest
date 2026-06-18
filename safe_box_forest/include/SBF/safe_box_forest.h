@@ -709,6 +709,12 @@ private:
 		std::size_t segment_edges_before_partition_refresh,
 		bool oracle_counters_before_valid,
 		const OracleCounters& oracle_counters_before);
+	void run_query_bridge_direct_start_goal_segments(
+		std::vector<QueryBridgeSearchTask>& tasks,
+		std::vector<int>& added_by_query,
+		StageContext& context,
+		bool scene_reusable_edges,
+		bool enabled);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,
