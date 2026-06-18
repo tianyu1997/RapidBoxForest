@@ -146,9 +146,15 @@ src/adaptive_grid_partition_keys.h
                                    internal grid hash keys for partition merge,
                                    broadphase, and adjacency indices
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
-src/connector.cpp                  island connector and chain-pave logic
+src/connector.cpp                  island connector orchestration, frontier
+                                   bridge, point-gap fallback, and bridge
+                                   commit loop
 src/connector_birrt.cpp            RRTConnect/BiRRT connector path search and
                                    diagnostics
+src/connector_internal.cpp         connector-local geometry, broadphase,
+                                   incremental graph, and diagnostics helpers
+src/connector_chain_pave.cpp       connector chain-pave box insertion along
+                                   waypoint paths
 src/grower_components.cpp          root/component grouping and distance
                                    helpers for RRT grower connectivity
 src/merger.cpp                     box containment and merge helpers
