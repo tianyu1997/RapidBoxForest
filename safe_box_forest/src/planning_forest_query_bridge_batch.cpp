@@ -1272,28 +1272,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
                                               total_ms);
     };
-    auto mark_partition_path_first_task = [&](const QueryBridgeSearchTask& task) {
-        batch_context.diagnostics().add_counter(
-            "query_bridge.partition_path_first_tasks");
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "partition_path_first"),
-            1.0);
-    };
-    auto mark_partition_path_first_rrt_skipped = [&](const QueryBridgeSearchTask& task) {
-        batch_context.diagnostics().add_counter(
-            "query_bridge.partition_path_first_rrt_skipped");
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "waypoint_from_partition_path"),
-            1.0);
-    };
-    auto mark_batch_task_no_path = [&](const QueryBridgeSearchTask& task,
-                                       double total_ms) {
-        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "no_path"),
-                                              1.0);
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                              total_ms);
-    };
     auto task_already_satisfied = [&](const QueryBridgeSearchTask& task) {
         return task.hipac_online_satisfied ||
                task.direct_start_goal_satisfied ||
@@ -1315,7 +1293,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                       query_bridge_index_forced(index_options, task.index),
                                       retry_options);
         if (plan.partition_path_first) {
-            mark_partition_path_first_task(task);
+            record_query_bridge_partition_path_first_task(batch_context, task.index);
         }
         record_forced_and_attempts(task, plan.forced, plan.effective_attempts);
         return plan;
@@ -1734,15 +1712,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             double best_length = std::numeric_limits<double>::infinity();
             if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
                 best_length = path_length(task.waypoint_path);
-                mark_partition_path_first_rrt_skipped(task);
+                record_query_bridge_partition_path_first_rrt_skipped(batch_context,
+                                                                     task.index);
             }
             adopt_waypoint_after_rrt(task,
                                      attempt_paths[task_offset],
                                      prepared[task_offset].attempts,
                                      best_length);
             if (task.waypoint_path.empty()) {
-                mark_batch_task_no_path(
-                    task,
+                record_query_bridge_batch_task_no_path(
+                    batch_context,
+                    task.index,
                     elapsed_ms_since(batch_t0) - prepared[task_offset].task_start_ms);
                 continue;
             }
@@ -1776,7 +1756,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
         const QueryBridgeAttemptPlan attempt_plan = prepare_task_attempts(task);
         if (attempt_plan.partition_path_first) {
-            mark_partition_path_first_rrt_skipped(task);
+            record_query_bridge_partition_path_first_rrt_skipped(batch_context,
+                                                                 task.index);
         }
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
             static_cast<std::size_t>(attempt_plan.effective_attempts));
@@ -1803,7 +1784,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             run_no_path_retries(task, attempt_plan.base_attempts, best_length);
         }
         if (task.waypoint_path.empty()) {
-            mark_batch_task_no_path(task, elapsed_ms_since(task_t0));
+            record_query_bridge_batch_task_no_path(batch_context,
+                                                   task.index,
+                                                   elapsed_ms_since(task_t0));
             continue;
         }
         finish_ready_waypoint_task(task,

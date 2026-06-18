@@ -201,6 +201,30 @@ void query_bridge_mark_task_skip(BuildProfile& profile,
     }
 }
 
+void record_query_bridge_partition_path_first_task(StageContext& context,
+                                                   std::size_t index) {
+    context.diagnostics().add_counter("query_bridge.partition_path_first_tasks");
+    context.diagnostics().set_value(
+        query_bridge_task_key(index, "partition_path_first"),
+        1.0);
+}
+
+void record_query_bridge_partition_path_first_rrt_skipped(StageContext& context,
+                                                          std::size_t index) {
+    context.diagnostics().add_counter("query_bridge.partition_path_first_rrt_skipped");
+    context.diagnostics().set_value(
+        query_bridge_task_key(index, "waypoint_from_partition_path"),
+        1.0);
+}
+
+void record_query_bridge_batch_task_no_path(StageContext& context,
+                                            std::size_t index,
+                                            double total_ms) {
+    context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
+    context.diagnostics().set_value(query_bridge_task_key(index, "no_path"), 1.0);
+    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
+}
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
