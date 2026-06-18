@@ -144,7 +144,15 @@ src/planning_forest_dynamic_cache.cpp
                                    dynamic segment fallback, and removed-box refill
                                    helpers
 src/planning_forest_overlay.cpp    partition overlay corridor helpers
-src/safe_box_forest.cpp            remaining facade orchestration and legacy-large
+src/planning_forest_query_utils.cpp
+                                   query/path utility functions shared by graph,
+                                   partition, OBB, and bridge stages
+src/planning_forest_qroot_helpers.cpp
+                                   query-root growth DSU/index/commit helpers
+src/planning_forest_query_bridge.cpp
+                                   online endpoint anchoring, query bridge, and
+                                   local repair orchestration
+src/safe_box_forest.cpp            remaining facade orchestration and build-stage
                                    implementation blocks pending extraction
 ```
 
@@ -153,9 +161,9 @@ above. `src/safe_box_forest.cpp` is currently a compatibility/orchestration
 holding file; adding new algorithm branches there should be treated as a
 temporary step with a follow-up extraction.
 
-The former `improve_workspace/` prototype tree has been retired. Its useful
-mechanisms are now production code in `lect_database` and `safe_box_forest`;
-new experiments and implementations should not depend on a parallel workspace.
+The former sidecar prototype tree has been retired. Its useful mechanisms are
+now production code in `lect_database` and `safe_box_forest`; new experiments
+and implementations should not depend on a parallel workspace.
 
 ## Planner Data Flow
 
