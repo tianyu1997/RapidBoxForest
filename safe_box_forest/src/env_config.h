@@ -36,6 +36,20 @@ inline double env_double_or_default(const char* name, double fallback) {
     return value;
 }
 
+inline bool env_flag_or_default(const char* name, bool fallback) {
+    const char* raw = std::getenv(name);
+    if (raw == nullptr || raw[0] == '\0') {
+        return fallback;
+    }
+    char* end = nullptr;
+    const long value = std::strtol(raw, &end, 10);
+    if (end != raw) {
+        return value != 0;
+    }
+    return raw[0] == 't' || raw[0] == 'T' ||
+           raw[0] == 'y' || raw[0] == 'Y';
+}
+
 inline int env_indexed_int_or_default(const char* prefix, int index, int fallback) {
     if (index < 0) {
         return fallback;

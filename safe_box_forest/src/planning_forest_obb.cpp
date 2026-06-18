@@ -2,6 +2,8 @@
 
 #include <sbf/envelope/envelope_collision.h>
 
+#include "env_config.h"
+
 #include <Eigen/Eigenvalues>
 
 #include <algorithm>
@@ -826,30 +828,6 @@ bool obb_clearance_sampled_enabled() {
     return value == nullptr || value[0] != '0';
 }
 
-int obb_env_int(const char* name, int fallback) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == '\0') {
-        return fallback;
-    }
-    try {
-        return std::stoi(value);
-    } catch (...) {
-        return fallback;
-    }
-}
-
-double obb_env_double(const char* name, double fallback) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || value[0] == '\0') {
-        return fallback;
-    }
-    try {
-        return std::stod(value);
-    } catch (...) {
-        return fallback;
-    }
-}
-
 bool validate_obb_clearance_sampled_candidate(const Robot& robot,
                                               const Scene& scene,
                                               const ObbPortalCandidate& candidate,
@@ -891,23 +869,23 @@ bool validate_obb_clearance_sampled_candidate(const Robot& robot,
     }
     // The pointwise clearance proof is designed for thin bridge tubes.  Large
     // transverse OBBs should use the affine support-hull validator instead.
-    if (lateral_l1 > obb_env_double("RBF_OBB_CLEARANCE_LATERAL_L1_MAX", 5e-3)) {
+    if (lateral_l1 > detail::env_double_or_default("RBF_OBB_CLEARANCE_LATERAL_L1_MAX", 5e-3)) {
         ++stats.clearance_support_fail;
         return false;
     }
 
     const double line_l1 = candidate.generators_q.col(line_col).lpNorm<1>();
-    int samples = obb_env_int("RBF_OBB_CLEARANCE_SAMPLES", 17);
+    int samples = detail::env_int_or_default("RBF_OBB_CLEARANCE_SAMPLES", 17);
     const double dense_line_l1_threshold =
-        obb_env_double("RBF_OBB_CLEARANCE_DENSE_LINE_L1_THRESHOLD", 0.03);
-    const int dense_samples = obb_env_int("RBF_OBB_CLEARANCE_DENSE_SAMPLES", 17);
+        detail::env_double_or_default("RBF_OBB_CLEARANCE_DENSE_LINE_L1_THRESHOLD", 0.03);
+    const int dense_samples = detail::env_int_or_default("RBF_OBB_CLEARANCE_DENSE_SAMPLES", 17);
     if (dense_line_l1_threshold > 0.0 &&
         line_l1 > dense_line_l1_threshold) {
         samples = std::max(samples, dense_samples);
     }
     samples = std::clamp(samples, 9, 257);
     const int fast_samples = std::clamp(
-        obb_env_int("RBF_OBB_CLEARANCE_FAST_SAMPLES", 0),
+        detail::env_int_or_default("RBF_OBB_CLEARANCE_FAST_SAMPLES", 0),
         0,
         257);
     std::vector<int> sample_schedule;
@@ -1282,7 +1260,7 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
                                      ObbPortalValidationStats& stats) {
     ++stats.validations;
     const bool clearance_first =
-        obb_env_int("RBF_OBB_CLEARANCE_FIRST", 0) != 0;
+        detail::env_int_or_default("RBF_OBB_CLEARANCE_FIRST", 0) != 0;
     bool clearance_attempted = false;
     if (clearance_first) {
         clearance_attempted = true;
@@ -1505,23 +1483,10 @@ bool validate_obb_zonotope_portal(const Robot& robot,
         }
     }
 
-    auto obb_env_flag = [](const char* name, int fallback) {
-        const char* value = std::getenv(name);
-        if (value == nullptr || value[0] == '\0') {
-            return fallback != 0;
-        }
-        char* end = nullptr;
-        const long parsed = std::strtol(value, &end, 10);
-        if (end != value) {
-            return parsed != 0;
-        }
-        return value[0] == 't' || value[0] == 'T' ||
-               value[0] == 'y' || value[0] == 'Y';
-    };
     const bool fast_primary_orientation =
-        obb_env_flag("RBF_OBB_FAST_PRIMARY_ORIENTATION", 1);
+        detail::env_flag_or_default("RBF_OBB_FAST_PRIMARY_ORIENTATION", true);
     const bool fallback_orientations_on_fail =
-        obb_env_flag("RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL", 0);
+        detail::env_flag_or_default("RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL", false);
     const bool primary_only =
         fast_primary_orientation && !fallback_orientations_on_fail;
     const auto orientations = obb_orientation_candidates(robot,
