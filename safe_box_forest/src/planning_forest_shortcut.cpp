@@ -10,19 +10,11 @@
 #include <vector>
 
 #include "planning_forest_audit.h"
+#include "planning_forest_query_utils.h"
 
 namespace rbf {
 
 namespace {
-
-const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
-    for (const auto& box : boxes) {
-        if (box.id == box_id) {
-            return &box;
-        }
-    }
-    return nullptr;
-}
 
 std::uint64_t partition_segment_pair_key_local(int lhs, int rhs) {
     if (lhs > rhs) {
@@ -304,8 +296,8 @@ int RBFPlanningForest::add_offline_shortcut_edges(int max_edges,
         if (find_segment_edge(segment_edges_, candidate.source, candidate.target) != nullptr) {
             continue;
         }
-        const BoxNode* source = find_box_by_id_local(boxes_, candidate.source);
-        const BoxNode* target = find_box_by_id_local(boxes_, candidate.target);
+        const BoxNode* source = find_box_by_id(boxes_, candidate.source);
+        const BoxNode* target = find_box_by_id(boxes_, candidate.target);
         if (source == nullptr || target == nullptr) {
             continue;
         }

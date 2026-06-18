@@ -10,18 +10,11 @@
 #include <string>
 #include <unordered_set>
 
+#include "planning_forest_query_utils.h"
+
 namespace rbf {
 
 namespace {
-
-const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
-    for (const auto& box : boxes) {
-        if (box.id == box_id) {
-            return &box;
-        }
-    }
-    return nullptr;
-}
 
 bool graph_has_box_path_local(const AdjacencyGraph& graph, int start_id, int goal_id) {
     if (start_id < 0 || goal_id < 0) {
@@ -75,12 +68,12 @@ bool graph_has_certified_box_path_local(const std::vector<BoxNode>& boxes,
         if (it == graph.end()) {
             continue;
         }
-        const BoxNode* current_box = find_box_by_id_local(boxes, current);
+        const BoxNode* current_box = find_box_by_id(boxes, current);
         if (current_box == nullptr) {
             continue;
         }
         for (int next : it->second) {
-            const BoxNode* next_box = find_box_by_id_local(boxes, next);
+            const BoxNode* next_box = find_box_by_id(boxes, next);
             if (next_box == nullptr ||
                 !boxes_connected(*current_box, *next_box, adjacency_tolerance)) {
                 continue;
