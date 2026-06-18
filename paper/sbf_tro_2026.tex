@@ -659,10 +659,10 @@ against the scene. Scene labels remain only in the forest or partition layer.
 LECT serves local box materialization; graph search uses the scene forest. Given
 a joint interval, the runtime replays or materializes endpoint evidence, derives
 the requested link representation, and applies the current scene-validation
-policy. In the evaluated pipeline, AABB broadphase precedes SupportHull/GJK refinement. Parent or child
-records can accelerate materialization, but no replayed record alone is a
-standalone collision-free certificate. When a node is split, child envelopes may
-tighten the parent witness, but the resulting parent record is still
+policy. In the evaluated pipeline, AABB broadphase precedes SupportHull/GJK
+refinement. Parent or child records can accelerate materialization, but replayed evidence alone is not a
+collision-free certificate. When a node is split, child-derived hulls can
+tighten an ancestor envelope; the reconstructed record remains
 representation-dependent and must be checked again against \(\calO\).
 Directional records are staged filters: a joint interval first passes the
 padded AABB broadphase, and only the remaining close obstacle candidates reach
@@ -677,7 +677,7 @@ the reusable evidence units. IFK+AABB records can be regenerated on demand,
 whereas slab or SupportHull records are stored only when their additional
 rejection power justifies lookup and storage cost. The prewarm pass fills target
 leaf records and propagates child hulls to reconstruct ancestors. This avoids
-repeated direct forward-kinematics charges across depths for the same cache. In
+recomputing direct forward kinematics independently at every ancestor depth. In
 a warm build, a cache hit reconstructs the requested link envelopes and
 revalidates them against the current obstacles. Warm builds still regrow scene-specific
 boxes; persisted box labels are not imported as certificates. The registered
@@ -810,7 +810,7 @@ constants are fixed in the artifact manifest.
 \STATE insert cells that pass validation into $\mathcal{F}$; prune covered descendants
 \STATE retain inconclusive or blocked cells in $\mathcal{C}$
 \STATE refine only selected domains in $\mathcal{C}$ using local materialization
-\STATE insert refined boxes that remain inside their domain and connect to the forest
+\STATE insert refined boxes that pass validation, remain inside their domain, and connect to the forest
 \RETURN $\mathcal{F},\mathcal{C}$
 \end{algorithmic}
 \end{algorithm}
@@ -828,12 +828,13 @@ $E_s$, and other outputs require query validation.
 \end{samepage}
 
 \begin{samepage}
-Given start and goal configurations, the query locates containing
-or anchor boxes and searches $G$. The theorem
-covers conservative box paths and portal chains.
-For OBB-corridor edges, \Cref{sec:obb_endpoint_env} gives the finite-cover
-certificate. All other returns are query-validated results, not conservative
-box-corridor proofs.
+Given start and goal configurations, the query locates containing boxes or
+configured anchor boxes and searches $G$. The certificate applies only to
+returned paths contained in conservative box regions or finite-cover
+OBB-corridor regions. \Cref{thm:corridor_certificate} states the box-region
+case; \Cref{sec:obb_endpoint_env} gives the finite-cover certificate for
+OBB-corridor edges. All other returns are query-validated results, not
+conservative box-corridor proofs.
 \end{samepage}
 
 \begin{samepage}
@@ -894,7 +895,7 @@ collision-free region.
 \IF{$\Delta^{+}\neq\emptyset$}
   \STATE remove boxes and typed witnesses hit by inserted obstacles
   \STATE run a bounded local leaf sweep inside each invalidated box
-  \STATE insert replacement boxes that validate and connect to the surviving forest
+  \STATE insert replacement boxes that pass validation and connect to the surviving forest
 \ENDIF
 \STATE revalidate affected typed edges and update components
 \RETURN updated $(\mathcal{F},G,\mathcal{C})$
@@ -1135,7 +1136,7 @@ query bridge, connector, simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
-both cases. The 0/8 diagnostic is a scope check, not evidence about query success after edits;
+both cases. The 0/8 result is a scope check, not evidence of post-edit query success;
 Table~\ref{tab:tro-dynamic-update} reports local maintenance timing only,
 not timing for a complete pipeline that updates the scene and solves a query.
 
