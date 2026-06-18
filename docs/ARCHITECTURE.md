@@ -135,9 +135,12 @@ src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
 src/planning_forest_adaptive_build.cpp
-                                   adaptive deep leaf sweep, budgeted merge,
-                                   query-root refinement, and leaf-sweep refine
-                                   build backends
+                                   adaptive deep leaf sweep, query-root
+                                   refinement, and leaf-sweep refine build
+                                   backends
+src/planning_forest_adaptive_merge.cpp
+                                   budgeted/grid/tree/exact merge helpers for
+                                   adaptive build backends
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
