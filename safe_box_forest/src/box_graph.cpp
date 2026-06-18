@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -15,16 +14,13 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "env_config.h"
+#include "box_graph_options.h"
 #include "query_graph_cost_options.h"
 
 namespace rbf {
 namespace {
 
 thread_local AdjacencyBuildStats g_last_adjacency_build_stats;
-
-using detail::env_double_or_default;
-using detail::env_int_or_default;
 
 std::unordered_map<int, const BoxNode*> box_map(const std::vector<BoxNode>& boxes) {
     std::unordered_map<int, const BoxNode*> map;
@@ -229,8 +225,10 @@ IntervalBinIndex build_interval_bin_index(const std::vector<BoxNode>& boxes,
     return index;
 }
 
-std::vector<IntervalBinIndex> select_adjacency_indices(const std::vector<BoxNode>& boxes,
-                                                       double tolerance) {
+std::vector<IntervalBinIndex> select_adjacency_indices(
+    const std::vector<BoxNode>& boxes,
+    double tolerance,
+    const detail::AdjacencyIndexOptions& options) {
     std::vector<IntervalBinIndex> indices;
     if (boxes.empty() || boxes.front().n_dims() <= 0) {
         return indices;
@@ -246,12 +244,8 @@ std::vector<IntervalBinIndex> select_adjacency_indices(const std::vector<BoxNode
         }
         return lhs.dim < rhs.dim;
     });
-    const int default_dim_count = static_cast<int>(boxes.size()) >= env_int_or_default("RBF_ADJACENCY_MULTI_DIM_THRESHOLD", 3000)
-                                      ? 3
-                                      : 1;
-    const int dim_count = std::max(1, env_int_or_default("RBF_ADJACENCY_INDEX_DIMS", default_dim_count));
-    if (static_cast<int>(indices.size()) > dim_count) {
-        indices.resize(static_cast<std::size_t>(dim_count));
+    if (static_cast<int>(indices.size()) > options.selected_dim_count) {
+        indices.resize(static_cast<std::size_t>(options.selected_dim_count));
     }
     return indices;
 }
@@ -352,7 +346,10 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
         return graph;
     }
-    const std::vector<IntervalBinIndex> indices = select_adjacency_indices(boxes, effective_tol);
+    const detail::AdjacencyIndexOptions adjacency_options =
+        detail::adjacency_index_options_from_env(n);
+    const std::vector<IntervalBinIndex> indices =
+        select_adjacency_indices(boxes, effective_tol, adjacency_options);
     if (indices.empty() || indices.front().dim < 0) {
         g_last_adjacency_build_stats.build_ms =
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time).count();
