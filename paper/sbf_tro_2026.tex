@@ -1075,9 +1075,9 @@ offline quality--time references, not online stopping rules.
 \Needspace{8\baselineskip}
 Under these definitions, reusable builds are 0.166~s (\rbf{}), 20.040~s
 (PRM), and 355.425~s (IRIS-NP/GCS), excluding \rbf{} d23 prewarm, snapshot
-load, and resident memory. RRT-Connect has the lowest median \(T\) on all five
-saved queries but worse median path ratios than \rbf{}; BIT* has higher median
-\(T\) than \rbf{} on all five queries but lower median path ratios.
+load, and resident memory. For all five queries, RRT-Connect has lower median
+\(T\) and higher \(L/L^\star\) than \rbf{}, while BIT* has higher median \(T\)
+and lower \(L/L^\star\).
 
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
