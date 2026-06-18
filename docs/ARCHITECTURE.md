@@ -130,7 +130,8 @@ src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core me
 src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
 src/planning_forest_dynamic_cache.cpp
                                    dynamic collision cache, obstacle-removal regrow,
-                                   and removed-box refill helpers
+                                   dynamic segment fallback, and removed-box
+                                   refill helpers
 src/safe_box_forest.cpp            remaining facade orchestration and legacy-large
                                    implementation blocks pending extraction
 ```
