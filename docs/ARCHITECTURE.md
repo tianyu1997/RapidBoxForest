@@ -244,6 +244,25 @@ The former sidecar prototype tree has been retired. Its useful mechanisms are
 now production code in `lect_database` and `safe_box_forest`; new experiments
 and implementations should not depend on a parallel workspace.
 
+Integrated mechanisms that previously lived in prototype workspace form now
+belong to the main source tree:
+
+- sparse/binary FFB execution belongs in `safe_box_forest/src/find_free_box.cpp`
+  and `safe_box_forest/src/virtual_sparse_ffb.*`;
+- adaptive-grid sparse indexing belongs in
+  `safe_box_forest/src/adaptive_grid_partition_sparse.cpp` and related
+  partition modules;
+- HiPaC, portal, OBB, direct-corridor, and query-bridge repair behavior belongs
+  in the `planning_forest_query_bridge_*` modules and typed
+  `RBFPlanningConfig`/`AdaptiveLeafSweepConfig` options;
+- LECT evidence, canonical mapping, split policy, and cache reuse optimizations
+  belong in `lect_database`, not in planner- or experiment-local sidecars.
+
+The source release tools enforce this rule. If an `improve_workspace/`
+directory exists anywhere in the source tree, release export and readiness
+checks fail; the correct fix is to migrate the code into the owning module and
+delete the sidecar directory.
+
 ## Planner Data Flow
 
 1. A caller builds a `Robot`, scene obstacles, and `RBFPlanningConfig`.
