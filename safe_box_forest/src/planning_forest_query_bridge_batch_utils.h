@@ -38,4 +38,8 @@ void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after);
 
+void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
+                                                    StageContext& context,
+                                                    std::size_t task_index);
+
 }  // namespace rbf
