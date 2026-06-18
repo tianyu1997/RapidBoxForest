@@ -1243,16 +1243,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                task.direct_start_goal_satisfied ||
                current_query_good(task, true);
     };
-    auto record_forced_and_attempts = [&](const QueryBridgeSearchTask& task,
-                                          bool forced_task,
-                                          int attempts) {
-        if (forced_task) {
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
-                                                  1.0);
-        }
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
-                                              static_cast<double>(attempts));
-    };
     auto prepare_task_attempts = [&](QueryBridgeSearchTask& task) {
         QueryBridgeAttemptPlan plan =
             query_bridge_attempt_plan(task,
@@ -1261,7 +1251,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (plan.partition_path_first) {
             record_query_bridge_partition_path_first_task(batch_context, task.index);
         }
-        record_forced_and_attempts(task, plan.forced, plan.effective_attempts);
+        record_query_bridge_forced_attempts(batch_context,
+                                            task.index,
+                                            plan.forced,
+                                            plan.effective_attempts);
         return plan;
     };
     auto adopt_waypoint_after_rrt =

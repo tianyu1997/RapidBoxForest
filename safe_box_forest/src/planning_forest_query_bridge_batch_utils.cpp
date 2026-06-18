@@ -258,6 +258,17 @@ void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
     context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
 }
 
+void record_query_bridge_forced_attempts(StageContext& context,
+                                         std::size_t index,
+                                         bool forced_task,
+                                         int attempts) {
+    if (forced_task) {
+        context.diagnostics().set_value(query_bridge_task_key(index, "forced"), 1.0);
+    }
+    context.diagnostics().set_value(query_bridge_task_key(index, "attempts"),
+                                    static_cast<double>(attempts));
+}
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,

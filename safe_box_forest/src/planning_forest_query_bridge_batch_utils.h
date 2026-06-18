@@ -355,6 +355,11 @@ void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
                                                       double probe_ms,
                                                       double total_ms);
 
+void record_query_bridge_forced_attempts(StageContext& context,
+                                         std::size_t index,
+                                         bool forced_task,
+                                         int attempts);
+
 double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
                                               const Eigen::VectorXd& a,
                                               const Eigen::VectorXd& b);
