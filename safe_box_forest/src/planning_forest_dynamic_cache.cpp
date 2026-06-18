@@ -1,16 +1,22 @@
 #include <SBF/safe_box_forest.h>
 
 #include <SBF/box_graph.h>
+#include <SBF/connector.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <limits>
 #include <unordered_set>
 #include <vector>
 
+#include "env_config.h"
+
 namespace rbf {
 
 namespace {
+
+using detail::env_int_or_default;
 
 const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
     for (const auto& box : boxes) {
@@ -120,6 +126,56 @@ bool allow_dynamic_commit(BoxOracle& oracle,
         return false;
     }
     return false;
+}
+
+CollisionChecker make_audit_checker_local(const Robot& robot,
+                                           const Scene& scene,
+                                           const QueryConfig& query_config) {
+    CollisionChecker checker(robot, scene);
+    checker.set_collision_tolerance(query_config.audit_collision_tolerance);
+    return checker;
+}
+
+int effective_audit_segment_resolution(const Eigen::VectorXd& start,
+                                       const Eigen::VectorXd& goal,
+                                       int min_resolution,
+                                       double segment_step) {
+    const int safe_resolution = std::max(1, min_resolution);
+    if (!(segment_step > 0.0) || !std::isfinite(segment_step)) {
+        return safe_resolution;
+    }
+    const double distance = (goal - start).norm();
+    if (!(distance > 0.0) || !std::isfinite(distance)) {
+        return safe_resolution;
+    }
+    const int step_resolution = std::max(2, static_cast<int>(std::ceil(distance / segment_step)));
+    return std::max(safe_resolution, step_resolution);
+}
+
+bool audit_waypoint_path_passes(const std::vector<Eigen::VectorXd>& path,
+                                const CollisionChecker& checker,
+                                int resolution,
+                                double segment_step) {
+    if (path.empty()) {
+        return false;
+    }
+    const int safe_resolution = std::max(1, resolution);
+    for (const auto& waypoint : path) {
+        if (checker.check_config(waypoint)) {
+            return false;
+        }
+    }
+    for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+        const int segment_resolution = effective_audit_segment_resolution(
+            path[index],
+            path[index + 1],
+            safe_resolution,
+            segment_step);
+        if (checker.check_segment(path[index], path[index + 1], segment_resolution)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -656,6 +712,150 @@ int RBFPlanningForest::refill_removed_box_with_leaf_sweep(const BoxNode& removed
         stack.push_back(Item{split.left, split.split_dim, std::move(left_intervals)});
     }
     return added;
+}
+
+RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
+    using Clock = std::chrono::steady_clock;
+    const auto t0 = Clock::now();
+    RebuildProfile profile;
+    profile.boxes_before = static_cast<int>(boxes_.size());
+    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
+    profile.obstacles_before = scene_.n_obstacles();
+    profile.obstacles_after = profile.obstacles_before;
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
+    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+    const bool use_partition_backend =
+        partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
+    const int islands_before = use_partition_backend
+        ? adaptive_partition_->component_count_with_overlay()
+        : static_cast<int>(find_islands(adjacency_).size());
+    profile.diagnostics["segment_fallback.islands_before"] = static_cast<double>(islands_before);
+
+    if (!oracle_ || boxes_.empty()) {
+        profile.boxes_after = profile.boxes_before;
+        profile.raw_boxes_after = profile.raw_boxes_before;
+        profile.adjacency_islands = islands_before;
+        profile.fallback_reason = boxes_.empty() ? "empty_forest" : "missing_oracle";
+        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        return profile;
+    }
+
+    if (use_partition_backend) {
+        const auto connector_t0 = Clock::now();
+        if (islands_before <= 1) {
+            profile.boxes_after = profile.boxes_before;
+            profile.raw_boxes_after = profile.raw_boxes_before;
+            profile.adjacency_islands = islands_before;
+            profile.diagnostics["segment_fallback.partition_native"] = 1.0;
+            profile.diagnostics["segment_fallback.connected"] = 1.0;
+            profile.diagnostics["segment_fallback.segment_edges_after"] =
+                static_cast<double>(segment_edges_.size());
+            profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+            return profile;
+        }
+        CollisionChecker checker = make_audit_checker_local(audit_robot_, scene_, config_.query);
+        int attempted_pairs = 0;
+        int audit_fail = 0;
+        int added = 0;
+        const int pair_candidate_cap = std::max(
+            8,
+            env_int_or_default("RBF_PARTITION_SEGMENT_FALLBACK_PAIR_CANDIDATE_CAP", 128));
+        const auto candidate_pairs =
+            adaptive_partition_->nearest_component_pairs_to_largest(1, pair_candidate_cap);
+        for (const auto& pair : candidate_pairs) {
+            if (pair.source_box_id < 0 || pair.target_box_id < 0 ||
+                pair.source_point.size() == 0 || pair.target_point.size() == 0) {
+                continue;
+            }
+            ++attempted_pairs;
+            std::vector<Eigen::VectorXd> waypoints{pair.source_point, pair.target_point};
+            if (!audit_waypoint_path_passes(waypoints,
+                                            checker,
+                                            config_.query.audit_resolution,
+                                            config_.query.audit_segment_step)) {
+                ++audit_fail;
+                continue;
+            }
+            const int edge_id = add_segment_edge_partition_first(pair.source_box_id,
+                                                                 pair.target_box_id,
+                                                                 std::move(waypoints),
+                                                                 SegmentEdgeType::QueryBridge,
+                                                                 config_.query.audit_resolution,
+                                                                 SegmentEdgeValidation::CollisionChecked,
+                                                                 true,
+                                                                 -1,
+                                                                 nullptr,
+                                                                 "segment_fallback.partition_native");
+            if (edge_id >= 0) {
+                ++added;
+            }
+        }
+        profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - connector_t0).count();
+        profile.segment_edges_added = added;
+        profile.rrt_segment_edges_added = added;
+        profile.point_gap_segment_edges_added = 0;
+        profile.boxes_added = 0;
+        profile.raw_boxes_added = 0;
+        profile.boxes_after = static_cast<int>(boxes_.size());
+        profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+        sync_adaptive_partition_segment_edges(nullptr, "segment_fallback.partition_native");
+        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
+        profile.diagnostics["segment_fallback.partition_native"] = 1.0;
+        profile.diagnostics["segment_fallback.attempted_pairs"] = static_cast<double>(attempted_pairs);
+        profile.diagnostics["segment_fallback.audit_fail"] = static_cast<double>(audit_fail);
+        profile.diagnostics["segment_fallback.partition_pair_candidates"] =
+            static_cast<double>(candidate_pairs.size());
+        profile.diagnostics["segment_fallback.connected"] = profile.adjacency_islands <= 1 ? 1.0 : 0.0;
+        profile.diagnostics["segment_fallback.segment_edges_after"] =
+            static_cast<double>(segment_edges_.size());
+        profile.diagnostics["segment_fallback.islands_after"] =
+            static_cast<double>(profile.adjacency_islands);
+        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+        const auto& partition_stats = adaptive_partition_->stats();
+        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
+        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
+        profile.diagnostics["adaptive.partition_overlay_edges"] =
+            static_cast<double>(partition_stats.overlay_edges);
+        return profile;
+    }
+
+    const auto connector_t0 = Clock::now();
+    StageContext context = StageContext::from_runtime(config_.runtime);
+    CollisionChecker checker(robot_, scene_);
+    IslandConnectorConfig connector_config = config_.connector;
+    connector_config.segment_edges_enabled = true;
+    connector_config.rrt_segment_edges = true;
+    connector_config.point_gap_segment_edges = true;
+    if (connector_config.n_threads <= 1 && config_.runtime.n_threads > 1) {
+        connector_config.n_threads = config_.runtime.n_threads;
+    }
+    IslandConnector connector(*oracle_, robot_, checker, connector_config);
+    int connector_next_id = next_box_id();
+    const auto connector_result =
+        connector.connect_all(boxes_, adjacency_, segment_edges_, connector_next_id, context);
+    profile.regrow_ms = std::chrono::duration<double, std::milli>(Clock::now() - connector_t0).count();
+
+    profile.bridge_boxes_added = connector_result.bridge_boxes_added;
+    profile.segment_edges_added = connector_result.segment_edges_added;
+    profile.rrt_segment_edges_added = connector_result.rrt_segment_edges_added;
+    profile.point_gap_segment_edges_added = connector_result.point_gap_segment_edges_added;
+    profile.boxes_added = std::max(0, static_cast<int>(boxes_.size()) - profile.boxes_before);
+    profile.raw_boxes_added = std::max(0, static_cast<int>(raw_boxes_.size()) - profile.raw_boxes_before);
+    profile.diagnostics["segment_fallback.attempted_pairs"] = static_cast<double>(connector_result.attempted_pairs);
+    profile.diagnostics["segment_fallback.connected"] = connector_result.connected ? 1.0 : 0.0;
+    profile.diagnostics["segment_fallback.segment_edges_after"] = static_cast<double>(segment_edges_.size());
+
+    const auto adj_t0 = Clock::now();
+    apply_segment_edges_to_adjacency(segment_edges_, adjacency_);
+    invalidate_query_cache();
+    profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
+    profile.boxes_after = static_cast<int>(boxes_.size());
+    profile.raw_boxes_after = static_cast<int>(raw_boxes_.size());
+    profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
+    profile.diagnostics["segment_fallback.islands_after"] = static_cast<double>(profile.adjacency_islands);
+    profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+    return profile;
 }
 
 RebuildProfile RBFPlanningForest::remove_obstacle_and_regrow(int obstacle_index) {
