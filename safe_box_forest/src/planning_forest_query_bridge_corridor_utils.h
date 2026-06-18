@@ -62,6 +62,17 @@ struct QueryBridgeLateralRepairOptions {
     double offset = 0.0;
 };
 
+struct QueryBridgeEdgeRuntimeOptions {
+    bool scene_reusable_edges = false;
+    bool direct_segment_after_rrt = false;
+    double direct_segment_after_rrt_min_length = 0.0;
+};
+
+struct QueryBridgeWaypointShortcutOptions {
+    bool enabled = false;
+    double min_gain = 0.0;
+};
+
 struct QueryBridgeLocalDsu {
     std::vector<int> parent;
 
@@ -86,6 +97,15 @@ double query_bridge_transition_fraction(const std::vector<Eigen::VectorXd>& samp
                                         const std::vector<int>& transitions,
                                         double audited_bridge_length,
                                         double fallback_path_length);
+
+double query_bridge_waypoint_length(const std::vector<Eigen::VectorXd>& path);
+
+QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options();
+
+QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
+    bool direct_segment_after_rrt_candidate);
+
+bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candidate);
 
 std::vector<int> query_bridge_order_transitions_by_gap_length(
     const std::vector<Eigen::VectorXd>& samples,

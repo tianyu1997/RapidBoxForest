@@ -106,6 +106,45 @@ double query_bridge_transition_fraction(const std::vector<Eigen::VectorXd>& samp
     return query_bridge_transition_length_sum(samples, transitions) / denominator;
 }
 
+double query_bridge_waypoint_length(const std::vector<Eigen::VectorXd>& path) {
+    double total = 0.0;
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        total += (path[index] - path[index - 1]).norm();
+    }
+    return total;
+}
+
+QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options() {
+    QueryBridgeEdgeRuntimeOptions options;
+    options.scene_reusable_edges =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES", 0) != 0;
+    options.direct_segment_after_rrt =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0;
+    options.direct_segment_after_rrt_min_length = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
+                                      0.0));
+    return options;
+}
+
+QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
+    bool direct_segment_after_rrt_candidate) {
+    QueryBridgeWaypointShortcutOptions options;
+    options.enabled =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT",
+                                   direct_segment_after_rrt_candidate ? 1 : 0) != 0;
+    options.min_gain =
+        std::max(0.0,
+                 detail::env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT_MIN_GAIN",
+                                               1e-6));
+    return options;
+}
+
+bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candidate) {
+    return detail::env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY",
+                                      direct_segment_after_rrt_candidate ? 1 : 0) != 0;
+}
+
 std::vector<int> query_bridge_order_transitions_by_gap_length(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<int>& transitions,

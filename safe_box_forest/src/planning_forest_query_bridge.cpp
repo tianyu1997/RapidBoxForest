@@ -65,22 +65,16 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return 0;
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
-    const bool scene_reusable_query_bridge_edges =
-        env_int_or_default("RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES", 0) != 0;
+    const QueryBridgeEdgeRuntimeOptions edge_options =
+        query_bridge_edge_runtime_options();
     const int bridge_edge_query_index =
-        scene_reusable_query_bridge_edges ? -1 : query_index;
-    const bool direct_segment_after_rrt =
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0;
-    const double direct_segment_after_rrt_min_length =
-        std::max(0.0,
-                 env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
-                                       0.0));
+        edge_options.scene_reusable_edges ? -1 : query_index;
     context.diagnostics().set_value("query_bridge.scene_reusable_edges",
-                                    scene_reusable_query_bridge_edges ? 1.0 : 0.0);
+                                    edge_options.scene_reusable_edges ? 1.0 : 0.0);
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt",
-                                    direct_segment_after_rrt ? 1.0 : 0.0);
+                                    edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_min_length",
-                                    direct_segment_after_rrt_min_length);
+                                    edge_options.direct_segment_after_rrt_min_length);
     struct QueryBridgePaveDiagnosticsFlush {
         BuildProfile& profile;
         StageContext& context;
@@ -91,17 +85,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
     } pave_diagnostics_flush{last_build_, context};
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-    auto waypoint_length = [](const std::vector<Eigen::VectorXd>& path) {
-        double total = 0.0;
-        for (std::size_t i = 1; i < path.size(); ++i) {
-            total += (path[i] - path[i - 1]).norm();
-        }
-        return total;
-    };
-    const double bridge_waypoint_length = waypoint_length(waypoint_path);
+    const double bridge_waypoint_length = query_bridge_waypoint_length(waypoint_path);
     const bool direct_segment_after_rrt_candidate =
-        direct_segment_after_rrt &&
-        bridge_waypoint_length >= direct_segment_after_rrt_min_length &&
+        edge_options.direct_segment_after_rrt &&
+        bridge_waypoint_length >= edge_options.direct_segment_after_rrt_min_length &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_candidate",
@@ -136,29 +123,24 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             value);
     };
     std::vector<Eigen::VectorXd> corridor_path = waypoint_path;
-    const bool bridge_waypoint_shortcut =
-        env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT",
-                           direct_segment_after_rrt_candidate ? 1 : 0) != 0;
-    const double bridge_waypoint_shortcut_min_gain =
-        std::max(0.0,
-                 env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT_MIN_GAIN",
-                                       1e-6));
+    const QueryBridgeWaypointShortcutOptions waypoint_shortcut_options =
+        query_bridge_waypoint_shortcut_options(direct_segment_after_rrt_candidate);
     context.diagnostics().set_value("query_bridge.waypoint_shortcut_enabled",
-                                    bridge_waypoint_shortcut ? 1.0 : 0.0);
-    if (bridge_waypoint_shortcut && corridor_path.size() > 2) {
+                                    waypoint_shortcut_options.enabled ? 1.0 : 0.0);
+    if (waypoint_shortcut_options.enabled && corridor_path.size() > 2) {
         using Clock = std::chrono::steady_clock;
         const auto shortcut_t0 = Clock::now();
-        const double before_length = waypoint_length(corridor_path);
+        const double before_length = query_bridge_waypoint_length(corridor_path);
         std::vector<Eigen::VectorXd> shortened =
             collision_shortcut_path(corridor_path,
                                     checker,
                                     collision_shortcut_resolution(config_.query));
-        const double after_length = waypoint_length(shortened);
+        const double after_length = query_bridge_waypoint_length(shortened);
         context.diagnostics().add_counter("query_bridge.waypoint_shortcut_attempts");
         set_query_bridge_task_value("waypoint_shortcut_before_length", before_length);
         set_query_bridge_task_value("waypoint_shortcut_after_length", after_length);
         if (!shortened.empty() &&
-            after_length + bridge_waypoint_shortcut_min_gain < before_length) {
+            after_length + waypoint_shortcut_options.min_gain < before_length) {
             const PathAuditCheck shortcut_audit =
                 audit_waypoint_path(shortened,
                                     checker,
@@ -273,8 +255,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         return locate_query_boxes();
     };
     const bool bridge_internal_simplify =
-        env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY",
-                           direct_segment_after_rrt_candidate ? 1 : 0) != 0;
+        query_bridge_internal_simplify_enabled(direct_segment_after_rrt_candidate);
     context.diagnostics().set_value("query_bridge.internal_simplify_enabled",
                                     bridge_internal_simplify ? 1.0 : 0.0);
     if (bridge_internal_simplify &&
@@ -297,7 +278,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         simplify_config.segment_step = config_.query.audit_segment_step;
         simplify_config.shortcut_path = true;
         const int attempts = std::max(1, config_.query.final_rrt_simplify_attempts);
-        double best_length = waypoint_length(corridor_path);
+        double best_length = query_bridge_waypoint_length(corridor_path);
         for (int attempt = 0; attempt < attempts; ++attempt) {
             const double remaining_ms =
                 config_.query.final_rrt_simplify_timeout_ms - elapsed_ms();
@@ -320,7 +301,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             if (candidate.empty()) {
                 continue;
             }
-            const double candidate_length = waypoint_length(candidate);
+            const double candidate_length = query_bridge_waypoint_length(candidate);
             if (candidate_length + 1e-12 >= best_length) {
                 continue;
             }
@@ -336,7 +317,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     }
     int dense_repair_added = 0;
     bool dense_repair_attempted = false;
-    const double audited_bridge_length = waypoint_length(corridor_path);
+    const double audited_bridge_length = query_bridge_waypoint_length(corridor_path);
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_final_length",
                                     audited_bridge_length);
     if (direct_segment_after_rrt_candidate) {
@@ -1572,7 +1553,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return query_bridge_transition_fraction(samples,
                                                     transitions,
                                                     audited_bridge_length,
-                                                    waypoint_length(samples));
+                                                    query_bridge_waypoint_length(samples));
         };
         const QueryBridgeAdaptiveRepairOptions adaptive_repair_options =
             query_bridge_adaptive_repair_options(query_index,
