@@ -543,34 +543,31 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return 1;
     };
 	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
-	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
-	            !last_adaptive_partition_config_.hipac_online_prebridge_portal ||
-	            !partition_native_mode() ||
-	            !adaptive_partition_query_enabled_ ||
-	            !adaptive_partition_ ||
-		            adaptive_partition_->empty() ||
-		            task.hipac_prebridge_resolves_used >=
-		                std::max(0, last_adaptive_partition_config_.hipac_online_max_resolves_per_query)) {
-		            return 0;
-		        }
-		        std::vector<Eigen::VectorXd> coarse_route = task.hipac_candidate_path;
-		        if (coarse_route.size() < 2) {
-		            coarse_route = {task.start, task.goal};
-		            batch_context.diagnostics().add_counter(
-		                "query_bridge.hipac_prebridge_direct_query_route");
-		        }
-		        if (coarse_route.size() < 2) {
-		            return 0;
-		        }
-		        const auto prebridge_t0 = Clock::now();
+	        const QueryBridgeHipacPrebridgeGate prebridge_gate =
+	            query_bridge_hipac_prebridge_gate(last_adaptive_partition_config_,
+	                                             partition_native_mode(),
+	                                             adaptive_partition_query_enabled_,
+	                                             adaptive_partition_ && !adaptive_partition_->empty(),
+	                                             task.hipac_prebridge_resolves_used);
+	        if (!prebridge_gate.enabled) {
+	            return 0;
+	        }
+	        std::vector<Eigen::VectorXd> coarse_route = task.hipac_candidate_path;
+	        if (coarse_route.size() < 2) {
+	            coarse_route = {task.start, task.goal};
+	            batch_context.diagnostics().add_counter(
+	                "query_bridge.hipac_prebridge_direct_query_route");
+	        }
+	        if (coarse_route.size() < 2) {
+	            return 0;
+	        }
+	        const auto prebridge_t0 = Clock::now();
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_attempts");
 	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_attempt"),
 	                                              1.0);
-	        const int candidate_limit =
-	            std::max(1, last_adaptive_partition_config_.hipac_online_prebridge_candidate_limit);
 	        const auto candidate_pairs =
-	            adaptive_partition_->nearest_component_pairs_to_largest(1, candidate_limit);
+	            adaptive_partition_->nearest_component_pairs_to_largest(1,
+	                                                                    prebridge_gate.candidate_limit);
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_candidates",
 	                                                static_cast<double>(candidate_pairs.size()));
 	        if (candidate_pairs.empty()) {
@@ -582,23 +579,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        const int start_box_id = locate_box_partition_first(task.start, false);
 	        const int goal_box_id = locate_box_partition_first(task.goal, false);
 
-	        const double max_pair_distance =
-	            std::max(0.0, last_adaptive_partition_config_.hipac_online_prebridge_max_pair_distance);
-	        const double route_weight =
-	            std::max(0.0,
-	                     last_adaptive_partition_config_.hipac_online_prebridge_route_distance_weight);
-	        const double pair_weight =
-	            std::max(0.0,
-	                     last_adaptive_partition_config_.hipac_online_prebridge_pair_distance_weight);
 	        const QueryBridgeHipacPrebridgeSelection prebridge_selection =
 	            query_bridge_select_hipac_prebridge_pair(candidate_pairs,
 	                                                     components,
 	                                                     start_box_id,
 	                                                     goal_box_id,
 	                                                     coarse_route,
-	                                                     max_pair_distance,
-	                                                     route_weight,
-	                                                     pair_weight);
+	                                                     prebridge_gate.max_pair_distance,
+	                                                     prebridge_gate.route_weight,
+	                                                     prebridge_gate.pair_weight);
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_considered",
 	                                                static_cast<double>(prebridge_selection.considered));
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_distance_rejects",

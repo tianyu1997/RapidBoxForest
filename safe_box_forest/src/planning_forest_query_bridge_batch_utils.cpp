@@ -230,6 +230,27 @@ QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
     return selection;
 }
 
+QueryBridgeHipacPrebridgeGate query_bridge_hipac_prebridge_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    bool adaptive_partition_query_enabled,
+    bool adaptive_partition_ready,
+    int resolves_used) {
+    QueryBridgeHipacPrebridgeGate gate;
+    gate.candidate_limit = std::max(1, config.hipac_online_prebridge_candidate_limit);
+    gate.max_pair_distance = std::max(0.0, config.hipac_online_prebridge_max_pair_distance);
+    gate.route_weight = std::max(0.0, config.hipac_online_prebridge_route_distance_weight);
+    gate.pair_weight = std::max(0.0, config.hipac_online_prebridge_pair_distance_weight);
+    gate.enabled = config.hipac_online_connectivity &&
+                   config.hipac_online_before_query_bridge &&
+                   config.hipac_online_prebridge_portal &&
+                   partition_native &&
+                   adaptive_partition_query_enabled &&
+                   adaptive_partition_ready &&
+                   resolves_used < std::max(0, config.hipac_online_max_resolves_per_query);
+    return gate;
+}
+
 QueryBridgeHipacOnlineGate query_bridge_hipac_online_gate(
     const AdaptiveLeafSweepConfig& config,
     bool partition_native,
