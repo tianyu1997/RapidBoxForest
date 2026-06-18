@@ -331,6 +331,35 @@ bool run_query_bridge_hipac_online_sequence(
 
 }  // namespace
 
+std::vector<int> RBFPlanningForest::finish_query_bridge_batch_result(
+    const std::vector<int>& added_by_query,
+    std::size_t partition_refresh_base,
+    std::size_t segment_edges_before_partition_refresh,
+    bool oracle_counters_before_valid,
+    const OracleCounters& oracle_counters_before) {
+    if (oracle_counters_before_valid && oracle_) {
+        const auto after = oracle_->counters();
+        add_query_bridge_oracle_counter_delta(last_build_,
+                                             oracle_counters_before,
+                                             after);
+    }
+    const bool changed =
+        boxes_.size() != partition_refresh_base ||
+        segment_edges_.size() != segment_edges_before_partition_refresh ||
+        std::any_of(added_by_query.begin(),
+                    added_by_query.end(),
+                    [](int added) { return added > 0; });
+    if (boxes_.size() > partition_refresh_base) {
+        append_adaptive_partition_boxes(partition_refresh_base,
+                                        &last_build_,
+                                        "query_bridge.batch");
+    } else if (changed) {
+        sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.batch");
+        refresh_adaptive_partition_diagnostics(&last_build_);
+    }
+    return added_by_query;
+}
+
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
                                                    const std::vector<Eigen::VectorXd>& goals) {
     if (starts.size() != goals.size()) {
@@ -341,27 +370,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const std::size_t segment_edges_before_partition_refresh = segment_edges_.size();
     OracleCounters oracle_counters_before;
     bool oracle_counters_before_valid = false;
-    auto finish_batch_bridge = [&]() {
-        if (oracle_counters_before_valid && oracle_) {
-            const auto after = oracle_->counters();
-            add_query_bridge_oracle_counter_delta(last_build_, oracle_counters_before, after);
-        }
-        const bool changed = boxes_.size() != partition_refresh_base ||
-                             segment_edges_.size() != segment_edges_before_partition_refresh ||
-                             std::any_of(added_by_query.begin(),
-                                         added_by_query.end(),
-                                         [](int added) { return added > 0; });
-        if (boxes_.size() > partition_refresh_base) {
-            append_adaptive_partition_boxes(partition_refresh_base,
-                                            &last_build_,
-                                            "query_bridge.batch");
-            partition_refresh_base = boxes_.size();
-        } else if (changed) {
-            sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.batch");
-            refresh_adaptive_partition_diagnostics(&last_build_);
-        }
-        return added_by_query;
-    };
     if (starts.empty() || !oracle_) {
         return added_by_query;
     }
@@ -498,7 +506,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     });
 
     if (tasks.empty()) {
-        return finish_batch_bridge();
+        return finish_query_bridge_batch_result(
+            added_by_query,
+            partition_refresh_base,
+            segment_edges_before_partition_refresh,
+            oracle_counters_before_valid,
+            oracle_counters_before);
     }
     const auto batch_t0 = QueryBridgeClock::now();
     StageContext batch_context = StageContext::from_runtime(config_.runtime);
@@ -1053,7 +1066,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
                                               query_bridge_elapsed_ms_since(batch_t0));
-        return finish_batch_bridge();
+        return finish_query_bridge_batch_result(
+            added_by_query,
+            partition_refresh_base,
+            segment_edges_before_partition_refresh,
+            oracle_counters_before_valid,
+            oracle_counters_before);
     }
 
     for (auto& task : tasks) {
@@ -1155,7 +1173,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
                                           query_bridge_elapsed_ms_since(batch_t0));
-    return finish_batch_bridge();
+    return finish_query_bridge_batch_result(
+        added_by_query,
+        partition_refresh_base,
+        segment_edges_before_partition_refresh,
+        oracle_counters_before_valid,
+        oracle_counters_before);
 }
 
 } // namespace rbf

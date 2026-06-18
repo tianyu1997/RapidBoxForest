@@ -703,6 +703,12 @@ private:
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		StageContext& context,
 		int query_index);
+	std::vector<int> finish_query_bridge_batch_result(
+		const std::vector<int>& added_by_query,
+		std::size_t partition_refresh_base,
+		std::size_t segment_edges_before_partition_refresh,
+		bool oracle_counters_before_valid,
+		const OracleCounters& oracle_counters_before);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,
