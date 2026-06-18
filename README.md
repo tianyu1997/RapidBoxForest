@@ -21,7 +21,7 @@ code remains in the module directories.
 ```text
 .
 |-- CMakeLists.txt                  integrated workspace build
-|-- docs/                           workspace architecture and active plans
+|-- docs/                           public workspace architecture and release docs
 |-- experiments/                    current experiment runners and protocols
 |-- link_interval_envelope/         interval FK and link-envelope package
 |-- lect_database/                  persistent LECT database and SBF adapter

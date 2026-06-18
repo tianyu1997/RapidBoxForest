@@ -1,7 +1,7 @@
 # Superseded Consolidation Plan
 
-This historical plan has been superseded by the workspace-level refactor plan at
-`../../docs/WORKSPACE_REFACTOR_PLAN.md`.
+This historical plan has been superseded by the private workspace-level
+refactor note at `../../docs/internal/WORKSPACE_REFACTOR_PLAN.md`.
 
 The active architecture is:
 

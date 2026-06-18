@@ -1,7 +1,7 @@
 # RapidBoxForest Documentation
 
-This directory contains workspace-level documentation. Module-specific usage
-and API details live beside each module.
+This directory contains public workspace-level documentation. Module-specific
+usage and API details live beside each module.
 
 ## Reading Order
 
@@ -22,17 +22,18 @@ and API details live beside each module.
    bindings.
 10. `../experiments/README.md` - current experiment runners and output layout.
 
-## Active Planning Notes
+## Private Development Notes
 
-The files in this directory that end in `_PLAN.md` or include dated status
-snapshots are engineering planning notes from the current development cycle.
-They are useful for implementation context, but they are not the canonical API
-or build documentation.
+The private development checkout may contain `internal/` with engineering
+plans, dated status snapshots, exploratory algorithm notes, and paper-drafting
+notes. Those files are implementation context only; they are not canonical API,
+build, or reproduction documentation, and the clean public export excludes
+`docs/internal/` by default.
 
 ## Archive Policy
 
-- `archive/` keeps superseded planning notes that may still explain historical
-  decisions in the private development checkout.
+- `internal/archive/` keeps superseded planning notes that may still explain
+  historical decisions in the private development checkout.
 - Clean public exports exclude historical archives and the private `paper/`
   directory by default; paper-facing reproduction should use the current
   top-level `experiments/` runners from the development checkout.
