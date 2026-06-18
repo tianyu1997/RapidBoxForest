@@ -71,6 +71,10 @@ struct QueryBridgeWaypointQualityRetryOptions {
     double max_additive = 0.75;
 };
 
+struct QueryBridgeDirectLineFallbackOptions {
+    bool enabled = false;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -132,6 +136,12 @@ bool query_bridge_waypoint_quality_retry_needed(
     const Eigen::VectorXd& goal,
     double best_length,
     const QueryBridgeWaypointQualityRetryOptions& options);
+
+QueryBridgeDirectLineFallbackOptions query_bridge_direct_line_fallback_options_from_env();
+
+void record_query_bridge_direct_line_fallback_diagnostics(
+    StageContext& context,
+    const QueryBridgeDirectLineFallbackOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

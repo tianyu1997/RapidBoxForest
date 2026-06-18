@@ -1237,13 +1237,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return path;
     };
-    const bool direct_line_on_no_path =
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_LINE_ON_NO_PATH", 0) != 0;
-    batch_context.diagnostics().set_value(
-        "query_bridge.direct_line_on_no_path",
-        direct_line_on_no_path ? 1.0 : 0.0);
+    const QueryBridgeDirectLineFallbackOptions direct_line_options =
+        query_bridge_direct_line_fallback_options_from_env();
+    record_query_bridge_direct_line_fallback_diagnostics(batch_context, direct_line_options);
     auto direct_line_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        if (!direct_line_on_no_path) {
+        if (!direct_line_options.enabled) {
             return std::vector<Eigen::VectorXd>{};
         }
         batch_context.diagnostics().add_counter(
