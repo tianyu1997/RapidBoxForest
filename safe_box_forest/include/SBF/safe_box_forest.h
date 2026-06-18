@@ -600,6 +600,14 @@ private:
 		double min_length,
 		int query_index,
 		int batch_task_index = -1);
+	int try_commit_query_bridge_segment_only_edge(
+		const Eigen::Ref<const Eigen::VectorXd>& start,
+		const Eigen::Ref<const Eigen::VectorXd>& goal,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		int segment_resolution,
+		int query_index,
+		int batch_task_index,
+		StageContext& context);
 	int try_add_query_residual_segment_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,

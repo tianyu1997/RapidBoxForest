@@ -1094,45 +1094,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                        best_length,
                                        task.waypoint_path);
         };
-    auto try_commit_segment_only_task = [&](QueryBridgeSearchTask& task) {
-        const int source_box_id = locate_box_partition_first(
-            task.start,
-            config_.query.nearest_if_outside);
-        const int target_box_id = locate_box_partition_first(
-            task.goal,
-            config_.query.nearest_if_outside);
-        int edge_id = -1;
-        if (source_box_id >= 0 && target_box_id >= 0) {
-            edge_id = add_segment_edge_partition_first(
-                source_box_id,
-                target_box_id,
-                task.waypoint_path,
-                SegmentEdgeType::QueryBridge,
-                task.bridge_rrt.segment_resolution,
-                SegmentEdgeValidation::CollisionChecked,
-                true,
-                query_bridge_edge_query_index(scene_reusable_edges, task));
-        }
-        if (edge_id >= 0) {
-            added_by_query[task.index] += 1;
-            invalidate_query_cache();
-            batch_context.diagnostics().add_counter(
-                "query_bridge.batch_tasks_segment_only");
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "segment_only"),
-                1.0);
-            batch_context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "added"),
-                1.0);
-            return true;
-        }
-        batch_context.diagnostics().add_counter(
-            "query_bridge.batch_tasks_segment_only_failures");
-        batch_context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "segment_only_failure"),
-            1.0);
-        return false;
-    };
     auto finish_ready_waypoint_task =
         [&](QueryBridgeSearchTask& task,
             bool forced_task,
@@ -1182,7 +1143,18 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 return;
             }
             if (segment_only_task) {
-                try_commit_segment_only_task(task);
+                const int segment_only_added =
+                    try_commit_query_bridge_segment_only_edge(
+                        task.start,
+                        task.goal,
+                        task.waypoint_path,
+                        task.bridge_rrt.segment_resolution,
+                        query_bridge_edge_query_index(scene_reusable_edges, task),
+                        static_cast<int>(task.index),
+                        batch_context);
+                if (segment_only_added > 0) {
+                    added_by_query[task.index] += segment_only_added;
+                }
                 batch_context.diagnostics().set_value(
                     query_bridge_task_key(task.index, "total_ms"),
                     task_elapsed_ms());
