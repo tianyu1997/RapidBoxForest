@@ -3327,7 +3327,7 @@ def generate_exp04_table(
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit; \(L/L^\star\) uses success-only 0.01-rad audited references.\par}",
+        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit; \(L/L^\star\) uses success-only query-level 0.01-rad audited references.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3549,7 +3549,7 @@ def generate_exp05_table(
         methods=methods,
         notes=(
             r"Median \([Q_1,Q_3]\), s. \(T=\onlineq{}\), excluding final simplification and audit; "
-            r"\(L/L^\star\) uses the query-level 0.01-rad audited reference path. "
+            r"\(L/L^\star\) uses the success-only query-level 0.01-rad audited reference path. "
             r"AS, TS, CS, LB, and RB denote the approach-side anchor, two shelf-side anchors, and the left and right bin anchors."
         ),
         include_segment=False,
@@ -4286,7 +4286,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     notes = (
         r"Median \([Q_1,Q_3]\), s. Build is a per-scene reusable-build term for \rbf{} and PRM; "
         r"RRT-Connect and BIT* are single-query rows. \onlineq{} excludes final simplification and audit; "
-        r"\(L/L^\star_{\mathrm{q}}\) uses saved 0.01-rad audited query-level references."
+        r"\(L/L^\star_{\mathrm{q}}\) uses success-only query-level 0.01-rad audited references for the saved queries."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"

@@ -6,7 +6,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "ef908d77b4a79b4c3f57b369d51f6fa7935b25273b8c8bf6190f8c5bddbc1342"
+      "sha256": "48b4abba7d6dc94db7b864604557b0ad332130406e5974fc96ea70bb6714c766"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
@@ -20,7 +20,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "ef6f483a5a2722709c7647c052af96680456eab05837f9d35805964451364f5a"
+      "sha256": "e535a6a3d751ff3df9eec759b58f0b9909b9e086330e22d0ed1b2ca7db84142c"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
@@ -34,7 +34,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "af98a0b75ccb01e9c0516c87e7e2d1e744c0367713d802cc4df93c3a29564e56"
+      "sha256": "76af7cedf16201dfbf46c16d98cf6aacbacdf300f1df1825fe8689fbb1401fa7"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
@@ -65,31 +65,31 @@
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "a2b7f24fc3543f833add20b8896f25fbf323e4c9db21cb16c3490d7c5cd13219"
+      "sha256": "8dc8d5c2f975475d8c02053c1efdfcb7342ae0ce2c96f9c07b0666554ca876de"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "e4491f3e569c6f27b8ec7bbb07d24002293d043612c7fd1799346ac8cca65f1e"
+      "sha256": "65cce2615a0998886c61b37bf3297b0f1dacdf63771d7877690baa7f6a77a7b3"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "f9536adff63dbc8361afc0ed9f926b99bed333c23ce6ac0c2850cbe8fc526065"
+      "sha256": "dd343b2a36268a7d2440ccbd3f6ff10747743d36e87edacb6c2e3a4789e9be06"
     }
   },
   "environment": {
     "cwd": ".",
-    "git_sha": "fce04b285c27",
+    "git_sha": "15c70aed83ff",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
       "VmData_kb": 22012,
-      "VmHWM_kb": 31752,
-      "VmRSS_kb": 31752,
+      "VmHWM_kb": 31800,
+      "VmRSS_kb": 31800,
       "VmSize_kb": 36708
     },
     "processor": "x86_64",
