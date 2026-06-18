@@ -365,6 +365,9 @@ void record_query_bridge_forced_attempts(StageContext& context,
                                          bool forced_task,
                                          int attempts);
 
+int query_bridge_edge_query_index(bool scene_reusable_edges,
+                                  const QueryBridgeSearchTask& task);
+
 double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
                                               const Eigen::VectorXd& a,
                                               const Eigen::VectorXd& b);

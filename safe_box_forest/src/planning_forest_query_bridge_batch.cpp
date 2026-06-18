@@ -208,14 +208,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const auto batch_t0 = Clock::now();
     StageContext batch_context = StageContext::from_runtime(config_.runtime);
     const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
+    const bool scene_reusable_edges = edge_options.scene_reusable_edges;
     batch_context.diagnostics().set_value("query_bridge.scene_reusable_edges",
-                                          edge_options.scene_reusable_edges ? 1.0 : 0.0);
+                                          scene_reusable_edges ? 1.0 : 0.0);
     ScopedStageDiagnosticsFlush batch_diagnostics_flush(last_build_, batch_context);
     auto elapsed_ms_since = [](Clock::time_point t0) {
         return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    };
-    auto edge_query_index_for = [&](const QueryBridgeSearchTask& task) {
-        return edge_options.scene_reusable_edges ? -1 : task.query_index;
     };
     const bool direct_start_goal_segment =
         edge_options.direct_segment_after_rrt &&
@@ -280,7 +278,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             config_.query.audit_resolution,
             SegmentEdgeValidation::CollisionChecked,
             true,
-            edge_query_index_for(task));
+            query_bridge_edge_query_index(scene_reusable_edges, task));
         if (edge_id < 0) {
             batch_context.diagnostics().add_counter(
                 "query_bridge.direct_start_goal_segment_add_fail");
@@ -435,7 +433,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task.bridge_rrt.segment_resolution,
                 SegmentEdgeValidation::CollisionChecked,
                 true,
-                edge_query_index_for(task));
+                query_bridge_edge_query_index(scene_reusable_edges, task));
             if (edge_id >= 0) {
                 added_length = path_length(candidate_path);
                 if (candidate_index > 0) {
@@ -538,7 +536,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                                                "query_bridge.hipac_online_prebridge",
 	                                                                false,
 	                                                                true,
-	                                                                edge_query_index_for(task),
+	                                                                query_bridge_edge_query_index(scene_reusable_edges, task),
 	                                                                &last_build_);
 	        const double prebridge_ms = elapsed_ms_since(prebridge_t0);
 	        batch_context.diagnostics().record_timing("query_bridge.hipac_prebridge_ms_total",
@@ -635,7 +633,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                                       "query_bridge.hipac_online",
 	                                                       true,
 	                                                       false,
-	                                                       edge_query_index_for(task),
+	                                                       query_bridge_edge_query_index(scene_reusable_edges, task),
 	                                                       &last_build_);
 	        if (added <= 0 &&
 	            last_adaptive_partition_config_.hipac_online_ffb_portal_fallback) {
@@ -645,7 +643,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                                          "query_bridge.hipac_online",
 	                                                          true,
 	                                                          false,
-	                                                          edge_query_index_for(task),
+	                                                          query_bridge_edge_query_index(scene_reusable_edges, task),
 	                                                          &last_build_);
 	        }
 	        const double hipac_ms = elapsed_ms_since(hipac_t0);
@@ -758,7 +756,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                                                    "query_bridge.hipac_online_transition",
 	                                                                    false,
 	                                                                    false,
-	                                                                    edge_query_index_for(task),
+	                                                                    query_bridge_edge_query_index(scene_reusable_edges, task),
 	                                                                    &last_build_);
 	            if (added <= 0) {
 	                batch_context.diagnostics().add_counter("query_bridge.hipac_transition_failures");
@@ -818,7 +816,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                                                   "query_bridge.hipac_promote",
 	                                                                   true,
 	                                                                   false,
-	                                                                   edge_query_index_for(task),
+	                                                                   query_bridge_edge_query_index(scene_reusable_edges, task),
 	                                                                   &last_build_);
 	        const double promote_ms = elapsed_ms_since(promote_t0);
 	        batch_context.diagnostics().record_timing("query_bridge.hipac_promote_ms_total",
@@ -1444,7 +1442,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task.bridge_rrt.segment_resolution,
                 SegmentEdgeValidation::CollisionChecked,
                 true,
-                edge_query_index_for(task));
+                query_bridge_edge_query_index(scene_reusable_edges, task));
         }
         if (edge_id >= 0) {
             added_by_query[task.index] += 1;

@@ -282,6 +282,11 @@ void record_query_bridge_forced_attempts(StageContext& context,
                                     static_cast<double>(attempts));
 }
 
+int query_bridge_edge_query_index(bool scene_reusable_edges,
+                                  const QueryBridgeSearchTask& task) {
+    return scene_reusable_edges ? -1 : task.query_index;
+}
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
