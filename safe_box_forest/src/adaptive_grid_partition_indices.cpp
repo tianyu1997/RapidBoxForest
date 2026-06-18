@@ -1,7 +1,7 @@
 #include <SBF/adaptive_grid_partition.h>
 
 #include "adaptive_grid_partition_geometry.h"
-#include "env_config.h"
+#include "adaptive_grid_partition_options.h"
 
 #include <algorithm>
 #include <array>
@@ -11,7 +11,6 @@
 
 namespace rbf {
 
-using detail::env_int_or_default;
 using partition_detail::interval_bin;
 
 std::size_t AdaptiveGridPartition::FaceKeyHash::operator()(const FaceKey& key) const noexcept {
@@ -140,8 +139,7 @@ void AdaptiveGridPartition::append_cell_to_indices(int cell_index) {
 			}
 			entry_count *= static_cast<std::uint64_t>(hi_bins[item] - lo_bins[item] + 1);
 		}
-		const std::uint64_t max_entries =
-			static_cast<std::uint64_t>(std::max(1, env_int_or_default("RBF_PARTITION_POINT_INDEX_MAX_CELL_ENTRIES", 128)));
+		const std::uint64_t max_entries = partition_point_index_max_cell_entries_from_env();
 		if (!valid || entry_count > max_entries) {
 			point_overflow_cells_.push_back(cell.cell_id);
 		} else {

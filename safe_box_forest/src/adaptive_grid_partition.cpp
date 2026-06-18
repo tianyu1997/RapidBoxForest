@@ -12,6 +12,7 @@
 
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_keys.h"
+#include "adaptive_grid_partition_options.h"
 #include "env_config.h"
 #include "query_graph_cost_options.h"
 
@@ -764,7 +765,7 @@ void AdaptiveGridPartition::rebuild_point_index() {
 	point_overflow_cells_.clear();
 	point_index_dims_ = choose_point_index_dims(
 		cells_,
-		env_int_or_default("RBF_PARTITION_POINT_INDEX_DIMS", 3));
+		partition_point_index_dims_from_env());
 	stats_.point_index_dims = static_cast<int>(point_index_dims_.size());
 	if (point_index_dims_.empty() || cells_.empty()) {
 		stats_.point_index_entries = 0;
@@ -778,8 +779,7 @@ void AdaptiveGridPartition::rebuild_point_index() {
 			? 0.0
 			: root_intervals_[static_cast<std::size_t>(dim)].lo;
 	}
-	const std::uint64_t max_entries =
-		static_cast<std::uint64_t>(std::max(1, env_int_or_default("RBF_PARTITION_POINT_INDEX_MAX_CELL_ENTRIES", 128)));
+	const std::uint64_t max_entries = partition_point_index_max_cell_entries_from_env();
 	for (const auto& cell : cells_) {
 		bool valid = true;
 		std::array<long long, 3> lo_bins{0, 0, 0};
@@ -984,8 +984,7 @@ std::vector<int> AdaptiveGridPartition::interval_candidate_cells(
 			}
 			entry_count *= static_cast<std::uint64_t>(hi_bins[item] - lo_bins[item] + 1);
 		}
-		const std::uint64_t max_entries =
-			static_cast<std::uint64_t>(std::max(1, env_int_or_default("RBF_PARTITION_POINT_INDEX_MAX_QUERY_ENTRIES", 512)));
+		const std::uint64_t max_entries = partition_point_index_max_query_entries_from_env();
 		if (valid && entry_count <= max_entries) {
 			std::unordered_set<int> seen;
 			for (long long b0 = lo_bins[0]; b0 <= hi_bins[0]; ++b0) {

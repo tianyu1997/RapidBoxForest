@@ -5,15 +5,9 @@
 #include <unordered_map>
 #include <unordered_set>
 
-#include "env_config.h"
+#include "adaptive_grid_partition_options.h"
 
 namespace rbf {
-
-namespace {
-
-using detail::env_int_or_default;
-
-}  // namespace
 
 void AdaptiveGridPartition::clear_overlay_edges() {
 	overlay_edges_by_cell_.clear();
@@ -23,9 +17,7 @@ void AdaptiveGridPartition::clear_overlay_edges() {
 }
 
 void AdaptiveGridPartition::reset_overlay_components() {
-	const int min_cells_for_overlay_dsu =
-		std::max(0, env_int_or_default("RBF_PARTITION_OVERLAY_DSU_MIN_CELLS", 1000));
-	if (static_cast<int>(cells_.size()) < min_cells_for_overlay_dsu) {
+	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells_from_env()) {
 		overlay_parent_.clear();
 		return;
 	}
@@ -46,9 +38,7 @@ void AdaptiveGridPartition::reset_overlay_components() {
 }
 
 void AdaptiveGridPartition::ensure_overlay_parent_size() {
-	const int min_cells_for_overlay_dsu =
-		std::max(0, env_int_or_default("RBF_PARTITION_OVERLAY_DSU_MIN_CELLS", 1000));
-	if (static_cast<int>(cells_.size()) < min_cells_for_overlay_dsu) {
+	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells_from_env()) {
 		overlay_parent_.clear();
 		return;
 	}
