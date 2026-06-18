@@ -263,6 +263,9 @@ private:
 							const FindFreeBoxResult* ffb_result = nullptr) const;
 	std::vector<Eigen::VectorXd> select_initial_roots(const std::vector<Eigen::VectorXd>& seeds,
 													  StageContext& context);
+	void initialize_anchor_targets(const std::vector<Eigen::VectorXd>& roots,
+								   const std::vector<Eigen::VectorXd>& seeds,
+								   StageContext& context);
 	int create_box(const Eigen::VectorXd& seed,
 				   int parent_box_id,
 				   int root_id,
