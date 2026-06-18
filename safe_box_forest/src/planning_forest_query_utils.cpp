@@ -2,6 +2,7 @@
 
 #include "env_config.h"
 #include "planning_forest_audit.h"
+#include "planning_forest_query_bridge_batch_utils.h"
 
 #include <algorithm>
 #include <atomic>
@@ -897,28 +898,15 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
     double best_length = std::numeric_limits<double>::infinity();
     const int safe_attempts = std::max(1, attempts);
     const double safe_total_ms = total_timeout_ms > 0.0 ? total_timeout_ms : base_config.timeout_ms;
-    const bool parallel_early_stop =
-        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
-    const int parallel_early_stop_min_successes =
-        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES", 1));
-    const double parallel_early_stop_ratio =
-        std::max(1.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO", 1.75));
-    const double parallel_early_stop_additive =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE", 0.75));
-    const double direct_distance = (goal - start).norm();
+    const QueryBridgeParallelRrtOptions parallel_options =
+        query_bridge_parallel_rrt_options_from_env();
     auto early_stop_path_good = [&](const std::vector<Eigen::VectorXd>& path) {
-        if (path.empty()) {
-            return false;
-        }
-        if (direct_distance <= 1e-9) {
-            return true;
-        }
-        const double length = path_length(path);
-        return length <= std::max(direct_distance * parallel_early_stop_ratio,
-                                  direct_distance + parallel_early_stop_additive);
+        return query_bridge_parallel_rrt_path_good_enough(start,
+                                                         goal,
+                                                         path,
+                                                         parallel_options);
     };
-    context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
-                                    parallel_early_stop ? 1.0 : 0.0);
+    record_query_bridge_parallel_rrt_diagnostics(context, parallel_options);
 
     if (context.executor().n_threads() > 1 && safe_attempts > 1) {
         const double per_attempt_ms =
@@ -927,8 +915,8 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                 : base_config.timeout_ms;
         std::vector<std::vector<Eigen::VectorXd>> audited_paths(static_cast<std::size_t>(safe_attempts));
         std::shared_ptr<std::atomic<bool>> local_cancel =
-            parallel_early_stop ? std::make_shared<std::atomic<bool>>(false)
-                                : context.native_cancel_flag();
+            parallel_options.early_stop ? std::make_shared<std::atomic<bool>>(false)
+                                        : context.native_cancel_flag();
         std::atomic<int> early_successes{0};
         context.executor().parallel_for(0, safe_attempts, [&](int attempt) {
             if (context.should_stop() ||
@@ -958,10 +946,10 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
             if (!audit.passed) {
                 return;
             }
-            if (parallel_early_stop && early_stop_path_good(path)) {
+            if (parallel_options.early_stop && early_stop_path_good(path)) {
                 const int successes =
                     early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-                if (successes >= parallel_early_stop_min_successes && local_cancel) {
+                if (successes >= parallel_options.early_stop_min_successes && local_cancel) {
                     local_cancel->store(true, std::memory_order_relaxed);
                 }
             }
@@ -986,7 +974,7 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
                                           static_cast<double>(safe_attempts));
         context.diagnostics().add_counter("query_bridge.parallel_rrt_successes",
                                           static_cast<double>(audited_successes));
-        if (parallel_early_stop) {
+        if (parallel_options.early_stop) {
             context.diagnostics().add_counter("query_bridge.parallel_rrt_early_stop_successes",
                                               static_cast<double>(early_successes.load(
                                                   std::memory_order_relaxed)));
