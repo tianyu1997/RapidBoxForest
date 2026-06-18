@@ -693,6 +693,11 @@ private:
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		StageContext& context,
 		int query_index);
+	int try_hipac_prebridge_portal_task(
+		QueryBridgeSearchTask& task,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		StageContext& context,
+		int query_index);
 	int try_hipac_transition_portal_task(
 		QueryBridgeSearchTask& task,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,

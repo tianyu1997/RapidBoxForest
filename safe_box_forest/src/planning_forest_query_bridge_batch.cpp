@@ -532,108 +532,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         "query_bridge.fast_direct_segment_after_rrt",
         fast_direct_segment_after_rrt ? 1.0 : 0.0);
 	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        const QueryBridgeHipacPrebridgeGate prebridge_gate =
-	            query_bridge_hipac_prebridge_gate(last_adaptive_partition_config_,
-	                                             partition_native_mode(),
-	                                             adaptive_partition_query_enabled_,
-	                                             adaptive_partition_ && !adaptive_partition_->empty(),
-	                                             task.hipac_prebridge_resolves_used);
-	        if (!prebridge_gate.enabled) {
-	            return 0;
-	        }
-	        std::vector<Eigen::VectorXd> coarse_route = task.hipac_candidate_path;
-	        if (coarse_route.size() < 2) {
-	            coarse_route = {task.start, task.goal};
-	            batch_context.diagnostics().add_counter(
-	                "query_bridge.hipac_prebridge_direct_query_route");
-	        }
-	        if (coarse_route.size() < 2) {
-	            return 0;
-	        }
-	        const auto prebridge_t0 = QueryBridgeClock::now();
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_attempts");
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_attempt"),
-	                                              1.0);
-	        const auto candidate_pairs =
-	            adaptive_partition_->nearest_component_pairs_to_largest(1,
-	                                                                    prebridge_gate.candidate_limit);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_candidates",
-	                                                static_cast<double>(candidate_pairs.size()));
-	        if (candidate_pairs.empty()) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_no_candidates");
-	            return 0;
-	        }
-
-	        const auto components = adaptive_partition_->component_box_ids_with_overlay();
-	        const int start_box_id = locate_box_partition_first(task.start, false);
-	        const int goal_box_id = locate_box_partition_first(task.goal, false);
-
-	        const QueryBridgeHipacPrebridgeSelection prebridge_selection =
-	            query_bridge_select_hipac_prebridge_pair(candidate_pairs,
-	                                                     components,
-	                                                     start_box_id,
-	                                                     goal_box_id,
-	                                                     coarse_route,
-	                                                     prebridge_gate.max_pair_distance,
-	                                                     prebridge_gate.route_weight,
-	                                                     prebridge_gate.pair_weight);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_considered",
-	                                                static_cast<double>(prebridge_selection.considered));
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_distance_rejects",
-	                                                static_cast<double>(prebridge_selection.distance_rejects));
-	        batch_context.diagnostics().add_counter(
-	            "query_bridge.hipac_prebridge_endpoint_component_rejects",
-	            static_cast<double>(prebridge_selection.endpoint_component_rejects));
-	        if (prebridge_selection.candidate_index < 0 ||
-	            prebridge_selection.candidate_index >= static_cast<int>(candidate_pairs.size())) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_no_candidate_after_filter");
-	            return 0;
-	        }
-	        const AdaptiveGridPartitionComponentPair& best_pair =
-	            candidate_pairs[static_cast<std::size_t>(prebridge_selection.candidate_index)];
-
-	        task.hipac_prebridge_resolves_used += 1;
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_portal_attempts");
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_score"),
-	                                              prebridge_selection.score);
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_pair_distance"),
-	                                              std::sqrt(std::max(0.0, best_pair.distance_sq)));
-	        std::vector<Eigen::VectorXd> local_path{best_pair.source_point, best_pair.target_point};
-	        const int added = add_partition_portal_corridor_overlay(best_pair.source_point,
-	                                                                best_pair.target_point,
-	                                                                local_path,
-	                                                                "query_bridge.hipac_online_prebridge",
-	                                                                false,
-	                                                                true,
-	                                                                query_bridge_edge_query_index(scene_reusable_edges, task),
-	                                                                &last_build_);
-	        const double prebridge_ms = query_bridge_elapsed_ms_since(prebridge_t0);
-	        batch_context.diagnostics().record_timing("query_bridge.hipac_prebridge_ms_total",
-	                                                  prebridge_ms);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_ms_total",
-	                                                prebridge_ms);
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_ms"),
-	                                              prebridge_ms);
-	        if (added <= 0) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_failures");
-	            return 0;
-	        }
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_added",
-	                                                static_cast<double>(added));
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_added"),
-	                                              static_cast<double>(added));
-	        added_by_query[task.index] += added;
-	        const QueryResult probe_after_prebridge = query(task.start, task.goal);
-	        if (query_bridge_result_acceptable(probe_after_prebridge,
-	                                           task.start,
-	                                           task.goal,
-	                                           bridge_acceptance)) {
-	            task.hipac_online_satisfied = true;
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_satisfied");
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_prebridge_satisfied"),
-	                                                  1.0);
-	        } else {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_prebridge_not_sufficient");
+	        const int added = try_hipac_prebridge_portal_task(
+	            task,
+	            bridge_acceptance,
+	            batch_context,
+	            query_bridge_edge_query_index(scene_reusable_edges, task));
+	        if (added > 0) {
+	            added_by_query[task.index] += added;
 	        }
 	        return added;
 	    };
