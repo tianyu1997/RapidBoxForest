@@ -1419,22 +1419,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                task.direct_start_goal_satisfied ||
                current_query_good(task, true);
     };
-    auto base_attempts_for_task = [&](const QueryBridgeSearchTask& task,
-                                      bool forced_task) {
-        return forced_task
-            ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
-            : std::max(1, task.attempts);
-    };
-    auto expand_attempts_for_local_radius = [&](int attempts) {
-        if (attempts <= 0 ||
-            retry_options.local_radius_schedule.empty() ||
-            !retry_options.local_radius_append_unrestricted_attempt) {
-            return attempts;
-        }
-        return std::max(
-            attempts,
-            static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
-    };
     auto record_forced_and_attempts = [&](const QueryBridgeSearchTask& task,
                                           bool forced_task,
                                           int attempts) {
@@ -1445,25 +1429,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
                                               static_cast<double>(attempts));
     };
-    struct TaskAttemptPlan {
-        bool forced = false;
-        bool partition_path_first = false;
-        int base_attempts = 1;
-        int effective_attempts = 1;
-    };
     auto prepare_task_attempts = [&](QueryBridgeSearchTask& task) {
-        TaskAttemptPlan plan;
-        plan.forced = query_bridge_forced(task);
-        plan.base_attempts = base_attempts_for_task(task, plan.forced);
-        plan.partition_path_first =
-            task.waypoint_path_from_partition_query && !task.waypoint_path.empty();
-        plan.effective_attempts =
-            plan.partition_path_first ? 0 : plan.base_attempts;
+        QueryBridgeAttemptPlan plan =
+            query_bridge_attempt_plan(task, query_bridge_forced(task), retry_options);
         if (plan.partition_path_first) {
             mark_partition_path_first_task(task);
         }
-        plan.effective_attempts =
-            expand_attempts_for_local_radius(plan.effective_attempts);
         record_forced_and_attempts(task, plan.forced, plan.effective_attempts);
         return plan;
     };
@@ -1846,7 +1817,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(probe_t0));
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-            const TaskAttemptPlan attempt_plan = prepare_task_attempts(task);
+            const QueryBridgeAttemptPlan attempt_plan = prepare_task_attempts(task);
             prepared[task_offset].forced = attempt_plan.forced;
             prepared[task_offset].attempts = attempt_plan.effective_attempts;
             for (int attempt = 0; attempt < prepared[task_offset].attempts; ++attempt) {
@@ -1950,7 +1921,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(probe_t0));
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-        const TaskAttemptPlan attempt_plan = prepare_task_attempts(task);
+        const QueryBridgeAttemptPlan attempt_plan = prepare_task_attempts(task);
         if (attempt_plan.partition_path_first) {
             mark_partition_path_first_rrt_skipped(task);
         }

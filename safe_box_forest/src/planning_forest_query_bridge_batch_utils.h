@@ -101,6 +101,13 @@ struct QueryBridgeRetryOptions {
     bool post_rrt_skip_forced = false;
 };
 
+struct QueryBridgeAttemptPlan {
+    bool forced = false;
+    bool partition_path_first = false;
+    int base_attempts = 1;
+    int effective_attempts = 1;
+};
+
 struct QueryBridgeParallelRrtOptions {
     bool early_stop = false;
     int early_stop_min_successes = 1;
@@ -175,6 +182,11 @@ struct QueryBridgeSearchJob {
     std::size_t task_index = 0;
     int attempt = 0;
 };
+
+QueryBridgeAttemptPlan query_bridge_attempt_plan(
+    const QueryBridgeSearchTask& task,
+    bool forced,
+    const QueryBridgeRetryOptions& options);
 
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 

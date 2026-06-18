@@ -86,6 +86,29 @@ std::string query_bridge_task_key(std::size_t index, const std::string& suffix) 
     return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
 }
 
+QueryBridgeAttemptPlan query_bridge_attempt_plan(
+    const QueryBridgeSearchTask& task,
+    bool forced,
+    const QueryBridgeRetryOptions& options) {
+    QueryBridgeAttemptPlan plan;
+    plan.forced = forced;
+    plan.base_attempts =
+        forced ? std::max(std::max(1, task.attempts), options.forced_attempts)
+               : std::max(1, task.attempts);
+    plan.partition_path_first =
+        task.waypoint_path_from_partition_query && !task.waypoint_path.empty();
+    plan.effective_attempts =
+        plan.partition_path_first ? 0 : plan.base_attempts;
+    if (plan.effective_attempts > 0 &&
+        !options.local_radius_schedule.empty() &&
+        options.local_radius_append_unrestricted_attempt) {
+        plan.effective_attempts =
+            std::max(plan.effective_attempts,
+                     static_cast<int>(options.local_radius_schedule.size()) + 1);
+    }
+    return plan;
+}
+
 std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(
     const QueryBridgeSearchTask& task,
     const Robot& audit_robot,
