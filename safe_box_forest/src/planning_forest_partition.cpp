@@ -1,13 +1,102 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/box_graph.h>
+
 #include <algorithm>
 #include <chrono>
 #include <exception>
 #include <memory>
+#include <queue>
 #include <string>
 #include <unordered_set>
 
 namespace rbf {
+
+namespace {
+
+const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
+    for (const auto& box : boxes) {
+        if (box.id == box_id) {
+            return &box;
+        }
+    }
+    return nullptr;
+}
+
+bool graph_has_box_path_local(const AdjacencyGraph& graph, int start_id, int goal_id) {
+    if (start_id < 0 || goal_id < 0) {
+        return false;
+    }
+    if (start_id == goal_id) {
+        return true;
+    }
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(start_id);
+    visited.insert(start_id);
+    while (!queue.empty()) {
+        const int current = queue.front();
+        queue.pop();
+        auto it = graph.find(current);
+        if (it == graph.end()) {
+            continue;
+        }
+        for (int next : it->second) {
+            if (next == goal_id) {
+                return true;
+            }
+            if (visited.insert(next).second) {
+                queue.push(next);
+            }
+        }
+    }
+    return false;
+}
+
+bool graph_has_certified_box_path_local(const std::vector<BoxNode>& boxes,
+                                        const AdjacencyGraph& graph,
+                                        int start_id,
+                                        int goal_id,
+                                        double adjacency_tolerance) {
+    if (start_id < 0 || goal_id < 0) {
+        return false;
+    }
+    if (start_id == goal_id) {
+        return true;
+    }
+    std::queue<int> queue;
+    std::unordered_set<int> visited;
+    queue.push(start_id);
+    visited.insert(start_id);
+    while (!queue.empty()) {
+        const int current = queue.front();
+        queue.pop();
+        auto it = graph.find(current);
+        if (it == graph.end()) {
+            continue;
+        }
+        const BoxNode* current_box = find_box_by_id_local(boxes, current);
+        if (current_box == nullptr) {
+            continue;
+        }
+        for (int next : it->second) {
+            const BoxNode* next_box = find_box_by_id_local(boxes, next);
+            if (next_box == nullptr ||
+                !boxes_connected(*current_box, *next_box, adjacency_tolerance)) {
+                continue;
+            }
+            if (next == goal_id) {
+                return true;
+            }
+            if (visited.insert(next).second) {
+                queue.push(next);
+            }
+        }
+    }
+    return false;
+}
+
+} // namespace
 
 void RBFPlanningForest::rebuild_adaptive_partition(const AdaptiveLeafSweepConfig& config,
                                                    BuildProfile* profile) {
@@ -366,6 +455,74 @@ int RBFPlanningForest::sync_adaptive_partition_segment_edges(BuildProfile* profi
         refresh_adaptive_partition_diagnostics(profile);
     }
     return appended;
+}
+
+int RBFPlanningForest::locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
+                                                  bool nearest_if_outside) const {
+    if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
+        const int partition_box = adaptive_partition_->locate_containing_box(point,
+                                                                             nearest_if_outside,
+                                                                             config_.query.adjacency_tolerance);
+        if (partition_box >= 0) {
+            return partition_box;
+        }
+    }
+    if (partition_native_mode()) {
+        return -1;
+    }
+    return locate_containing_box(query_cache(), point, nearest_if_outside);
+}
+
+bool RBFPlanningForest::box_only_path_connected_partition_first(int source_box_id,
+                                                                int target_box_id) const {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return false;
+    }
+    if (adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        !adaptive_partition_->empty() &&
+        adaptive_partition_->same_island(source_box_id, target_box_id)) {
+        return true;
+    }
+    if (partition_native_mode()) {
+        return false;
+    }
+    return graph_has_certified_box_path_local(boxes_,
+                                              adjacency_,
+                                              source_box_id,
+                                              target_box_id,
+                                              config_.query.adjacency_tolerance);
+}
+
+bool RBFPlanningForest::overlay_path_connected_partition_first(int source_box_id,
+                                                               int target_box_id) const {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return false;
+    }
+    if (adaptive_partition_query_enabled_ &&
+        adaptive_partition_ &&
+        !adaptive_partition_->empty() &&
+        adaptive_partition_->same_component_with_overlay(source_box_id, target_box_id)) {
+        return true;
+    }
+    if (partition_native_mode()) {
+        return false;
+    }
+    return graph_has_box_path_local(adjacency_, source_box_id, target_box_id);
+}
+
+bool RBFPlanningForest::partition_native_mode() const {
+    return has_adaptive_partition_config_ &&
+           last_adaptive_partition_config_.planning_backend == "partition_native";
+}
+
+int RBFPlanningForest::island_count_partition_first() const {
+    if (partition_native_mode() &&
+        adaptive_partition_query_enabled_ &&
+        adaptive_partition_) {
+        return adaptive_partition_->component_count_with_overlay();
+    }
+    return static_cast<int>(find_islands(adjacency_).size());
 }
 
 } // namespace rbf
