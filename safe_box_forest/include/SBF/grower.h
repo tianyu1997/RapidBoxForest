@@ -6,6 +6,7 @@
 
 #include <Eigen/Core>
 
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -266,6 +267,10 @@ private:
 	void initialize_anchor_targets(const std::vector<Eigen::VectorXd>& roots,
 								   const std::vector<Eigen::VectorXd>& seeds,
 								   StageContext& context);
+	void run_frontwave_bootstrap(GrowerResult& result,
+								 FindFreeBoxService& ffb,
+								 StageContext& context,
+								 std::chrono::steady_clock::time_point deadline);
 	int create_box(const Eigen::VectorXd& seed,
 				   int parent_box_id,
 				   int root_id,
