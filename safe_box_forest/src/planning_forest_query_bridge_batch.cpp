@@ -67,31 +67,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                  const Eigen::VectorXd& goal) {
         return query_bridge_result_acceptable(current, start, goal, bridge_acceptance);
     };
-    auto box_id_contains_query_point = [&](int box_id,
-                                           const Eigen::Ref<const Eigen::VectorXd>& point) {
-        if (box_id < 0) {
-            return false;
-        }
-        const BoxNode* box = find_box_by_id(boxes_, box_id);
-        return box != nullptr &&
-               intervals_contain_point_local(box->joint_intervals,
-                                             point,
-                                             config_.query.adjacency_tolerance);
-    };
-    auto refresh_located_or_keep_anchor = [&](int anchor_box_id,
-                                              const Eigen::Ref<const Eigen::VectorXd>& point,
-                                              const char* endpoint_name) {
-        const int located = locate_query_bridge_box(point);
-        if (located >= 0) {
-            return located;
-        }
-        if (box_id_contains_query_point(anchor_box_id, point)) {
-            last_build_.diagnostics[std::string("query_bridge.endpoint_anchor_keep_after_lookup_miss.") +
-                                    endpoint_name] += 1.0;
-            return anchor_box_id;
-        }
-        return -1;
-    };
     auto catch_up_query_bridge_partition = [&](const char* diagnostic_prefix) {
         if (partition_native_mode() &&
             adaptive_partition_query_enabled_ &&
@@ -153,14 +128,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         catch_up_query_bridge_partition("query_bridge.endpoint_anchor");
         if (start_box_id >= 0) {
-            start_box_id = refresh_located_or_keep_anchor(start_box_id,
-                                                          starts[index],
-                                                          "start");
+            start_box_id = refresh_query_bridge_box_or_anchor(start_box_id,
+                                                              starts[index],
+                                                              "start");
         }
         if (goal_box_id >= 0) {
-            goal_box_id = refresh_located_or_keep_anchor(goal_box_id,
-                                                         goals[index],
-                                                         "goal");
+            goal_box_id = refresh_query_bridge_box_or_anchor(goal_box_id,
+                                                             goals[index],
+                                                             "goal");
         }
         if (goal_box_id < 0 || goal_box_id == start_box_id) {
             mark_task_skip(goal_box_id < 0 ? 3.0 : 4.0,

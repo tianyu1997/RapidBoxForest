@@ -542,6 +542,11 @@ private:
 	int locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
 								   bool nearest_if_outside) const;
 	int locate_query_bridge_box(const Eigen::Ref<const Eigen::VectorXd>& point) const;
+	bool query_bridge_box_contains_point(int box_id,
+										 const Eigen::Ref<const Eigen::VectorXd>& point) const;
+	int refresh_query_bridge_box_or_anchor(int anchor_box_id,
+										   const Eigen::Ref<const Eigen::VectorXd>& point,
+										   const char* endpoint_name);
 	bool box_only_path_connected_partition_first(int source_box_id,
 												 int target_box_id) const;
 	bool overlay_path_connected_partition_first(int source_box_id,

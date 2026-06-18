@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 namespace rbf {
 
@@ -23,6 +24,35 @@ int RBFPlanningForest::locate_query_bridge_box(
         return -1;
     }
     return locate_box_partition_first(point, config_.query.nearest_if_outside);
+}
+
+bool RBFPlanningForest::query_bridge_box_contains_point(
+    int box_id,
+    const Eigen::Ref<const Eigen::VectorXd>& point) const {
+    if (box_id < 0) {
+        return false;
+    }
+    const BoxNode* box = find_box_by_id(boxes_, box_id);
+    return box != nullptr &&
+           intervals_contain_point_local(box->joint_intervals,
+                                         point,
+                                         config_.query.adjacency_tolerance);
+}
+
+int RBFPlanningForest::refresh_query_bridge_box_or_anchor(
+    int anchor_box_id,
+    const Eigen::Ref<const Eigen::VectorXd>& point,
+    const char* endpoint_name) {
+    const int located = locate_query_bridge_box(point);
+    if (located >= 0) {
+        return located;
+    }
+    if (query_bridge_box_contains_point(anchor_box_id, point)) {
+        last_build_.diagnostics[std::string("query_bridge.endpoint_anchor_keep_after_lookup_miss.") +
+                                endpoint_name] += 1.0;
+        return anchor_box_id;
+    }
+    return -1;
 }
 
 std::pair<int, int> RBFPlanningForest::locate_query_bridge_boxes(
