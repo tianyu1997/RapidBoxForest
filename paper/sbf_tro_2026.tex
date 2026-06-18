@@ -159,9 +159,9 @@ Saved-catalog experiments use audit-separated timing and explicit cache
 accounting. On Shelf+IIWA, warm-cache depth-23 LECT replay gives a 0.166~s
 median reusable build, 0.130~s median \onlineq{} (per-query online time), and
 0.164~s median five-query amortized time; live \mbox{HIFK-5} (hierarchical
-interval forward kinematics) materialization takes 7.006~s. On random scenes,
-\mbox{RRT-Connect} has lower median \onlineq{} in five of six cases but higher
-audited path ratios in all six; \rbf{} has lower median \onlineq{} than
+interval forward kinematics) materialization takes 7.006~s. On saved random
+scenes, \mbox{RRT-Connect} has lower median \onlineq{} in five of six cases but
+worse audited path ratios in all six; \rbf{} has lower median \onlineq{} than
 BIT* (Batch Informed Trees) in all six, while BIT* has better ratios in the
 four UR5/Panda cases.
 In a maintenance-only scene-cache study, leaf-sweep insertions show a
