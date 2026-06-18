@@ -596,6 +596,8 @@ private:
 		int& accumulated_added,
 		int& next_id,
 		StageContext& context);
+	void refresh_query_bridge_direct_corridor_partition(std::size_t boxes_before);
+	int finish_query_bridge_direct_corridor(std::size_t boxes_before, int value);
 	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
 										   const Eigen::Ref<const Eigen::VectorXd>& goal,
 										   const std::vector<Eigen::VectorXd>& waypoint_path,

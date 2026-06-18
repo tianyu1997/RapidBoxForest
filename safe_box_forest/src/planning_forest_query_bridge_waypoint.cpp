@@ -188,24 +188,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         const auto t0 = Clock::now();
         const bool graphless_direct_corridor = partition_native_mode();
         const std::size_t boxes_before_direct_corridor = boxes_.size();
-        auto finish_direct_corridor = [&](int value) {
-            if (boxes_.size() > boxes_before_direct_corridor) {
-                append_adaptive_partition_boxes(boxes_before_direct_corridor,
-                                                &last_build_,
-                                                "query_bridge.direct_corridor");
-            }
-            sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.direct_corridor");
-            return value;
-        };
-        auto refresh_direct_corridor_partition = [&]() {
-            if (boxes_.size() > boxes_before_direct_corridor) {
-                append_adaptive_partition_boxes(boxes_before_direct_corridor,
-                                                &last_build_,
-                                                "query_bridge.direct_corridor");
-            }
-            sync_adaptive_partition_segment_edges(&last_build_,
-                                                  "query_bridge.direct_corridor");
-        };
         const double audit_step = direct_corridor_options.audit_step;
         const double sample_step = direct_corridor_options.sample_step;
         context.diagnostics().set_value("query_bridge.direct_corridor_sample_step",
@@ -2012,16 +1994,20 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                                  bridge_edge_query_index);
             if (edge_id >= 0) {
                 invalidate_query_cache();
-                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added + 1);
+                return finish_query_bridge_direct_corridor(
+                    boxes_before_direct_corridor,
+                    direct_added + repair_added + local_segment_edges_added + 1);
             }
-            return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
+            return finish_query_bridge_direct_corridor(
+                boxes_before_direct_corridor,
+                direct_added + repair_added + local_segment_edges_added);
         }
         if (!final_bad.empty() &&
             allow_residual_segments &&
             local_segment_edges_added > 0 &&
             source_box_id >= 0 &&
             target_box_id >= 0) {
-            refresh_direct_corridor_partition();
+            refresh_query_bridge_direct_corridor_partition(boxes_before_direct_corridor);
             const bool locally_overlay_connected =
                 overlay_path_connected_partition_first(source_box_id, target_box_id);
             context.diagnostics().set_value(
@@ -2066,8 +2052,10 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                              target_box_id,
                                              "local_residual_overlay");
                 invalidate_query_cache();
-                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added +
-                                              (full_edge_id >= 0 ? 1 : 0));
+                return finish_query_bridge_direct_corridor(
+                    boxes_before_direct_corridor,
+                    direct_added + repair_added + local_segment_edges_added +
+                        (full_edge_id >= 0 ? 1 : 0));
             }
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_full_residual_without_local_overlay");
@@ -2080,7 +2068,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 context.diagnostics().add_counter(
                     "query_bridge.direct_corridor_full_residual_audit_rejects");
                 invalidate_query_cache();
-                return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
+                return finish_query_bridge_direct_corridor(
+                    boxes_before_direct_corridor,
+                    direct_added + repair_added + local_segment_edges_added);
             }
             const int edge_id = add_segment_edge_partition_first(source_box_id,
                                                                  target_box_id,
@@ -2104,10 +2094,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                          target_box_id,
                                          "full_residual");
             invalidate_query_cache();
-            return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added +
-                                          (edge_id >= 0 ? 1 : 0));
+            return finish_query_bridge_direct_corridor(
+                boxes_before_direct_corridor,
+                direct_added + repair_added + local_segment_edges_added +
+                    (edge_id >= 0 ? 1 : 0));
         }
-        return finish_direct_corridor(0);
+        return finish_query_bridge_direct_corridor(boxes_before_direct_corridor, 0);
     };
     if (dense_box_corridor_candidate) {
         const int direct_corridor_added = try_direct_ffb_corridor();

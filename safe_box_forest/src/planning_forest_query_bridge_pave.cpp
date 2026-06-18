@@ -128,4 +128,22 @@ std::pair<int, int> RBFPlanningForest::run_query_bridge_reverse_boundary_pave(
     return locate_query_bridge_boxes(start, goal, context);
 }
 
+void RBFPlanningForest::refresh_query_bridge_direct_corridor_partition(
+    std::size_t boxes_before) {
+    if (boxes_.size() > boxes_before) {
+        append_adaptive_partition_boxes(boxes_before,
+                                        &last_build_,
+                                        "query_bridge.direct_corridor");
+    }
+    sync_adaptive_partition_segment_edges(&last_build_,
+                                          "query_bridge.direct_corridor");
+}
+
+int RBFPlanningForest::finish_query_bridge_direct_corridor(
+    std::size_t boxes_before,
+    int value) {
+    refresh_query_bridge_direct_corridor_partition(boxes_before);
+    return value;
+}
+
 } // namespace rbf
