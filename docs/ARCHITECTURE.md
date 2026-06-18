@@ -136,6 +136,8 @@ src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
                                    survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
 src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
+src/planning_forest_shortcut.cpp   offline shortcut-edge selection and audited
+                                   shortcut/corridor insertion
 src/planning_forest_dynamic_cache.cpp
                                    dynamic obstacle insertion/removal rebuild,
                                    dirty-region checks, collision-cache promotion,
