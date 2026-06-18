@@ -66,6 +66,22 @@ void merge_diagnostic_snapshot_local(std::unordered_map<std::string, double>& di
     }
 }
 
+void initialize_segment_fallback_profile(RebuildProfile& profile,
+                                         int boxes_size,
+                                         int raw_boxes_size,
+                                         int obstacle_count,
+                                         int collision_cache_size,
+                                         int segment_edge_count) {
+    profile.boxes_before = boxes_size;
+    profile.raw_boxes_before = raw_boxes_size;
+    profile.obstacles_before = obstacle_count;
+    profile.obstacles_after = obstacle_count;
+    profile.collision_cache_boxes_before = collision_cache_size;
+    profile.collision_cache_boxes_after = collision_cache_size;
+    profile.diagnostics["segment_fallback.segment_edges_before"] =
+        static_cast<double>(segment_edge_count);
+}
+
 int containing_domain_index(const std::vector<BoxNode>& domains,
                             const Eigen::Ref<const Eigen::VectorXd>& point,
                             double tolerance) {
@@ -1648,13 +1664,12 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();
     RebuildProfile profile;
-    profile.boxes_before = static_cast<int>(boxes_.size());
-    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
-    profile.obstacles_before = scene_.n_obstacles();
-	    profile.obstacles_after = profile.obstacles_before;
-	    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
-	    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
-	    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+    initialize_segment_fallback_profile(profile,
+                                        static_cast<int>(boxes_.size()),
+                                        static_cast<int>(raw_boxes_.size()),
+                                        scene_.n_obstacles(),
+                                        static_cast<int>(dynamic_collision_box_cache_.size()),
+                                        static_cast<int>(segment_edges_.size()));
 	    const bool use_partition_backend =
 	        partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
 	    const int islands_before = use_partition_backend
@@ -1867,13 +1882,12 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();
     RebuildProfile profile;
-    profile.boxes_before = static_cast<int>(boxes_.size());
-    profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
-    profile.obstacles_before = scene_.n_obstacles();
-    profile.obstacles_after = profile.obstacles_before;
-    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
-    profile.collision_cache_boxes_after = profile.collision_cache_boxes_before;
-    profile.diagnostics["segment_fallback.segment_edges_before"] = static_cast<double>(segment_edges_.size());
+    initialize_segment_fallback_profile(profile,
+                                        static_cast<int>(boxes_.size()),
+                                        static_cast<int>(raw_boxes_.size()),
+                                        scene_.n_obstacles(),
+                                        static_cast<int>(dynamic_collision_box_cache_.size()),
+                                        static_cast<int>(segment_edges_.size()));
     const bool use_partition_backend =
         partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
     const int islands_before = use_partition_backend
