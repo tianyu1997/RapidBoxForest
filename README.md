@@ -69,35 +69,162 @@ Useful options:
 Each module can also be configured from its own directory; module READMEs
 document the standalone workflows.
 
+For source builds in a restricted-network environment, install Eigen,
+nlohmann_json, and pybind11 first, then configure with
+`-DFETCHCONTENT_FULLY_DISCONNECTED=ON` to avoid implicit dependency downloads.
+See `docs/REPRODUCIBILITY.md` for the Python-extension smoke workflow.
+
+Conda users can create the recommended build-and-experiment environment with:
+
+```bash
+conda env create -f environment.yml
+conda activate rapidboxforest
+```
+
 ## Experiments
 
 Current experiment entry points live under `experiments/` and default to writing
 generated results under `outputs/new_experiments/`.
 
 ```bash
-python3 experiments/exp01_endpoint_envelope/run_endpoint_envelope.py --smoke --dry-run
-python3 experiments/exp02_link_envelope_s1/run_link_envelope_s1.py --smoke --dry-run
-python3 experiments/exp03_lect_microbench/run_lect_microbench.py --dry-run
-python3 experiments/exp04_shelf_ablation/run_shelf_ablation.py --dry-run
-python3 experiments/exp05_shelf_cross_algorithm/run_shelf_cross_algorithm.py --dry-run
-python3 experiments/exp06_random_robot/run_random_robot.py --dry-run
+python3 experiments/run_tro2026.py --phase smoke --dry-run
+python3 experiments/run_tro2026.py --phase smoke --execute
+python3 experiments/run_tro2026.py --phase smoke --only exp04 --dry-run
 ```
+
+The default smoke execute path imports the `link_interval_envelope` Python
+module. Use dry-run mode for a source-only checkout, or build/install the Python
+extension before using `--execute`.
 
 Use `experiments/README.md` and `experiments/00_experiment_principles.md` as the
 entry point before running long jobs.
+
+For a clean reproduction workflow, including smoke runs, saved random-scene
+catalogs, cache policy, and paper table/figure generation, see
+`docs/REPRODUCIBILITY.md`.
 
 ## Documentation
 
 - `docs/README.md` - workspace documentation index and cleanup policy.
 - `docs/ARCHITECTURE.md` - code framework, module targets, and data flow.
+- `docs/REPRODUCIBILITY.md` - build, smoke-test, experiment, and paper-asset
+  reproduction workflow.
 - `link_interval_envelope/README.md` - envelope package usage.
 - `lect_database/README.md` - database and online-cache package usage.
 - `safe_box_forest/README.md` - planner package usage.
 
+## Citation And License
+
+RapidBoxForest is released under the MIT License; see `LICENSE`. If you use the
+software in research, cite the repository metadata in `CITATION.cff` and the
+associated TRO manuscript once it is published.
+
 ## Generated And Archived Files
 
 Build directories, CMake caches, Python caches, local database caches, and
-experiment outputs are generated files and should stay untracked. Historical
-scripts under `safe_box_forest/experiments/sbf_old/` and manuscripts under
-`paper/sbf_old/` are retained as archival reproduction material unless a
-specific replacement is added.
+experiment outputs are generated files and should stay untracked. The private
+development checkout may contain historical scripts and old manuscripts for
+engineering reference, but the clean public export excludes those archives by
+default. Paper-facing reproduction should use the current top-level
+`experiments/` runners.
+
+For a public release, prefer exporting a clean source tree instead of publishing
+the full development history:
+
+```bash
+python3 scripts/export_public_release.py \
+  --out-dir /tmp/RapidBoxForest-public \
+  --force
+python3 scripts/check_public_release.py \
+  /tmp/RapidBoxForest-public \
+  --run-smoke-dry-run
+python3 scripts/check_release_readiness.py \
+  --repo-root . \
+  --public-tree /tmp/RapidBoxForest-public
+```
+
+The export keeps paper-facing source and documentation while excluding local
+outputs, caches, build products, scratch workspaces, and historical archives by
+default.
+
+To produce a checked source archive for upload or for initializing a new public
+repository:
+
+```bash
+python3 scripts/package_public_release.py \
+  --out-dir /tmp/RapidBoxForest-release \
+  --repo-url https://github.com/<owner>/RapidBoxForest \
+  --version v0.1.0 \
+  --release-date YYYY-MM-DD \
+  --cache-manifest path/to/cache_artifacts.json \
+  --strict-metadata \
+  --force
+```
+
+This writes `RapidBoxForest-public.tar.gz` and a companion schema-v2 package
+manifest with the archive SHA256, exported file counts, tar member count,
+duplicate-entry count, `release_tools_checked`, and `cache_archives_checked`;
+the package step also verifies that the archive matches the manifest and has no
+duplicate tar entries. Add `--doi` when that identifier is available. Omit
+`--cache-manifest` and `--strict-metadata` only for source-only template checks
+before the external LECT cache artifacts and final release identifiers have
+been published.
+
+After the public repository URL is known, update citation metadata before the
+final strict release check:
+
+```bash
+python3 scripts/set_public_release_urls.py \
+  --repo-url https://github.com/<owner>/RapidBoxForest
+```
+
+To initialize a fresh public git repository from the clean export:
+
+```bash
+python3 scripts/init_public_repository.py \
+  --out-dir /tmp/RapidBoxForest-public-git \
+  --repo-url https://github.com/<owner>/RapidBoxForest \
+  --version v0.1.0 \
+  --release-date YYYY-MM-DD \
+  --strict-metadata \
+  --force
+```
+
+When `--repo-url` is provided, the script stamps citation metadata, refreshes
+`PUBLIC_RELEASE_MANIFEST.json`, runs strict citation validation, and stages the
+exported files. Add `--doi` when that metadata is available. Add `--commit`
+after configuring git identity locally if you want it to create the initial
+commit.
+
+After building Python bindings from the exported tree into an out-of-tree build
+directory, the same checker can validate executable smoke tests:
+
+```bash
+PYBIND11_CMAKE_DIR="$(python3 -c 'import pybind11; print(pybind11.get_cmake_dir())')"
+cmake -S /tmp/RapidBoxForest-public \
+  -B /tmp/RapidBoxForest-python-smoke-build \
+  -DRBF_BUILD_ENVELOPE=ON \
+  -DRBF_BUILD_LECT_DATABASE=OFF \
+  -DRBF_BUILD_SBF=OFF \
+  -DRBF_BUILD_TESTS=OFF \
+  -DRBF_WITH_PYTHON=ON \
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON \
+  "-DCMAKE_PREFIX_PATH=${PYBIND11_CMAKE_DIR}"
+cmake --build /tmp/RapidBoxForest-python-smoke-build -j"$(nproc)"
+
+python3 /tmp/RapidBoxForest-public/scripts/check_public_release.py \
+  /tmp/RapidBoxForest-public \
+  --pythonpath /tmp/RapidBoxForest-python-smoke-build/python \
+  --check-python-extension \
+  --run-smoke-execute
+```
+
+If a XeLaTeX-capable TeX distribution is available, the checker can also compile
+the manuscript from the exported tree without writing LaTeX intermediates into
+the source directory:
+
+```bash
+python3 /tmp/RapidBoxForest-public/scripts/check_public_release.py \
+  /tmp/RapidBoxForest-public \
+  --check-paper-compile
+```

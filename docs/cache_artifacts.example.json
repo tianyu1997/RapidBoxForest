@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "description": "Template for external LECT cache artifacts required for exact paper timing reproduction. Replace TODO fields before publishing artifacts.",
+  "artifacts": [
+    {
+      "id": "exp04_iiwa_d23_aafk_support_hull",
+      "role": "warm_lect_cache",
+      "required_for": ["Exp.4 baseline", "Exp.5 RBF shelf row"],
+      "robot": "iiwa",
+      "endpoint_source": "IFK_AAFK",
+      "envelope": "support_hull",
+      "depth": 23,
+      "depth_semantics": "lect_canonical_tree",
+      "split_schedule": "full_joint_canonical_aafk_manifest",
+      "canonical_mode": true,
+      "coverage_domain": "full_robot_joint_limits",
+      "expected_unpack_path": "outputs/new_experiments/exp04_full_root_d23/cache/iiwa_endpoint_only_p23_canonical_full_root",
+      "build_command": [
+        "python3",
+        "experiments/exp04_shelf_leaf_rrt/build_d23_full_root_cache.py",
+        "--depth",
+        "23",
+        "--endpoint-source",
+        "ifk",
+        "--threads",
+        "8"
+      ],
+      "archive": {
+        "file_name": "TODO-exp04-iiwa-d23-aafk-support-hull.tar.zst",
+        "url": "TODO",
+        "sha256": "TODO",
+        "size_bytes": "TODO"
+      },
+      "unpacked": {
+        "manifest_relative_path": "manifest.json",
+        "snapshot_relative_path": "lect_snapshot",
+        "directory_sha256": "TODO"
+      }
+    },
+    {
+      "id": "exp04_iiwa_d23_critsample_support_hull",
+      "role": "warm_lect_cache",
+      "required_for": ["Exp.4 CritSample ablation"],
+      "robot": "iiwa",
+      "endpoint_source": "CritSample",
+      "envelope": "support_hull",
+      "depth": 23,
+      "depth_semantics": "lect_canonical_tree",
+      "split_schedule": "full_joint_canonical_aafk_manifest",
+      "canonical_mode": true,
+      "coverage_domain": "full_robot_joint_limits",
+      "expected_unpack_path": "outputs/new_experiments/exp04_full_root_d23/cache/iiwa_critsample_p23_canonical_full_root",
+      "build_command": [
+        "python3",
+        "experiments/exp04_shelf_leaf_rrt/build_d23_full_root_cache.py",
+        "--depth",
+        "23",
+        "--endpoint-source",
+        "critsample",
+        "--threads",
+        "8"
+      ],
+      "archive": {
+        "file_name": "TODO-exp04-iiwa-d23-critsample-support-hull.tar.zst",
+        "url": "TODO",
+        "sha256": "TODO",
+        "size_bytes": "TODO"
+      },
+      "unpacked": {
+        "manifest_relative_path": "manifest.json",
+        "snapshot_relative_path": "lect_snapshot",
+        "directory_sha256": "TODO"
+      }
+    },
+    {
+      "id": "exp06_iiwa_d23_support_hull",
+      "role": "warm_lect_cache",
+      "required_for": ["Exp.6 IIWA RBF"],
+      "robot": "iiwa",
+      "endpoint_source": "IFK_AAFK",
+      "envelope": "support_hull",
+      "depth": 23,
+      "depth_semantics": "lect_canonical_tree",
+      "split_schedule": "full_joint_canonical_aafk_manifest",
+      "canonical_mode": true,
+      "coverage_domain": "full_robot_joint_limits",
+      "expected_unpack_path": "outputs/new_experiments/exp04_full_root_d23/cache/iiwa_endpoint_only_p23_canonical_full_root",
+      "build_command": [
+        "python3",
+        "experiments/exp04_shelf_leaf_rrt/build_d23_full_root_cache.py",
+        "--depth",
+        "23",
+        "--endpoint-source",
+        "ifk",
+        "--threads",
+        "8"
+      ],
+      "archive": {
+        "file_name": "TODO-exp06-iiwa-d23-support-hull.tar.zst",
+        "url": "TODO",
+        "sha256": "TODO",
+        "size_bytes": "TODO"
+      },
+      "unpacked": {
+        "manifest_relative_path": "manifest.json",
+        "snapshot_relative_path": "lect_snapshot",
+        "directory_sha256": "TODO"
+      }
+    },
+    {
+      "id": "exp06_ur5_d20_support_hull",
+      "role": "warm_lect_cache",
+      "required_for": ["Exp.6 UR5 RBF"],
+      "robot": "ur5",
+      "endpoint_source": "IFK_AAFK",
+      "envelope": "support_hull",
+      "depth": 20,
+      "depth_semantics": "lect_canonical_tree",
+      "split_schedule": "support_hull_volume_min",
+      "canonical_mode": true,
+      "coverage_domain": "full_robot_joint_limits",
+      "expected_unpack_path": "outputs/new_experiments/tro2026/lectdb_defaults/cache/tro2026_ur5_p20_support_hull_sched_d40_canonical_native_stateless",
+      "build_command": [
+        "python3",
+        "experiments/exp06_random_robot/run_random_robot.py",
+        "--ensure-lect-cache-only",
+        "--robots",
+        "ur5",
+        "--threads",
+        "8"
+      ],
+      "archive": {
+        "file_name": "TODO-exp06-ur5-d20-support-hull.tar.zst",
+        "url": "TODO",
+        "sha256": "TODO",
+        "size_bytes": "TODO"
+      },
+      "unpacked": {
+        "manifest_relative_path": "manifest.json",
+        "snapshot_relative_path": "lect_snapshot",
+        "directory_sha256": "TODO"
+      }
+    },
+    {
+      "id": "exp06_panda_d20_support_hull",
+      "role": "warm_lect_cache",
+      "required_for": ["Exp.6 Panda RBF"],
+      "robot": "panda",
+      "endpoint_source": "IFK_AAFK",
+      "envelope": "support_hull",
+      "depth": 20,
+      "depth_semantics": "lect_canonical_tree",
+      "split_schedule": "support_hull_volume_min",
+      "canonical_mode": true,
+      "coverage_domain": "full_robot_joint_limits",
+      "expected_unpack_path": "outputs/new_experiments/tro2026/lectdb_defaults/cache/tro2026_panda_full_wrist_p20_support_hull_sched_d40_canonical_native_stateless",
+      "build_command": [
+        "python3",
+        "experiments/exp06_random_robot/run_random_robot.py",
+        "--ensure-lect-cache-only",
+        "--robots",
+        "panda",
+        "--threads",
+        "8"
+      ],
+      "archive": {
+        "file_name": "TODO-exp06-panda-d20-support-hull.tar.zst",
+        "url": "TODO",
+        "sha256": "TODO",
+        "size_bytes": "TODO"
+      },
+      "unpacked": {
+        "manifest_relative_path": "manifest.json",
+        "snapshot_relative_path": "lect_snapshot",
+        "directory_sha256": "TODO"
+      }
+    }
+  ]
+}
