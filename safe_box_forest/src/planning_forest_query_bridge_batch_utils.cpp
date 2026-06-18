@@ -310,6 +310,37 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
     return plan;
 }
 
+QueryBridgePartitionInitialPathDecision query_bridge_partition_initial_path_decision(
+    const QueryResult& initial_query,
+    const Eigen::VectorXd& start,
+    const Eigen::VectorXd& goal,
+    const QueryBridgeAcceptanceThresholds& thresholds,
+    const QueryBridgePartitionPathFirstOptions& options) {
+    QueryBridgePartitionInitialPathDecision decision;
+    decision.direct_distance = (goal - start).norm();
+    decision.raw_length =
+        initial_query.raw_path_length > 1e-12
+            ? initial_query.raw_path_length
+            : initial_query.path_length;
+    decision.segment_fraction =
+        decision.raw_length > 1e-12
+            ? initial_query.segment_edge_length / decision.raw_length
+            : std::numeric_limits<double>::infinity();
+    decision.segment_reasonable =
+        std::isfinite(decision.segment_fraction) &&
+        decision.segment_fraction <= options.max_segment_fraction;
+    decision.length_reasonable =
+        decision.direct_distance <= 1e-9 ||
+        initial_query.path_length <=
+            std::max(decision.direct_distance * thresholds.path_ratio,
+                     decision.direct_distance + thresholds.path_additive) ||
+        initial_query.path_length <= thresholds.max_path_length;
+    decision.accepted =
+        decision.segment_reasonable &&
+        (decision.length_reasonable || options.allow_long);
+    return decision;
+}
+
 std::shared_ptr<std::atomic<bool>> query_bridge_parallel_rrt_cancel_flag(
     const QueryBridgeParallelRrtOptions& options,
     const std::shared_ptr<std::atomic<bool>>& fallback_cancel) {

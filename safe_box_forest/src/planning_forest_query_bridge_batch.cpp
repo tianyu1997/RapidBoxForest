@@ -149,30 +149,19 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             initial_query.audit_passed &&
             !initial_query.path.empty()) {
             last_build_.diagnostics["query_bridge.partition_path_first_initial_success"] += 1.0;
-            const double direct = (task.goal - task.start).norm();
-            const double raw_length = initial_query.raw_path_length > 1e-12
-                ? initial_query.raw_path_length
-                : initial_query.path_length;
-            const double segment_fraction =
-                raw_length > 1e-12
-                    ? initial_query.segment_edge_length / raw_length
-                    : std::numeric_limits<double>::infinity();
-            const bool segment_reasonable =
-                std::isfinite(segment_fraction) &&
-                segment_fraction <= partition_path_first_options.max_segment_fraction;
-            const bool length_reasonable =
-                direct <= 1e-9 ||
-                initial_query.path_length <= std::max(direct * bridge_acceptance.path_ratio,
-                                                      direct + bridge_acceptance.path_additive) ||
-                initial_query.path_length <= bridge_acceptance.max_path_length;
-            if (!segment_reasonable) {
+            const QueryBridgePartitionInitialPathDecision partition_path_decision =
+                query_bridge_partition_initial_path_decision(initial_query,
+                                                             task.start,
+                                                             task.goal,
+                                                             bridge_acceptance,
+                                                             partition_path_first_options);
+            if (!partition_path_decision.segment_reasonable) {
                 last_build_.diagnostics["query_bridge.partition_path_first_reject_segment"] += 1.0;
             }
-            if (!length_reasonable) {
+            if (!partition_path_decision.length_reasonable) {
                 last_build_.diagnostics["query_bridge.partition_path_first_reject_length"] += 1.0;
             }
-            if (segment_reasonable &&
-                (length_reasonable || partition_path_first_options.allow_long)) {
+            if (partition_path_decision.accepted) {
                 task.waypoint_path = initial_query.path;
                 task.waypoint_path_from_partition_query = true;
                 if (task.hipac_candidate_path.empty()) {
