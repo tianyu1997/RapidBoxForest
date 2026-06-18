@@ -10,36 +10,9 @@
 #include <chrono>
 #include <string>
 
+#include "planning_forest_diagnostics.h"
+
 namespace rbf {
-
-namespace {
-
-double portal_membership_policy_code(PortalMembershipPolicy policy) {
-    switch (policy) {
-    case PortalMembershipPolicy::GlobalForestOnly:
-        return 0.0;
-    case PortalMembershipPolicy::PortalInteriorIndex:
-        return 1.0;
-    }
-    return -1.0;
-}
-
-void record_portal_membership_policy(StageDiagnostics& diagnostics,
-                                     PortalMembershipPolicy policy,
-                                     const std::string& prefix = "portal_membership.") {
-    diagnostics.set_value(prefix + "policy", portal_membership_policy_code(policy));
-    diagnostics.set_value(prefix + "global_forest_only",
-                          policy == PortalMembershipPolicy::GlobalForestOnly ? 1.0 : 0.0);
-    diagnostics.set_value(prefix + "portal_interior_index",
-                          policy == PortalMembershipPolicy::PortalInteriorIndex ? 1.0 : 0.0);
-    if (policy == PortalMembershipPolicy::PortalInteriorIndex) {
-        diagnostics.add_counter(prefix + "portal_interior_index_requested");
-        diagnostics.add_counter(prefix + "portal_interior_index_unavailable");
-        diagnostics.add_counter(prefix + "global_forest_only_fallback");
-    }
-}
-
-} // namespace
 
 BuildProfile RBFPlanningForest::build(const Eigen::Ref<const Eigen::VectorXd>& start,
                                       const Eigen::Ref<const Eigen::VectorXd>& goal,
