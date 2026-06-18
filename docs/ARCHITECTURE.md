@@ -136,6 +136,9 @@ src/adaptive_grid_partition_geometry.cpp
 src/adaptive_grid_partition_overlay.cpp
                                    overlay segment edges and overlay-aware
                                    component queries for the partition
+src/adaptive_grid_partition_keys.h
+                                   internal grid hash keys for partition merge,
+                                   broadphase, and adjacency indices
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
 src/connector.cpp                  island connector and chain-pave logic
 src/connector_birrt.cpp            RRTConnect/BiRRT connector path search and
