@@ -280,6 +280,36 @@ def run_self_test(repo_root: Path, tmp_root: Path) -> None:
     archive_names = {artifact["archive"]["file_name"] for artifact in filled_artifacts}
     if len(archive_names) != 1:
         raise RuntimeError(f"duplicate cache artifacts should reuse one archive, got {archive_names}")
+    rewritten_manifest = out_dir / "cache_artifacts.rewritten_urls.json"
+    run(
+        [
+            sys.executable,
+            "scripts/fill_cache_artifact_urls.py",
+            str(filled_manifest),
+            "--url-base",
+            "https://downloads.example.org/rbf/cache",
+            "--out",
+            str(rewritten_manifest),
+        ],
+        cwd=repo_root,
+    )
+    rewritten_data = json.loads(rewritten_manifest.read_text(encoding="utf-8"))
+    rewritten_urls = {artifact["archive"]["url"] for artifact in rewritten_data["artifacts"]}
+    if rewritten_urls != {"https://downloads.example.org/rbf/cache/fake_cache.tar.gz"}:
+        raise RuntimeError(f"unexpected rewritten cache artifact URLs: {rewritten_urls}")
+    run(
+        [
+            sys.executable,
+            "scripts/check_cache_artifacts.py",
+            str(rewritten_manifest),
+            "--repo-root",
+            str(fake_repo),
+            "--archive-dir",
+            str(out_dir),
+            "--verify-local",
+        ],
+        cwd=repo_root,
+    )
     run(
         [
             sys.executable,

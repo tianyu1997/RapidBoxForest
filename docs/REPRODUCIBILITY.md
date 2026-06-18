@@ -391,6 +391,17 @@ rerun with `--url-base` or edit the URL fields, then validate without
 `--allow-placeholders`. `--url-base` must be an HTTPS URL so the generated
 manifest is suitable for public release checks.
 
+If the archives were already packaged locally and only the upload URL changed,
+rewrite the manifest URLs without re-running the expensive archive step:
+
+```bash
+python3 scripts/fill_cache_artifact_urls.py \
+  outputs/cache_artifacts/cache_artifacts.json \
+  --url-base https://example.org/RapidBoxForest/cache \
+  --out outputs/cache_artifacts/cache_artifacts.release.json \
+  --force
+```
+
 ## Active Paper Assets
 
 The current main generated assets are:

@@ -45,6 +45,7 @@ REQUIRED_FILES = (
     "docs/OPEN_SOURCE_RELEASE_CHECKLIST.md",
     "scripts/check_cache_artifacts.py",
     "scripts/package_cache_artifacts.py",
+    "scripts/fill_cache_artifact_urls.py",
     "scripts/check_paper_result_sources.py",
     "scripts/check_release_readiness.py",
     "scripts/check_public_package.py",

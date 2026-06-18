@@ -49,6 +49,9 @@ local paths, and discarded implementation attempts.
 - `scripts/package_cache_artifacts.py` packages selected local LECT cache
   directories and writes a filled cache artifact manifest with archive and
   unpacked-directory SHA256 values.
+- `scripts/fill_cache_artifact_urls.py` rewrites archive URLs in an already
+  packaged cache-artifact manifest after the archives are uploaded, without
+  rebuilding large tarballs.
 - `scripts/check_paper_result_sources.py` validates
   `paper/generated/tro_table_generation_manifest.json`, generated paper asset
   hashes, source-artifact references, and optional local `outputs/` artifacts.
@@ -379,10 +382,21 @@ Validated on 2026-06-18:
    which avoids uploading duplicate IIWA cache bundles for Exp.4 and Exp.6.
 
    Upload the archives, fill or regenerate the HTTPS URL fields, then validate
-   the filled manifest before release. The filled manifest must not contain
-   placeholders and must use exact 64-character lowercase SHA256 values. With
-   `--verify-local`, the checker recomputes each unpacked cache directory hash
-   and rejects stale or mismatched `unpacked.directory_sha256` entries:
+   the filled manifest before release. If the archives are already packaged,
+   rewrite URLs without rebuilding them:
+
+   ```bash
+   python3 scripts/fill_cache_artifact_urls.py \
+     outputs/cache_artifacts/cache_artifacts.json \
+     --url-base https://example.org/RapidBoxForest/cache \
+     --out outputs/cache_artifacts/cache_artifacts.release.json \
+     --force
+   ```
+
+   The filled manifest must not contain placeholders and must use exact
+   64-character lowercase SHA256 values. With `--verify-local`, the checker
+   recomputes each unpacked cache directory hash and rejects stale or mismatched
+   `unpacked.directory_sha256` entries:
 
    ```bash
    python3 scripts/check_cache_artifacts.py \

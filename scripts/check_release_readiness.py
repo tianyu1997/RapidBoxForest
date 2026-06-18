@@ -32,6 +32,7 @@ REQUIRED_RELEASE_FILES = (
     "scripts/check_release_readiness.py",
     "scripts/check_cache_artifacts.py",
     "scripts/package_cache_artifacts.py",
+    "scripts/fill_cache_artifact_urls.py",
     "scripts/check_paper_result_sources.py",
     "scripts/check_public_package.py",
     "scripts/package_public_release.py",
