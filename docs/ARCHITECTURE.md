@@ -192,7 +192,10 @@ src/planning_forest_dynamic_cache.cpp
                                    dirty-region checks, collision-cache promotion,
                                    dynamic segment fallback, and removed-box refill
                                    helpers
-src/planning_forest_overlay.cpp    partition overlay corridor helpers
+src/planning_forest_overlay.cpp    partition box/portal overlay corridor helpers
+src/planning_forest_overlay_edges.cpp
+                                   partition-first segment edge insertion,
+                                   OBB bridge/segment cover, and edge sync
 src/planning_forest_query.cpp      online query entry point, strict audit,
                                    final simplify, and local repair
 src/planning_forest_query_utils.cpp
