@@ -5,6 +5,7 @@
 
 #include "env_config.h"
 #include "planning_forest_audit.h"
+#include "planning_forest_query_bridge_corridor_utils.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_utils.h"
@@ -470,41 +471,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         std::size_t direct_partition_append_base = boxes_.size();
         std::vector<std::vector<int>> sample_layers(samples.size());
         std::vector<bool> covered(samples.size(), false);
-        struct ResidualMilestone {
-            double param = 0.0;
-            Eigen::VectorXd point;
-            int box_index = -1;
-        };
-        std::vector<ResidualMilestone> repair_milestones;
+        std::vector<QueryBridgeResidualMilestone> repair_milestones;
         repair_milestones.reserve(samples.size());
-        auto seed_path_param = [&](const Eigen::VectorXd& seed, int transition_hint) {
-            if (samples.empty()) {
-                return 0.0;
-            }
-            if (transition_hint >= 0 &&
-                transition_hint + 1 < static_cast<int>(samples.size())) {
-                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition_hint)];
-                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition_hint + 1)];
-                const Eigen::VectorXd delta = b - a;
-                const double denom = delta.squaredNorm();
-                double u = 0.5;
-                if (denom > 1e-18) {
-                    u = (seed - a).dot(delta) / denom;
-                    u = std::min(1.0, std::max(0.0, u));
-                }
-                return static_cast<double>(transition_hint) + u;
-            }
-            double best_distance = std::numeric_limits<double>::infinity();
-            std::size_t best_index = 0;
-            for (std::size_t index = 0; index < samples.size(); ++index) {
-                const double distance = (seed - samples[index]).squaredNorm();
-                if (distance < best_distance) {
-                    best_distance = distance;
-                    best_index = index;
-                }
-            }
-            return static_cast<double>(best_index);
-        };
         auto mark_from_index = [&](std::size_t from_index) {
             const auto mark_t0 = Clock::now();
             int changed = 0;
@@ -568,44 +536,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         };
         mark_from_index(0);
 
-        struct LocalDsu {
-            std::vector<int> parent;
-            explicit LocalDsu(std::size_t count = 0) : parent(count) {
-                for (std::size_t index = 0; index < parent.size(); ++index) {
-                    parent[index] = static_cast<int>(index);
-                }
-            }
-            int add() {
-                const int id = static_cast<int>(parent.size());
-                parent.push_back(id);
-                return id;
-            }
-            int find(int value) {
-                int root = value;
-                while (parent[static_cast<std::size_t>(root)] != root) {
-                    root = parent[static_cast<std::size_t>(root)];
-                }
-                while (parent[static_cast<std::size_t>(value)] != value) {
-                    const int next = parent[static_cast<std::size_t>(value)];
-                    parent[static_cast<std::size_t>(value)] = root;
-                    value = next;
-                }
-                return root;
-            }
-            void unite(int lhs, int rhs) {
-                if (lhs < 0 || rhs < 0 ||
-                    lhs >= static_cast<int>(parent.size()) ||
-                    rhs >= static_cast<int>(parent.size())) {
-                    return;
-                }
-                const int left = find(lhs);
-                const int right = find(rhs);
-                if (left != right) {
-                    parent[static_cast<std::size_t>(right)] = left;
-                }
-            }
-        };
-        LocalDsu dsu(boxes_.size());
+        QueryBridgeLocalDsu dsu(boxes_.size());
         double transition_connected_ms = 0.0;
         double bad_transitions_ms = 0.0;
         double current_cover_ms = 0.0;
@@ -1380,7 +1311,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 const int covered_count = assimilate_box(duplicate_index, transition_hint);
                 if (covered_count == 0) {
                     repair_milestones.push_back(
-                        {seed_path_param(seed, transition_hint), seed, duplicate_index});
+                        {query_bridge_seed_path_param(samples, seed, transition_hint), seed, duplicate_index});
                 }
                 return finish(duplicate_index);
             }
@@ -1430,7 +1361,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             const int covered_count = assimilate_box(box_index, transition_hint);
             if (covered_count == 0) {
                 repair_milestones.push_back(
-                    {seed_path_param(seed, transition_hint), seed, box_index});
+                    {query_bridge_seed_path_param(samples, seed, transition_hint), seed, box_index});
             }
             return finish(box_index);
         };
@@ -1507,11 +1438,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             env_int_or_default("RBF_QUERY_BRIDGE_FFB_DIAGNOSTICS", 0) != 0;
         const std::vector<Interval> direct_planning_domain =
             oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
-        struct DirectFfbTask {
-            Eigen::VectorXd seed;
-            std::size_t sample_index = 0;
-            int transition_hint = 0;
-        };
         context.diagnostics().set_value(
             "query_bridge.direct_corridor_ffb_diagnostics_enabled",
             direct_options.record_diagnostics ? 1.0 : 0.0);
@@ -1522,7 +1448,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         double adaptive_repair_ffb_ms = 0.0;
         double lateral_repair_ffb_ms = 0.0;
         double residual_segment_audit_ms = 0.0;
-        std::vector<DirectFfbTask> direct_tasks;
+        std::vector<QueryBridgeDirectFfbTask> direct_tasks;
         direct_tasks.reserve(samples.size());
         const int max_transition_hint =
             std::max(0, static_cast<int>(samples.size()) - 2);
@@ -1756,77 +1682,19 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                           repair_loop_t0).count();
         }
         std::vector<int> final_bad = bad_transitions();
-        auto transition_length = [&](int transition) {
-            if (transition < 0 ||
-                transition + 1 >= static_cast<int>(samples.size())) {
-                return 0.0;
-            }
-            return (samples[static_cast<std::size_t>(transition + 1)] -
-                    samples[static_cast<std::size_t>(transition)]).norm();
-        };
-        auto bad_transition_length_sum = [&](const std::vector<int>& transitions) {
-            double total = 0.0;
-            for (int transition : transitions) {
-                total += transition_length(transition);
-            }
-            return total;
-        };
         auto bad_transition_fraction = [&](const std::vector<int>& transitions) {
-            const double denominator =
-                audited_bridge_length > 1e-12
-                    ? audited_bridge_length
-                    : std::max(1e-12, waypoint_length(samples));
-            return bad_transition_length_sum(transitions) / denominator;
+            return query_bridge_transition_fraction(samples,
+                                                    transitions,
+                                                    audited_bridge_length,
+                                                    waypoint_length(samples));
         };
         const int adaptive_repair_priority_mode =
             env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY", 1);
         auto order_adaptive_repair_transitions =
             [&](const std::vector<int>& transitions) {
-                if (adaptive_repair_priority_mode <= 0 || transitions.size() < 2) {
-                    return transitions;
-                }
-                struct GapGroup {
-                    int begin = 0;
-                    int end = 0;
-                    double length = 0.0;
-                };
-                std::vector<GapGroup> groups;
-                groups.reserve(transitions.size());
-                for (int transition : transitions) {
-                    if (groups.empty() ||
-                        transition > groups.back().end + 1) {
-                        groups.push_back({transition,
-                                          transition,
-                                          transition_length(transition)});
-                    } else {
-                        groups.back().end = transition;
-                        groups.back().length += transition_length(transition);
-                    }
-                }
-                std::stable_sort(groups.begin(), groups.end(), [](const GapGroup& lhs,
-                                                                   const GapGroup& rhs) {
-                    if (std::abs(lhs.length - rhs.length) > 1e-12) {
-                        return lhs.length > rhs.length;
-                    }
-                    return lhs.begin < rhs.begin;
-                });
-                std::vector<int> ordered;
-                ordered.reserve(transitions.size());
-                for (const auto& group : groups) {
-                    const int center = (group.begin + group.end) / 2;
-                    ordered.push_back(center);
-                    for (int radius = 1;
-                         center - radius >= group.begin || center + radius <= group.end;
-                         ++radius) {
-                        if (center - radius >= group.begin) {
-                            ordered.push_back(center - radius);
-                        }
-                        if (center + radius <= group.end) {
-                            ordered.push_back(center + radius);
-                        }
-                    }
-                }
-                return ordered;
+                return query_bridge_order_transitions_by_gap_length(samples,
+                                                                    transitions,
+                                                                    adaptive_repair_priority_mode);
             };
         int adaptive_repair_calls = 0;
         int adaptive_repair_added = 0;
@@ -2079,16 +1947,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
         int local_segment_edges_added = 0;
         int local_segment_gap_samples_max = 0;
-        auto nearest_nonempty_layer = [&](int start_index, int direction) {
-            int index = start_index;
-            while (index >= 0 && index < static_cast<int>(sample_layers.size())) {
-                if (!sample_layers[static_cast<std::size_t>(index)].empty()) {
-                    return index;
-                }
-                index += direction;
-            }
-            return -1;
-        };
         if (!final_bad.empty() &&
             allow_residual_segments &&
             config_.connector.segment_edges_enabled &&
@@ -2181,7 +2039,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 return false;
             };
             if (residual_milestone_segments) {
-                std::vector<ResidualMilestone> milestones;
+                std::vector<QueryBridgeResidualMilestone> milestones;
                 milestones.reserve(samples.size() + repair_milestones.size());
                 for (std::size_t sample_index = 0; sample_index < sample_layers.size(); ++sample_index) {
                     const auto& layer = sample_layers[sample_index];
@@ -2200,14 +2058,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 }
                 std::stable_sort(milestones.begin(),
                                  milestones.end(),
-                                 [](const ResidualMilestone& lhs,
-                                    const ResidualMilestone& rhs) {
+                                 [](const QueryBridgeResidualMilestone& lhs,
+                                    const QueryBridgeResidualMilestone& rhs) {
                                      if (std::abs(lhs.param - rhs.param) > 1e-9) {
                                          return lhs.param < rhs.param;
                                      }
                                      return lhs.box_index < rhs.box_index;
                                  });
-                std::vector<ResidualMilestone> compact;
+                std::vector<QueryBridgeResidualMilestone> compact;
                 compact.reserve(milestones.size());
                 for (const auto& milestone : milestones) {
                     if (milestone.box_index < 0) {
@@ -2242,9 +2100,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 const auto gap_group = pending_gap_groups.back();
                 pending_gap_groups.pop_back();
                 const int lhs_sample =
-                    nearest_nonempty_layer(gap_group.first, -1);
+                    query_bridge_nearest_nonempty_layer(sample_layers, gap_group.first, -1);
                 const int rhs_sample =
-                    nearest_nonempty_layer(gap_group.second + 1, 1);
+                    query_bridge_nearest_nonempty_layer(sample_layers, gap_group.second + 1, 1);
                 if (lhs_sample < 0 || rhs_sample < 0 || lhs_sample >= rhs_sample) {
                     continue;
                 }

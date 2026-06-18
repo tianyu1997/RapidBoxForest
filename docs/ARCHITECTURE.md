@@ -192,6 +192,10 @@ src/planning_forest_query_bridge_batch_utils.cpp
 src/planning_forest_query_bridge.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation
+src/planning_forest_query_bridge_corridor_utils.cpp
+                                   direct-corridor paving local data structures,
+                                   DSU, transition ordering, and residual-gap
+                                   helper functions
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting
