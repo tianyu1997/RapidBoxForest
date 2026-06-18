@@ -120,6 +120,7 @@ Current source-file boundaries:
 src/runtime.cpp                    runtime budget, deadline, and diagnostics helpers
 src/find_free_box.cpp              seed-to-certified-box search service
 src/grower.cpp                     forest grower implementations
+src/grower_trace.cpp               optional RRT grower JSON trace output
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
