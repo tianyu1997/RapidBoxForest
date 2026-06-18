@@ -6,7 +6,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "c6f3f0cbc81c767cf8df50408c5594c0294fd60ee941ccdda018c6b2540a277b"
+      "sha256": "fbc2f62aff01d148ac9fd7806c4c87dc1c5fdb9d4e80f5c53fb4d3bf77599f5b"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
@@ -20,7 +20,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "b83fbbd4df4753cb2322e3f088b28e23ca3ac446d0710f16d1b530c6a812fed6"
+      "sha256": "f55c994f9d93ddb04df747becdabb362212df8fd9cc92c54e8d13b9e2007645c"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
@@ -34,7 +34,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "23926d4b06dce8a4bcfb191d68fb0edbe3afba6fe6868c19bee73b72cb629b86"
+      "sha256": "b132cc6a84db3ea24b50a8bc21968b94620b8c591d112e570f34a970480b5c64"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
@@ -47,13 +47,13 @@
       "exists": true,
       "path": "paper/generated/tab_tro_dynamic_update.tex",
       "placeholder": false,
-      "sha256": "7f002c4aa0df2bc003b15be1f61c9bbb754523121f6307a8038c5d5514556350"
+      "sha256": "6a8bbb5524cd99a71c7e9b321d4047da5f639647c001069762b2514d98cd0723"
     },
     "tab_tro_endpoint_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_endpoint_envelope.tex",
       "placeholder": false,
-      "sha256": "e2a2349892f265c646412473ce70019970442d14bdd10717295d59d46a0d2c6e"
+      "sha256": "16f50584b9c099add12caa4222831dd76d07deed286ece513c0e061bb04ab1df"
     },
     "tab_tro_link_envelope.tex": {
       "exists": true,
@@ -65,32 +65,32 @@
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "8a6357cb99e41146a23f5b5b7564f7860074528db5adc98f42c472a7b4a658d4"
+      "sha256": "a2b7f24fc3543f833add20b8896f25fbf323e4c9db21cb16c3490d7c5cd13219"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "65cce2615a0998886c61b37bf3297b0f1dacdf63771d7877690baa7f6a77a7b3"
+      "sha256": "e4491f3e569c6f27b8ec7bbb07d24002293d043612c7fd1799346ac8cca65f1e"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "58a2bd5b542e9950faeaa00ef41fac7cb42e2553cfc2ac324ee90c0beaaf1470"
+      "sha256": "f9536adff63dbc8361afc0ed9f926b99bed333c23ce6ac0c2850cbe8fc526065"
     }
   },
   "environment": {
     "cwd": ".",
-    "git_sha": "4f4724c13506",
+    "git_sha": "99cdb951dbd4",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 22012,
-      "VmHWM_kb": 31804,
-      "VmRSS_kb": 31804,
-      "VmSize_kb": 36708
+      "VmData_kb": 22128,
+      "VmHWM_kb": 31908,
+      "VmRSS_kb": 31908,
+      "VmSize_kb": 36824
     },
     "processor": "x86_64",
     "python": "3.10.19",

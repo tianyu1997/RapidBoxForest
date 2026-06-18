@@ -282,7 +282,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Endpoint AABB source comparison at fixed joint-box widths. IFK and HIFK are certificate-backed sources. Critical sample, Analytical, and MC are diagnostic or reference sources; Worst gap reports the largest per-axis shortfall against their sampling-union reference.}",
+        r"\captionof{table}{Endpoint AABB source comparison at fixed joint-box widths. IFK-AA and HIFK are certificate-backed sources. Critical sample, Analytical, and MC are diagnostic or reference sources; Worst gap reports the largest per-axis shortfall against their sampling-union reference.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",

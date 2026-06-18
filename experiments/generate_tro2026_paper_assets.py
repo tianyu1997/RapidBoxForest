@@ -1815,7 +1815,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostic or reference rows. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}",
+        r"{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK-AA and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostic or reference rows. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}",
         r"\par\endgroup",
         "",
     ])
