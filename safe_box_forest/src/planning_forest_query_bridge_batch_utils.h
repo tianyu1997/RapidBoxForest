@@ -236,6 +236,18 @@ void run_query_bridge_task_attempts(
     const RBFPlanningConfig& config,
     StageContext& context);
 
+void improve_query_bridge_waypoint_if_needed(
+    QueryBridgeSearchTask& task,
+    int attempts_already_used,
+    double& best_length,
+    std::vector<Eigen::VectorXd>& waypoint_path,
+    const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
+    const QueryBridgeRetryOptions& retry_options,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context);
+
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
