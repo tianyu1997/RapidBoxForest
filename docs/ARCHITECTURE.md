@@ -126,6 +126,10 @@ src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra h
 src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
+src/planning_forest_adaptive_build.cpp
+                                   adaptive deep leaf sweep, budgeted merge,
+                                   query-root refinement, and leaf-sweep refine
+                                   build backends
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
@@ -154,14 +158,12 @@ src/planning_forest_qroot_helpers.cpp
 src/planning_forest_query_bridge.cpp
                                    online endpoint anchoring, query bridge, and
                                    local repair orchestration
-src/safe_box_forest.cpp            remaining facade orchestration and build-stage
-                                   implementation blocks pending extraction
 ```
 
 New production features should normally land in the smallest matching module
-above. `src/safe_box_forest.cpp` is currently a compatibility/orchestration
-holding file; adding new algorithm branches there should be treated as a
-temporary step with a follow-up extraction.
+above. Large experimental branches should be isolated behind typed
+configuration and placed in the matching module instead of reintroducing a
+monolithic facade implementation file.
 
 The former sidecar prototype tree has been retired. Its useful mechanisms are
 now production code in `lect_database` and `safe_box_forest`; new experiments
@@ -196,10 +198,10 @@ separate production responsibilities inside `safe_box_forest`.
 
 Current cleanup priorities:
 
-1. Keep `RBFPlanningForest` as the stable public facade, but move large
-   implementation blocks out of `src/safe_box_forest.cpp` by responsibility:
-   coverage build, adaptive partition maintenance, query repair/corridors,
-   dynamic update, and diagnostics.
+1. Keep `RBFPlanningForest` as the stable public facade and keep production
+   code in responsibility-oriented modules. Do not reintroduce a monolithic
+   `safe_box_forest.cpp`; remaining large modules should be split only when a
+   clearer responsibility boundary is available.
 2. Treat environment-variable controls as temporary experiment overrides.
    Production behavior should come from typed config structs or named
    experiment profiles; debug-only `RBF_*` switches should not define the

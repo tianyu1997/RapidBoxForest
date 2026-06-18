@@ -92,6 +92,7 @@ add_library(sbf_core STATIC
     src/grower.cpp
     src/leaf_sweep_grower.cpp
     src/merger.cpp
+    src/planning_forest_adaptive_build.cpp
     src/planning_forest_audit.cpp
     src/planning_forest_build.cpp
     src/planning_forest_core.cpp
@@ -110,7 +111,6 @@ add_library(sbf_core STATIC
     src/planning_forest_shortcut.cpp
     src/query.cpp
     src/runtime.cpp
-    src/safe_box_forest.cpp
 )
 add_library(SBF::core ALIAS sbf_core)
 set_target_properties(sbf_core PROPERTIES EXPORT_NAME core)
