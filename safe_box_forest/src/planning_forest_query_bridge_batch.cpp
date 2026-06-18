@@ -68,9 +68,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return query_bridge_result_acceptable(current, start, goal, bridge_acceptance);
     };
     const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
-    auto query_bridge_forced_index = [&](std::size_t index) {
-        return query_bridge_index_forced(index_options, index);
-    };
     const QueryBridgePartitionPathFirstOptions partition_path_first_options =
         query_bridge_partition_path_first_options_from_env(partition_native_mode());
 
@@ -80,7 +77,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (starts[index].size() != goals[index].size()) {
             throw std::invalid_argument("bridge_queries received a start/goal dimension mismatch");
         }
-        const bool forced_task = query_bridge_forced_index(index);
+        const bool forced_task = query_bridge_index_forced(index_options, index);
         QueryResult initial_query;
         bool has_initial_query = false;
         if (!forced_task || partition_path_first_options.enabled) {
@@ -906,7 +903,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                           parallel_rrt_options);
     };
     auto query_bridge_forced = [&](const QueryBridgeSearchTask& task) {
-        return query_bridge_forced_index(task.index);
+        return query_bridge_index_forced(index_options, task.index);
     };
     auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
         if (query_bridge_index_segment_only(index_options, task.index)) {
