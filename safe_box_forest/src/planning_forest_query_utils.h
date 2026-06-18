@@ -78,6 +78,15 @@ std::vector<Eigen::VectorXd> extract_partition_waypoints_local(
 Eigen::VectorXd closest_point_in_box(const BoxNode& box,
                                      const Eigen::Ref<const Eigen::VectorXd>& point);
 
+double interval_point_gap_local(const Interval& interval, double value);
+
+double intervals_point_gap_local(const std::vector<Interval>& intervals,
+                                 const Eigen::Ref<const Eigen::VectorXd>& point);
+
+bool intervals_contain_point_local(const std::vector<Interval>& intervals,
+                                   const Eigen::Ref<const Eigen::VectorXd>& point,
+                                   double tolerance);
+
 std::optional<std::pair<double, double>> segment_box_parameter_interval(
     const Eigen::Ref<const Eigen::VectorXd>& a,
     const Eigen::Ref<const Eigen::VectorXd>& b,

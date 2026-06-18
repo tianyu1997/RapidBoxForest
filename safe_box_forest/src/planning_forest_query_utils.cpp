@@ -597,6 +597,34 @@ Eigen::VectorXd closest_point_in_box(const BoxNode& box,
     return out;
 }
 
+double interval_point_gap_local(const Interval& interval, double value) {
+    if (value < interval.lo) {
+        return interval.lo - value;
+    }
+    if (value > interval.hi) {
+        return value - interval.hi;
+    }
+    return 0.0;
+}
+
+double intervals_point_gap_local(const std::vector<Interval>& intervals,
+                                 const Eigen::Ref<const Eigen::VectorXd>& point) {
+    if (point.size() != static_cast<int>(intervals.size())) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double gap = 0.0;
+    for (int dim = 0; dim < point.size(); ++dim) {
+        gap = std::max(gap, interval_point_gap_local(intervals[static_cast<std::size_t>(dim)], point[dim]));
+    }
+    return gap;
+}
+
+bool intervals_contain_point_local(const std::vector<Interval>& intervals,
+                                   const Eigen::Ref<const Eigen::VectorXd>& point,
+                                   double tolerance) {
+    return intervals_point_gap_local(intervals, point) <= tolerance;
+}
+
 std::optional<std::pair<double, double>> segment_box_parameter_interval(
     const Eigen::Ref<const Eigen::VectorXd>& a,
     const Eigen::Ref<const Eigen::VectorXd>& b,
