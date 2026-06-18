@@ -134,6 +134,7 @@ src/planning_forest_dynamic_cache.cpp
                                    dynamic collision cache, obstacle-removal regrow,
                                    dynamic segment fallback, and removed-box
                                    refill helpers
+src/planning_forest_overlay.cpp    partition overlay corridor helpers
 src/safe_box_forest.cpp            remaining facade orchestration and legacy-large
                                    implementation blocks pending extraction
 ```
