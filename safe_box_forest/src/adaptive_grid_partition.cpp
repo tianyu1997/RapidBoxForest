@@ -1081,9 +1081,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 	if (cells_.empty()) {
 		return;
 	}
-	const int indexed_threshold = std::max(
-		0,
-		env_int_or_default("RBF_PARTITION_INDEXED_ADJACENCY_THRESHOLD", 128));
+	const int indexed_threshold = partition_indexed_adjacency_threshold_from_env();
 	if (static_cast<int>(cells_.size()) < indexed_threshold) {
 		for (int cell_index = 0; cell_index < static_cast<int>(cells_.size()); ++cell_index) {
 			neighbor_cache_[static_cast<std::size_t>(cell_index)] =
@@ -1092,10 +1090,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 		return;
 	}
 	const int dims = static_cast<int>(split_counts_.size());
-	const int max_adjacency_dims = std::clamp(
-		env_int_or_default("RBF_PARTITION_ADJACENCY_DIMS", 4),
-		1,
-		std::min(7, std::max(1, dims)));
+	const int max_adjacency_dims = partition_adjacency_dim_limit_from_env(dims);
 	std::vector<int> selected_dims;
 	selected_dims.reserve(static_cast<std::size_t>(max_adjacency_dims));
 	std::vector<int> order(static_cast<std::size_t>(dims));
@@ -1124,14 +1119,9 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 		return;
 	}
 
-	const bool enable_cross_root_adjacency =
-		env_int_or_default("RBF_PARTITION_ENABLE_CROSS_ROOT_ADJACENCY", 1) != 0;
-	const std::uint64_t max_bins_per_cell = static_cast<std::uint64_t>(
-		std::max(64, env_int_or_default("RBF_PARTITION_BROADPHASE_MAX_BINS_PER_CELL", 4096)));
-	const int adjacency_bucket_bits = std::clamp(
-		env_int_or_default("RBF_PARTITION_ADJACENCY_BUCKET_BITS", 3),
-		1,
-		20);
+	const bool enable_cross_root_adjacency = partition_cross_root_adjacency_enabled_from_env();
+	const std::uint64_t max_bins_per_cell = partition_broadphase_max_bins_per_cell_from_env();
+	const int adjacency_bucket_bits = partition_adjacency_bucket_bits_from_env();
 	auto coarse_adjacency_coord = [&](const GridRange& range, int dim, bool upper) {
 		const int split_count = split_counts_[static_cast<std::size_t>(dim)];
 		const int shift = std::max(0, split_count - adjacency_bucket_bits);
@@ -1206,10 +1196,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 
 	std::unordered_set<std::uint64_t> tested_pairs;
 	tested_pairs.reserve(cells_.size() * 8);
-	const int max_neighbors_per_cell = static_cast<int>(cells_.size()) >=
-			env_int_or_default("RBF_PARTITION_SPARSE_NEIGHBOR_THRESHOLD", 5000)
-		? std::max(0, env_int_or_default("RBF_PARTITION_MAX_NEIGHBORS_PER_CELL", 0))
-		: 0;
+	const int max_neighbors_per_cell = partition_max_neighbors_per_cell_from_env(cells_.size());
 	auto add_edge_if_adjacent = [&](int lhs, int rhs) {
 		if (lhs == rhs ||
 			lhs < 0 || rhs < 0 ||
@@ -1528,10 +1515,7 @@ AdaptiveGridPartition::nearest_component_pairs_to_largest(int max_pairs_per_comp
 	}
 	const int per_component_limit = max_pairs_per_component > 0 ? max_pairs_per_component : 1;
 	const int cap = std::max(1, candidate_cap);
-	const std::uint64_t exact_pair_cap =
-		static_cast<std::uint64_t>(std::max(
-			1,
-			env_int_or_default("RBF_PARTITION_COMPONENT_PAIR_EXACT_CAP", 200000)));
+	const std::uint64_t exact_pair_cap = partition_component_pair_exact_cap_from_env();
 	const auto& main = components.front();
 	const std::vector<Interval> main_hull = interval_hull_for_cells(cells_, main);
 	pairs.reserve((components.size() - 1) * static_cast<std::size_t>(per_component_limit));
@@ -2170,7 +2154,7 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 		return result;
 	}
 	if (start_island != goal_island &&
-		env_int_or_default("RBF_PARTITION_QUERY_COMPONENT_PRUNE", 0) != 0 &&
+		partition_query_component_prune_enabled_from_env() &&
 		!same_component_with_overlay(result.start_box_id, result.goal_box_id)) {
 		result.search_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 		return result;
