@@ -6,6 +6,7 @@
 #include "planning_forest_diagnostics.h"
 
 #include <algorithm>
+#include <string>
 
 namespace rbf {
 
@@ -135,6 +136,64 @@ int RBFPlanningForest::try_add_query_residual_segment_edge(
         return 1;
     }
     return 0;
+}
+
+int RBFPlanningForest::try_add_query_direct_corridor_full_residual_edge(
+    int source_box_id,
+    int target_box_id,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    const RRTConnectConfig& bridge_rrt,
+    const CollisionChecker& checker,
+    StageContext& context,
+    int edge_query_index,
+    int batch_task_query_index,
+    bool local_overlay_connected,
+    bool count_without_local_overlay_attempt) {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return -1;
+    }
+    if (count_without_local_overlay_attempt) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_full_residual_without_local_overlay");
+    }
+    const PathAuditCheck full_residual_audit =
+        audit_waypoint_path(waypoint_path,
+                            checker,
+                            config_.query.audit_resolution,
+                            config_.query.audit_segment_step);
+    if (!full_residual_audit.passed) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_full_residual_audit_rejects");
+        return -2;
+    }
+    const int edge_id = add_segment_edge_partition_first(
+        source_box_id,
+        target_box_id,
+        waypoint_path,
+        SegmentEdgeType::QueryBridge,
+        bridge_rrt.segment_resolution,
+        SegmentEdgeValidation::CollisionChecked,
+        true,
+        edge_query_index);
+    if (edge_id < 0) {
+        return -1;
+    }
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_full_residual_edges");
+    if (local_overlay_connected) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_full_residual_edges_with_local_overlay");
+    } else {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_full_residual_edges_without_local_overlay");
+    }
+    if (batch_task_query_index >= 0) {
+        context.diagnostics().set_value(
+            "query_bridge.batch_task." + std::to_string(batch_task_query_index) +
+                ".direct_corridor_full_residual_edge",
+            1.0);
+    }
+    return edge_id;
 }
 
 } // namespace rbf

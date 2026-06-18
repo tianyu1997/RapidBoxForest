@@ -2020,33 +2020,18 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     direct_corridor_options.full_residual_overlay_when_connected;
                 int full_edge_id = -1;
                 if (add_full_residual_overlay_when_connected) {
-                    const PathAuditCheck full_residual_audit =
-                        audit_waypoint_path(corridor_path,
-                                            checker,
-                                            config_.query.audit_resolution,
-                                            config_.query.audit_segment_step);
-                    if (full_residual_audit.passed) {
-                        full_edge_id = add_segment_edge_partition_first(
+                    full_edge_id =
+                        try_add_query_direct_corridor_full_residual_edge(
                             source_box_id,
                             target_box_id,
                             corridor_path,
-                            SegmentEdgeType::QueryBridge,
-                            bridge_rrt.segment_resolution,
-                            SegmentEdgeValidation::CollisionChecked,
+                            bridge_rrt,
+                            checker,
+                            context,
+                            bridge_edge_query_index,
+                            query_index,
                             true,
-                            bridge_edge_query_index);
-                        if (full_edge_id >= 0) {
-                            context.diagnostics().add_counter(
-                                "query_bridge.direct_corridor_full_residual_edges");
-                            context.diagnostics().add_counter(
-                                "query_bridge.direct_corridor_full_residual_edges_with_local_overlay");
-                            set_query_bridge_task_value("direct_corridor_full_residual_edge",
-                                                        1.0);
-                        }
-                    } else {
-                        context.diagnostics().add_counter(
-                            "query_bridge.direct_corridor_full_residual_audit_rejects");
-                    }
+                            false);
                 }
                 try_adopt_certified_subchain(source_box_id,
                                              target_box_id,
@@ -2057,38 +2042,22 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                     direct_added + repair_added + local_segment_edges_added +
                         (full_edge_id >= 0 ? 1 : 0));
             }
-            context.diagnostics().add_counter(
-                "query_bridge.direct_corridor_full_residual_without_local_overlay");
-            const PathAuditCheck full_residual_audit =
-                audit_waypoint_path(corridor_path,
-                                    checker,
-                                    config_.query.audit_resolution,
-                                    config_.query.audit_segment_step);
-            if (!full_residual_audit.passed) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_full_residual_audit_rejects");
+            const int edge_id = try_add_query_direct_corridor_full_residual_edge(
+                source_box_id,
+                target_box_id,
+                corridor_path,
+                bridge_rrt,
+                checker,
+                context,
+                bridge_edge_query_index,
+                query_index,
+                false,
+                true);
+            if (edge_id == -2) {
                 invalidate_query_cache();
                 return finish_query_bridge_direct_corridor(
                     boxes_before_direct_corridor,
                     direct_added + repair_added + local_segment_edges_added);
-            }
-            const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                                 target_box_id,
-                                                                 corridor_path,
-                                                                 SegmentEdgeType::QueryBridge,
-                                                                 bridge_rrt.segment_resolution,
-                                                                 SegmentEdgeValidation::CollisionChecked,
-                                                                 true,
-                                                                 bridge_edge_query_index);
-            if (edge_id >= 0) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_full_residual_edges");
-                if (!locally_overlay_connected) {
-                    context.diagnostics().add_counter(
-                        "query_bridge.direct_corridor_full_residual_edges_without_local_overlay");
-                }
-                set_query_bridge_task_value("direct_corridor_full_residual_edge",
-                                            1.0);
             }
             try_adopt_certified_subchain(source_box_id,
                                          target_box_id,

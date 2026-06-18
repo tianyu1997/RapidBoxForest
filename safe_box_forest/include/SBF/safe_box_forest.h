@@ -578,6 +578,17 @@ private:
 											double depth_failures_before,
 											int query_index,
 											bool enabled);
+	int try_add_query_direct_corridor_full_residual_edge(
+		int source_box_id,
+		int target_box_id,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const RRTConnectConfig& bridge_rrt,
+		const CollisionChecker& checker,
+		StageContext& context,
+		int edge_query_index,
+		int batch_task_query_index,
+		bool local_overlay_connected,
+		bool count_without_local_overlay_attempt);
 	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
 												  const Eigen::Ref<const Eigen::VectorXd>& goal,
 												  StageContext& context);
