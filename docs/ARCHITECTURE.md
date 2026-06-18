@@ -187,7 +187,8 @@ src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
 src/planning_forest_query_bridge_batch_utils.cpp
                                    query bridge batch task records and oracle
-                                   counter aggregation helpers
+                                   counter aggregation, acceptance, and route
+                                   scoring helpers
 src/planning_forest_query_bridge.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation

@@ -5,9 +5,17 @@
 
 #include <Eigen/Core>
 
+#include <string>
 #include <vector>
 
 namespace rbf {
+
+struct QueryBridgeAcceptanceThresholds {
+    double max_segment_fraction = 0.25;
+    double path_ratio = 1.50;
+    double path_additive = 0.75;
+    double max_path_length = 4.5;
+};
 
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
@@ -37,6 +45,21 @@ struct QueryBridgeSearchJob {
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after);
+
+std::string query_bridge_task_key(std::size_t index, const std::string& suffix);
+
+double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
+                                              const Eigen::VectorXd& a,
+                                              const Eigen::VectorXd& b);
+
+double query_bridge_point_polyline_distance_sq(
+    const Eigen::VectorXd& point,
+    const std::vector<Eigen::VectorXd>& path);
+
+bool query_bridge_result_acceptable(const QueryResult& current,
+                                    const Eigen::VectorXd& start,
+                                    const Eigen::VectorXd& goal,
+                                    const QueryBridgeAcceptanceThresholds& thresholds);
 
 void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
                                                     StageContext& context,

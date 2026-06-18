@@ -1,5 +1,8 @@
 #include "planning_forest_query_bridge_batch_utils.h"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
 #include <string>
 
 namespace rbf {
@@ -69,14 +72,71 @@ void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                       before.envelope_collision_gjk_tests);
 }
 
+std::string query_bridge_task_key(std::size_t index, const std::string& suffix) {
+    return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
+}
+
+double query_bridge_point_segment_distance_sq(const Eigen::VectorXd& point,
+                                              const Eigen::VectorXd& a,
+                                              const Eigen::VectorXd& b) {
+    if (point.size() != a.size() || point.size() != b.size()) {
+        return std::numeric_limits<double>::infinity();
+    }
+    const Eigen::VectorXd ab = b - a;
+    const double denom = ab.squaredNorm();
+    if (denom <= 1e-18) {
+        return (point - a).squaredNorm();
+    }
+    const double t = std::clamp((point - a).dot(ab) / denom, 0.0, 1.0);
+    return (point - (a + t * ab)).squaredNorm();
+}
+
+double query_bridge_point_polyline_distance_sq(
+    const Eigen::VectorXd& point,
+    const std::vector<Eigen::VectorXd>& path) {
+    if (path.empty()) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double best = std::numeric_limits<double>::infinity();
+    for (std::size_t index = 1; index < path.size(); ++index) {
+        best = std::min(best,
+                        query_bridge_point_segment_distance_sq(point,
+                                                               path[index - 1],
+                                                               path[index]));
+    }
+    if (path.size() == 1) {
+        best = (point - path.front()).squaredNorm();
+    }
+    return best;
+}
+
+bool query_bridge_result_acceptable(const QueryResult& current,
+                                    const Eigen::VectorXd& start,
+                                    const Eigen::VectorXd& goal,
+                                    const QueryBridgeAcceptanceThresholds& thresholds) {
+    if (!current.success || !current.audit_passed) {
+        return false;
+    }
+    const double raw_length =
+        current.raw_path_length > 1e-12 ? current.raw_path_length : current.path_length;
+    const double segment_fraction =
+        raw_length > 1e-12 ? current.segment_edge_length / raw_length
+                           : std::numeric_limits<double>::infinity();
+    if (!(segment_fraction <= thresholds.max_segment_fraction)) {
+        return false;
+    }
+    const double direct = (goal - start).norm();
+    return direct <= 1e-9 ||
+           current.path_length <= std::max(direct * thresholds.path_ratio,
+                                            direct + thresholds.path_additive) ||
+           current.path_length <= thresholds.max_path_length;
+}
+
 void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
                                                     StageContext& context,
                                                     std::size_t task_index) {
-    auto task_key = [](std::size_t index, const std::string& suffix) {
-        return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
-    };
     auto add = [&](const std::string& suffix, const std::string& total_key) {
-        const auto it = profile.diagnostics.find(task_key(task_index, suffix));
+        const auto it = profile.diagnostics.find(query_bridge_task_key(task_index, suffix));
         if (it != profile.diagnostics.end()) {
             context.diagnostics().add_counter(total_key, it->second);
         }
