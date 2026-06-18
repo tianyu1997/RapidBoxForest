@@ -87,6 +87,18 @@ bool intervals_contain_point_local(const std::vector<Interval>& intervals,
                                    const Eigen::Ref<const Eigen::VectorXd>& point,
                                    double tolerance);
 
+bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals,
+                                          const Eigen::Ref<const Eigen::VectorXd>& point,
+                                          double tolerance = 0.0);
+
+Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals);
+
+BoxNode adaptive_make_box_from_intervals(const std::vector<Interval>& intervals,
+                                         OracleNodeId node,
+                                         int id,
+                                         BoxSafetyStatus status,
+                                         bool strict_audit_required);
+
 std::optional<std::pair<double, double>> segment_box_parameter_interval(
     const Eigen::Ref<const Eigen::VectorXd>& a,
     const Eigen::Ref<const Eigen::VectorXd>& b,

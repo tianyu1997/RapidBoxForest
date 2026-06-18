@@ -625,6 +625,47 @@ bool intervals_contain_point_local(const std::vector<Interval>& intervals,
     return intervals_point_gap_local(intervals, point) <= tolerance;
 }
 
+bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals,
+                                          const Eigen::Ref<const Eigen::VectorXd>& point,
+                                          double tolerance) {
+    if (point.size() != static_cast<int>(intervals.size())) {
+        return false;
+    }
+    for (int dim = 0; dim < point.size(); ++dim) {
+        if (point[dim] < intervals[static_cast<std::size_t>(dim)].lo - tolerance ||
+            point[dim] > intervals[static_cast<std::size_t>(dim)].hi + tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
+Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals) {
+    Eigen::VectorXd center(static_cast<int>(intervals.size()));
+    for (int dim = 0; dim < center.size(); ++dim) {
+        center[dim] = intervals[static_cast<std::size_t>(dim)].center();
+    }
+    return center;
+}
+
+BoxNode adaptive_make_box_from_intervals(const std::vector<Interval>& intervals,
+                                         OracleNodeId node,
+                                         int id,
+                                         BoxSafetyStatus status,
+                                         bool strict_audit_required) {
+    BoxNode box;
+    box.id = id;
+    box.joint_intervals = intervals;
+    box.seed_config = adaptive_center_of_intervals(intervals);
+    box.tree_id = node;
+    box.parent_box_id = -1;
+    box.root_id = id;
+    box.safety_status = status;
+    box.strict_audit_required = strict_audit_required;
+    box.compute_volume();
+    return box;
+}
+
 std::optional<std::pair<double, double>> segment_box_parameter_interval(
     const Eigen::Ref<const Eigen::VectorXd>& a,
     const Eigen::Ref<const Eigen::VectorXd>& b,
