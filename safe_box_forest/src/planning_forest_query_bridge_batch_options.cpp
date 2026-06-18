@@ -25,6 +25,23 @@ QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env() {
     return thresholds;
 }
 
+void record_query_bridge_acceptance_diagnostics(
+    StageContext& context,
+    const QueryBridgeAcceptanceThresholds& thresholds) {
+    context.diagnostics().set_value(
+        "query_bridge.accept_segment_fraction",
+        thresholds.max_segment_fraction);
+    context.diagnostics().set_value(
+        "query_bridge.accept_path_ratio",
+        thresholds.path_ratio);
+    context.diagnostics().set_value(
+        "query_bridge.accept_path_additive",
+        thresholds.path_additive);
+    context.diagnostics().set_value(
+        "query_bridge.accept_max_path_length",
+        thresholds.max_path_length);
+}
+
 QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
     bool partition_native_mode) {
     QueryBridgePartitionPathFirstOptions options;
@@ -38,6 +55,20 @@ QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_f
         detail::env_double_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_MAX_SEGMENT_FRACTION",
                                       0.95));
     return options;
+}
+
+void record_query_bridge_partition_path_first_diagnostics(
+    StageContext& context,
+    const QueryBridgePartitionPathFirstOptions& options) {
+    context.diagnostics().set_value(
+        "query_bridge.partition_path_first",
+        options.enabled ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.partition_path_first_allow_long",
+        options.allow_long ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.partition_path_first_max_segment_fraction",
+        options.max_segment_fraction);
 }
 
 double query_bridge_rrt_clearance_from_env() {

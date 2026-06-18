@@ -190,8 +190,16 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
 
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 
+void record_query_bridge_acceptance_diagnostics(
+    StageContext& context,
+    const QueryBridgeAcceptanceThresholds& thresholds);
+
 QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
     bool partition_native_mode);
+
+void record_query_bridge_partition_path_first_diagnostics(
+    StageContext& context,
+    const QueryBridgePartitionPathFirstOptions& options);
 
 QueryBridgeRetryOptions query_bridge_retry_options_from_env();
 

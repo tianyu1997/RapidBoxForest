@@ -954,27 +954,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeParallelRrtOptions parallel_rrt_options =
         query_bridge_parallel_rrt_options_from_env();
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
-    batch_context.diagnostics().set_value(
-        "query_bridge.accept_segment_fraction",
-        bridge_acceptance.max_segment_fraction);
-    batch_context.diagnostics().set_value(
-        "query_bridge.accept_path_ratio",
-        bridge_acceptance.path_ratio);
-    batch_context.diagnostics().set_value(
-        "query_bridge.accept_path_additive",
-        bridge_acceptance.path_additive);
-    batch_context.diagnostics().set_value(
-        "query_bridge.accept_max_path_length",
-        bridge_acceptance.max_path_length);
-    batch_context.diagnostics().set_value(
-        "query_bridge.partition_path_first",
-        partition_path_first_options.enabled ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.partition_path_first_allow_long",
-        partition_path_first_options.allow_long ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.partition_path_first_max_segment_fraction",
-        partition_path_first_options.max_segment_fraction);
+    record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
+    record_query_bridge_partition_path_first_diagnostics(batch_context,
+                                                        partition_path_first_options);
     auto rrt_path_good_enough_for_task = [&](const QueryBridgeSearchTask& task,
                                              const std::vector<Eigen::VectorXd>& path) {
         return query_bridge_parallel_rrt_path_good_enough(task.start,
