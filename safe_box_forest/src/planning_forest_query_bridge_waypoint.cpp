@@ -1524,7 +1524,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return direct_corridor_added;
         }
         if (partition_native_mode()) {
-            context.diagnostics().add_counter(
+            skip_legacy_query_bridge_pave_if_partition_native(
+                context,
                 "query_bridge.partition_legacy_dense_chain_pave_skipped");
             dense_repair_attempted = true;
         }
@@ -1568,7 +1569,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                      short_local_bridge)
             : config_.connector.pave;
     int added = 0;
-    if (!partition_native_mode()) {
+    if (!skip_legacy_query_bridge_pave_if_partition_native(
+            context,
+            "query_bridge.partition_legacy_forward_chain_pave_skipped")) {
         added = run_query_bridge_chain_pave(
             corridor_path,
             start_box_id,
@@ -1576,9 +1579,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             context,
             pave_config,
             "query_bridge.forward_boundary_pave");
-    } else {
-        context.diagnostics().add_counter(
-            "query_bridge.partition_legacy_forward_chain_pave_skipped");
     }
     auto [source_box_id, target_box_id] =
         run_query_bridge_reverse_boundary_pave(start,
@@ -1632,16 +1632,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
         }
     }
-    if (!partition_native_mode()) {
+    if (!skip_legacy_query_bridge_pave_if_partition_native(
+            context,
+            "query_bridge.partition_legacy_gap_connector_skipped")) {
         IslandConnectorConfig gap_config = config_.connector;
         gap_config.max_total_bridge_boxes = 0;
         IslandConnector gap_connector(*oracle_, robot_, checker, gap_config);
         const auto gap_result = gap_connector.connect_all(boxes_, adjacency_, segment_edges_, next_id, context);
         (void)gap_result;
         invalidate_query_cache();
-    } else {
-        context.diagnostics().add_counter(
-            "query_bridge.partition_legacy_gap_connector_skipped");
     }
     source_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     target_box_id = locate_box_partition_first(goal, config_.query.nearest_if_outside);
