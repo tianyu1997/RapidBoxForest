@@ -82,6 +82,11 @@ struct QueryBridgeHybridizeAttemptOptions {
     int max_cross_checks = 4096;
 };
 
+struct QueryBridgeBatchExecutionOptions {
+    bool evaluate_all_fallback_paths = false;
+    bool parallel_task_rrt = true;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -151,6 +156,12 @@ void record_query_bridge_direct_line_fallback_diagnostics(
     const QueryBridgeDirectLineFallbackOptions& options);
 
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
+
+QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env();
+
+void record_query_bridge_batch_execution_diagnostics(
+    StageContext& context,
+    const QueryBridgeBatchExecutionOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
