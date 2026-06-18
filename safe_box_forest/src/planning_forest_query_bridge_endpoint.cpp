@@ -1237,4 +1237,12 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     return new_id;
 }
 
+int RBFPlanningForest::anchor_query_endpoint_box_with_diagnostics(
+    const Eigen::Ref<const Eigen::VectorXd>& point) {
+    StageContext anchor_context = StageContext::from_runtime(config_.runtime);
+    const int box_id = anchor_query_endpoint_box(point, anchor_context);
+    merge_diagnostic_snapshot(last_build_.diagnostics, anchor_context.diagnostics().snapshot());
+    return box_id;
+}
+
 } // namespace rbf

@@ -539,6 +539,7 @@ private:
 								   bool allow_collision_shortcut) const;
 	int anchor_query_endpoint_box(const Eigen::Ref<const Eigen::VectorXd>& point,
 								  StageContext& context);
+	int anchor_query_endpoint_box_with_diagnostics(const Eigen::Ref<const Eigen::VectorXd>& point);
 	int locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
 								   bool nearest_if_outside) const;
 	int locate_query_bridge_box(const Eigen::Ref<const Eigen::VectorXd>& point) const;
