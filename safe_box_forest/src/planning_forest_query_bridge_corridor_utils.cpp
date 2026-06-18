@@ -145,6 +145,47 @@ bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candid
                                       direct_segment_after_rrt_candidate ? 1 : 0) != 0;
 }
 
+QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_options(
+    int query_index,
+    double audit_step) {
+    QueryBridgeDirectCorridorRuntimeOptions options;
+    options.max_length =
+        std::max(0.0, detail::env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH", 6.5));
+    options.audit_step = audit_step > 0.0 ? audit_step : 0.01;
+    const double base_sample_step =
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
+                                      options.audit_step);
+    options.sample_step = std::max(
+        1e-4,
+        detail::env_indexed_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
+                                              query_index,
+                                              base_sample_step));
+    options.partition_neighbor_candidates =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES", 0) != 0;
+    options.immediate_partition_append =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE", 0) != 0;
+    options.partition_append_batch_size = options.immediate_partition_append
+        ? std::max(1,
+                   detail::env_int_or_default(
+                       "RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE",
+                       32))
+        : 0;
+    options.detailed_timing =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DETAILED_TIMING", 0) != 0;
+    options.local_sample_assimilation =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION", 1) != 0;
+    options.ffb_diagnostics =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_FFB_DIAGNOSTICS", 0) != 0;
+    options.group_residual_gaps =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
+    options.residual_milestone_segments =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_RESIDUAL_MILESTONE_SEGMENTS", 0) != 0;
+    options.full_residual_overlay_when_connected =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
+                                   0) != 0;
+    return options;
+}
+
 std::vector<int> query_bridge_order_transitions_by_gap_length(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<int>& transitions,

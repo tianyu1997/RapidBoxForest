@@ -3,7 +3,6 @@
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_utils.h"
 #include "planning_forest_diagnostics.h"
@@ -17,7 +16,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -29,14 +27,6 @@
 #include <vector>
 
 namespace rbf {
-
-using detail::env_double_list_or_empty;
-using detail::env_double_or_default;
-using detail::env_index_list_contains;
-using detail::env_indexed_double_or_default;
-using detail::env_indexed_int_or_default;
-using detail::env_int_list_or_empty;
-using detail::env_int_or_default;
 
 int RBFPlanningForest::bridge_query_with_waypoint_path(
     const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -359,8 +349,13 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 "query_bridge.direct_segment_after_rrt_add_fail");
         }
     }
-    const double dense_box_corridor_max_length =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH", 6.5));
+    const double direct_corridor_audit_step = config_.query.audit_segment_step > 0.0
+        ? config_.query.audit_segment_step
+        : 0.01;
+    const QueryBridgeDirectCorridorRuntimeOptions direct_corridor_options =
+        query_bridge_direct_corridor_runtime_options(query_index,
+                                                     direct_corridor_audit_step);
+    const double dense_box_corridor_max_length = direct_corridor_options.max_length;
     const bool dense_box_corridor_candidate =
         defer_query_segment_edge &&
         audited_bridge_length > 0.0 &&
@@ -388,17 +383,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             sync_adaptive_partition_segment_edges(&last_build_,
                                                   "query_bridge.direct_corridor");
         };
-        const double audit_step = config_.query.audit_segment_step > 0.0
-            ? config_.query.audit_segment_step
-            : 0.01;
-        const double base_sample_step =
-            env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
-                                  audit_step);
-        const double sample_step =
-            std::max(1e-4,
-                     env_indexed_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
-                                                   query_index,
-                                                   base_sample_step));
+        const double audit_step = direct_corridor_options.audit_step;
+        const double sample_step = direct_corridor_options.sample_step;
         context.diagnostics().set_value("query_bridge.direct_corridor_sample_step",
                                         sample_step);
         const std::vector<Eigen::VectorXd> samples =
@@ -413,18 +399,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             adaptive_partition_;
         const bool use_partition_neighbor_candidates =
             use_partition_cover_index &&
-            env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES", 0) != 0;
+            direct_corridor_options.partition_neighbor_candidates;
         const bool immediate_partition_append =
             use_partition_cover_index &&
-            env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE", 0) != 0;
+            direct_corridor_options.immediate_partition_append;
         const int partition_append_batch_size = immediate_partition_append
-            ? std::max(1,
-                       env_int_or_default(
-                           "RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE",
-                           32))
+            ? direct_corridor_options.partition_append_batch_size
             : 0;
-        const bool detailed_direct_timing =
-            env_int_or_default("RBF_QUERY_BRIDGE_DETAILED_TIMING", 0) != 0;
+        const bool detailed_direct_timing = direct_corridor_options.detailed_timing;
         context.diagnostics().set_value(
             "query_bridge.direct_corridor_partition_neighbor_candidates_enabled",
             use_partition_neighbor_candidates ? 1.0 : 0.0);
@@ -551,7 +533,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         int direct_partition_append_calls = 0;
         int direct_partition_append_boxes = 0;
         const bool local_assimilate_sample_scan =
-            env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION", 1) != 0;
+            direct_corridor_options.local_sample_assimilation;
         int assimilate_local_hits = 0;
         int assimilate_full_scan_fallbacks = 0;
         int assimilate_local_sample_tests = 0;
@@ -1415,8 +1397,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         direct_options.reject_seed_collision = false;
         direct_options.skip_existing_cover_check = true;
         direct_options.materialize_result_node = false;
-        direct_options.record_diagnostics =
-            env_int_or_default("RBF_QUERY_BRIDGE_FFB_DIAGNOSTICS", 0) != 0;
+        direct_options.record_diagnostics = direct_corridor_options.ffb_diagnostics;
         const std::vector<Interval> direct_planning_domain =
             oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
         context.diagnostics().set_value(
@@ -1754,7 +1735,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             const auto residual_segment_loop_t0 =
                 detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const bool group_residual_gaps =
-                env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
+                direct_corridor_options.group_residual_gaps;
             const std::vector<std::pair<int, int>> gap_groups =
                 query_bridge_group_residual_gap_transitions(final_bad,
                                                             sample_layers.size(),
@@ -1768,7 +1749,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 pending_gap_groups.push_back(*it);
             }
             const bool residual_milestone_segments =
-                env_int_or_default("RBF_QUERY_BRIDGE_RESIDUAL_MILESTONE_SEGMENTS", 0) != 0;
+                direct_corridor_options.residual_milestone_segments;
             context.diagnostics().set_value(
                 "query_bridge.direct_corridor_residual_milestone_segments",
                 residual_milestone_segments ? 1.0 : 0.0);
@@ -2226,9 +2207,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                         locally_overlay_connected ? 1.0 : 0.0);
             if (locally_overlay_connected) {
                 const bool add_full_residual_overlay_when_connected =
-                    env_int_or_default(
-                        "RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
-                        0) != 0;
+                    direct_corridor_options.full_residual_overlay_when_connected;
                 int full_edge_id = -1;
                 if (add_full_residual_overlay_when_connected) {
                     const PathAuditCheck full_residual_audit =

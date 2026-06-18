@@ -73,6 +73,21 @@ struct QueryBridgeWaypointShortcutOptions {
     double min_gain = 0.0;
 };
 
+struct QueryBridgeDirectCorridorRuntimeOptions {
+    double max_length = 0.0;
+    double audit_step = 0.01;
+    double sample_step = 0.01;
+    bool partition_neighbor_candidates = false;
+    bool immediate_partition_append = false;
+    int partition_append_batch_size = 0;
+    bool detailed_timing = false;
+    bool local_sample_assimilation = true;
+    bool ffb_diagnostics = false;
+    bool group_residual_gaps = false;
+    bool residual_milestone_segments = false;
+    bool full_residual_overlay_when_connected = false;
+};
+
 struct QueryBridgeLocalDsu {
     std::vector<int> parent;
 
@@ -106,6 +121,10 @@ QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
     bool direct_segment_after_rrt_candidate);
 
 bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candidate);
+
+QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_options(
+    int query_index,
+    double audit_step);
 
 std::vector<int> query_bridge_order_transitions_by_gap_length(
     const std::vector<Eigen::VectorXd>& samples,
