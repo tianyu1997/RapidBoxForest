@@ -51,6 +51,55 @@ bool query_bridge_current_query_good(
                                           bridge_acceptance);
 }
 
+std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
+    const QueryBridgeSearchTask& task,
+    int attempt,
+    int override_fixed_iters,
+    const QueryBridgeRetryOptions& retry_options,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context,
+    std::shared_ptr<std::atomic<bool>> cancel_override =
+        std::shared_ptr<std::atomic<bool>>{}) {
+    const int scheduled_attempt = attempt + retry_options.attempt_offset;
+    Robot bridge_robot = make_sbf_clearance_robot(audit_robot,
+                                                  retry_options.rrt_clearance);
+    CollisionChecker checker =
+        retry_options.rrt_clearance > 0.0
+            ? CollisionChecker(bridge_robot, scene)
+            : make_audit_checker(audit_robot, scene, config.query);
+    RRTConnectConfig rrt_config =
+        query_bridge_rrt_config_for_attempt(task,
+                                            attempt,
+                                            scheduled_attempt,
+                                            override_fixed_iters,
+                                            config.connector.per_pair_timeout_ms,
+                                            retry_options);
+    std::vector<Eigen::VectorXd> path = rrt_connect(
+        task.start,
+        task.goal,
+        checker,
+        bridge_robot,
+        rrt_config,
+        query_bridge_rrt_seed_for_attempt(task,
+                                          config.grower.rng_seed,
+                                          scheduled_attempt),
+        cancel_override ? cancel_override : context.native_cancel_flag());
+    if (path.empty()) {
+        return {};
+    }
+    const PathAuditCheck audit =
+        audit_waypoint_path(path,
+                            checker,
+                            config.query.audit_resolution,
+                            config.query.audit_segment_step);
+    if (!audit.passed) {
+        return {};
+    }
+    return path;
+}
+
 }  // namespace
 
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
@@ -639,44 +688,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     record_query_bridge_partition_path_first_diagnostics(batch_context,
                                                         partition_path_first_options);
-    auto run_task_attempt = [&](const QueryBridgeSearchTask& task,
-                                int attempt,
-                                int override_fixed_iters,
-                                std::shared_ptr<std::atomic<bool>> cancel_override =
-                                    std::shared_ptr<std::atomic<bool>>{}) {
-        const int scheduled_attempt = attempt + retry_options.attempt_offset;
-        Robot bridge_robot = make_sbf_clearance_robot(audit_robot_, retry_options.rrt_clearance);
-        CollisionChecker checker =
-            retry_options.rrt_clearance > 0.0
-                ? CollisionChecker(bridge_robot, scene_)
-                : make_audit_checker(audit_robot_, scene_, config_.query);
-        RRTConnectConfig config =
-            query_bridge_rrt_config_for_attempt(task,
-                                                attempt,
-                                                scheduled_attempt,
-                                                override_fixed_iters,
-                                                config_.connector.per_pair_timeout_ms,
-                                                retry_options);
-        std::vector<Eigen::VectorXd> path = rrt_connect(
-            task.start,
-            task.goal,
-            checker,
-            bridge_robot,
-            config,
-            query_bridge_rrt_seed_for_attempt(task,
-                                              config_.grower.rng_seed,
-                                              scheduled_attempt),
-            cancel_override ? cancel_override : batch_context.native_cancel_flag());
-        if (path.empty()) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        const PathAuditCheck audit =
-            audit_waypoint_path(path, checker, config_.query.audit_resolution, config_.query.audit_segment_step);
-        if (!audit.passed) {
-            return std::vector<Eigen::VectorXd>{};
-        }
-        return path;
-    };
     const QueryBridgeDirectLineFallbackOptions direct_line_options =
         query_bridge_direct_line_fallback_options_from_env();
     record_query_bridge_direct_line_fallback_diagnostics(batch_context, direct_line_options);
@@ -718,16 +729,26 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 quality_retry_options.attempts,
                 [&](int retry) {
                     retry_paths[static_cast<std::size_t>(retry)] =
-                        run_task_attempt(task,
-                                         attempts_already_used + retry,
-                                         quality_retry_options.iters);
+                        run_query_bridge_task_rrt_attempt(task,
+                                                          attempts_already_used + retry,
+                                                          quality_retry_options.iters,
+                                                          retry_options,
+                                                          audit_robot_,
+                                                          scene_,
+                                                          config_,
+                                                          batch_context);
                 });
         } else {
             for (int retry = 0; retry < quality_retry_options.attempts; ++retry) {
                 retry_paths[static_cast<std::size_t>(retry)] =
-                    run_task_attempt(task,
-                                     attempts_already_used + retry,
-                                     quality_retry_options.iters);
+                    run_query_bridge_task_rrt_attempt(task,
+                                                      attempts_already_used + retry,
+                                                      quality_retry_options.iters,
+                                                      retry_options,
+                                                      audit_robot_,
+                                                      scene_,
+                                                      config_,
+                                                      batch_context);
             }
         }
         for (auto& retry_path : retry_paths) {
@@ -1109,7 +1130,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     if (query_bridge_parallel_rrt_cancelled(local_cancel)) {
                         return;
                     }
-                    auto path = run_task_attempt(task, attempt, 0, local_cancel);
+                    auto path =
+                        run_query_bridge_task_rrt_attempt(task,
+                                                          attempt,
+                                                          0,
+                                                          retry_options,
+                                                          audit_robot_,
+                                                          scene_,
+                                                          config_,
+                                                          batch_context,
+                                                          local_cancel);
                     query_bridge_maybe_stop_parallel_rrt_after_success(
                         query_bridge_task_rrt_path_good_enough(task,
                                                                path,
@@ -1127,7 +1157,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
             for (int attempt = 0; attempt < effective_attempts; ++attempt) {
                 attempt_paths[static_cast<std::size_t>(attempt)] =
-                    run_task_attempt(task, attempt, 0);
+                    run_query_bridge_task_rrt_attempt(task,
+                                                      attempt,
+                                                      0,
+                                                      retry_options,
+                                                      audit_robot_,
+                                                      scene_,
+                                                      config_,
+                                                      batch_context);
             }
         };
 
@@ -1198,10 +1235,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     return;
                 }
                 const QueryBridgeSearchJob& job = jobs[static_cast<std::size_t>(job_index)];
-                auto path = run_task_attempt(tasks[job.task_index],
-                                             job.attempt,
-                                             0,
-                                             local_cancel);
+                auto path =
+                    run_query_bridge_task_rrt_attempt(tasks[job.task_index],
+                                                      job.attempt,
+                                                      0,
+                                                      retry_options,
+                                                      audit_robot_,
+                                                      scene_,
+                                                      config_,
+                                                      batch_context,
+                                                      local_cancel);
                 query_bridge_maybe_stop_parallel_rrt_after_success(
                     query_bridge_task_rrt_path_good_enough(tasks[job.task_index],
                                                            path,
@@ -1219,7 +1262,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         } else {
             for (const QueryBridgeSearchJob& job : jobs) {
                 attempt_paths[job.task_index][static_cast<std::size_t>(job.attempt)] =
-                    run_task_attempt(tasks[job.task_index], job.attempt, 0);
+                    run_query_bridge_task_rrt_attempt(tasks[job.task_index],
+                                                      job.attempt,
+                                                      0,
+                                                      retry_options,
+                                                      audit_robot_,
+                                                      scene_,
+                                                      config_,
+                                                      batch_context);
             }
         }
         const double rrt_ms = query_bridge_elapsed_ms_since(rrt_t0);
@@ -1331,7 +1381,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 best_length,
                 retry_options,
                 [&](int attempt, int fixed_iters) {
-                    return run_task_attempt(task, attempt, fixed_iters);
+                    return run_query_bridge_task_rrt_attempt(task,
+                                                             attempt,
+                                                             fixed_iters,
+                                                             retry_options,
+                                                             audit_robot_,
+                                                             scene_,
+                                                             config_,
+                                                             batch_context);
                 },
                 batch_context);
         } else {
@@ -1341,7 +1398,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 best_length,
                 retry_options,
                 [&](int attempt, int fixed_iters) {
-                    return run_task_attempt(task, attempt, fixed_iters);
+                    return run_query_bridge_task_rrt_attempt(task,
+                                                             attempt,
+                                                             fixed_iters,
+                                                             retry_options,
+                                                             audit_robot_,
+                                                             scene_,
+                                                             config_,
+                                                             batch_context);
                 },
                 batch_context);
         }
