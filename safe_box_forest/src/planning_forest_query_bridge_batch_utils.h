@@ -75,6 +75,13 @@ struct QueryBridgeDirectLineFallbackOptions {
     bool enabled = false;
 };
 
+struct QueryBridgeHybridizeAttemptOptions {
+    bool enabled = false;
+    int max_paths = 8;
+    int max_vertices = 128;
+    int max_cross_checks = 4096;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -142,6 +149,8 @@ QueryBridgeDirectLineFallbackOptions query_bridge_direct_line_fallback_options_f
 void record_query_bridge_direct_line_fallback_diagnostics(
     StageContext& context,
     const QueryBridgeDirectLineFallbackOptions& options);
+
+QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

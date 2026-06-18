@@ -1581,6 +1581,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             "query_bridge.waypoint_quality_retry_ms_total",
             elapsed_ms_since(retry_t0));
     };
+    const QueryBridgeHybridizeAttemptOptions hybrid_options =
+        query_bridge_hybridize_attempt_options_from_env();
     auto select_attempt_paths = [&](QueryBridgeSearchTask& task,
                                     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
                                     double& best_length) {
@@ -1599,18 +1601,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (valid_paths.empty()) {
             return;
         }
-        const bool hybridize_attempt_paths =
-            env_int_or_default("RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS", 0) != 0;
-        if (hybridize_attempt_paths && valid_paths.size() >= 2U) {
-            const int hybrid_max_paths = std::max(
-                2,
-                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS", 8));
-            const int hybrid_max_vertices = std::max(
-                8,
-                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES", 128));
-            const int hybrid_max_cross_checks = std::max(
-                1,
-                env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS", 4096));
+        if (hybrid_options.enabled && valid_paths.size() >= 2U) {
             CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
             const double best_input_length =
                 std::min(best_length,
@@ -1624,9 +1615,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 hybridize_collision_free_paths(attempt_paths,
                                                checker,
                                                collision_shortcut_resolution(config_.query),
-                                               hybrid_max_paths,
-                                               hybrid_max_vertices,
-                                               hybrid_max_cross_checks);
+                                               hybrid_options.max_paths,
+                                               hybrid_options.max_vertices,
+                                               hybrid_options.max_cross_checks);
             batch_context.diagnostics().add_counter(
                 "query_bridge.hybridize_attempt_paths_tasks");
             if (!hybrid.empty()) {
