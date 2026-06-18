@@ -1763,6 +1763,33 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     ? "query_bridge.parallel_rrt_early_stop_triggered"
                     : "query_bridge.parallel_rrt_early_stop_not_triggered");
         };
+    auto run_attempts_for_task =
+        [&](QueryBridgeSearchTask& task,
+            int effective_attempts,
+            std::vector<std::vector<Eigen::VectorXd>>& attempt_paths) {
+            if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
+                std::shared_ptr<std::atomic<bool>> local_cancel =
+                    make_parallel_rrt_cancel_flag();
+                std::atomic<int> early_successes{0};
+                batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
+                    if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
+                        return;
+                    }
+                    auto path = run_task_attempt(task, attempt, 0, local_cancel);
+                    maybe_stop_parallel_rrt_after_success(task,
+                                                          path,
+                                                          early_successes,
+                                                          local_cancel);
+                    attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
+                });
+                record_parallel_rrt_early_stop(local_cancel, early_successes);
+                return;
+            }
+            for (int attempt = 0; attempt < effective_attempts; ++attempt) {
+                attempt_paths[static_cast<std::size_t>(attempt)] =
+                    run_task_attempt(task, attempt, 0);
+            }
+        };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1924,27 +1951,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(static_cast<std::size_t>(effective_attempts));
         const auto rrt_t0 = Clock::now();
-        if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
-            std::shared_ptr<std::atomic<bool>> local_cancel =
-                make_parallel_rrt_cancel_flag();
-            std::atomic<int> early_successes{0};
-            batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
-                if (local_cancel && local_cancel->load(std::memory_order_relaxed)) {
-                    return;
-                }
-                auto path = run_task_attempt(task, attempt, 0, local_cancel);
-                maybe_stop_parallel_rrt_after_success(task,
-                                                      path,
-                                                      early_successes,
-                                                      local_cancel);
-                attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
-            });
-            record_parallel_rrt_early_stop(local_cancel, early_successes);
-        } else {
-            for (int attempt = 0; attempt < effective_attempts; ++attempt) {
-                attempt_paths[static_cast<std::size_t>(attempt)] = run_task_attempt(task, attempt, 0);
-            }
-        }
+        run_attempts_for_task(task, effective_attempts, attempt_paths);
         const double rrt_ms = elapsed_ms_since(rrt_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
                                                   rrt_ms);
