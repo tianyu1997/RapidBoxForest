@@ -16,7 +16,6 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
-#include <queue>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -871,38 +870,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                     static_cast<double>(exact_tests));
             diagnostics.add_counter("query_bridge.hipac_promote_transition.local_adj_edges",
                                     static_cast<double>(exact_edges));
-            auto shortest_local_path = [&](int source_node, int target_node) {
-                std::vector<int> parent(local_indices.size(), -1);
-                std::queue<int> queue;
-                parent[static_cast<std::size_t>(source_node)] = source_node;
-                queue.push(source_node);
-                while (!queue.empty()) {
-                    const int current = queue.front();
-                    queue.pop();
-                    if (current == target_node) {
-                        break;
-                    }
-                    for (int neighbor : local_adj[static_cast<std::size_t>(current)]) {
-                        if (parent[static_cast<std::size_t>(neighbor)] >= 0) {
-                            continue;
-                        }
-                        parent[static_cast<std::size_t>(neighbor)] = current;
-                        queue.push(neighbor);
-                    }
-                }
-                std::vector<int> path;
-                if (parent[static_cast<std::size_t>(target_node)] < 0) {
-                    return path;
-                }
-                for (int current = target_node;
-                     current != source_node;
-                     current = parent[static_cast<std::size_t>(current)]) {
-                    path.push_back(current);
-                }
-                path.push_back(source_node);
-                std::reverse(path.begin(), path.end());
-                return path;
-            };
             auto promote_local_path = [&](const std::vector<int>& local_path,
                                           const char* mode) {
                 if (local_path.size() < 3) {
@@ -953,7 +920,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 invalidate_query_cache();
                 return 1;
             };
-            std::vector<int> full_local_path = shortest_local_path(local_source, local_target);
+            std::vector<int> full_local_path =
+                query_bridge_shortest_local_path(local_adj, local_source, local_target);
             if (!full_local_path.empty()) {
                 const int promoted = promote_local_path(full_local_path, "full");
                 if (promoted > 0) {
@@ -963,85 +931,21 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 diagnostics.add_counter("query_bridge.hipac_promote_transition.chain_fail");
             }
 
-            std::vector<int> component_id(local_indices.size(), -1);
-            int component_count = 0;
-            for (int node = 1; node + 1 < static_cast<int>(local_indices.size()); ++node) {
-                if (component_id[static_cast<std::size_t>(node)] >= 0) {
-                    continue;
-                }
-                std::queue<int> component_queue;
-                component_id[static_cast<std::size_t>(node)] = component_count;
-                component_queue.push(node);
-                while (!component_queue.empty()) {
-                    const int current = component_queue.front();
-                    component_queue.pop();
-                    for (int neighbor : local_adj[static_cast<std::size_t>(current)]) {
-                        if (neighbor <= local_source || neighbor >= local_target ||
-                            component_id[static_cast<std::size_t>(neighbor)] >= 0) {
-                            continue;
-                        }
-                        component_id[static_cast<std::size_t>(neighbor)] = component_count;
-                        component_queue.push(neighbor);
-                    }
-                }
-                ++component_count;
-            }
+            const auto [component_id, component_count] =
+                query_bridge_internal_local_components(local_adj,
+                                                       local_source,
+                                                       local_target);
             diagnostics.add_counter("query_bridge.hipac_promote_transition.slice_components",
                                     static_cast<double>(component_count));
-            std::vector<std::vector<int>> nodes_by_component(static_cast<std::size_t>(component_count));
-            for (int node = 1; node + 1 < static_cast<int>(local_indices.size()); ++node) {
-                const int component = component_id[static_cast<std::size_t>(node)];
-                if (component >= 0) {
-                    nodes_by_component[static_cast<std::size_t>(component)].push_back(node);
-                }
-            }
-            struct SliceCandidate {
-                int first = -1;
-                int last = -1;
-                int count = 0;
-                int span = 0;
-            };
-            std::vector<SliceCandidate> slices;
-            slices.reserve(nodes_by_component.size());
-            auto sample_rank = [&](int local_node) {
-                const int box_index =
-                    local_indices[static_cast<std::size_t>(local_node)];
-                const auto it = first_sample_by_box.find(box_index);
-                return it == first_sample_by_box.end()
-                    ? std::numeric_limits<int>::max()
-                    : it->second;
-            };
-            for (auto& nodes : nodes_by_component) {
-                if (static_cast<int>(nodes.size()) < min_boxes + 2) {
-                    continue;
-                }
-                std::sort(nodes.begin(), nodes.end(), [&](int lhs, int rhs) {
-                    const int lhs_rank = sample_rank(lhs);
-                    const int rhs_rank = sample_rank(rhs);
-                    if (lhs_rank != rhs_rank) {
-                        return lhs_rank < rhs_rank;
-                    }
-                    return lhs < rhs;
-                });
-                SliceCandidate slice;
-                slice.first = nodes.front();
-                slice.last = nodes.back();
-                slice.count = static_cast<int>(nodes.size());
-                slice.span = std::max(0, sample_rank(slice.last) - sample_rank(slice.first));
-                slices.push_back(slice);
-            }
-            std::sort(slices.begin(), slices.end(), [](const SliceCandidate& lhs,
-                                                       const SliceCandidate& rhs) {
-                if (lhs.count != rhs.count) {
-                    return lhs.count > rhs.count;
-                }
-                if (lhs.span != rhs.span) {
-                    return lhs.span > rhs.span;
-                }
-                return lhs.first < rhs.first;
-            });
+            const std::vector<QueryBridgeLocalSliceCandidate> slices =
+                query_bridge_component_slice_candidates(component_id,
+                                                        component_count,
+                                                        local_indices,
+                                                        first_sample_by_box,
+                                                        min_boxes);
             for (const auto& slice : slices) {
-                std::vector<int> slice_path = shortest_local_path(slice.first, slice.last);
+                std::vector<int> slice_path =
+                    query_bridge_shortest_local_path(local_adj, slice.first, slice.last);
                 if (slice_path.empty()) {
                     diagnostics.add_counter("query_bridge.hipac_promote_transition.slice_chain_fail");
                     continue;
