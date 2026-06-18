@@ -660,15 +660,15 @@ LECT serves local box materialization; graph search uses the scene forest. Given
 a joint interval, the runtime replays or materializes endpoint evidence, derives
 the requested link representation, and applies the current scene-validation
 policy. In the evaluated pipeline, AABB broadphase precedes SupportHull/GJK
-refinement. Parent or child records can accelerate materialization, but replayed evidence alone is not a
-collision-free certificate. When a node is split, child-derived hulls can
-tighten an ancestor envelope; the reconstructed record remains
-representation-dependent and must be checked again against \(\calO\).
+refinement. Parent or child records can accelerate materialization, but replayed
+evidence alone is not a collision-free certificate. When a node is split,
+child-derived hulls can tighten an ancestor envelope; the reconstructed record
+remains representation-dependent and must be checked again against \(\calO\).
 Directional records are staged filters: a joint interval first passes the
 padded AABB broadphase, and only the remaining close obstacle candidates reach
-slab or SupportHull/GJK refinement. If no exact replay record exists, the interval is
-materialized on demand and then handled by the same validation path, so a cache
-miss changes cost but not semantics.
+slab or SupportHull/GJK refinement. If no exact replay record exists, the
+interval is materialized on demand and then handled by the same validation path,
+so a cache miss changes cost but not semantics.
 
 \subsection{Storage and Warm-Build Semantics}\label{sec:lect_storage}
 
@@ -810,7 +810,8 @@ constants are fixed in the artifact manifest.
 \STATE insert cells that pass validation into $\mathcal{F}$; prune covered descendants
 \STATE retain inconclusive or blocked cells in $\mathcal{C}$
 \STATE refine only selected domains in $\mathcal{C}$ using local materialization
-\STATE insert refined boxes that pass validation, remain inside their domain, and connect to the forest
+\STATE insert refined boxes that pass validation, remain inside their domain, and
+connect to the forest
 \RETURN $\mathcal{F},\mathcal{C}$
 \end{algorithmic}
 \end{algorithm}
@@ -895,7 +896,8 @@ collision-free region.
 \IF{$\Delta^{+}\neq\emptyset$}
   \STATE remove boxes and typed witnesses hit by inserted obstacles
   \STATE run a bounded local leaf sweep inside each invalidated box
-  \STATE insert replacement boxes that pass validation and connect to the surviving forest
+  \STATE insert replacement boxes that pass validation and connect to the
+  surviving forest
 \ENDIF
 \STATE revalidate affected typed edges and update components
 \RETURN updated $(\mathcal{F},G,\mathcal{C})$
@@ -1136,7 +1138,8 @@ query bridge, connector, simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
-both cases. The 0/8 result is a scope check, not evidence of post-edit query success;
+both cases. The 0/8 result is a scope check, not evidence of post-edit query
+success;
 Table~\ref{tab:tro-dynamic-update} reports local maintenance timing only,
 not timing for a complete pipeline that updates the scene and solves a query.
 
