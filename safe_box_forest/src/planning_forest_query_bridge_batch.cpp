@@ -436,22 +436,6 @@ void adopt_query_bridge_waypoint_after_rrt(
                                             context);
 }
 
-template <typename OnlineBridge, typename TransitionPortal, typename PrebridgePortal>
-bool run_query_bridge_hipac_online_sequence(
-    QueryBridgeSearchTask& task,
-    OnlineBridge& online_bridge,
-    TransitionPortal& transition_portal,
-    PrebridgePortal& prebridge_portal) {
-    online_bridge(task);
-    if (!task.hipac_online_satisfied) {
-        transition_portal(task);
-    }
-    if (!task.hipac_online_satisfied) {
-        prebridge_portal(task);
-    }
-    return task.hipac_online_satisfied;
-}
-
 }  // namespace
 
 std::vector<int> RBFPlanningForest::finish_query_bridge_batch_result(
@@ -667,39 +651,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.fast_direct_segment_after_rrt",
         fast_direct_segment_after_rrt ? 1.0 : 0.0);
-	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        const int added = try_hipac_prebridge_portal_task(
-	            task,
-	            bridge_acceptance,
-	            batch_context,
-	            query_bridge_edge_query_index(scene_reusable_edges, task));
-	        if (added > 0) {
-	            added_by_query[task.index] += added;
-	        }
-	        return added;
-	    };
-	    auto try_hipac_online_bridge = [&](QueryBridgeSearchTask& task) -> int {
-	        const int added = try_hipac_online_bridge_task(
-	            task,
-	            bridge_acceptance,
-	            batch_context,
-	            query_bridge_edge_query_index(scene_reusable_edges, task));
-	        if (added > 0) {
-	            added_by_query[task.index] += added;
-	        }
-	        return added;
-	    };
-	    auto try_hipac_transition_portal = [&](QueryBridgeSearchTask& task) -> int {
-	        const int added = try_hipac_transition_portal_task(
-	            task,
-	            bridge_acceptance,
-	            batch_context,
-	            query_bridge_edge_query_index(scene_reusable_edges, task));
-	        if (added > 0) {
-	            added_by_query[task.index] += added;
-	        }
-	        return added;
-	    };
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));
     run_query_bridge_direct_start_goal_segments(tasks,
@@ -733,10 +684,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     if (last_adaptive_partition_config_.hipac_online_connectivity &&
         last_adaptive_partition_config_.hipac_online_before_query_bridge) {
         for (auto& task : tasks) {
-            run_query_bridge_hipac_online_sequence(task,
-                                                   try_hipac_online_bridge,
-                                                   try_hipac_transition_portal,
-                                                   try_hipac_prebridge_portal);
+            run_query_bridge_hipac_online_sequence_task(task,
+                                                        added_by_query[task.index],
+                                                        batch_context,
+                                                        scene_reusable_edges,
+                                                        bridge_acceptance);
         }
     }
 

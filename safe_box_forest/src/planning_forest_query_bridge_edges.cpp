@@ -518,6 +518,43 @@ int RBFPlanningForest::try_hipac_transition_portal_task(
     return total_added;
 }
 
+bool RBFPlanningForest::run_query_bridge_hipac_online_sequence_task(
+    QueryBridgeSearchTask& task,
+    int& added_for_task,
+    StageContext& context,
+    bool scene_reusable_edges,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
+    int added = try_hipac_online_bridge_task(
+        task,
+        bridge_acceptance,
+        context,
+        query_bridge_edge_query_index(scene_reusable_edges, task));
+    if (added > 0) {
+        added_for_task += added;
+    }
+    if (!task.hipac_online_satisfied) {
+        added = try_hipac_transition_portal_task(
+            task,
+            bridge_acceptance,
+            context,
+            query_bridge_edge_query_index(scene_reusable_edges, task));
+        if (added > 0) {
+            added_for_task += added;
+        }
+    }
+    if (!task.hipac_online_satisfied) {
+        added = try_hipac_prebridge_portal_task(
+            task,
+            bridge_acceptance,
+            context,
+            query_bridge_edge_query_index(scene_reusable_edges, task));
+        if (added > 0) {
+            added_for_task += added;
+        }
+    }
+    return task.hipac_online_satisfied;
+}
+
 int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     int source_box_id,
     int target_box_id,
@@ -757,35 +794,11 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
                                                task)) {
         task.hipac_candidate_path = task.waypoint_path;
-        int hipac_added = try_hipac_online_bridge_task(
-            task,
-            bridge_acceptance,
-            context,
-            query_bridge_edge_query_index(scene_reusable_edges, task));
-        if (hipac_added > 0) {
-            added_for_task += hipac_added;
-        }
-        if (!task.hipac_online_satisfied) {
-            hipac_added = try_hipac_transition_portal_task(
-                task,
-                bridge_acceptance,
-                context,
-                query_bridge_edge_query_index(scene_reusable_edges, task));
-            if (hipac_added > 0) {
-                added_for_task += hipac_added;
-            }
-        }
-        if (!task.hipac_online_satisfied) {
-            hipac_added = try_hipac_prebridge_portal_task(
-                task,
-                bridge_acceptance,
-                context,
-                query_bridge_edge_query_index(scene_reusable_edges, task));
-            if (hipac_added > 0) {
-                added_for_task += hipac_added;
-            }
-        }
-        if (task.hipac_online_satisfied) {
+        if (run_query_bridge_hipac_online_sequence_task(task,
+                                                        added_for_task,
+                                                        context,
+                                                        scene_reusable_edges,
+                                                        bridge_acceptance)) {
             record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
                 context,
                 task.index,

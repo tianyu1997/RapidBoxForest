@@ -707,6 +707,12 @@ private:
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		StageContext& context,
 		int query_index);
+	bool run_query_bridge_hipac_online_sequence_task(
+		QueryBridgeSearchTask& task,
+		int& added_for_task,
+		StageContext& context,
+		bool scene_reusable_edges,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance);
 	std::vector<int> finish_query_bridge_batch_result(
 		const std::vector<int>& added_by_query,
 		std::size_t partition_refresh_base,
