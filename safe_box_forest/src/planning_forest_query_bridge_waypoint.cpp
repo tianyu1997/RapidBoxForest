@@ -1224,36 +1224,30 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 detailed_direct_timing);
         const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_plan.tasks;
         direct_task_build_ms = direct_task_plan.build_ms;
-        const auto direct_loop_t0 =
-            detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        for (const auto& task : direct_tasks) {
-            if (task.sample_index < covered.size() && covered[task.sample_index]) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_direct_skip_covered");
-                continue;
-            }
-            const auto direct_ffb_t0 = Clock::now();
-            const FindFreeBoxResult result = find_free_box_in_domain(
-                task.seed,
-                direct_planning_domain,
+        const QueryBridgeFfbTaskExecutionStats direct_task_stats =
+            query_bridge_run_direct_ffb_tasks(
                 context,
-                direct_options);
-            direct_ffb_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - direct_ffb_t0).count();
-            direct_calls += 1;
-            const std::size_t before_boxes = boxes_.size();
-            const int box_index = commit_result(std::move(result),
-                                                task.seed,
-                                                task.transition_hint);
-            if (box_index >= 0 && boxes_.size() > before_boxes) {
-                direct_added += 1;
-            }
-        }
-        if (detailed_direct_timing) {
-            direct_loop_ms =
-                std::chrono::duration<double, std::milli>(Clock::now() -
-                                                          direct_loop_t0).count();
-        }
+                direct_tasks,
+                covered,
+                [&](const QueryBridgeDirectFfbTask& task) {
+                    return find_free_box_in_domain(task.seed,
+                                                   direct_planning_domain,
+                                                   context,
+                                                   direct_options);
+                },
+                [&](FindFreeBoxResult&& result, const QueryBridgeDirectFfbTask& task) {
+                    const std::size_t before_boxes = boxes_.size();
+                    const int box_index = commit_result(std::move(result),
+                                                        task.seed,
+                                                        task.transition_hint);
+                    return QueryBridgeFfbTaskCommitResult{box_index,
+                                                          boxes_.size() > before_boxes};
+                },
+                detailed_direct_timing);
+        direct_calls = direct_task_stats.calls;
+        direct_added = direct_task_stats.added;
+        direct_ffb_ms = direct_task_stats.ffb_ms;
+        direct_loop_ms = direct_task_stats.loop_ms;
         const QueryBridgeRepairSubdivisionOptions repair_subdivision_options =
             query_bridge_repair_subdivision_options(query_index);
         const int subdivisions = repair_subdivision_options.subdivisions;

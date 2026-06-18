@@ -569,6 +569,40 @@ QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
     return plan;
 }
 
+QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
+    StageContext& context,
+    const std::vector<QueryBridgeDirectFfbTask>& tasks,
+    const std::vector<bool>& covered,
+    const std::function<FindFreeBoxResult(const QueryBridgeDirectFfbTask&)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const QueryBridgeDirectFfbTask&)>& commit_box,
+    bool detailed_timing) {
+    using Clock = std::chrono::steady_clock;
+    QueryBridgeFfbTaskExecutionStats stats;
+    const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
+    for (const auto& task : tasks) {
+        if (task.sample_index < covered.size() && covered[task.sample_index]) {
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_direct_skip_covered");
+            continue;
+        }
+        const auto ffb_t0 = Clock::now();
+        FindFreeBoxResult result = find_box(task);
+        stats.ffb_ms +=
+            std::chrono::duration<double, std::milli>(Clock::now() - ffb_t0).count();
+        stats.calls += 1;
+        const QueryBridgeFfbTaskCommitResult commit = commit_box(std::move(result), task);
+        if (commit.box_index >= 0 && commit.added_box) {
+            stats.added += 1;
+        }
+    }
+    if (detailed_timing) {
+        stats.loop_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
+    }
+    return stats;
+}
+
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
     std::vector<double> fractions;
     if (subdivisions <= 1) {

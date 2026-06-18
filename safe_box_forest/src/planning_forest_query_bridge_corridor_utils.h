@@ -3,9 +3,11 @@
 #include <Eigen/Core>
 
 #include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
 #include <SBF/runtime.h>
 
 #include <cstddef>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -45,6 +47,18 @@ struct QueryBridgeDirectFfbTaskPlan {
     QueryBridgeDirectFfbTaskRuntimeOptions runtime;
     int uncovered_gap_groups = 0;
     double build_ms = 0.0;
+};
+
+struct QueryBridgeFfbTaskCommitResult {
+    int box_index = -1;
+    bool added_box = false;
+};
+
+struct QueryBridgeFfbTaskExecutionStats {
+    int calls = 0;
+    int added = 0;
+    double ffb_ms = 0.0;
+    double loop_ms = 0.0;
 };
 
 struct QueryBridgeRepairSubdivisionOptions {
@@ -237,6 +251,15 @@ QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<bool>& covered,
     int ffb_start_depth,
+    bool detailed_timing);
+
+QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
+    StageContext& context,
+    const std::vector<QueryBridgeDirectFfbTask>& tasks,
+    const std::vector<bool>& covered,
+    const std::function<FindFreeBoxResult(const QueryBridgeDirectFfbTask&)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const QueryBridgeDirectFfbTask&)>& commit_box,
     bool detailed_timing);
 
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
