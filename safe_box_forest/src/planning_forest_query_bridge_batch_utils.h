@@ -213,6 +213,29 @@ int query_bridge_rrt_seed_for_attempt(const QueryBridgeSearchTask& task,
                                       int rng_seed,
                                       int scheduled_attempt);
 
+std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
+    const QueryBridgeSearchTask& task,
+    int attempt,
+    int override_fixed_iters,
+    const QueryBridgeRetryOptions& retry_options,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context,
+    std::shared_ptr<std::atomic<bool>> cancel_override =
+        std::shared_ptr<std::atomic<bool>>{});
+
+void run_query_bridge_task_attempts(
+    QueryBridgeSearchTask& task,
+    int effective_attempts,
+    std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeParallelRrtOptions& parallel_rrt_options,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context);
+
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
