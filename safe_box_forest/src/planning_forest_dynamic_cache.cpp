@@ -11,14 +11,12 @@
 #include <unordered_set>
 #include <vector>
 
-#include "env_config.h"
+#include "adaptive_grid_partition_options.h"
 #include "planning_forest_audit.h"
 
 namespace rbf {
 
 namespace {
-
-using detail::env_int_or_default;
 
 const BoxNode* find_box_by_id_local(const std::vector<BoxNode>& boxes, int box_id) {
     for (const auto& box : boxes) {
@@ -2044,9 +2042,7 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
         int attempted_pairs = 0;
         int audit_fail = 0;
         int added = 0;
-        const int pair_candidate_cap = std::max(
-            8,
-            env_int_or_default("RBF_PARTITION_SEGMENT_FALLBACK_PAIR_CANDIDATE_CAP", 128));
+        const int pair_candidate_cap = partition_segment_fallback_pair_candidate_cap_from_env();
         const auto candidate_pairs =
             adaptive_partition_->nearest_component_pairs_to_largest(1, pair_candidate_cap);
         for (const auto& pair : candidate_pairs) {

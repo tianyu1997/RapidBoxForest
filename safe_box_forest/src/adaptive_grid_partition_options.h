@@ -100,4 +100,10 @@ inline bool partition_last_query_cache_enabled_from_env() {
 	return detail::env_int_or_default("RBF_PARTITION_LAST_QUERY_CACHE", 0) != 0;
 }
 
+inline int partition_segment_fallback_pair_candidate_cap_from_env() {
+	return std::max(
+		8,
+		detail::env_int_or_default("RBF_PARTITION_SEGMENT_FALLBACK_PAIR_CANDIDATE_CAP", 128));
+}
+
 }  // namespace rbf
