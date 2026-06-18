@@ -158,6 +158,9 @@ src/planning_forest_qroot_helpers.cpp
 src/planning_forest_query_bridge.cpp
                                    online endpoint anchoring, query bridge, and
                                    local repair orchestration
+src/planning_forest_query_bridge_batch.cpp
+                                   batched query bridge scheduling and per-query
+                                   repair accounting
 ```
 
 New production features should normally land in the smallest matching module

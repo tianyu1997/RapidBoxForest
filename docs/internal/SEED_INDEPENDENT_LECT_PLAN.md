@@ -44,7 +44,7 @@ external_lookup 花 14ms 纯开销零命中，warm cache 对 build 零加速。
   `safe_box_forest/experiments/sbf_old/common_sbf_config.py`、`experiments/common/lect_db_dispatch.py`、
   `experiments/exp04_shelf_ablation/run_shelf_ablation.py`。
 - 移除 3 处 seed 注入：
-  `safe_box_forest/src/find_free_box.cpp`、`safe_box_forest/src/safe_box_forest.cpp`、
+  `safe_box_forest/src/find_free_box.cpp`、`safe_box_forest/src/planning_forest_*.cpp`、
   `safe_box_forest/python/bindings.cpp`（删除把 `tree_seed` 写入 `split.best_tighten.seed_coords` 的块）。
 - 保留 `--ffb-auto-mask-inert`（per-robot inert 维 mask，seed 无关）。
 - 保留 L2 `dim_priority_weights`（seed 无关 tie-break）。
