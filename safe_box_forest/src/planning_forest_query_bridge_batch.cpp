@@ -1625,6 +1625,45 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             query_bridge_task_key(task.index, "no_path_retry_successes"),
             static_cast<double>(retry_successes_total));
     };
+    auto try_commit_segment_only_task = [&](QueryBridgeSearchTask& task) {
+        const int source_box_id = locate_box_partition_first(
+            task.start,
+            config_.query.nearest_if_outside);
+        const int target_box_id = locate_box_partition_first(
+            task.goal,
+            config_.query.nearest_if_outside);
+        int edge_id = -1;
+        if (source_box_id >= 0 && target_box_id >= 0) {
+            edge_id = add_segment_edge_partition_first(
+                source_box_id,
+                target_box_id,
+                task.waypoint_path,
+                SegmentEdgeType::QueryBridge,
+                task.bridge_rrt.segment_resolution,
+                SegmentEdgeValidation::CollisionChecked,
+                true,
+                edge_query_index_for(task));
+        }
+        if (edge_id >= 0) {
+            added_by_query[task.index] += 1;
+            invalidate_query_cache();
+            batch_context.diagnostics().add_counter(
+                "query_bridge.batch_tasks_segment_only");
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "segment_only"),
+                1.0);
+            batch_context.diagnostics().set_value(
+                query_bridge_task_key(task.index, "added"),
+                1.0);
+            return true;
+        }
+        batch_context.diagnostics().add_counter(
+            "query_bridge.batch_tasks_segment_only_failures");
+        batch_context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "segment_only_failure"),
+            1.0);
+        return false;
+    };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1931,37 +1970,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             continue;
         }
         if (segment_only_task) {
-            const int source_box_id = locate_box_partition_first(task.start,
-                                                                 config_.query.nearest_if_outside);
-            const int target_box_id = locate_box_partition_first(task.goal,
-                                                                 config_.query.nearest_if_outside);
-            int edge_id = -1;
-            if (source_box_id >= 0 && target_box_id >= 0) {
-                edge_id = add_segment_edge_partition_first(
-                    source_box_id,
-                    target_box_id,
-                    task.waypoint_path,
-                    SegmentEdgeType::QueryBridge,
-                    task.bridge_rrt.segment_resolution,
-                    SegmentEdgeValidation::CollisionChecked,
-                    true,
-                    edge_query_index_for(task));
-            }
-            if (edge_id >= 0) {
-                added_by_query[task.index] += 1;
-                invalidate_query_cache();
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.batch_tasks_segment_only");
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "segment_only"),
-                                                      1.0);
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "added"),
-                                                      1.0);
-            } else {
-                batch_context.diagnostics().add_counter(
-                    "query_bridge.batch_tasks_segment_only_failures");
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "segment_only_failure"),
-                                                      1.0);
-            }
+            try_commit_segment_only_task(task);
             batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
                                                   elapsed_ms_since(task_t0));
             continue;
