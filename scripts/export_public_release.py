@@ -67,8 +67,6 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "experiments/exp04_shelf_leaf_rrt/study_ts_cs_box_cover.py",
     "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
     "openai-skills/**",
-    "improve_workspace/**",
-    "**/improve_workspace/**",
     "outputs/**",
     "**/outputs/**",
     ".sbf_lect_database/**",
@@ -131,9 +129,20 @@ ARCHIVE_PATTERNS = (
     "experiments/exp04_shelf_leaf_rrt/scan_full_root_depths.py",
     "experiments/exp04_shelf_leaf_rrt/study_ts_cs_box_cover.py",
     "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
-    "improve_workspace/**",
-    "**/improve_workspace/**",
 )
+
+FORBIDDEN_SOURCE_DIR_NAMES = {
+    "improve_workspace",
+}
+
+SOURCE_TREE_SCAN_SKIP_DIRS = {
+    ".git",
+    ".sbf_lect_database",
+    "__pycache__",
+    "build",
+    "outputs",
+    "tmp",
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -161,6 +170,33 @@ def git_files() -> list[str]:
         for path in result.stdout.decode("utf-8").split("\0")
         if path and (REPO_ROOT / path).is_file()
     )
+
+
+def check_forbidden_source_sidecars(root: Path = REPO_ROOT) -> list[str]:
+    hits: list[str] = []
+    stack = [root]
+    while stack:
+        current = stack.pop()
+        try:
+            children = list(current.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir():
+                continue
+            name = child.name
+            if name in FORBIDDEN_SOURCE_DIR_NAMES:
+                hits.append(child.relative_to(root).as_posix())
+                continue
+            if name in SOURCE_TREE_SCAN_SKIP_DIRS or name.startswith("build-"):
+                continue
+            stack.append(child)
+    if not hits:
+        return []
+    return [
+        "forbidden sidecar source directories are present; integrate their code into "
+        f"the main modules instead: {hits[:20]}"
+    ]
 
 
 def allowed(path: str) -> bool:
@@ -206,6 +242,11 @@ def export_files(files: list[str], out_dir: Path) -> None:
 def main() -> int:
     args = parse_args()
     out_dir = args.out_dir.resolve()
+    sidecar_errors = check_forbidden_source_sidecars()
+    if sidecar_errors:
+        for error in sidecar_errors:
+            print(f"FAIL: {error}", file=sys.stderr)
+        return 1
     files = [path for path in git_files() if allowed(path) and not excluded(path, include_archive=args.include_archive)]
     if args.dry_run:
         print(f"would export {len(files)} files to {out_dir}")

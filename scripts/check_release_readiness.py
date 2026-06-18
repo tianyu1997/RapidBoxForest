@@ -15,7 +15,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from export_public_release import DEFAULT_EXCLUDE_PATTERNS, allowed as export_allowed, excluded as export_excluded  # noqa: E402
+from export_public_release import (  # noqa: E402
+    DEFAULT_EXCLUDE_PATTERNS,
+    allowed as export_allowed,
+    check_forbidden_source_sidecars,
+    excluded as export_excluded,
+)
 
 
 REQUIRED_RELEASE_FILES = (
@@ -409,6 +414,7 @@ def main() -> int:
         return 1
     errors: list[str] = []
     errors.extend(check_required_files(root))
+    errors.extend(check_forbidden_source_sidecars(root))
     if args.tracking_only:
         errors.extend(check_required_files_tracked(root, strict=True))
         errors.extend(check_public_manifest_files_tracked(root, strict=True) if (root / "PUBLIC_RELEASE_MANIFEST.json").exists() else [])

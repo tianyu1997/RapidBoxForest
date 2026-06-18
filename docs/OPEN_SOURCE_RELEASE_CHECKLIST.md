@@ -34,9 +34,11 @@ local paths, and discarded implementation attempts.
   `exp01,exp02`; heavier/cache-dependent experiments must be requested
   explicitly with `--only`.
 - `scripts/export_public_release.py` exports an allowlisted public source tree
-  and excludes local outputs, caches, build trees, scratch workspaces, and
-  historical archives by default. The generated `PUBLIC_RELEASE_MANIFEST.json`
-  records every exported file and its SHA256 hash.
+  and excludes local outputs, caches, build trees, and historical archives by
+  default. It fails if an `improve_workspace` sidecar exists, because optimized
+  implementations must be integrated into the main modules. The generated
+  `PUBLIC_RELEASE_MANIFEST.json` records every exported file and its SHA256
+  hash.
 - `scripts/check_public_release.py` validates the exported tree, checks for
   forbidden generated/history paths, scans text files for local absolute paths,
   checks for references to excluded historical entry points, checks local
@@ -58,10 +60,10 @@ local paths, and discarded implementation attempts.
   hashes, source-artifact references, and optional local `outputs/` artifacts.
 - `scripts/check_release_readiness.py` runs the source-tree final audit:
   required release files, public-manifest files tracked by git in strict mode,
-  tracked generated files, citation metadata, stale historical references,
-  cache metadata, optional local paper provenance when `paper/` is present,
-  optional public tree validation, and optional public source package
-  validation.
+  forbidden source sidecars, tracked generated files, citation metadata, stale
+  historical references, cache metadata, optional local paper provenance when
+  `paper/` is present, optional public tree validation, and optional public
+  source package validation.
 - `scripts/check_public_package.py` validates the source archive against
   `RapidBoxForest-public.package.json`, including archive SHA256,
   `PUBLIC_RELEASE_MANIFEST.json`, file counts, duplicate tar entries, and
