@@ -886,9 +886,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                           path,
                                                           parallel_rrt_options);
     };
-    auto query_bridge_forced = [&](const QueryBridgeSearchTask& task) {
-        return query_bridge_index_forced(index_options, task.index);
-    };
     auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
         if (!query_bridge_should_check_current_query(task,
                                                      respect_forced,
@@ -1314,7 +1311,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     };
     auto prepare_task_attempts = [&](QueryBridgeSearchTask& task) {
         QueryBridgeAttemptPlan plan =
-            query_bridge_attempt_plan(task, query_bridge_forced(task), retry_options);
+            query_bridge_attempt_plan(task,
+                                      query_bridge_index_forced(index_options, task.index),
+                                      retry_options);
         if (plan.partition_path_first) {
             mark_partition_path_first_task(task);
         }
