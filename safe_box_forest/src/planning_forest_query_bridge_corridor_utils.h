@@ -77,6 +77,18 @@ struct QueryBridgeLateralRepairStats {
     std::vector<int> committed_indices;
 };
 
+struct QueryBridgeAdaptiveRepairStats {
+    int calls = 0;
+    int added = 0;
+    int max_subdivisions_used = 0;
+    double ffb_ms = 0.0;
+    double loop_ms = 0.0;
+    double initial_bad_fraction = 0.0;
+    double final_bad_fraction = 0.0;
+    std::vector<int> committed_indices;
+    std::vector<int> final_bad;
+};
+
 struct QueryBridgeRepairSubdivisionOptions {
     int base_subdivisions = 0;
     int subdivisions = 0;
@@ -299,6 +311,22 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
     const QueryBridgeLateralRepairOptions& options,
     const std::function<bool(int)>& transition_connected,
     const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
+    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const Eigen::VectorXd&,
+                                                       int)>& commit_box,
+    bool detailed_timing);
+
+QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<int>& initial_bad,
+    int base_subdivisions,
+    const QueryBridgeAdaptiveRepairOptions& options,
+    const std::function<bool(int)>& transition_connected,
+    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
+    const std::function<std::vector<int>()>& bad_transitions,
+    const std::function<double(const std::vector<int>&)>& bad_fraction,
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,

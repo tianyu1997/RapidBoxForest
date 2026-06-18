@@ -739,6 +739,120 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
     return stats;
 }
 
+QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<int>& initial_bad,
+    int base_subdivisions,
+    const QueryBridgeAdaptiveRepairOptions& options,
+    const std::function<bool(int)>& transition_connected,
+    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
+    const std::function<std::vector<int>()>& bad_transitions,
+    const std::function<double(const std::vector<int>&)>& bad_fraction,
+    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
+    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
+                                                       const Eigen::VectorXd&,
+                                                       int)>& commit_box,
+    bool detailed_timing) {
+    using Clock = std::chrono::steady_clock;
+    QueryBridgeAdaptiveRepairStats stats;
+    stats.max_subdivisions_used = base_subdivisions;
+    stats.final_bad = initial_bad;
+    stats.initial_bad_fraction = bad_fraction(stats.final_bad);
+
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_adaptive_repair_priority",
+        static_cast<double>(options.priority_mode));
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_adaptive_repair_target_segment_fraction",
+        options.target_segment_fraction);
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
+        stats.initial_bad_fraction);
+
+    if (options.enabled && !stats.final_bad.empty()) {
+        const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
+        std::vector<int> ordered_final_bad =
+            query_bridge_order_transitions_by_gap_length(samples,
+                                                        stats.final_bad,
+                                                        options.priority_mode);
+        for (int transition : ordered_final_bad) {
+            if (stats.calls >= options.max_calls) {
+                break;
+            }
+            if (options.target_segment_fraction > 0.0 &&
+                bad_fraction(stats.final_bad) <= options.target_segment_fraction) {
+                context.diagnostics().add_counter(
+                    "query_bridge.direct_corridor_adaptive_repair_target_stops");
+                break;
+            }
+            if (transition_connected(transition) ||
+                transition < 0 ||
+                transition + 1 >= static_cast<int>(samples.size())) {
+                continue;
+            }
+            const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
+            const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
+            const double gap_length = (b - a).norm();
+            const int target_subdivisions = std::min(
+                options.max_subdivisions,
+                std::max(base_subdivisions + 1,
+                         static_cast<int>(std::ceil(gap_length / options.fine_step))));
+            stats.max_subdivisions_used =
+                std::max(stats.max_subdivisions_used, target_subdivisions);
+            const std::vector<double> adaptive_fractions =
+                query_bridge_center_ordered_fractions(target_subdivisions);
+            for (double u : adaptive_fractions) {
+                if (stats.calls >= options.max_calls) {
+                    break;
+                }
+                if (transition_connected(transition)) {
+                    break;
+                }
+                const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
+                if (seed_covered(seed)) {
+                    context.diagnostics().add_counter(
+                        "query_bridge.direct_corridor_adaptive_repair_skip_covered");
+                    continue;
+                }
+                const auto ffb_t0 = Clock::now();
+                FindFreeBoxResult result = find_box(seed, transition);
+                stats.ffb_ms +=
+                    std::chrono::duration<double, std::milli>(Clock::now() - ffb_t0).count();
+                stats.calls += 1;
+                const QueryBridgeFfbTaskCommitResult commit =
+                    commit_box(std::move(result), seed, transition);
+                if (commit.box_index >= 0) {
+                    if (std::find(stats.committed_indices.begin(),
+                                  stats.committed_indices.end(),
+                                  commit.box_index) == stats.committed_indices.end()) {
+                        stats.committed_indices.push_back(commit.box_index);
+                    }
+                    if (commit.added_box) {
+                        stats.added += 1;
+                    }
+                    if (options.target_segment_fraction > 0.0) {
+                        stats.final_bad = bad_transitions();
+                    }
+                    if (transition_connected(transition)) {
+                        break;
+                    }
+                }
+            }
+        }
+        stats.final_bad = bad_transitions();
+        if (detailed_timing) {
+            stats.loop_ms =
+                std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
+        }
+    }
+    stats.final_bad_fraction = bad_fraction(stats.final_bad);
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_adaptive_final_bad_fraction",
+        stats.final_bad_fraction);
+    return stats;
+}
+
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
     std::vector<double> fractions;
     if (subdivisions <= 1) {

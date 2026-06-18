@@ -1297,116 +1297,42 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                  subdivisions,
                                                  audit_step,
                                                  sample_step);
-        const int adaptive_repair_priority_mode = adaptive_repair_options.priority_mode;
-        auto order_adaptive_repair_transitions =
-            [&](const std::vector<int>& transitions) {
-                return query_bridge_order_transitions_by_gap_length(samples,
-                                                                    transitions,
-                                                                    adaptive_repair_priority_mode);
-            };
         int adaptive_repair_calls = 0;
         int adaptive_repair_added = 0;
         int adaptive_repair_max_subdivisions_used = subdivisions;
-        const bool adaptive_step_repair = adaptive_repair_options.enabled;
-        const double adaptive_target_segment_fraction =
-            adaptive_repair_options.target_segment_fraction;
-        const double adaptive_initial_bad_fraction =
-            bad_transition_fraction(final_bad);
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_adaptive_repair_priority",
-            static_cast<double>(adaptive_repair_priority_mode));
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_adaptive_repair_target_segment_fraction",
-            adaptive_target_segment_fraction);
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
-            adaptive_initial_bad_fraction);
-        if (adaptive_step_repair && !final_bad.empty()) {
-            const auto adaptive_loop_t0 =
-                detailed_direct_timing ? Clock::now() : Clock::time_point{};
-            const int adaptive_max_subdivisions = adaptive_repair_options.max_subdivisions;
-            const double adaptive_fine_step = adaptive_repair_options.fine_step;
-            const int adaptive_max_calls = adaptive_repair_options.max_calls;
-            std::vector<int> ordered_final_bad =
-                order_adaptive_repair_transitions(final_bad);
-            for (int transition : ordered_final_bad) {
-                if (adaptive_repair_calls >= adaptive_max_calls) {
-                    break;
-                }
-                if (adaptive_target_segment_fraction > 0.0 &&
-                    bad_transition_fraction(final_bad) <= adaptive_target_segment_fraction) {
-                    context.diagnostics().add_counter(
-                        "query_bridge.direct_corridor_adaptive_repair_target_stops");
-                    break;
-                }
-                if (transition_connected(transition) ||
-                    transition < 0 ||
-                    transition + 1 >= static_cast<int>(samples.size())) {
-                    continue;
-                }
-                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
-                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
-                const double gap_length = (b - a).norm();
-                const int target_subdivisions = std::min(
-                    adaptive_max_subdivisions,
-                    std::max(subdivisions + 1,
-                             static_cast<int>(std::ceil(gap_length / adaptive_fine_step))));
-                adaptive_repair_max_subdivisions_used =
-                    std::max(adaptive_repair_max_subdivisions_used, target_subdivisions);
-                const std::vector<double> adaptive_fractions =
-                    query_bridge_center_ordered_fractions(target_subdivisions);
-                for (double u : adaptive_fractions) {
-                    if (adaptive_repair_calls >= adaptive_max_calls) {
-                        break;
-                    }
-                    if (transition_connected(transition)) {
-                        break;
-                    }
-                    const Eigen::VectorXd seed = (1.0 - u) * a + u * b;
-                    if (current_boxes_cover_point(seed)) {
-                        context.diagnostics().add_counter(
-                            "query_bridge.direct_corridor_adaptive_repair_skip_covered");
-                        continue;
-                    }
-                    const auto adaptive_ffb_t0 = Clock::now();
-                    const FindFreeBoxResult result = find_free_box_in_domain(
-                        seed,
-                        direct_planning_domain,
-                        context,
-                        direct_options);
-                    adaptive_repair_ffb_ms +=
-                        std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                  adaptive_ffb_t0).count();
-                    adaptive_repair_calls += 1;
+        const QueryBridgeAdaptiveRepairStats adaptive_stats =
+            query_bridge_run_adaptive_repair_pass(
+                context,
+                samples,
+                final_bad,
+                subdivisions,
+                adaptive_repair_options,
+                transition_connected,
+                current_boxes_cover_point,
+                bad_transitions,
+                bad_transition_fraction,
+                [&](const Eigen::VectorXd& seed, int) {
+                    return find_free_box_in_domain(seed,
+                                                   direct_planning_domain,
+                                                   context,
+                                                   direct_options);
+                },
+                [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
                     const std::size_t before_boxes = boxes_.size();
                     const int box_index = commit_result(std::move(result), seed, transition);
-                    if (box_index >= 0) {
-                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
-                            repair_indices.end()) {
-                            repair_indices.push_back(box_index);
-                        }
-                        if (boxes_.size() > before_boxes) {
-                            adaptive_repair_added += 1;
-                        }
-                        if (adaptive_target_segment_fraction > 0.0) {
-                            final_bad = bad_transitions();
-                        }
-                        if (transition_connected(transition)) {
-                            break;
-                        }
-                    }
-                }
-            }
-            final_bad = bad_transitions();
-            if (detailed_direct_timing) {
-                adaptive_loop_ms =
-                    std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              adaptive_loop_t0).count();
-            }
-        }
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_adaptive_final_bad_fraction",
-            bad_transition_fraction(final_bad));
+                    return QueryBridgeFfbTaskCommitResult{box_index,
+                                                          boxes_.size() > before_boxes};
+                },
+                detailed_direct_timing);
+        adaptive_repair_calls = adaptive_stats.calls;
+        adaptive_repair_added = adaptive_stats.added;
+        adaptive_repair_max_subdivisions_used = adaptive_stats.max_subdivisions_used;
+        adaptive_repair_ffb_ms = adaptive_stats.ffb_ms;
+        adaptive_loop_ms = adaptive_stats.loop_ms;
+        final_bad = adaptive_stats.final_bad;
+        repair_indices.insert(repair_indices.end(),
+                              adaptive_stats.committed_indices.begin(),
+                              adaptive_stats.committed_indices.end());
         int lateral_repair_calls = 0;
         int lateral_repair_added = 0;
         const QueryBridgeLateralRepairOptions lateral_repair_options =
