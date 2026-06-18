@@ -9,7 +9,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <vector>
 
@@ -49,8 +48,7 @@ struct ObbPortalCandidate {
 };
 
 bool obb_sampled_support_enabled() {
-    const char* value = std::getenv("RBF_OBB_SAMPLED_SUPPORT");
-    return value != nullptr && value[0] == '1';
+    return detail::env_flag_or_default("RBF_OBB_SAMPLED_SUPPORT", false);
 }
 
 Eigen::MatrixXd obb_compress_generator_columns(const Eigen::MatrixXd& generators,
@@ -824,8 +822,7 @@ double obb_segment_aabb_distance_sq(const detail::Vec3& origin,
 }
 
 bool obb_clearance_sampled_enabled() {
-    const char* value = std::getenv("RBF_OBB_CLEARANCE_SAMPLED_SUPPORT");
-    return value == nullptr || value[0] != '0';
+    return detail::env_flag_or_default("RBF_OBB_CLEARANCE_SAMPLED_SUPPORT", true);
 }
 
 bool validate_obb_clearance_sampled_candidate(const Robot& robot,
