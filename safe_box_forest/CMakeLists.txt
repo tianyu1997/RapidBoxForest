@@ -122,6 +122,7 @@ add_library(sbf_core STATIC
     src/planning_forest_dynamic_cache.cpp
     src/planning_forest_ffb.cpp
     src/planning_forest_obb.cpp
+    src/planning_forest_obb_sampled.cpp
     src/planning_forest_obb_zonotope.cpp
     src/planning_forest_overlay.cpp
     src/planning_forest_partition.cpp
