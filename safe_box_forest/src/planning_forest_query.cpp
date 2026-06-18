@@ -5,21 +5,18 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 
 #include "adaptive_grid_partition_options.h"
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_utils.h"
+#include "query_graph_cost_options.h"
 
 namespace rbf {
 
 namespace {
-
-using detail::env_int_or_default;
 
 bool collision_bracket(const Eigen::VectorXd& lhs,
                        const Eigen::VectorXd& rhs,
@@ -224,7 +221,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         query_config.collision_shortcut = false;
     }
     const bool do_collision_shortcut = query_config.collision_shortcut;
-    const int active_query_index = env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
+    const int active_query_index = active_query_index_from_env();
     const bool partition_last_query_cache_enabled =
         partition_native_mode() &&
         adaptive_partition_query_enabled_ &&

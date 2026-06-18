@@ -1,6 +1,5 @@
 #include "planning_forest_query_utils.h"
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_batch_utils.h"
 
@@ -9,7 +8,6 @@
 #include <cctype>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <queue>
@@ -18,9 +16,6 @@
 #include <string>
 
 namespace rbf {
-
-using detail::env_double_or_default;
-using detail::env_int_or_default;
 
 std::vector<Eigen::VectorXd> collision_shortcut_path(const std::vector<Eigen::VectorXd>& path,
                                                      const CollisionChecker& checker,

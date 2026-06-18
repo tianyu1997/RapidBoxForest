@@ -13,15 +13,12 @@
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_keys.h"
 #include "adaptive_grid_partition_options.h"
-#include "env_config.h"
 #include "query_graph_cost_options.h"
 
 namespace rbf {
 
 namespace {
 
-using detail::env_double_or_default;
-using detail::env_int_or_default;
 using partition_detail::box_center;
 using partition_detail::box_volume_from_intervals;
 using partition_detail::choose_bin_width;

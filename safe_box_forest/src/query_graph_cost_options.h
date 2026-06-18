@@ -20,6 +20,10 @@ struct QueryShortcutCostOptions {
     double cost_factor = 1.05;
 };
 
+inline int active_query_index_from_env() {
+    return detail::env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
+}
+
 inline QueryGraphCostOptions query_graph_cost_options_from_env() {
     QueryGraphCostOptions options;
     options.box_transition_penalty = std::max(
@@ -34,8 +38,7 @@ inline QueryGraphCostOptions query_graph_cost_options_from_env() {
     options.query_bridge_penalty = std::max(
         0.0,
         detail::env_double_or_default("RBF_QUERY_BRIDGE_EDGE_COST_PENALTY", 0.0));
-    options.active_query_index =
-        detail::env_int_or_default("RBF_ACTIVE_QUERY_INDEX", -1);
+    options.active_query_index = active_query_index_from_env();
     options.foreign_query_edge_penalty = options.active_query_index >= 0
         ? std::max(0.0,
                    detail::env_double_or_default("RBF_QUERY_FOREIGN_EDGE_COST_PENALTY", 0.0))
