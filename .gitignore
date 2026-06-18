@@ -31,6 +31,7 @@ __pycache__/
 compile_commands.json
 .cache/
 .pytest_cache/
+/tmp/
 
 # LaTeX intermediate files
 *.aux
@@ -40,6 +41,15 @@ compile_commands.json
 *.xdv
 *.out
 *.blg
+*.bcf
+*.run.xml
+*.synctex.gz
+*.toc
+*.lof
+*.lot
+*.nav
+*.snm
+*.vrb
 
 # Local editor/system files
 .vscode/

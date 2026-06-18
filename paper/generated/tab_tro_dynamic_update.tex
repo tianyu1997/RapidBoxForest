@@ -1,14 +1,14 @@
 \par\vspace{0.25ex}
 \noindent\begin{minipage}{\columnwidth}
 \centering
-\captionof{table}{Adaptive leaf-sweep maintenance timing.}
+\captionof{table}{Adaptive leaf-sweep maintenance-only timing.}
 \label{tab:tro-dynamic-update}
 \scriptsize
 \setlength{\tabcolsep}{2.0pt}
 \renewcommand{\arraystretch}{1.02}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-Operation & Time (ms) & Speedup \\
+Operation & Time (ms) & \shortstack{Speedup over\\15-obstacle build} \\
 \midrule
 Warm build (10 obstacles) & 922.75 [897.57, 955.67] & -- \\
 Insert to 15 obstacles & 6.06 [5.69, 6.54] & 153.3--207.5$\times$ \\
@@ -17,6 +17,6 @@ Warm build (15 obstacles) & 958.79 [941.67, 1115.18] & -- \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), ms. Maintenance only, not end-to-end replanning; speedup compares each update row with the 15-obstacle warm build.\par}
+{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), ms. Maintenance only; no query stage. Speedup compares each update row with the 15-obstacle warm build.\par}
 \end{minipage}
 \par\vspace{0.25ex}

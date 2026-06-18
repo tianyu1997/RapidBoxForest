@@ -11,8 +11,8 @@ this repository unless the work explicitly requires coordinated updates in
 ## Before Opening A Pull Request
 
 1. Build and run the default validation workflow with `bash tests/run_all.sh`.
-2. If your change touches experiment scripts or paper-facing outputs, read `docs/EXPERIMENT_REPRODUCTION.md` and rerun the affected generator or experiment entry point.
-3. If your change updates the TRO manuscript under `doc/paper/tro_rewrite_2026`, rebuild `sbf_tro_2026.tex` with XeLaTeX so the checked-in PDF matches the source.
+2. If your change touches experiment scripts or paper-facing outputs, read `../docs/REPRODUCIBILITY.md` and rerun the affected generator or experiment entry point.
+3. If your change updates the TRO manuscript under `../paper/`, rebuild `paper/sbf_tro_2026.tex` with XeLaTeX so the checked-in PDF matches the source.
 
 ## Change Guidelines
 

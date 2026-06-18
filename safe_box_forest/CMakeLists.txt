@@ -66,6 +66,11 @@ if(SBF_WITH_PYTHON)
     find_package(ompl REQUIRED HINTS /usr/share/ompl/cmake)
     find_package(pybind11 2.12 QUIET)
     if(NOT pybind11_FOUND)
+        if(FETCHCONTENT_FULLY_DISCONNECTED)
+            message(FATAL_ERROR
+                "pybind11 was not found and FetchContent is fully disconnected. "
+                "Install pybind11, set CMAKE_PREFIX_PATH, or configure with network access.")
+        endif()
         FetchContent_Declare(
             pybind11
             GIT_REPOSITORY https://github.com/pybind/pybind11.git

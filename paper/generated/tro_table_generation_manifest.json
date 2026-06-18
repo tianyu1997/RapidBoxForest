@@ -47,7 +47,7 @@
       "exists": true,
       "path": "paper/generated/tab_tro_dynamic_update.tex",
       "placeholder": false,
-      "sha256": "6a8bbb5524cd99a71c7e9b321d4047da5f639647c001069762b2514d98cd0723"
+      "sha256": "7f002c4aa0df2bc003b15be1f61c9bbb754523121f6307a8038c5d5514556350"
     },
     "tab_tro_endpoint_envelope.tex": {
       "exists": true,
@@ -65,19 +65,19 @@
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "a2b7f24fc3543f833add20b8896f25fbf323e4c9db21cb16c3490d7c5cd13219"
+      "sha256": "8a6357cb99e41146a23f5b5b7564f7860074528db5adc98f42c472a7b4a658d4"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "e4491f3e569c6f27b8ec7bbb07d24002293d043612c7fd1799346ac8cca65f1e"
+      "sha256": "65cce2615a0998886c61b37bf3297b0f1dacdf63771d7877690baa7f6a77a7b3"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "f9536adff63dbc8361afc0ed9f926b99bed333c23ce6ac0c2850cbe8fc526065"
+      "sha256": "58a2bd5b542e9950faeaa00ef41fac7cb42e2553cfc2ac324ee90c0beaaf1470"
     }
   },
   "environment": {

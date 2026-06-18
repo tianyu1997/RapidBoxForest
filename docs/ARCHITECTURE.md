@@ -137,9 +137,10 @@ when the configured thresholds require it.
 
 Current experiment runners are in top-level `experiments/`, with common helpers
 under `experiments/common/`. They write generated data under ignored `outputs/`
-paths. Package-local `safe_box_forest/experiments/sbf_old/` scripts and
-`paper/sbf_old/` are historical reproduction materials and should not be treated
-as the preferred entry points for new runs.
+paths. Historical package-local scripts and old manuscript trees may exist in
+the private development checkout, but they are excluded from the clean public
+export by default and should not be treated as preferred entry points for new
+runs.
 
 ## Cleanup Rules
 

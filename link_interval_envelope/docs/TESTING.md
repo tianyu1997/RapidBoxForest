@@ -9,7 +9,7 @@ bash tests/run_all.sh
 Environment overrides:
 
 ```bash
-PYTHON_EXECUTABLE=/home/tian/miniconda3/envs/sbf/bin/python \
+PYTHON_EXECUTABLE="$(command -v python3)" \
 BUILD_DIR=build \
 JOBS=8 \
 bash tests/run_all.sh
@@ -41,7 +41,7 @@ cmake -S . -B build \
   -DCMAKE_BUILD_TYPE=Release \
   -DLIE_BUILD_TESTS=ON \
   -DLIE_WITH_PYTHON=ON \
-  -DPython3_EXECUTABLE=/home/tian/miniconda3/envs/sbf/bin/python
+  -DPython3_EXECUTABLE="$(command -v python3)"
 cmake --build build -j
 ctest --test-dir build --output-on-failure
 ```
@@ -54,7 +54,7 @@ After building:
 
 ```bash
 export PYTHONPATH=build/python:python
-/home/tian/miniconda3/envs/sbf/bin/python -m unittest discover \
+python3 -m unittest discover \
   -s tests \
   -p 'test_python_api.py'
 ```
@@ -63,7 +63,7 @@ export PYTHONPATH=build/python:python
 
 ```bash
 export PYTHONPATH=build/python:python
-/home/tian/miniconda3/envs/sbf/bin/python -m link_interval_envelope compute \
+python3 -m link_interval_envelope compute \
   --robot examples/data/2dof_planar.json \
   --intervals-json '[[-0.4, 0.4], [-0.2, 0.2]]' \
   --endpoint-source ifk \
@@ -77,7 +77,7 @@ export PYTHONPATH=build/python:python
 
 ```bash
 export PYTHONPATH=build/python:python
-/home/tian/miniconda3/envs/sbf/bin/python examples/benchmark_ifk_crit.py \
+python3 examples/benchmark_ifk_crit.py \
   --n-boxes 512 \
   --repeats 7 \
   --threads 4 \

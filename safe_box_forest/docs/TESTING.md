@@ -13,4 +13,5 @@ Useful environment variables:
 - `RBF_WITH_PYTHON`: build Python bindings for enabled workspace modules.
 
 The test script configures the workspace root and also runs an independence grep
-check to catch accidental includes of v6-only forest/planner/ffb/lect headers.
+check to catch accidental includes of forbidden private forest/planner/ffb/lect
+headers.

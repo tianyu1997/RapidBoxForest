@@ -1,12 +1,11 @@
 # Link Interval Envelope
 
-Self-contained extraction of the v6 link interval envelope pipeline. The package
-is intentionally outside `cpp/v6` and does not include or link against the v6
-planner, LECT, SafeBoxForest, Drake, or OMPL code.
+Self-contained link interval envelope package. The package does not include or
+link against planner, LECT, SafeBoxForest, Drake, or OMPL code.
 
 Given a robot model, a joint-interval box, endpoint-source settings, and an
 envelope type, the package computes per-link envelopes plus normalized JSON and
-optional HTML visualization artifacts. It also exposes the v6-compatible
+optional HTML visualization artifacts. It also exposes the compatibility
 `sbf::FKState` layout and a stateful context for repeated nearby interval
 queries.
 
@@ -195,11 +194,10 @@ auto batch = lie::compute_envelope_batch(
     4);
 ```
 
-The compatibility `rbf::FKState` struct keeps the current v6 field layout, so code that
-already targets v6 `FKState` fields remains source-compatible when compiled
-against this standalone package. Do not link this package and v6 as two
-independent libraries into the same target while including both copies of the
-same `rbf` symbols.
+The compatibility `rbf::FKState` struct keeps the workspace field layout, so
+code that already targets those `FKState` fields remains source-compatible when
+compiled against this standalone package. Do not link this package with another
+independent library that provides the same `rbf` symbols in one target.
 
 New C++ integrations should include `link_interval_envelope/api.h` and avoid
 direct `sbf/*` includes unless they intentionally need a source-specific kernel,
@@ -229,7 +227,7 @@ The `compute` command accepts either `--intervals-json` / `--intervals-file` or
 
 ## Robot JSON
 
-Robot files follow the v6 DH schema:
+Robot files follow the workspace DH schema:
 
 ```json
 {

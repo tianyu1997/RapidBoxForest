@@ -5,8 +5,9 @@ This module contains the SafeBoxForest (SBF) build/query pipeline. It depends on
 the sibling `lect_database` module, which in turn depends on the sibling
 `link_interval_envelope` module.
 
-Public repository:
-https://github.com/tianyu1997/SafeBoxForest
+In the public RapidBoxForest release this module is normally built through the
+workspace root.  Use the top-level README and `docs/REPRODUCIBILITY.md` for
+paper-facing builds and experiment reruns.
 
 The package separates SBF into explicit rings:
 
@@ -19,17 +20,17 @@ The package separates SBF into explicit rings:
 - Facade: `SafeBoxForest`
 - Runtime: `StageContext`, `RuntimeConfig`, `ThreadPoolExecutor`
 
-The default `SBFConfig` is the paper-facing `SBF-SH` profile: CritSample
-endpoint evidence, SupportHull envelopes with retained KDOP26 slabs, a 64-box
-connected quality floor, strict path audit, and collision-checked path
-post-processing.
+Paper-facing configurations are defined by the top-level experiment profiles
+under `experiments/common/`.  Do not infer the paper configuration from a raw
+default-constructed planner config.
 
 ## Documentation
 
 - `docs/README.md` - documentation index and reading order.
-- `docs/EXPERIMENT_REPRODUCTION.md` - build, test, paper, and experiment rerun guide.
-- `docs/PAPER_ARTIFACTS.md` - manuscript, generated tables, and result-artifact map.
-- `experiments/README.md` - experiment script layout and preferred entry points.
+- `../experiments/README.md` - paper experiment script layout and preferred
+  entry points.
+- `../docs/REPRODUCIBILITY.md` - workspace-level build, paper, and experiment
+  reproduction guide.
 
 ## Release Metadata
 
@@ -65,34 +66,22 @@ SBF_BUILD_EXPERIMENTS=ON bash tests/run_all.sh
 ```
 
 The test script configures the workspace root, builds C++, builds the Python
-extension, runs CTest, and checks that this module does not include v6-only
-headers or paths.
+extension, runs CTest, and checks that this module does not include forbidden
+private headers or paths.
 
 ## TRO 2026 Paper Quickstart
 
-If you want to regenerate the current TRO paper from the committed JSON and
-generated manifests, use one build directory consistently and then rerun the
-table generator plus XeLaTeX:
+Use the workspace-level dispatcher and paper asset generator rather than
+package-local historical scripts:
 
 ```bash
-BUILD_DIR="$PWD/build_py310" \
-SBF_BUILD_EXPERIMENTS=ON \
-PYTHON_EXECUTABLE="$(command -v python)" \
-bash tests/run_all.sh
-
-PYTHONPATH="$PWD/build_py310/python:$PWD/python:$PWD/experiments" \
-python experiments/tro2026_generate_tables.py \
-	--mode main \
-	--manifest doc/paper/tro_rewrite_2026/generated/tro_table_generation_manifest_main.json
-
-cd doc/paper/tro_rewrite_2026
-xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
-xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
+python3 ../experiments/run_tro2026.py --phase smoke --dry-run
+python3 ../experiments/generate_tro2026_paper_assets.py \
+  --out-dir ../outputs/new_experiments/tro2026 \
+  --paper-dir ../paper
 ```
 
-For a full rerun of the heavy paper experiments, start from
-`docs/EXPERIMENT_REPRODUCTION.md` and `experiments/README.md` rather than
-calling ad hoc scripts directly.
+For the complete public workflow, start from `../docs/REPRODUCIBILITY.md`.
 
 ## C++ Quickstart
 
@@ -145,28 +134,18 @@ print(profile.final_boxes, result.success)
 PY
 ```
 
-## Marcucci Shelf Demo
+## Paper Experiments
 
-The standalone package includes a Drake/Meshcat demo for the Marcucci
-shelf+IIWA combined scene. It ports the 16 AABB obstacles, five canonical query
-pairs, and IIWA14 model data into the SBF package, then exports timing JSON and
-a Meshcat HTML visualization.
+The clean public release uses the top-level TRO dispatcher for paper-facing
+experiments:
 
 ```bash
-PYTHONPATH=build_py310/python:python \
-python experiments/archive/legacy_demos/marcucci_shelf_demo.py \
-	--query AS->TS \
-	--out-dir outputs/marcucci_shelf_demo
+python3 ../experiments/run_tro2026.py --phase smoke --dry-run
 ```
 
-Outputs:
-
-- `marcucci_shelf_sbf_run.json`: build/query timings and diagnostics.
-- `paths.json`: path waypoints in the same shape as the legacy visualizer.
-- `marcucci_shelf_sbf_path.html`: Drake Meshcat scene with the SBF path trace.
-
-Set `GCS_REPO=/path/to/gcs-science-robotics` or pass `--gcs-repo` if the Drake
-model repository is not beside this workspace.
+Historical Drake/Meshcat demos may exist in the private development checkout,
+but they are excluded from the default clean public export and are not the
+recommended reproduction entry point.
 
 ## Parallelism Contract
 

@@ -9,11 +9,18 @@ and API details live beside each module.
    entry points.
 2. `ARCHITECTURE.md` - code framework, package boundaries, dependency flow, and
    generated-file policy.
-3. `../link_interval_envelope/README.md` - envelope computation package.
-4. `../lect_database/README.md` - LECT database, snapshots, and online cache.
-5. `../safe_box_forest/README.md` - planner facade, query pipeline, and Python
+3. `REPRODUCIBILITY.md` - build, smoke-test, experiment, cache, and paper-asset
+   reproduction workflow.
+4. `OPEN_SOURCE_RELEASE_CHECKLIST.md` - release-readiness checks before
+   publishing the repository.
+5. `../scripts/export_public_release.py` - allowlist-based clean public source
+   tree exporter.
+6. `../scripts/check_public_release.py` - public release tree validator.
+7. `../link_interval_envelope/README.md` - envelope computation package.
+8. `../lect_database/README.md` - LECT database, snapshots, and online cache.
+9. `../safe_box_forest/README.md` - planner facade, query pipeline, and Python
    bindings.
-6. `../experiments/README.md` - current experiment runners and output layout.
+10. `../experiments/README.md` - current experiment runners and output layout.
 
 ## Active Planning Notes
 
@@ -25,9 +32,9 @@ or build documentation.
 ## Archive Policy
 
 - `archive/` keeps superseded planning notes that may still explain historical
-  decisions.
-- `paper/` and `safe_box_forest/experiments/sbf_old/` keep reproduction
-  artifacts for older TRO-oriented workflows.
+  decisions in the private development checkout.
+- Clean public exports exclude historical archives by default; paper-facing
+  reproduction should use the current top-level `experiments/` runners.
 - Generated outputs belong under ignored paths such as `build*/`, `outputs/`,
   `**/outputs/`, `__pycache__/`, and `.sbf_lect_database/`.
 

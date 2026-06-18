@@ -12,6 +12,11 @@ if(NOT LIE_FORCE_FETCH_EIGEN)
     find_package(Eigen3 3.4 QUIET)
 endif()
 if(NOT Eigen3_FOUND)
+    if(FETCHCONTENT_FULLY_DISCONNECTED AND NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_EIGEN3}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "Eigen3 was not found and FetchContent is fully disconnected. "
+            "Install Eigen3, set CMAKE_PREFIX_PATH, or configure with network access.")
+    endif()
     FetchContent_Declare(
         eigen3
         GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
@@ -26,9 +31,17 @@ if(NOT Eigen3_FOUND)
 endif()
 
 if(NOT LIE_FORCE_FETCH_NLOHMANN_JSON)
-    find_package(nlohmann_json 3.11 QUIET)
+    # Ubuntu 22.04 ships nlohmann-json3-dev 3.10.x.  The code only relies on
+    # stable core JSON APIs, so accepting 3.10 keeps offline public CI and
+    # source builds practical while FetchContent still pins a newer version.
+    find_package(nlohmann_json 3.10 QUIET)
 endif()
 if(NOT nlohmann_json_FOUND)
+    if(FETCHCONTENT_FULLY_DISCONNECTED AND NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_NLOHMANN_JSON}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "nlohmann_json was not found and FetchContent is fully disconnected. "
+            "Install nlohmann_json, set CMAKE_PREFIX_PATH, or configure with network access.")
+    endif()
     FetchContent_Declare(
         nlohmann_json
         GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -45,6 +58,11 @@ if(LIE_WITH_PYTHON)
 
     find_package(pybind11 2.12 QUIET)
     if(NOT pybind11_FOUND)
+        if(FETCHCONTENT_FULLY_DISCONNECTED AND NOT EXISTS "${FETCHCONTENT_SOURCE_DIR_PYBIND11}/CMakeLists.txt")
+            message(FATAL_ERROR
+                "pybind11 was not found and FetchContent is fully disconnected. "
+                "Install pybind11, set CMAKE_PREFIX_PATH, or configure with network access.")
+        endif()
         FetchContent_Declare(
             pybind11
             GIT_REPOSITORY https://github.com/pybind/pybind11.git

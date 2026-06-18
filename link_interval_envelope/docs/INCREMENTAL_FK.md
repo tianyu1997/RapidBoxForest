@@ -1,8 +1,9 @@
-# Incremental FK and v6 Compatibility
+# Incremental FK and Compatibility
 
 ## Compatibility Goal
 
-The standalone package keeps the current v6 `sbf::FKState` structure and the same incremental FK functions:
+The standalone package keeps the workspace-compatible `sbf::FKState` structure
+and the same incremental FK functions:
 
 - `sbf::compute_fk_full`
 - `sbf::compute_fk_incremental`
@@ -10,7 +11,11 @@ The standalone package keeps the current v6 `sbf::FKState` structure and the sam
 - `sbf::extract_endpoint_iaabbs`
 - `sbf::extract_link_aabbs`
 
-This makes code written for the v6 FK state source-compatible when it is compiled against this standalone package. The standalone package is self-contained and should be treated as the provider of `sbf::*` symbols in a downstream target. Avoid linking both `cpp/v6` and this package into the same binary because they intentionally define overlapping `sbf` symbols.
+This keeps code written for the compatibility FK state source-compatible when
+it is compiled against this standalone package. The standalone package is
+self-contained and should be treated as the provider of `sbf::*` symbols in a
+downstream target. Avoid linking another independent provider of the same
+`sbf` symbols into one binary.
 
 ## How Incremental FK Is Used
 
@@ -26,7 +31,9 @@ auto child = sbf::compute_endpoint_iaabb(
     robot, child_intervals, endpoint_config, &fk, changed_dim);
 ```
 
-The first call computes the full chain and writes `fk`. The second call reuses the valid state and recomputes only from `changed_dim` onward. This matches the v6 incremental workflow used by tree expansion code.
+The first call computes the full chain and writes `fk`. The second call reuses
+the valid state and recomputes only from `changed_dim` onward. This is the
+incremental workflow used by tree expansion code.
 
 ## Stateful Context
 
