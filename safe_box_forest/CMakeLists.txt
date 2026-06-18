@@ -102,6 +102,7 @@ add_library(sbf_core STATIC
     src/frontwave_grower.cpp
     src/grower.cpp
     src/grower_bootstrap.cpp
+    src/grower_component_connect.cpp
     src/grower_components.cpp
     src/grower_failure_cooling.cpp
     src/grower_frontier.cpp
