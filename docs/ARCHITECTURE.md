@@ -126,6 +126,8 @@ src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra h
 src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
+src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
+                                   survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
 src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
 src/planning_forest_dynamic_cache.cpp

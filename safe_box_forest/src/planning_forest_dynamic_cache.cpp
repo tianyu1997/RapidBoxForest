@@ -5,12 +5,12 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
 #include <limits>
 #include <unordered_set>
 #include <vector>
 
 #include "env_config.h"
+#include "planning_forest_audit.h"
 
 namespace rbf {
 
@@ -126,56 +126,6 @@ bool allow_dynamic_commit(BoxOracle& oracle,
         return false;
     }
     return false;
-}
-
-CollisionChecker make_audit_checker_local(const Robot& robot,
-                                           const Scene& scene,
-                                           const QueryConfig& query_config) {
-    CollisionChecker checker(robot, scene);
-    checker.set_collision_tolerance(query_config.audit_collision_tolerance);
-    return checker;
-}
-
-int effective_audit_segment_resolution(const Eigen::VectorXd& start,
-                                       const Eigen::VectorXd& goal,
-                                       int min_resolution,
-                                       double segment_step) {
-    const int safe_resolution = std::max(1, min_resolution);
-    if (!(segment_step > 0.0) || !std::isfinite(segment_step)) {
-        return safe_resolution;
-    }
-    const double distance = (goal - start).norm();
-    if (!(distance > 0.0) || !std::isfinite(distance)) {
-        return safe_resolution;
-    }
-    const int step_resolution = std::max(2, static_cast<int>(std::ceil(distance / segment_step)));
-    return std::max(safe_resolution, step_resolution);
-}
-
-bool audit_waypoint_path_passes(const std::vector<Eigen::VectorXd>& path,
-                                const CollisionChecker& checker,
-                                int resolution,
-                                double segment_step) {
-    if (path.empty()) {
-        return false;
-    }
-    const int safe_resolution = std::max(1, resolution);
-    for (const auto& waypoint : path) {
-        if (checker.check_config(waypoint)) {
-            return false;
-        }
-    }
-    for (std::size_t index = 0; index + 1 < path.size(); ++index) {
-        const int segment_resolution = effective_audit_segment_resolution(
-            path[index],
-            path[index + 1],
-            safe_resolution,
-            segment_step);
-        if (checker.check_segment(path[index], path[index + 1], segment_resolution)) {
-            return false;
-        }
-    }
-    return true;
 }
 
 } // namespace
@@ -754,7 +704,7 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
             profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             return profile;
         }
-        CollisionChecker checker = make_audit_checker_local(audit_robot_, scene_, config_.query);
+        CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         int attempted_pairs = 0;
         int audit_fail = 0;
         int added = 0;
