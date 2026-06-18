@@ -289,15 +289,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
     batch_context.diagnostics().set_value("query_bridge.scene_reusable_edges",
                                           edge_options.scene_reusable_edges ? 1.0 : 0.0);
-    struct BatchBridgeDiagnosticsFlush {
-        BuildProfile& profile;
-        StageContext& context;
-        ~BatchBridgeDiagnosticsFlush() {
-            for (const auto& [key, value] : context.diagnostics().snapshot()) {
-                profile.diagnostics[key] = value;
-            }
-        }
-    } batch_diagnostics_flush{last_build_, batch_context};
+    ScopedStageDiagnosticsFlush batch_diagnostics_flush(last_build_, batch_context);
     auto elapsed_ms_since = [](Clock::time_point t0) {
         return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     };

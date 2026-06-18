@@ -4,6 +4,14 @@
 
 namespace rbf {
 
+ScopedStageDiagnosticsFlush::ScopedStageDiagnosticsFlush(BuildProfile& profile,
+                                                         StageContext& context)
+    : profile_(profile), context_(context) {}
+
+ScopedStageDiagnosticsFlush::~ScopedStageDiagnosticsFlush() {
+    merge_diagnostic_snapshot(profile_.diagnostics, context_.diagnostics().snapshot());
+}
+
 double boundary_max_depth_failure_count_local(const StageContext& context) {
     const auto& diagnostics = context.diagnostics();
     return diagnostics.value("connector.chain_pave_boundary_fail_depth_cap", 0.0) +

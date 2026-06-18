@@ -60,15 +60,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                     edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_min_length",
                                     edge_options.direct_segment_after_rrt_min_length);
-    struct QueryBridgePaveDiagnosticsFlush {
-        BuildProfile& profile;
-        StageContext& context;
-        ~QueryBridgePaveDiagnosticsFlush() {
-            for (const auto& [key, value] : context.diagnostics().snapshot()) {
-                profile.diagnostics[key] = value;
-            }
-        }
-    } pave_diagnostics_flush{last_build_, context};
+    ScopedStageDiagnosticsFlush pave_diagnostics_flush(last_build_, context);
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     const double bridge_waypoint_length = query_bridge_waypoint_length(waypoint_path);
     const bool direct_segment_after_rrt_candidate =

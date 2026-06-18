@@ -7,6 +7,18 @@
 
 namespace rbf {
 
+class ScopedStageDiagnosticsFlush {
+public:
+    ScopedStageDiagnosticsFlush(BuildProfile& profile, StageContext& context);
+    ScopedStageDiagnosticsFlush(const ScopedStageDiagnosticsFlush&) = delete;
+    ScopedStageDiagnosticsFlush& operator=(const ScopedStageDiagnosticsFlush&) = delete;
+    ~ScopedStageDiagnosticsFlush();
+
+private:
+    BuildProfile& profile_;
+    StageContext& context_;
+};
+
 double boundary_max_depth_failure_count_local(const StageContext& context);
 
 double diagnostic_map_value(const std::unordered_map<std::string, double>& diagnostics,

@@ -54,15 +54,7 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
-    struct QueryBridgeDiagnosticsFlush {
-        BuildProfile& profile;
-        StageContext& context;
-        ~QueryBridgeDiagnosticsFlush() {
-            for (const auto& [key, value] : context.diagnostics().snapshot()) {
-                profile.diagnostics[key] = value;
-            }
-        }
-    } diagnostics_flush{last_build_, context};
+    ScopedStageDiagnosticsFlush diagnostics_flush(last_build_, context);
     int start_box_id = locate_box_partition_first(start, config_.query.nearest_if_outside);
     if (start_box_id < 0) {
         start_box_id = anchor_query_endpoint_box(start, context);
