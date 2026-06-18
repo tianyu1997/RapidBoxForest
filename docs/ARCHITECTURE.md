@@ -156,11 +156,14 @@ src/planning_forest_query_utils.cpp
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
 src/planning_forest_query_bridge.cpp
-                                   online endpoint anchoring, query bridge, and
-                                   local repair orchestration
+                                   pair-level query bridge and local repair
+                                   orchestration
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting
+src/planning_forest_query_bridge_endpoint.cpp
+                                   endpoint anchoring and endpoint-to-main
+                                   corridor repair
 ```
 
 New production features should normally land in the smallest matching module
