@@ -296,6 +296,10 @@ QueryBridgeHipacTransitionGate query_bridge_hipac_transition_gate(
     int task_position_index,
     int query_index);
 
+bool query_bridge_hipac_after_rrt_available(
+    const AdaptiveLeafSweepConfig& config,
+    const QueryBridgeSearchTask& task);
+
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,
     const std::vector<Eigen::VectorXd>& waypoint_path,

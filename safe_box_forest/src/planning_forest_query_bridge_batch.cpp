@@ -1549,18 +1549,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
             batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                       elapsed_ms_since(second_probe_t0));
-            const int hipac_resolve_cap =
-                std::max(0, last_adaptive_partition_config_.hipac_online_max_resolves_per_query);
-            const bool can_run_hipac_online =
-                task.hipac_online_resolves_used < hipac_resolve_cap ||
-                (last_adaptive_partition_config_.hipac_online_transition_portal &&
-                 task.hipac_transition_resolves_used <
-                     std::max(0, last_adaptive_partition_config_.hipac_transition_max_attempts_per_query)) ||
-                (last_adaptive_partition_config_.hipac_online_prebridge_portal &&
-                 task.hipac_prebridge_resolves_used < hipac_resolve_cap);
-            if (last_adaptive_partition_config_.hipac_online_connectivity &&
-                !task.waypoint_path.empty() &&
-                can_run_hipac_online) {
+            if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
+                                                       task)) {
                 task.hipac_candidate_path = task.waypoint_path;
                 try_hipac_online_bridge(task);
                 if (!task.hipac_online_satisfied) {
@@ -1901,18 +1891,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
                                                   elapsed_ms_since(second_probe_t0));
-        const int hipac_resolve_cap =
-            std::max(0, last_adaptive_partition_config_.hipac_online_max_resolves_per_query);
-        const bool can_run_hipac_online =
-            task.hipac_online_resolves_used < hipac_resolve_cap ||
-            (last_adaptive_partition_config_.hipac_online_transition_portal &&
-             task.hipac_transition_resolves_used <
-                 std::max(0, last_adaptive_partition_config_.hipac_transition_max_attempts_per_query)) ||
-            (last_adaptive_partition_config_.hipac_online_prebridge_portal &&
-             task.hipac_prebridge_resolves_used < hipac_resolve_cap);
-        if (last_adaptive_partition_config_.hipac_online_connectivity &&
-            !task.waypoint_path.empty() &&
-            can_run_hipac_online) {
+        if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
+                                                   task)) {
             task.hipac_candidate_path = task.waypoint_path;
             try_hipac_online_bridge(task);
             if (!task.hipac_online_satisfied) {

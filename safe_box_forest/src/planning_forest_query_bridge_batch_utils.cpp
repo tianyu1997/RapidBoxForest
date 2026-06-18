@@ -303,6 +303,23 @@ QueryBridgeHipacTransitionGate query_bridge_hipac_transition_gate(
     return gate;
 }
 
+bool query_bridge_hipac_after_rrt_available(
+    const AdaptiveLeafSweepConfig& config,
+    const QueryBridgeSearchTask& task) {
+    const int hipac_resolve_cap =
+        std::max(0, config.hipac_online_max_resolves_per_query);
+    const bool has_remaining_budget =
+        task.hipac_online_resolves_used < hipac_resolve_cap ||
+        (config.hipac_online_transition_portal &&
+         task.hipac_transition_resolves_used <
+             std::max(0, config.hipac_transition_max_attempts_per_query)) ||
+        (config.hipac_online_prebridge_portal &&
+         task.hipac_prebridge_resolves_used < hipac_resolve_cap);
+    return config.hipac_online_connectivity &&
+           !task.waypoint_path.empty() &&
+           has_remaining_budget;
+}
+
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,
     const std::vector<Eigen::VectorXd>& waypoint_path,
