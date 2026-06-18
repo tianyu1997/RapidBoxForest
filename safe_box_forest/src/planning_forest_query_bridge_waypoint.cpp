@@ -1413,74 +1413,37 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             query_bridge_lateral_repair_options(sample_step);
         const bool lateral_repair = lateral_repair_options.enabled;
         if (lateral_repair && !final_bad.empty()) {
-            const auto lateral_loop_t0 =
-                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const auto domain = oracle_->planning_intervals();
-            for (int transition : final_bad) {
-                if (lateral_repair_calls >= lateral_repair_options.max_calls) {
-                    break;
-                }
-                if (transition_connected(transition) ||
-                    transition < 0 ||
-                    transition + 1 >= static_cast<int>(samples.size())) {
-                    continue;
-                }
-                const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
-                const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
-                const Eigen::VectorXd seed = 0.5 * (a + b);
-                const Eigen::VectorXd direction = b - a;
-                for (const Eigen::VectorXd& lateral_seed :
-                     query_bridge_lateral_candidates(seed,
-                                                     direction,
-                                                     domain,
-                                                     lateral_repair_options.dims,
-                                                     lateral_repair_options.rounds,
-                                                     lateral_repair_options.offset)) {
-                    if (lateral_repair_calls >= lateral_repair_options.max_calls) {
-                        break;
-                    }
-                    if (transition_connected(transition)) {
-                        break;
-                    }
-                    if (current_boxes_cover_point(lateral_seed)) {
-                        context.diagnostics().add_counter(
-                            "query_bridge.direct_corridor_lateral_repair_skip_covered");
-                        continue;
-                    }
-                    const auto lateral_ffb_t0 = Clock::now();
-                    const FindFreeBoxResult result = find_free_box_in_domain(
-                        lateral_seed,
-                        direct_planning_domain,
-                        context,
-                        direct_options);
-                    lateral_repair_ffb_ms +=
-                        std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                  lateral_ffb_t0).count();
-                    lateral_repair_calls += 1;
-                    const std::size_t before_boxes = boxes_.size();
-                    const int box_index = commit_result(std::move(result),
-                                                        lateral_seed,
-                                                        transition);
-                    if (box_index >= 0) {
-                        if (std::find(repair_indices.begin(), repair_indices.end(), box_index) ==
-                            repair_indices.end()) {
-                            repair_indices.push_back(box_index);
-                        }
-                        if (boxes_.size() > before_boxes) {
-                            lateral_repair_added += 1;
-                        }
-                        if (transition_connected(transition)) {
-                            break;
-                        }
-                    }
-                }
-            }
+            const QueryBridgeLateralRepairStats lateral_stats =
+                query_bridge_run_lateral_repair_pass(
+                    context,
+                    samples,
+                    final_bad,
+                    domain,
+                    lateral_repair_options,
+                    transition_connected,
+                    current_boxes_cover_point,
+                    [&](const Eigen::VectorXd& seed, int) {
+                        return find_free_box_in_domain(seed,
+                                                       direct_planning_domain,
+                                                       context,
+                                                       direct_options);
+                    },
+                    [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
+                        const std::size_t before_boxes = boxes_.size();
+                        const int box_index = commit_result(std::move(result), seed, transition);
+                        return QueryBridgeFfbTaskCommitResult{box_index,
+                                                              boxes_.size() > before_boxes};
+                    },
+                    detailed_direct_timing);
+            lateral_repair_calls = lateral_stats.calls;
+            lateral_repair_added = lateral_stats.added;
+            lateral_repair_ffb_ms = lateral_stats.ffb_ms;
+            lateral_loop_ms = lateral_stats.loop_ms;
+            repair_indices.insert(repair_indices.end(),
+                                  lateral_stats.committed_indices.begin(),
+                                  lateral_stats.committed_indices.end());
             final_bad = bad_transitions();
-            if (detailed_direct_timing) {
-                lateral_loop_ms =
-                    std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              lateral_loop_t0).count();
-            }
         }
         int local_segment_edges_added = 0;
         int local_segment_gap_samples_max = 0;
