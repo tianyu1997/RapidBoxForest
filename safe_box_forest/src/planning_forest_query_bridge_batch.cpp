@@ -100,6 +100,63 @@ std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
     return path;
 }
 
+void run_query_bridge_task_attempts(
+    QueryBridgeSearchTask& task,
+    int effective_attempts,
+    std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeParallelRrtOptions& parallel_rrt_options,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const RBFPlanningConfig& config,
+    StageContext& context) {
+    if (context.executor().n_threads() > 1 && effective_attempts > 1) {
+        std::shared_ptr<std::atomic<bool>> local_cancel =
+            query_bridge_parallel_rrt_cancel_flag(
+                parallel_rrt_options,
+                context.native_cancel_flag());
+        std::atomic<int> early_successes{0};
+        context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
+            if (query_bridge_parallel_rrt_cancelled(local_cancel)) {
+                return;
+            }
+            auto path = run_query_bridge_task_rrt_attempt(task,
+                                                          attempt,
+                                                          0,
+                                                          retry_options,
+                                                          audit_robot,
+                                                          scene,
+                                                          config,
+                                                          context,
+                                                          local_cancel);
+            query_bridge_maybe_stop_parallel_rrt_after_success(
+                query_bridge_task_rrt_path_good_enough(task,
+                                                       path,
+                                                       parallel_rrt_options),
+                parallel_rrt_options,
+                early_successes,
+                local_cancel);
+            attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
+        });
+        record_query_bridge_parallel_rrt_early_stop(context,
+                                                    parallel_rrt_options,
+                                                    local_cancel,
+                                                    early_successes);
+        return;
+    }
+    for (int attempt = 0; attempt < effective_attempts; ++attempt) {
+        attempt_paths[static_cast<std::size_t>(attempt)] =
+            run_query_bridge_task_rrt_attempt(task,
+                                              attempt,
+                                              0,
+                                              retry_options,
+                                              audit_robot,
+                                              scene,
+                                              config,
+                                              context);
+    }
+}
+
 void improve_query_bridge_waypoint_if_needed(
     QueryBridgeSearchTask& task,
     int attempts_already_used,
@@ -780,58 +837,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 query_bridge_task_key(task.index, "total_ms"),
                 task_elapsed_ms());
         };
-    auto run_attempts_for_task =
-        [&](QueryBridgeSearchTask& task,
-            int effective_attempts,
-            std::vector<std::vector<Eigen::VectorXd>>& attempt_paths) {
-            if (batch_context.executor().n_threads() > 1 && effective_attempts > 1) {
-                std::shared_ptr<std::atomic<bool>> local_cancel =
-                    query_bridge_parallel_rrt_cancel_flag(
-                        parallel_rrt_options,
-                        batch_context.native_cancel_flag());
-                std::atomic<int> early_successes{0};
-                batch_context.executor().parallel_for(0, effective_attempts, [&](int attempt) {
-                    if (query_bridge_parallel_rrt_cancelled(local_cancel)) {
-                        return;
-                    }
-                    auto path =
-                        run_query_bridge_task_rrt_attempt(task,
-                                                          attempt,
-                                                          0,
-                                                          retry_options,
-                                                          audit_robot_,
-                                                          scene_,
-                                                          config_,
-                                                          batch_context,
-                                                          local_cancel);
-                    query_bridge_maybe_stop_parallel_rrt_after_success(
-                        query_bridge_task_rrt_path_good_enough(task,
-                                                               path,
-                                                               parallel_rrt_options),
-                        parallel_rrt_options,
-                        early_successes,
-                        local_cancel);
-                    attempt_paths[static_cast<std::size_t>(attempt)] = std::move(path);
-                });
-                record_query_bridge_parallel_rrt_early_stop(batch_context,
-                                                            parallel_rrt_options,
-                                                            local_cancel,
-                                                            early_successes);
-                return;
-            }
-            for (int attempt = 0; attempt < effective_attempts; ++attempt) {
-                attempt_paths[static_cast<std::size_t>(attempt)] =
-                    run_query_bridge_task_rrt_attempt(task,
-                                                      attempt,
-                                                      0,
-                                                      retry_options,
-                                                      audit_robot_,
-                                                      scene_,
-                                                      config_,
-                                                      batch_context);
-            }
-        };
-
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
     const bool has_segment_only_task =
@@ -1027,7 +1032,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
             static_cast<std::size_t>(attempt_plan.effective_attempts));
         const auto rrt_t0 = QueryBridgeClock::now();
-        run_attempts_for_task(task, attempt_plan.effective_attempts, attempt_paths);
+        run_query_bridge_task_attempts(task,
+                                       attempt_plan.effective_attempts,
+                                       attempt_paths,
+                                       retry_options,
+                                       parallel_rrt_options,
+                                       audit_robot_,
+                                       scene_,
+                                       config_,
+                                       batch_context);
         const double rrt_ms = query_bridge_elapsed_ms_since(rrt_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
                                                   rrt_ms);
