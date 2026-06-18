@@ -90,6 +90,7 @@ add_library(sbf_core STATIC
     src/adaptive_grid_partition_overlay.cpp
     src/box_graph.cpp
     src/connector.cpp
+    src/connector_birrt.cpp
     src/find_free_box.cpp
     src/frontwave_grower.cpp
     src/grower.cpp
