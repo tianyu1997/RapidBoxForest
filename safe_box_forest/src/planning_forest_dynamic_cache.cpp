@@ -82,6 +82,20 @@ void initialize_segment_fallback_profile(RebuildProfile& profile,
         static_cast<double>(segment_edge_count);
 }
 
+void record_segment_fallback_partition_stats(RebuildProfile& profile,
+                                             const AdaptiveGridPartition& partition,
+                                             int segment_edge_count) {
+    profile.diagnostics["segment_fallback.segment_edges_after"] =
+        static_cast<double>(segment_edge_count);
+    profile.diagnostics["segment_fallback.islands_after"] =
+        static_cast<double>(profile.adjacency_islands);
+    const auto& partition_stats = partition.stats();
+    profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
+    profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
+    profile.diagnostics["adaptive.partition_overlay_edges"] =
+        static_cast<double>(partition_stats.overlay_edges);
+}
+
 int containing_domain_index(const std::vector<BoxNode>& domains,
                             const Eigen::Ref<const Eigen::VectorXd>& point,
                             double tolerance) {
@@ -1764,15 +1778,9 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
 	        profile.diagnostics["segment_fallback.connected"] =
 	            (start_box >= 0 && goal_box >= 0 &&
 	             overlay_path_connected_partition_first(start_box, goal_box)) ? 1.0 : 0.0;
-	        profile.diagnostics["segment_fallback.segment_edges_after"] =
-	            static_cast<double>(segment_edges_.size());
-	        profile.diagnostics["segment_fallback.islands_after"] =
-	            static_cast<double>(profile.adjacency_islands);
-	        const auto& partition_stats = adaptive_partition_->stats();
-	        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
-	        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
-	        profile.diagnostics["adaptive.partition_overlay_edges"] =
-	            static_cast<double>(partition_stats.overlay_edges);
+	        record_segment_fallback_partition_stats(profile,
+	                                                *adaptive_partition_,
+	                                                static_cast<int>(segment_edges_.size()));
 	        profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 	        return profile;
 	    }
@@ -1912,8 +1920,9 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
             profile.adjacency_islands = islands_before;
             profile.diagnostics["segment_fallback.partition_native"] = 1.0;
             profile.diagnostics["segment_fallback.connected"] = 1.0;
-            profile.diagnostics["segment_fallback.segment_edges_after"] =
-                static_cast<double>(segment_edges_.size());
+            record_segment_fallback_partition_stats(profile,
+                                                    *adaptive_partition_,
+                                                    static_cast<int>(segment_edges_.size()));
             profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             return profile;
         }
@@ -1968,16 +1977,10 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
         profile.diagnostics["segment_fallback.partition_pair_candidates"] =
             static_cast<double>(candidate_pairs.size());
         profile.diagnostics["segment_fallback.connected"] = profile.adjacency_islands <= 1 ? 1.0 : 0.0;
-        profile.diagnostics["segment_fallback.segment_edges_after"] =
-            static_cast<double>(segment_edges_.size());
-        profile.diagnostics["segment_fallback.islands_after"] =
-            static_cast<double>(profile.adjacency_islands);
+        record_segment_fallback_partition_stats(profile,
+                                                *adaptive_partition_,
+                                                static_cast<int>(segment_edges_.size()));
         profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-        const auto& partition_stats = adaptive_partition_->stats();
-        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(partition_stats.cells);
-        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(partition_stats.islands);
-        profile.diagnostics["adaptive.partition_overlay_edges"] =
-            static_cast<double>(partition_stats.overlay_edges);
         return profile;
     }
 
