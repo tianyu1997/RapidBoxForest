@@ -424,6 +424,57 @@ int RBFPlanningForest::try_hipac_transition_portal_task(
     return total_added;
 }
 
+int RBFPlanningForest::try_promote_query_repair_to_hipac(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    int bridge_added,
+    int query_index,
+    int batch_task_index,
+    StageContext& context) {
+    if (!last_adaptive_partition_config_.hipac_online_connectivity ||
+        !last_adaptive_partition_config_.hipac_promote_query_repairs ||
+        !partition_native_mode() ||
+        bridge_added <= 0 ||
+        waypoint_path.size() < 2) {
+        return 0;
+    }
+    const auto promote_t0 = QueryBridgeHipacClock::now();
+    context.diagnostics().add_counter("query_bridge.hipac_promote_attempts");
+    const int promoted = add_partition_portal_corridor_overlay(start,
+                                                               goal,
+                                                               waypoint_path,
+                                                               "query_bridge.hipac_promote",
+                                                               true,
+                                                               false,
+                                                               query_index,
+                                                               &last_build_);
+    const double promote_ms = query_bridge_hipac_elapsed_ms_since(promote_t0);
+    context.diagnostics().record_timing("query_bridge.hipac_promote_ms_total",
+                                        promote_ms);
+    context.diagnostics().add_counter("query_bridge.hipac_promote_ms_total",
+                                      promote_ms);
+    if (batch_task_index >= 0) {
+        context.diagnostics().set_value(
+            query_bridge_task_key(static_cast<std::size_t>(batch_task_index),
+                                  "hipac_promote_ms"),
+            promote_ms);
+    }
+    if (promoted > 0) {
+        context.diagnostics().add_counter("query_bridge.hipac_promote_added",
+                                          static_cast<double>(promoted));
+        if (batch_task_index >= 0) {
+            context.diagnostics().set_value(
+                query_bridge_task_key(static_cast<std::size_t>(batch_task_index),
+                                      "hipac_promote_added"),
+                static_cast<double>(promoted));
+        }
+    } else {
+        context.diagnostics().add_counter("query_bridge.hipac_promote_failures");
+    }
+    return promoted;
+}
+
 bool RBFPlanningForest::run_query_bridge_hipac_online_sequence_task(
     QueryBridgeSearchTask& task,
     int& added_for_task,
