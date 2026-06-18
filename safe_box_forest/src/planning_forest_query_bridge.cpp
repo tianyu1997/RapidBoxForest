@@ -2092,14 +2092,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             try_adopt_certified_subchain(source_box_id,
                                          target_box_id,
                                          "box_connected");
-            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
-                                                 target_box_id,
-                                                 corridor_path,
-                                                 SegmentEdgeType::BoxCorridor,
-                                                 bridge_rrt.segment_resolution,
-                                                 SegmentEdgeValidation::CollisionChecked,
-                                                 false,
-                                                 bridge_edge_query_index);
+            const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                                 target_box_id,
+                                                                 corridor_path,
+                                                                 SegmentEdgeType::BoxCorridor,
+                                                                 bridge_rrt.segment_resolution,
+                                                                 SegmentEdgeValidation::CollisionChecked,
+                                                                 false,
+                                                                 bridge_edge_query_index);
             if (edge_id >= 0) {
                 invalidate_query_cache();
                 return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added + 1);
@@ -2172,14 +2172,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                 invalidate_query_cache();
                 return finish_direct_corridor(direct_added + repair_added + local_segment_edges_added);
             }
-            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
-                                                 target_box_id,
-                                                 corridor_path,
-                                                 SegmentEdgeType::QueryBridge,
-                                                 bridge_rrt.segment_resolution,
-                                                 SegmentEdgeValidation::CollisionChecked,
-                                                 true,
-                                                 bridge_edge_query_index);
+            const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                                 target_box_id,
+                                                                 corridor_path,
+                                                                 SegmentEdgeType::QueryBridge,
+                                                                 bridge_rrt.segment_resolution,
+                                                                 SegmentEdgeValidation::CollisionChecked,
+                                                                 true,
+                                                                 bridge_edge_query_index);
             if (edge_id >= 0) {
                 context.diagnostics().add_counter(
                     "query_bridge.direct_corridor_full_residual_edges");
@@ -2217,7 +2217,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         dense_config.refine_covered_waypoints = true;
         dense_config.fill_gaps = true;
         dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
-	        dense_config.gap_fill_sample_step = 0.0025;
+        dense_config.gap_fill_sample_step = 0.0025;
         dense_config.gap_fill_time_budget_ms = 0.0;
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
@@ -2246,14 +2246,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
             box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-            const int edge_id = add_segment_edge_partition_first(	                                 source_box_id,
-	                                 target_box_id,
-	                                 corridor_path,
-                                                 SegmentEdgeType::BoxCorridor,
-                                                 bridge_rrt.segment_resolution,
-                                                 SegmentEdgeValidation::CollisionChecked,
-                                                 false,
-                                                 bridge_edge_query_index);
+            const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                                 target_box_id,
+                                                                 corridor_path,
+                                                                 SegmentEdgeType::BoxCorridor,
+                                                                 bridge_rrt.segment_resolution,
+                                                                 SegmentEdgeValidation::CollisionChecked,
+                                                                 false,
+                                                                 bridge_edge_query_index);
             box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
@@ -2267,7 +2267,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         pave_config.refine_covered_waypoints = true;
         pave_config.fill_gaps = true;
         pave_config.find_free_box.max_depth = query_bridge_ffb_depth;
-	        pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
+        pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
         pave_config.gap_fill_time_budget_ms =
             std::max(pave_config.gap_fill_time_budget_ms, short_local_bridge ? 350.0 : 200.0);
         pave_config.gap_fill_max_ffb_calls =
@@ -2304,14 +2304,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         source_box_id >= 0 &&
         target_box_id >= 0 &&
         box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-        const int edge_id = add_segment_edge_partition_first(                                             source_box_id,
-                                             target_box_id,
-                                             corridor_path,
-                                             SegmentEdgeType::BoxCorridor,
-                                             bridge_rrt.segment_resolution,
-                                             SegmentEdgeValidation::CollisionChecked,
-                                             false,
-                                             bridge_edge_query_index);
+        const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                             target_box_id,
+                                                             corridor_path,
+                                                             SegmentEdgeType::BoxCorridor,
+                                                             bridge_rrt.segment_resolution,
+                                                             SegmentEdgeValidation::CollisionChecked,
+                                                             false,
+                                                             bridge_edge_query_index);
         box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
@@ -2324,7 +2324,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         dense_config.refine_covered_waypoints = true;
         dense_config.fill_gaps = true;
         dense_config.find_free_box.max_depth = query_bridge_ffb_depth;
-	        dense_config.gap_fill_sample_step = 0.0025;
+        dense_config.gap_fill_sample_step = 0.0025;
         dense_config.gap_fill_time_budget_ms = 0.0;
         dense_config.gap_fill_max_ffb_calls = -1;
         dense_config.gap_fill_min_arc_gain = 0.0;
@@ -2353,14 +2353,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         if (source_box_id >= 0 &&
             target_box_id >= 0 &&
             box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-            const int edge_id = add_segment_edge_partition_first(                                                 source_box_id,
-                                                 target_box_id,
-                                                 corridor_path,
-                                                 SegmentEdgeType::BoxCorridor,
-                                                 bridge_rrt.segment_resolution,
-                                                 SegmentEdgeValidation::CollisionChecked,
-                                                 false,
-                                                 bridge_edge_query_index);
+            const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                                 target_box_id,
+                                                                 corridor_path,
+                                                                 SegmentEdgeType::BoxCorridor,
+                                                                 bridge_rrt.segment_resolution,
+                                                                 SegmentEdgeValidation::CollisionChecked,
+                                                                 false,
+                                                                 bridge_edge_query_index);
             box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
             if (box_corridor_edges_added > 0) {
                 invalidate_query_cache();
@@ -2385,14 +2385,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         source_box_id >= 0 &&
         target_box_id >= 0 &&
         box_only_path_connected_partition_first(source_box_id, target_box_id)) {
-        const int edge_id = add_segment_edge_partition_first(	                                             source_box_id,
-	                                             target_box_id,
-	                                             corridor_path,
-                                             SegmentEdgeType::BoxCorridor,
-                                             bridge_rrt.segment_resolution,
-                                             SegmentEdgeValidation::CollisionChecked,
-                                             false,
-                                             bridge_edge_query_index);
+        const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                             target_box_id,
+                                                             corridor_path,
+                                                             SegmentEdgeType::BoxCorridor,
+                                                             bridge_rrt.segment_resolution,
+                                                             SegmentEdgeValidation::CollisionChecked,
+                                                             false,
+                                                             bridge_edge_query_index);
         box_corridor_edges_added = edge_id >= 0 ? 1 : 0;
         if (box_corridor_edges_added > 0) {
             invalidate_query_cache();
@@ -2416,14 +2416,14 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                         "query_bridge.segment_edge_audit_rejects");
                     return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
                 }
-                const int edge_id = add_segment_edge_partition_first(                                                     source_box_id,
-                                                     target_box_id,
-                                                     corridor_path,
-                                                     SegmentEdgeType::QueryBridge,
-                                                     bridge_rrt.segment_resolution,
-                                                     SegmentEdgeValidation::CollisionChecked,
-                                                     true,
-                                                     bridge_edge_query_index);
+                const int edge_id = add_segment_edge_partition_first(source_box_id,
+                                                                     target_box_id,
+                                                                     corridor_path,
+                                                                     SegmentEdgeType::QueryBridge,
+                                                                     bridge_rrt.segment_resolution,
+                                                                     SegmentEdgeValidation::CollisionChecked,
+                                                                     true,
+                                                                     bridge_edge_query_index);
                 direct_segment_edges_added = edge_id >= 0 ? 1 : 0;
                 if (direct_segment_edges_added > 0) {
                     invalidate_query_cache();
