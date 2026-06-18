@@ -183,6 +183,12 @@ struct QueryBridgeSearchJob {
     int attempt = 0;
 };
 
+bool query_bridge_short_local_distance(double bridge_distance);
+
+void query_bridge_configure_short_local_profiles(
+    RRTConnectConfig& bridge_rrt,
+    std::vector<RRTConnectConfig>& short_local_profiles);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,

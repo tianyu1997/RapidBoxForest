@@ -14,6 +14,7 @@
 #include <random>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace rbf {
 
@@ -84,6 +85,33 @@ void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
 
 std::string query_bridge_task_key(std::size_t index, const std::string& suffix) {
     return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
+}
+
+bool query_bridge_short_local_distance(double bridge_distance) {
+    return bridge_distance > 0.55 && bridge_distance < 0.85;
+}
+
+void query_bridge_configure_short_local_profiles(
+    RRTConnectConfig& bridge_rrt,
+    std::vector<RRTConnectConfig>& short_local_profiles) {
+    bridge_rrt.step_size = std::min(bridge_rrt.step_size, 0.25);
+    bridge_rrt.goal_bias = 0.08;
+    bridge_rrt.local_sampling_radius =
+        bridge_rrt.local_sampling_radius > 0.0
+            ? std::min(bridge_rrt.local_sampling_radius, 0.85)
+            : 0.85;
+    auto add_profile = [&](double step_size, double goal_bias, double radius) {
+        RRTConnectConfig profile = bridge_rrt;
+        profile.step_size = step_size;
+        profile.goal_bias = goal_bias;
+        profile.local_sampling_radius = radius;
+        profile.shortcut_path = true;
+        short_local_profiles.push_back(std::move(profile));
+    };
+    add_profile(0.25, 0.08, 0.90);
+    add_profile(0.50, 0.20, 1.00);
+    add_profile(0.35, 0.10, 1.00);
+    add_profile(0.25, 0.08, 0.45);
 }
 
 void query_bridge_mark_task_skip(BuildProfile& profile,

@@ -182,26 +182,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
         }
         const double bridge_distance = (task.goal - task.start).norm();
-        task.short_local_bridge = bridge_distance > 0.55 && bridge_distance < 0.85;
+        task.short_local_bridge = query_bridge_short_local_distance(bridge_distance);
         if (task.short_local_bridge) {
-            task.bridge_rrt.step_size = std::min(task.bridge_rrt.step_size, 0.25);
-            task.bridge_rrt.goal_bias = 0.08;
-            task.bridge_rrt.local_sampling_radius =
-                task.bridge_rrt.local_sampling_radius > 0.0
-                    ? std::min(task.bridge_rrt.local_sampling_radius, 0.85)
-                    : 0.85;
-            auto add_profile = [&](double step_size, double goal_bias, double radius) {
-                RRTConnectConfig profile = task.bridge_rrt;
-                profile.step_size = step_size;
-                profile.goal_bias = goal_bias;
-                profile.local_sampling_radius = radius;
-                profile.shortcut_path = true;
-                task.short_local_profiles.push_back(std::move(profile));
-            };
-            add_profile(0.25, 0.08, 0.90);
-            add_profile(0.50, 0.20, 1.00);
-            add_profile(0.35, 0.10, 1.00);
-            add_profile(0.25, 0.08, 0.45);
+            query_bridge_configure_short_local_profiles(task.bridge_rrt,
+                                                        task.short_local_profiles);
         }
         task.attempts = std::max(1, config_.connector.max_pairs_per_gap);
         tasks.push_back(std::move(task));
