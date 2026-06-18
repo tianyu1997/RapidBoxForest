@@ -166,7 +166,8 @@ while BIT* has lower, hence better, median audited path ratios than \rbf{} in
 the four UR5/Panda cases.
 In a maintenance-only scene-cache study, leaf-sweep insertions show a
 153.3--207.5$\times$ speedup and removals show a
-943.6--3354.0$\times$ speedup relative to the 15-obstacle warm-build baseline.
+943.6--3354.0$\times$ speedup relative to a 15-obstacle warm scene-cache
+rebuild.
 Snapshot creation and loading costs, along with resident memory, are outside
 the reported timing rows; update rows report maintenance only, not the full
 update-and-query pipeline.
@@ -467,7 +468,7 @@ non-conservative filters; they do not extend \Cref{cor:box_validation} or
 For endpoint $k$, let $\Gamma_k(I)$ be its exact trajectory over interval $I$.
 Any conservative set containing $\Gamma_k(I)$ is an endpoint interval envelope;
 the basic record is an endpoint AABB because it is compact and directly reusable
-by all link-envelope representations. This implementation uses two
+by all link-envelope representations. The implementation uses two
 certificate-backed endpoint sources. IFK-AA denotes interval forward kinematics
 (IFK) with affine-arithmetic bounds propagated along the Denavit--Hartenberg
 chain; shared noise symbols preserve part of the trigonometric correlation.
@@ -522,8 +523,8 @@ the certificate comes from endpoint and link envelopes over \(R_{\rm obb}\), not
 from the fitted orientation.
 
 \paragraph{Cover certificate}
-The conservative cover test tiles the local cube, maps each tile to joint
-space, and validates the joint-space AABB hull of each tile:
+The conservative cover test tiles the local cube; for each tile
+\(X_r\subseteq\Xi\), it validates the joint-space AABB hull
 \[
 I_r=\operatorname{bbox}_q(q_c+A X_r).
 \]
@@ -739,7 +740,8 @@ workspace scale, or dimensionality of the experiments.}
 
 Fig.~\ref{fig:overview} illustrates the planning layer. \rbf{} builds a
 scene-specific set of policy-accepted joint boxes and stores their adjacency as a
-typed corridor graph. This pair is the scene cache: while the obstacle set is
+typed corridor graph. The forest--graph pair is the scene cache: while the
+obstacle set is
 unchanged, later queries use box membership and graph search instead of
 rebuilding the cover. LECT remains a separate kinematics-keyed evidence store;
 every policy-accepted scene box is still checked against the current obstacles.
@@ -1050,7 +1052,7 @@ reported only as query-validated transitions.
   \vspace{-0.50ex}
   \includegraphics[width=0.84\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
   \captionof{figure}{Saved-catalog random-scene trade-off. Left and middle panels
-  show a fixed five-query amortization, Build/5 + \onlineq{}, for medium and hard
+  show a fixed five-query display point, Build/5 + \onlineq{}, for medium and hard
   rows; the right panel varies the amortization count \(K\) in
   Build/\(K\) + \onlineq{}. Methods without a reusable-build term are plotted at
   \onlineq{}. Rings mark the first checkpoints with
@@ -1132,11 +1134,10 @@ before the method-independent pruning rule below is applied. For each robot and
 seed, medium and hard rows share the saved start-goal set; hard rows add later
 obstacle prefixes instead of regenerating unrelated scenes. Before any method
 summary is computed, a fixed manifest rule removes direct-line cases, where the
-start-goal segment validates directly. The trade-off plot marks Build/5 +
-\onlineq{} for rows with reusable builds and \onlineq{} for single-query rows as
-a fixed amortization reference. The stored catalogs still retain ten queries per
-scene; the right panel varies the amortization count \(K\) as a reuse horizon
-rather than as a post-pruning sample count.
+start-goal segment validates directly. The trade-off plot uses Build/5 +
+\onlineq{} for reusable-build rows and \onlineq{} otherwise, as a fixed
+five-query display point; \(K\) is a reuse horizon, not a post-pruning
+retained-query count. The stored catalogs still retain ten queries per scene.
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
@@ -1168,8 +1169,9 @@ and is higher in the four UR5/Panda rows.
 Tables~\ref{tab:tro-endpoint-envelope} and~\ref{tab:tro-link-envelope} compare
 endpoint sources and envelope narrow phases. \Cref{tab:tro-endpoint-envelope}
 reports endpoint volume as a ratio to the Analytical row at the same width and
-the sampled-union signed gap in millimeters; negative gaps are
-finite-sampling diagnostics. Only IFK-AA and HIFK rows are certificate-backed;
+the sampled-union signed gap in millimeters. Negative gaps are diagnostic
+undercoverage relative to the finite sampled union, not certificate margins.
+Only IFK-AA and HIFK rows are certificate-backed;
 Critical sample, Analytical, and MC rows are diagnostic or reference rows rather
 than certificate evidence. \Cref{tab:tro-link-envelope} motivates the AABB broadphase:
 SupportHull/GJK stores a compact support record, but wide boxes increase
@@ -1178,8 +1180,9 @@ collision-test time when every obstacle reaches the GJK narrow phase.
 \subsection{Dynamic Updates}
 \label{sec:exp_dynamic_updates}
 
-Table~\ref{tab:tro-dynamic-update} reports scene-cache maintenance only: no
-query bridge, connector, simplification, audit, or query timing is included.
+Table~\ref{tab:tro-dynamic-update} reports scene-cache maintenance only: its
+warm-build rows are scene-cache rebuilds, and no query bridge, connector,
+simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
@@ -1201,16 +1204,17 @@ derived from \mbox{filter-only} evidence require independent query validation.
 Under saved catalogs, audit-separated timing, and explicit cache accounting,
 warm-cache depth-23 LECT replay on Shelf+IIWA yields a 0.166~s median reusable
 build and 0.130~s median \onlineq{}, whereas live \mbox{HIFK-5} materialization
-takes 7.006~s. In saved random scenes, \rbf{} has lower median \onlineq{} than
-BIT* at all six operating points in Table~\ref{tab:tro-random-summary}, while
-BIT* has lower, hence better, median audited path ratios in the four UR5/Panda
-cases.
+takes 7.006~s. In saved random scenes, \mbox{RRT-Connect} is faster in five
+cases but has worse path ratios than \rbf{}; against BIT*, \rbf{} has lower
+median \onlineq{} in all six, while BIT* has better ratios in the four
+UR5/Panda cases.
 The dynamic-update rows measure scene-cache maintenance rather than full
 update-and-query performance.
 Within this scope, \rbf{} is a low-overhead method for constructing reusable
 regions for repeated queries. The same scope defines the remaining limitations:
-certificates exclude paths that are repaired, shortened, post-processed, or
-derived from \mbox{filter-only} evidence; LECT snapshot creation and loading
+certificates do not cover repaired, shortened, post-processed, or
+\mbox{filter-only} paths unless converted into conservative regions; LECT
+snapshot creation and loading
 costs, resident memory, and memory break-even analyses are not reported; and
 validation beyond active-link obstacle collision, including self-collision,
 \mbox{payload} and gripper models, and task-specific regions, remains future
