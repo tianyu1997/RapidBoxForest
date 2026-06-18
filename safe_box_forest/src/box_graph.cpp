@@ -15,36 +15,15 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "env_config.h"
+
 namespace rbf {
 namespace {
 
 thread_local AdjacencyBuildStats g_last_adjacency_build_stats;
 
-double env_double_or_default(const char* name, double fallback) {
-    const char* raw = std::getenv(name);
-    if (raw == nullptr || raw[0] == '\0') {
-        return fallback;
-    }
-    char* end = nullptr;
-    const double value = std::strtod(raw, &end);
-    if (end == raw || !std::isfinite(value)) {
-        return fallback;
-    }
-    return value;
-}
-
-int env_int_or_default(const char* name, int fallback) {
-    const char* raw = std::getenv(name);
-    if (raw == nullptr || raw[0] == '\0') {
-        return fallback;
-    }
-    char* end = nullptr;
-    const long value = std::strtol(raw, &end, 10);
-    if (end == raw) {
-        return fallback;
-    }
-    return static_cast<int>(value);
-}
+using detail::env_double_or_default;
+using detail::env_int_or_default;
 
 std::unordered_map<int, const BoxNode*> box_map(const std::vector<BoxNode>& boxes) {
     std::unordered_map<int, const BoxNode*> map;

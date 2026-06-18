@@ -9,6 +9,7 @@
 #include <string>
 #include <utility>
 
+#include "env_config.h"
 #include "virtual_sparse_ffb.h"
 
 namespace rbf {
@@ -86,17 +87,7 @@ std::vector<int> scheduled_depths(const FindFreeBoxOptions& options,
     return depths;
 }
 
-int env_int_or_default(const char* name, int fallback) {
-    const char* value = std::getenv(name);
-    if (value == nullptr || *value == '\0') {
-        return fallback;
-    }
-    try {
-        return std::stoi(value);
-    } catch (...) {
-        return fallback;
-    }
-}
+using detail::env_int_or_default;
 
 }  // namespace
 

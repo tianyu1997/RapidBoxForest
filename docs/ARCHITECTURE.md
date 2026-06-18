@@ -133,6 +133,34 @@ Dynamic-update paths reuse the same forest state, mark dirty regions after
 obstacle edits, locally regrow when possible, and fall back to warm rebuilds
 when the configured thresholds require it.
 
+## Planner Cleanup Direction
+
+The open-source codebase should remain a single workspace rather than growing a
+parallel "clean" implementation directory. A second implementation would split
+CI, experiment reproduction, Python bindings, and public release tooling across
+two trees. The maintainable path is to keep the current module layout and
+separate production responsibilities inside `safe_box_forest`.
+
+Current cleanup priorities:
+
+1. Keep `RBFPlanningForest` as the stable public facade, but move large
+   implementation blocks out of `src/safe_box_forest.cpp` by responsibility:
+   coverage build, adaptive partition maintenance, query repair/corridors,
+   dynamic update, and diagnostics.
+2. Treat environment-variable controls as temporary experiment overrides.
+   Production behavior should come from typed config structs or named
+   experiment profiles; debug-only `RBF_*` switches should not define the
+   default algorithm.
+3. Keep paper-facing runners in top-level `experiments/`. Historical or
+   diagnostic scripts must remain outside the public export and must not be
+   required by current tables or figures.
+4. Keep cache, canonicalization, and oracle semantics inside `lect_database`.
+   Planner and experiment layers should pass native joint-space inputs and
+   receive native boxes/paths.
+5. Prefer small, behavior-preserving extractions before algorithm changes. A
+   refactor is acceptable only when the existing CTest suite, public release
+   checks, and paper provenance checks still pass.
+
 ## Experiments And Local Paper Artifacts
 
 Current experiment runners are in top-level `experiments/`, with common helpers
