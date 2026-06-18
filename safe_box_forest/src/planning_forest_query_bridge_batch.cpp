@@ -906,34 +906,24 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeDirectLineFallbackOptions direct_line_options =
         query_bridge_direct_line_fallback_options_from_env();
     record_query_bridge_direct_line_fallback_diagnostics(batch_context, direct_line_options);
-    auto direct_line_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        return query_bridge_direct_line_fallback_path(task,
-                                                      audit_robot_,
-                                                      scene_,
-                                                      config_.query,
-                                                      direct_line_options,
-                                                      batch_context);
-    };
     const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
     record_query_bridge_detour_diagnostics(batch_context, detour_options);
     const auto detour_planning_domain = oracle_->planning_intervals();
-    auto deterministic_detour_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        return query_bridge_deterministic_detour_fallback_path(task,
-                                                              audit_robot_,
-                                                              scene_,
-                                                              config_.query,
-                                                              detour_planning_domain,
-                                                              detour_options,
-                                                              config_.grower.rng_seed,
-                                                              batch_context);
-    };
     auto maybe_apply_detour_path = [&](const QueryBridgeSearchTask& task,
                                        double& best_length,
         std::vector<Eigen::VectorXd>& waypoint_path) {
         if (!waypoint_path.empty() && !detour_options.candidate) {
             return false;
         }
-        auto detour_path = deterministic_detour_fallback_path(task);
+        auto detour_path = query_bridge_deterministic_detour_fallback_path(
+            task,
+            audit_robot_,
+            scene_,
+            config_.query,
+            detour_planning_domain,
+            detour_options,
+            config_.grower.rng_seed,
+            batch_context);
         if (detour_path.empty()) {
             return false;
         }
@@ -1234,7 +1224,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             double& best_length) {
             select_attempt_paths(task, attempt_paths_for_task, best_length);
             if (task.waypoint_path.empty()) {
-                auto direct_path = direct_line_fallback_path(task);
+                auto direct_path = query_bridge_direct_line_fallback_path(
+                    task,
+                    audit_robot_,
+                    scene_,
+                    config_.query,
+                    direct_line_options,
+                    batch_context);
                 if (!direct_path.empty()) {
                     best_length = path_length(direct_path);
                     task.waypoint_path = std::move(direct_path);
