@@ -570,6 +570,18 @@ private:
 										const RRTConnectConfig& bridge_rrt,
 										int query_index = -1,
 										bool allow_residual_segments = true);
+	int try_query_bridge_direct_ffb_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
+											 const Eigen::Ref<const Eigen::VectorXd>& goal,
+											 const std::vector<Eigen::VectorXd>& corridor_path,
+											 const RRTConnectConfig& bridge_rrt,
+											 CollisionChecker& checker,
+											 StageContext& context,
+											 int query_index,
+											 int bridge_edge_query_index,
+											 int query_bridge_ffb_depth,
+											 double audited_bridge_length,
+											 bool allow_residual_segments,
+											 int& next_id);
 		int try_add_query_box_corridor_edge(int source_box_id,
 											int target_box_id,
 											const std::vector<Eigen::VectorXd>& waypoint_path,
