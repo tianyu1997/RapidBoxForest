@@ -2,7 +2,7 @@
 
 #include <sbf/envelope/envelope_collision.h>
 
-#include "env_config.h"
+#include "planning_forest_obb_options.h"
 
 #include <Eigen/Eigenvalues>
 
@@ -48,7 +48,7 @@ struct ObbPortalCandidate {
 };
 
 bool obb_sampled_support_enabled() {
-    return detail::env_flag_or_default("RBF_OBB_SAMPLED_SUPPORT", false);
+    return obb_sampled_support_enabled_from_env();
 }
 
 Eigen::MatrixXd obb_compress_generator_columns(const Eigen::MatrixXd& generators,
@@ -822,7 +822,7 @@ double obb_segment_aabb_distance_sq(const detail::Vec3& origin,
 }
 
 bool obb_clearance_sampled_enabled() {
-    return detail::env_flag_or_default("RBF_OBB_CLEARANCE_SAMPLED_SUPPORT", true);
+    return obb_clearance_sampled_enabled_from_env();
 }
 
 bool validate_obb_clearance_sampled_candidate(const Robot& robot,
@@ -866,23 +866,22 @@ bool validate_obb_clearance_sampled_candidate(const Robot& robot,
     }
     // The pointwise clearance proof is designed for thin bridge tubes.  Large
     // transverse OBBs should use the affine support-hull validator instead.
-    if (lateral_l1 > detail::env_double_or_default("RBF_OBB_CLEARANCE_LATERAL_L1_MAX", 5e-3)) {
+    if (lateral_l1 > obb_clearance_lateral_l1_max_from_env()) {
         ++stats.clearance_support_fail;
         return false;
     }
 
     const double line_l1 = candidate.generators_q.col(line_col).lpNorm<1>();
-    int samples = detail::env_int_or_default("RBF_OBB_CLEARANCE_SAMPLES", 17);
-    const double dense_line_l1_threshold =
-        detail::env_double_or_default("RBF_OBB_CLEARANCE_DENSE_LINE_L1_THRESHOLD", 0.03);
-    const int dense_samples = detail::env_int_or_default("RBF_OBB_CLEARANCE_DENSE_SAMPLES", 17);
+    int samples = obb_clearance_samples_from_env();
+    const double dense_line_l1_threshold = obb_clearance_dense_line_l1_threshold_from_env();
+    const int dense_samples = obb_clearance_dense_samples_from_env();
     if (dense_line_l1_threshold > 0.0 &&
         line_l1 > dense_line_l1_threshold) {
         samples = std::max(samples, dense_samples);
     }
     samples = std::clamp(samples, 9, 257);
     const int fast_samples = std::clamp(
-        detail::env_int_or_default("RBF_OBB_CLEARANCE_FAST_SAMPLES", 0),
+        obb_clearance_fast_samples_from_env(),
         0,
         257);
     std::vector<int> sample_schedule;
@@ -1256,8 +1255,7 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
                                      double safety_epsilon,
                                      ObbPortalValidationStats& stats) {
     ++stats.validations;
-    const bool clearance_first =
-        detail::env_int_or_default("RBF_OBB_CLEARANCE_FIRST", 0) != 0;
+    const bool clearance_first = obb_clearance_first_from_env();
     bool clearance_attempted = false;
     if (clearance_first) {
         clearance_attempted = true;
@@ -1480,10 +1478,9 @@ bool validate_obb_zonotope_portal(const Robot& robot,
         }
     }
 
-    const bool fast_primary_orientation =
-        detail::env_flag_or_default("RBF_OBB_FAST_PRIMARY_ORIENTATION", true);
+    const bool fast_primary_orientation = obb_fast_primary_orientation_from_env();
     const bool fallback_orientations_on_fail =
-        detail::env_flag_or_default("RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL", false);
+        obb_fallback_orientations_on_primary_fail_from_env();
     const bool primary_only =
         fast_primary_orientation && !fallback_orientations_on_fail;
     const auto orientations = obb_orientation_candidates(robot,

@@ -10,18 +10,14 @@
 #include <unordered_map>
 #include <vector>
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_obb.h"
+#include "planning_forest_obb_options.h"
 #include "planning_forest_query_bridge_batch_utils.h"
 #include "planning_forest_query_utils.h"
 
 namespace rbf {
-
-using detail::env_double_list_or_empty;
-using detail::env_double_or_default;
-using detail::env_int_or_default;
 
 int RBFPlanningForest::add_partition_box_corridor_overlay(
     const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -808,10 +804,10 @@ int RBFPlanningForest::add_segment_edge_partition_first(
     const bool obb_metadata_only =
         eligible_for_obb_cover &&
         !strict_obb_bridge_cover &&
-        env_int_or_default("RBF_OBB_METADATA_ONLY", 0) != 0;
+        obb_metadata_only_from_env();
     const bool obb_metadata_require_cover =
         obb_metadata_only &&
-        env_int_or_default("RBF_OBB_METADATA_ONLY_REQUIRE_COVER", 0) != 0;
+        obb_metadata_only_require_cover_from_env();
     if (eligible_for_obb_cover) {
         const bool greedy_bridge_cover =
             path_is_rrt_bridge_like &&
@@ -980,13 +976,11 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 if (!greedy_bridge_cover || !strict_obb_bridge_cover || waypoints.size() < 2U) {
                     return -1;
                 }
-                const int retry_attempts =
-                    std::max(0, env_int_or_default("RBF_OBB_CLEARANCE_RETRY_ATTEMPTS", 0));
+                const int retry_attempts = obb_clearance_retry_attempts_from_env();
                 if (retry_attempts <= 0) {
                     return -1;
                 }
-                std::vector<double> clearances =
-                    env_double_list_or_empty("RBF_OBB_CLEARANCE_RETRY_VALUES");
+                std::vector<double> clearances = obb_clearance_retry_values_from_env();
                 if (clearances.empty()) {
                     const double fallback_clearance = query_bridge_rrt_clearance_from_env();
                     if (fallback_clearance > 0.0) {
@@ -1003,12 +997,10 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 retry_config.segment_step = config_.query.audit_segment_step;
                 retry_config.max_iters = std::max(
                     1,
-                    env_int_or_default("RBF_OBB_CLEARANCE_RETRY_ITERS",
-                                       std::max(1, retry_config.max_iters)));
+                    obb_clearance_retry_iters_from_env(std::max(1, retry_config.max_iters)));
                 retry_config.timeout_ms = std::max(
                     0.0,
-                    env_double_or_default("RBF_OBB_CLEARANCE_RETRY_TIMEOUT_MS",
-                                          retry_config.timeout_ms));
+                    obb_clearance_retry_timeout_ms_from_env(retry_config.timeout_ms));
                 diagnostics[prefix + "." + obb_diag + "_clearance_retry_attempt_budget"] +=
                     static_cast<double>(retry_attempts);
                 for (int attempt = 0; attempt < retry_attempts; ++attempt) {
