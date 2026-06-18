@@ -30,6 +30,12 @@ struct QueryBridgeHipacPrebridgeSelection {
     double score = 0.0;
 };
 
+struct QueryBridgeHipacOnlineGate {
+    bool enabled = false;
+    int resolve_cap = 0;
+    double candidate_max_length = 0.0;
+};
+
 struct QueryBridgeHipacTransitionCandidate {
     int source_box_id = -1;
     int target_box_id = -1;
@@ -251,6 +257,12 @@ QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
     double max_pair_distance,
     double route_weight,
     double pair_weight);
+
+QueryBridgeHipacOnlineGate query_bridge_hipac_online_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    int candidate_path_size,
+    int resolves_used);
 
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,

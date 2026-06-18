@@ -657,12 +657,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        return added;
 	    };
 	    auto try_hipac_online_bridge = [&](QueryBridgeSearchTask& task) -> int {
-	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
-	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
-	            !partition_native_mode() ||
-	            task.hipac_candidate_path.size() < 2 ||
-	            task.hipac_online_resolves_used >=
-	                std::max(0, last_adaptive_partition_config_.hipac_online_max_resolves_per_query)) {
+	        const QueryBridgeHipacOnlineGate hipac_online_gate =
+	            query_bridge_hipac_online_gate(
+	                last_adaptive_partition_config_,
+	                partition_native_mode(),
+	                static_cast<int>(task.hipac_candidate_path.size()),
+	                task.hipac_online_resolves_used);
+	        if (!hipac_online_gate.enabled) {
 	            return 0;
 	        }
 	        task.hipac_online_resolves_used += 1;
@@ -699,12 +700,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            }
 	        }
 	        const double hipac_candidate_length = path_length(hipac_path);
-	        const double hipac_candidate_max_length =
-	            std::max(0.0, last_adaptive_partition_config_.hipac_online_candidate_max_length);
 	        batch_context.diagnostics().add_counter("query_bridge.hipac_online_candidate_length",
 	                                                hipac_candidate_length);
-	        if (hipac_candidate_max_length > 0.0 &&
-	            hipac_candidate_length > hipac_candidate_max_length + 1e-12) {
+	        if (hipac_online_gate.candidate_max_length > 0.0 &&
+	            hipac_candidate_length > hipac_online_gate.candidate_max_length + 1e-12) {
 	            batch_context.diagnostics().add_counter(
 	                "query_bridge.hipac_online_candidate_length_rejects");
 	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_length_reject"),

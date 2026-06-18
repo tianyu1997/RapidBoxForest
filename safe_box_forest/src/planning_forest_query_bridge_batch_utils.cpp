@@ -230,6 +230,22 @@ QueryBridgeHipacPrebridgeSelection query_bridge_select_hipac_prebridge_pair(
     return selection;
 }
 
+QueryBridgeHipacOnlineGate query_bridge_hipac_online_gate(
+    const AdaptiveLeafSweepConfig& config,
+    bool partition_native,
+    int candidate_path_size,
+    int resolves_used) {
+    QueryBridgeHipacOnlineGate gate;
+    gate.resolve_cap = std::max(0, config.hipac_online_max_resolves_per_query);
+    gate.candidate_max_length = std::max(0.0, config.hipac_online_candidate_max_length);
+    gate.enabled = config.hipac_online_connectivity &&
+                   config.hipac_online_before_query_bridge &&
+                   partition_native &&
+                   candidate_path_size >= 2 &&
+                   resolves_used < gate.resolve_cap;
+    return gate;
+}
+
 QueryBridgeHipacTransitionCandidateSet query_bridge_select_hipac_transition_candidates(
     const AdaptiveGridPartition& partition,
     const std::vector<Eigen::VectorXd>& waypoint_path,
