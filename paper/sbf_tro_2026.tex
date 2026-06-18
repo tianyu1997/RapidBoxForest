@@ -34,6 +34,7 @@
 \emergencystretch=2em
 % Keep floats close to the text that introduces them.
 \setcounter{topnumber}{4}
+\setcounter{dbltopnumber}{3}
 \setcounter{bottomnumber}{3}
 \setcounter{totalnumber}{6}
 \renewcommand{\topfraction}{0.92}
@@ -954,11 +955,46 @@ sweep planner budget explicitly. Random scenes and queries are saved before
 planner execution, so methods share the same start-goal and obstacle instances
 within each scope.
 
+\begin{figure}[!t]
+  \centering
+  \includegraphics[width=\columnwidth]{figures/Marcucci_scene.png}
+  \caption{Canonical Marcucci Shelf+IIWA scene with the fixed saved
+  five-anchor query cycle.}
+  \label{fig:tro_shelf_scene}
+\end{figure}
+
 \begin{table*}[!t]
   \centering
   \begin{minipage}{0.74\textwidth}
   \input{generated/tab_tro_shelf_ablation.tex}
   \end{minipage}
+\end{table*}
+
+\begin{figure*}[!t]
+  \centering
+  \begin{minipage}[t]{0.32\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_tradeoff.pdf}
+    \caption{Shelf+IIWA \rbf{} mechanism trade-off. Query-validated mechanism
+    rows are plotted at Build/5 + \onlineq{} versus \(L/L^\star_{\mathrm{q}}\);
+    gold rings mark the rows listed in Table~\ref{tab:tro-shelf-ablation}.}
+    \label{fig:tro_shelf_tradeoff}
+  \end{minipage}\hfill
+  \begin{minipage}[t]{0.64\textwidth}
+    \centering
+    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
+    \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark the first
+    checkpoints with audited success on the saved five-query set. The horizontal
+    coordinate is Build/5 + \onlineq{} for methods with reusable builds and
+    \onlineq{} for single-query rows.}
+    \label{fig:tro_shelf_cross_tradeoff}
+  \end{minipage}
+\end{figure*}
+
+\begin{table*}[!t]
+  \centering
+  \TableFontRestore
+  \input{generated/tab_tro_shelf_cross_algorithm.tex}
 \end{table*}
 
 \Needspace{24\baselineskip}
@@ -1010,41 +1046,6 @@ become certificate-supported only after conversion into conservative
 box-corridor or finite-cover OBB-corridor edges; all remaining witnesses are
 reported only as query-validated transitions.
 
-\begin{figure}[!t]
-  \centering
-  \includegraphics[width=\columnwidth]{figures/Marcucci_scene.png}
-  \caption{Canonical Marcucci Shelf+IIWA scene with the fixed saved
-  five-anchor query cycle.}
-  \label{fig:tro_shelf_scene}
-\end{figure}
-
-\begin{figure*}[!t]
-  \centering
-  \begin{minipage}[t]{0.32\textwidth}
-    \centering
-    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_tradeoff.pdf}
-    \caption{Shelf+IIWA \rbf{} mechanism trade-off. Query-validated mechanism
-    rows are plotted at Build/5 + \onlineq{} versus \(L/L^\star_{\mathrm{q}}\);
-    gold rings mark the rows listed in Table~\ref{tab:tro-shelf-ablation}.}
-    \label{fig:tro_shelf_tradeoff}
-  \end{minipage}\hfill
-  \begin{minipage}[t]{0.64\textwidth}
-    \centering
-    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
-    \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark the first
-    checkpoints with audited success on the saved five-query set. The horizontal
-    coordinate is Build/5 + \onlineq{} for methods with reusable builds and
-    \onlineq{} for single-query rows.}
-    \label{fig:tro_shelf_cross_tradeoff}
-  \end{minipage}
-\end{figure*}
-
-\begin{table*}[!t]
-  \centering
-  \TableFontRestore
-  \input{generated/tab_tro_shelf_cross_algorithm.tex}
-\end{table*}
-
 \begin{table*}[!t]
   \centering
   \TableFontRestore
@@ -1078,7 +1079,7 @@ approach-side anchor. TS and CS are shelf-side target anchors, and LB and RB are
 the left and right bin anchors. Table~\ref{tab:tro-shelf-ablation} and
 Fig.~\ref{fig:tro_shelf_tradeoff} report the manifest-registered b100 profile over seeds
 0--7. The five-anchor cycle is used for mechanism ablations and profile selection;
-the saved random catalog below tests broader start-goal variation. The table
+the saved random-scene catalogs below test broader start-goal variation. The table
 reports build time, \onlineq{}, five-query amortized time
 \(\mathrm{Build}/5+\onlineq{}\), and path ratio. The Critical sample row uses
 the same planner and fixed-step query validation; its endpoint approximation is

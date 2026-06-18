@@ -49,7 +49,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--force", action="store_true", help="Replace existing tree/archive outputs.")
     parser.add_argument("--skip-checks", action="store_true", help="Create the archive without running release checkers.")
-    parser.add_argument("--check-paper-compile", action="store_true", help="Also compile the paper from the exported tree before packaging.")
+    parser.add_argument(
+        "--check-paper-compile",
+        action="store_true",
+        help="Also compile the paper if the exported tree intentionally includes paper sources.",
+    )
     parser.add_argument(
         "--strict-metadata",
         action="store_true",

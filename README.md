@@ -12,8 +12,9 @@ safe_box_forest -> lect_database -> link_interval_envelope
 ```
 
 The top-level project owns the integrated CMake entry point, shared
-documentation, experiments, and paper artifacts. Implementation code remains in
-the module directories.
+documentation, and experiments. The private development checkout also keeps
+paper artifacts, but the public source export omits `paper/`. Implementation
+code remains in the module directories.
 
 ## Repository Layout
 
@@ -24,9 +25,12 @@ the module directories.
 |-- experiments/                    current experiment runners and protocols
 |-- link_interval_envelope/         interval FK and link-envelope package
 |-- lect_database/                  persistent LECT database and SBF adapter
-|-- safe_box_forest/                planner, query pipeline, and bindings
-`-- paper/                          manuscript sources and generated figures
+`-- safe_box_forest/                planner, query pipeline, and bindings
 ```
+
+The private development checkout also keeps `paper/` with manuscript sources
+and generated figures. The clean public source export intentionally omits that
+directory.
 
 ## Modules
 
@@ -143,9 +147,9 @@ python3 scripts/check_release_readiness.py \
   --public-tree /tmp/RapidBoxForest-public
 ```
 
-The export keeps paper-facing source and documentation while excluding local
-outputs, caches, build products, scratch workspaces, and historical archives by
-default.
+The export keeps source code, public documentation, experiment runners, release
+scripts, and metadata while excluding `paper/`, local outputs, caches, build
+products, scratch workspaces, and historical archives by default.
 
 To produce a checked source archive for upload or for initializing a new public
 repository:
@@ -218,12 +222,10 @@ python3 /tmp/RapidBoxForest-public/scripts/check_public_release.py \
   --run-smoke-execute
 ```
 
-If a XeLaTeX-capable TeX distribution is available, the checker can also compile
-the manuscript from the exported tree without writing LaTeX intermediates into
-the source directory:
+If a XeLaTeX-capable TeX distribution is available, manuscript compilation is
+checked from the private development checkout, where `paper/` is present:
 
 ```bash
-python3 /tmp/RapidBoxForest-public/scripts/check_public_release.py \
-  /tmp/RapidBoxForest-public \
-  --check-paper-compile
+cd paper
+latexmk -xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
 ```

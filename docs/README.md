@@ -33,8 +33,9 @@ or build documentation.
 
 - `archive/` keeps superseded planning notes that may still explain historical
   decisions in the private development checkout.
-- Clean public exports exclude historical archives by default; paper-facing
-  reproduction should use the current top-level `experiments/` runners.
+- Clean public exports exclude historical archives and the private `paper/`
+  directory by default; paper-facing reproduction should use the current
+  top-level `experiments/` runners from the development checkout.
 - Generated outputs belong under ignored paths such as `build*/`, `outputs/`,
   `**/outputs/`, `__pycache__/`, and `.sbf_lect_database/`.
 

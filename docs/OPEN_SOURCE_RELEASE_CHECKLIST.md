@@ -1,7 +1,9 @@
 # Open-Source Release Checklist
 
-This checklist tracks repository work required before making the code public
-with the TRO manuscript artifacts.
+This checklist tracks repository work required before making the code public.
+The public source repository is source-only and intentionally does not include
+the `paper/` directory. Manuscript sources and generated paper assets remain in
+the private development checkout and can be validated there.
 
 ## Recommended Release Model
 
@@ -19,7 +21,7 @@ local paths, and discarded implementation attempts.
 - Root `environment.yml` provides a conda-forge build-and-experiment
   environment for source users.
 - `docs/REPRODUCIBILITY.md` documents smoke/full experiment workflows, cache
-  policy, generated paper assets, and the paper asset manifest.
+  policy, local manuscript-asset validation, and the public source export.
 - `docs/cache_artifacts.example.json` records the optional local LECT cache
   artifact schema and expected unpack paths for paper-facing warm caches.
 - `.gitignore` excludes build products, experiment outputs, local LECT caches,
@@ -39,10 +41,10 @@ local paths, and discarded implementation attempts.
   forbidden generated/history paths, scans text files for local absolute paths,
   checks for references to excluded historical entry points, checks local
   Markdown links, verifies the export manifest and per-file SHA256 hashes,
-  verifies required paper generated assets and figures, validates the
-  cache-artifact template, and can run dispatcher smoke dry-run, compile the
-  manuscript, verify release helper scripts, or, after Python bindings are
-  built, smoke execute.
+  validates the cache-artifact template, and can run dispatcher smoke dry-run,
+  verify release helper scripts, or, after Python bindings are built, smoke
+  execute. If a nonstandard tree intentionally includes `paper/`, it can also
+  validate paper assets and compile the manuscript.
 - `scripts/check_cache_artifacts.py` validates filled cache-artifact manifests
   and can verify local cache archives plus expected unpack directories.
 - `scripts/package_cache_artifacts.py` packages selected local LECT cache
@@ -57,8 +59,9 @@ local paths, and discarded implementation attempts.
 - `scripts/check_release_readiness.py` runs the source-tree final audit:
   required release files, public-manifest files tracked by git in strict mode,
   tracked generated files, citation metadata, stale historical references,
-  cache metadata, paper provenance, optional public tree validation, and
-  optional public source package validation.
+  cache metadata, optional local paper provenance when `paper/` is present,
+  optional public tree validation, and optional public source package
+  validation.
 - `scripts/check_public_package.py` validates the source archive against
   `RapidBoxForest-public.package.json`, including archive SHA256,
   `PUBLIC_RELEASE_MANIFEST.json`, file counts, duplicate tar entries, and
@@ -232,16 +235,15 @@ Validated on 2026-06-18:
   files in the clean exported tree. It also found no references to excluded
   historical entry points outside the release-script allowlist and no broken
   local Markdown links. It verified the export file list, per-file SHA256
-  hashes, required `paper/generated/` tables/figures, static paper figures, and
-  `tro_table_generation_manifest.json` asset list and provenance schema.
+  hashes, cache-artifact template validity, and release-tool self-tests. The
+  source-only public export intentionally contains no `paper/` directory.
 
-- Clean public export paper compilation can be checked without writing LaTeX
-  intermediates into the export tree:
+- Manuscript compilation is checked from the private development checkout,
+  where `paper/` is present:
 
   ```bash
-  python3 scripts/check_public_release.py \
-    /tmp/RapidBoxForest-public \
-    --check-paper-compile
+  cd paper
+  latexmk -xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
   ```
 
 - The public CI workflow is included in the exported tree and required by
@@ -332,8 +334,8 @@ Validated on 2026-06-18:
    `exp01,exp02`. Run additional experiments with `--only` after preparing the
    required caches, catalogs, or optional external planners.
 
-3. Regenerate paper assets from the selected public artifact directory and
-   compile the manuscript:
+3. Regenerate paper assets in the private development checkout and compile the
+   manuscript there:
 
    ```bash
    python3 experiments/generate_tro2026_paper_assets.py \
@@ -356,12 +358,13 @@ Validated on 2026-06-18:
      --tracking-only
    ```
 
-5. Decide which paper artifacts are intentionally tracked:
+5. Decide which paper artifacts remain tracked in the private development
+   repository. They are not part of the public source export:
 
    - manuscript source under `paper/`;
    - generated TeX tables and PDF/PNG figures under `paper/generated/`;
-   - compiled `paper/sbf_tro_2026.pdf`, if the release should include a
-     rendered manuscript preview.
+   - compiled `paper/sbf_tro_2026.pdf`, if the development repository should
+     keep a rendered manuscript preview.
 
 6. Large LECT caches are generated locally and must remain outside git. If a
    local exact-timing cache bundle is needed, use the cache packager to create

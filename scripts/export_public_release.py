@@ -30,7 +30,6 @@ ALLOWED_PREFIXES = (
     "experiments/",
     "lect_database/",
     "link_interval_envelope/",
-    "paper/",
     "safe_box_forest/",
     "scripts/",
 )
@@ -61,6 +60,7 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "safe_box_forest/docs/EXPERIMENT_MIGRATION_STATUS.md",
     "safe_box_forest/docs/MARCUCCI_QUALITY_AWARE_GROW_PLAN.md",
     "safe_box_forest/docs/TRO_REWRITE_EXECUTION_PLAN_20260505.md",
+    "paper/**",
     "paper/sbf_old/**",
     "paper/history/**",
     "safe_box_forest/paper/sbf_old/**",

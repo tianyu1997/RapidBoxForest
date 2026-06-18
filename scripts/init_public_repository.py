@@ -34,7 +34,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--remote-url", default=None, help="Optional git remote URL to add as origin. Defaults to --repo-url when provided.")
     parser.add_argument("--commit", action="store_true", help="Create the initial commit after staging files.")
     parser.add_argument("--commit-message", default="Initial public RapidBoxForest release", help="Initial commit message.")
-    parser.add_argument("--check-paper-compile", action="store_true", help="Compile the paper from the exported tree before git initialization.")
+    parser.add_argument(
+        "--check-paper-compile",
+        action="store_true",
+        help="Compile the paper if the exported tree intentionally includes paper sources.",
+    )
     parser.add_argument("--skip-checks", action="store_true", help="Skip public release checks before git initialization.")
     parser.add_argument(
         "--strict-metadata",

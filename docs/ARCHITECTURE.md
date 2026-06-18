@@ -133,14 +133,16 @@ Dynamic-update paths reuse the same forest state, mark dirty regions after
 obstacle edits, locally regrow when possible, and fall back to warm rebuilds
 when the configured thresholds require it.
 
-## Experiments And Paper Artifacts
+## Experiments And Local Paper Artifacts
 
 Current experiment runners are in top-level `experiments/`, with common helpers
 under `experiments/common/`. They write generated data under ignored `outputs/`
-paths. Historical package-local scripts and old manuscript trees may exist in
-the private development checkout, but they are excluded from the clean public
-export by default and should not be treated as preferred entry points for new
-runs.
+paths. Manuscript sources and generated paper assets live in `paper/` in the
+private development checkout, but the clean public source export intentionally
+omits `paper/`. Historical package-local scripts and old manuscript trees may
+exist in the private development checkout, but they are excluded from the clean
+public export by default and should not be treated as preferred entry points for
+new runs.
 
 ## Cleanup Rules
 

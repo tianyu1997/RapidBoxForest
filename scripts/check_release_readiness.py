@@ -322,11 +322,14 @@ def check_cache_manifest(root: Path, manifest: Path | None, *, strict: bool, arc
 
 
 def check_paper_manifest(root: Path) -> list[str]:
+    manifest_path = root / "paper/generated/tro_table_generation_manifest.json"
+    if not manifest_path.exists():
+        return []
     command = [
         sys.executable,
         "scripts/check_paper_result_sources.py",
         "--manifest",
-        "paper/generated/tro_table_generation_manifest.json",
+        str(manifest_path.relative_to(root)),
         "--repo-root",
         ".",
         "--verify-local",

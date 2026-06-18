@@ -57,10 +57,9 @@ REQUIRED_FILES = (
     "scripts/export_public_release.py",
     "scripts/check_public_release.py",
     "safe_box_forest/CITATION.cff",
-    "paper/sbf_tro_2026.tex",
 )
 
-REQUIRED_PAPER_FILES = (
+OPTIONAL_PAPER_FILES = (
     "paper/generated/tab_tro_endpoint_envelope.tex",
     "paper/generated/tab_tro_link_envelope.tex",
     "paper/generated/tab_tro_shelf_ablation.tex",
@@ -135,7 +134,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--check-python-extension", action="store_true", help="Verify that link_interval_envelope Python bindings are importable.")
     parser.add_argument("--run-smoke-execute", action="store_true", help="Run dispatcher smoke execute with outputs outside the release tree. Requires Python bindings.")
     parser.add_argument("--check-release-tools", action="store_true", help="Run lightweight release-tool self-tests inside the public tree.")
-    parser.add_argument("--check-paper-compile", action="store_true", help="Compile paper/sbf_tro_2026.tex with latexmk into a temporary output directory.")
+    parser.add_argument(
+        "--check-paper-compile",
+        action="store_true",
+        help="Compile paper/sbf_tro_2026.tex when the checked tree intentionally includes paper sources.",
+    )
     parser.add_argument("--strict-citation", action="store_true", help="Require final repository URL metadata in exported CFF citation files.")
     return parser.parse_args()
 
@@ -340,7 +343,10 @@ def check_manifest(root: Path, files: list[str]) -> list[str]:
 def check_paper_assets(root: Path, files: list[str]) -> list[str]:
     errors: list[str] = []
     file_set = set(files)
-    missing = [rel for rel in REQUIRED_PAPER_FILES if rel not in file_set]
+    paper_present = any(rel == "paper/sbf_tro_2026.tex" or rel.startswith("paper/") for rel in file_set)
+    if not paper_present:
+        return []
+    missing = [rel for rel in OPTIONAL_PAPER_FILES if rel not in file_set]
     if missing:
         errors.append(f"missing required paper assets: {missing}")
         return errors
@@ -352,7 +358,7 @@ def check_paper_assets(root: Path, files: list[str]) -> list[str]:
     generated_assets = set(str(item) for item in manifest.get("assets", []))
     required_generated = {
         Path(rel).name
-        for rel in REQUIRED_PAPER_FILES
+        for rel in OPTIONAL_PAPER_FILES
         if rel.startswith("paper/generated/") and Path(rel).name != "tro_table_generation_manifest.json"
     }
     missing_manifest_assets = sorted(required_generated - generated_assets)
@@ -392,6 +398,8 @@ def check_cache_artifact_template(root: Path) -> list[str]:
 
 
 def check_paper_result_source_manifest(root: Path) -> list[str]:
+    if not (root / "paper/generated/tro_table_generation_manifest.json").exists():
+        return []
     env = subprocess_env()
     command = [
         sys.executable,
@@ -506,6 +514,8 @@ def check_release_tools(root: Path) -> list[str]:
 
 
 def check_paper_compile(root: Path) -> list[str]:
+    if not (root / "paper/sbf_tro_2026.tex").exists():
+        return ["paper/sbf_tro_2026.tex is not included in this public source tree"]
     if shutil.which("latexmk") is None:
         return ["latexmk is not available; install a TeX distribution or skip --check-paper-compile"]
     if shutil.which("xelatex") is None:

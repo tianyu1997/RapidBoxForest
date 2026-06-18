@@ -6,10 +6,10 @@ tables and figures used by `paper/sbf_tro_2026.tex`.
 
 ## Scope
 
-The repository intentionally separates three kinds of artifacts:
+The development repository intentionally separates three kinds of artifacts:
 
 1. source code, experiment runners, generated paper assets, and manifests that
-   can be versioned;
+   can be versioned in the development checkout;
 2. local build products and Python/LaTeX intermediates, which are ignored;
 3. large experiment outputs and LECT evidence caches under `outputs/`, which
    are reproducible but not suitable for normal git history.
@@ -19,7 +19,9 @@ The source of truth for generated paper assets is
 artifact paths, hashes, selected rows, and table/figure provenance.
 
 For public release, export a clean source tree rather than publishing the full
-development repository history:
+development repository history. The public source tree intentionally omits the
+`paper/` directory; manuscript sources and generated paper assets are validated
+from the private development checkout.
 
 ```bash
 python3 scripts/export_public_release.py \
@@ -28,9 +30,9 @@ python3 scripts/export_public_release.py \
 ```
 
 The export is allowlist-based. It keeps the current modules, paper-facing
-experiments, documentation, manuscript assets, license, citation metadata, and
-release scripts. It excludes local outputs, LECT caches, build products,
-scratch workspaces, and historical archives by default.
+experiments, documentation, license, citation metadata, and release scripts. It
+excludes `paper/`, local outputs, LECT caches, build products, scratch
+workspaces, and historical archives by default.
 
 After exporting, run the release-readiness audit:
 
@@ -223,8 +225,12 @@ python3 experiments/run_tro2026.py \
   --execute \
   --out-dir outputs/repro_smoke
 
+python3 scripts/export_public_release.py \
+  --out-dir /tmp/RapidBoxForest-public \
+  --force
+
 python3 scripts/check_public_release.py \
-  . \
+  /tmp/RapidBoxForest-public \
   --pythonpath /tmp/RapidBoxForest-python-smoke-build/python \
   --check-release-tools \
   --check-python-extension \
@@ -278,13 +284,12 @@ cd paper
 latexmk -xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
 ```
 
-To verify manuscript compilation from a clean public export without leaving
-LaTeX intermediates in the source tree, use:
+Manuscript compilation is verified from the development checkout, where
+`paper/` is present:
 
 ```bash
-python3 scripts/check_public_release.py \
-  /tmp/RapidBoxForest-public \
-  --check-paper-compile
+cd paper
+latexmk -xelatex -interaction=nonstopmode -halt-on-error sbf_tro_2026.tex
 ```
 
 ## Full Experiment Workflow
@@ -408,7 +413,8 @@ python3 scripts/fill_cache_artifact_urls.py \
 
 ## Active Paper Assets
 
-The current main generated assets are:
+The current main generated assets are tracked in the private development
+checkout and are not included in the public source export:
 
 1. `paper/generated/tab_tro_endpoint_envelope.tex`
 2. `paper/generated/tab_tro_link_envelope.tex`
