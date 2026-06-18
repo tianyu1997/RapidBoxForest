@@ -23,6 +23,9 @@
 
 namespace rbf {
 
+struct QueryBridgeAcceptanceThresholds;
+struct QueryBridgeSearchTask;
+
 struct DynamicUpdateConfig {
 	bool enable_spatial_dirty_region = true;
 	double dirty_region_padding = 0.0;
@@ -685,6 +688,11 @@ private:
 											  bool skip_if_connected,
 											  int query_index = -1,
 											  BuildProfile* profile = nullptr);
+	int try_hipac_online_bridge_task(
+		QueryBridgeSearchTask& task,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		StageContext& context,
+		int query_index);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,

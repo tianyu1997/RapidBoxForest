@@ -638,113 +638,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        return added;
 	    };
 	    auto try_hipac_online_bridge = [&](QueryBridgeSearchTask& task) -> int {
-	        const QueryBridgeHipacOnlineGate hipac_online_gate =
-	            query_bridge_hipac_online_gate(
-	                last_adaptive_partition_config_,
-	                partition_native_mode(),
-	                static_cast<int>(task.hipac_candidate_path.size()),
-	                task.hipac_online_resolves_used);
-	        if (!hipac_online_gate.enabled) {
-	            return 0;
-	        }
-	        task.hipac_online_resolves_used += 1;
-	        const auto hipac_t0 = QueryBridgeClock::now();
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_online_attempts");
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_attempt"),
-	                                              1.0);
-	        std::vector<Eigen::VectorXd> hipac_path = task.hipac_candidate_path;
-	        if (hipac_path.size() > 2) {
-	            CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-	            const double before_length = path_length(hipac_path);
-	            std::vector<Eigen::VectorXd> shortened =
-	                collision_shortcut_path(hipac_path,
-	                                        checker,
-	                                        collision_shortcut_resolution(config_.query));
-	            if (shortened.size() >= 2 &&
-	                path_length(shortened) <= before_length + 1e-12) {
-	                const PathAuditCheck audit =
-	                    audit_waypoint_path(shortened,
-	                                        checker,
-	                                        config_.query.audit_resolution,
-	                                        config_.query.audit_segment_step);
-	                if (audit.passed) {
-	                    batch_context.diagnostics().add_counter(
-	                        "query_bridge.hipac_online_shortcut_accepts");
-	                    batch_context.diagnostics().add_counter(
-	                        "query_bridge.hipac_online_shortcut_delta",
-	                        std::max(0.0, before_length - path_length(shortened)));
-	                    hipac_path = std::move(shortened);
-	                } else {
-	                    batch_context.diagnostics().add_counter(
-	                        "query_bridge.hipac_online_shortcut_audit_rejects");
-	                }
-	            }
-	        }
-	        const double hipac_candidate_length = path_length(hipac_path);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_online_candidate_length",
-	                                                hipac_candidate_length);
-	        if (hipac_online_gate.candidate_max_length > 0.0 &&
-	            hipac_candidate_length > hipac_online_gate.candidate_max_length + 1e-12) {
-	            batch_context.diagnostics().add_counter(
-	                "query_bridge.hipac_online_candidate_length_rejects");
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_length_reject"),
-	                                                  1.0);
-	            const double hipac_ms = query_bridge_elapsed_ms_since(hipac_t0);
-	            batch_context.diagnostics().record_timing("query_bridge.hipac_online_ms_total",
-	                                                      hipac_ms);
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_ms_total",
-	                                                    hipac_ms);
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_ms"),
-	                                                  hipac_ms);
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_failures");
-	            return 0;
-	        }
-	        int added = add_partition_box_corridor_overlay(task.start,
-	                                                       task.goal,
-	                                                       hipac_path,
-	                                                       "query_bridge.hipac_online",
-	                                                       true,
-	                                                       false,
-	                                                       query_bridge_edge_query_index(scene_reusable_edges, task),
-	                                                       &last_build_);
-	        if (added <= 0 &&
-	            last_adaptive_partition_config_.hipac_online_ffb_portal_fallback) {
-	            added = add_partition_portal_corridor_overlay(task.start,
-	                                                          task.goal,
-	                                                          hipac_path,
-	                                                          "query_bridge.hipac_online",
-	                                                          true,
-	                                                          false,
-	                                                          query_bridge_edge_query_index(scene_reusable_edges, task),
-	                                                          &last_build_);
-	        }
-	        const double hipac_ms = query_bridge_elapsed_ms_since(hipac_t0);
-	        batch_context.diagnostics().record_timing("query_bridge.hipac_online_ms_total",
-	                                                  hipac_ms);
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_online_ms_total",
-	                                                hipac_ms);
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_ms"),
-	                                              hipac_ms);
-	        if (added <= 0) {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_failures");
-	            return 0;
-	        }
-	        batch_context.diagnostics().add_counter("query_bridge.hipac_online_added",
-	                                                static_cast<double>(added));
-	        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_added"),
-	                                              static_cast<double>(added));
-	        added_by_query[task.index] += added;
-	        const QueryResult probe_after_hipac = query(task.start, task.goal);
-	        if (query_bridge_result_acceptable(probe_after_hipac,
-	                                           task.start,
-	                                           task.goal,
-	                                           bridge_acceptance)) {
-	            task.hipac_online_satisfied = true;
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_satisfied");
-	            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_satisfied"),
-	                                                  1.0);
-	        } else {
-	            batch_context.diagnostics().add_counter("query_bridge.hipac_online_not_sufficient");
+	        const int added = try_hipac_online_bridge_task(
+	            task,
+	            bridge_acceptance,
+	            batch_context,
+	            query_bridge_edge_query_index(scene_reusable_edges, task));
+	        if (added > 0) {
+	            added_by_query[task.index] += added;
 	        }
 	        return added;
 	    };
