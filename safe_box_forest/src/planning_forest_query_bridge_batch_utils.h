@@ -386,6 +386,12 @@ void record_query_bridge_forced_attempts(StageContext& context,
                                          bool forced_task,
                                          int attempts);
 
+void query_bridge_adopt_retry_path_if_better(
+    QueryBridgeSearchTask& task,
+    std::vector<Eigen::VectorXd> retry_path,
+    double& best_length,
+    int& retry_successes);
+
 int query_bridge_edge_query_index(bool scene_reusable_edges,
                                   const QueryBridgeSearchTask& task);
 

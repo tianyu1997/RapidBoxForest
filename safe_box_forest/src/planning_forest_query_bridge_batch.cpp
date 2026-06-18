@@ -1249,20 +1249,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                        best_length,
                                        task.waypoint_path);
         };
-    auto adopt_retry_path_if_better = [&](QueryBridgeSearchTask& task,
-                                          std::vector<Eigen::VectorXd> retry_path,
-                                          double& best_length,
-                                          int& retry_successes) {
-        if (retry_path.empty()) {
-            return;
-        }
-        retry_successes += 1;
-        const double length = path_length(retry_path);
-        if (length < best_length) {
-            best_length = length;
-            task.waypoint_path = std::move(retry_path);
-        }
-    };
     auto run_segment_only_retry = [&](QueryBridgeSearchTask& task,
                                       int first_attempt,
                                       double& best_length) {
@@ -1273,10 +1259,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const auto retry_t0 = Clock::now();
         int retry_successes = 0;
         for (int retry = 0; retry < retry_options.segment_only_retry_attempts; ++retry) {
-            adopt_retry_path_if_better(task,
-                                       run_task_attempt(task, first_attempt + retry, 0),
-                                       best_length,
-                                       retry_successes);
+            query_bridge_adopt_retry_path_if_better(
+                task,
+                run_task_attempt(task, first_attempt + retry, 0),
+                best_length,
+                retry_successes);
             if (retry_successes > 0 && retry_options.no_path_retry_stop_on_first_success) {
                 break;
             }
@@ -1325,7 +1312,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             int retry_successes = 0;
             int retry_attempts_run = 0;
             for (int retry = 0; retry < effective_stage_attempts; ++retry) {
-                adopt_retry_path_if_better(
+                query_bridge_adopt_retry_path_if_better(
                     task,
                     run_task_attempt(task,
                                      retry_attempt_offset + retry,

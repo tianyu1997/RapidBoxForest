@@ -282,6 +282,22 @@ void record_query_bridge_forced_attempts(StageContext& context,
                                     static_cast<double>(attempts));
 }
 
+void query_bridge_adopt_retry_path_if_better(
+    QueryBridgeSearchTask& task,
+    std::vector<Eigen::VectorXd> retry_path,
+    double& best_length,
+    int& retry_successes) {
+    if (retry_path.empty()) {
+        return;
+    }
+    retry_successes += 1;
+    const double length = path_length(retry_path);
+    if (length < best_length) {
+        best_length = length;
+        task.waypoint_path = std::move(retry_path);
+    }
+}
+
 int query_bridge_edge_query_index(bool scene_reusable_edges,
                                   const QueryBridgeSearchTask& task) {
     return scene_reusable_edges ? -1 : task.query_index;
