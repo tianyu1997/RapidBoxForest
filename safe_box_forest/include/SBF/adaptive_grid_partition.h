@@ -242,23 +242,23 @@ public:
 	std::vector<AdaptiveGridPartitionSparseCellRecord> sparse_virtual_records() const;
 	bool boxes_are_neighbors(int lhs_box_id, int rhs_box_id) const;
 	int island_id_for_box(int box_id) const;
-		bool same_island(int lhs_box_id, int rhs_box_id) const;
-		bool same_component_with_overlay(int lhs_box_id, int rhs_box_id) const;
-		int component_count_with_overlay() const;
-		std::vector<std::vector<int>> component_box_ids_with_overlay() const;
-		std::vector<std::vector<int>> island_box_ids() const;
-		std::vector<int> largest_island_box_ids() const;
-		std::vector<int> largest_component_box_ids_with_overlay() const;
-		bool box_adjacent_to_any(const BoxNode& box,
-								 const std::unordered_set<int>& box_ids,
-								 double tolerance) const;
-		std::vector<int> adjacent_box_ids(const BoxNode& box,
-										  double tolerance) const;
-		AdaptiveGridPartitionConnectivityDominance classify_connectivity_dominance(
-			const BoxNode& box,
-			double tolerance) const;
-		int sync_segment_edges(const SegmentEdgeList& edges);
-		bool append_segment_edge(const SegmentEdge& edge);
+	bool same_island(int lhs_box_id, int rhs_box_id) const;
+	bool same_component_with_overlay(int lhs_box_id, int rhs_box_id) const;
+	int component_count_with_overlay() const;
+	std::vector<std::vector<int>> component_box_ids_with_overlay() const;
+	std::vector<std::vector<int>> island_box_ids() const;
+	std::vector<int> largest_island_box_ids() const;
+	std::vector<int> largest_component_box_ids_with_overlay() const;
+	bool box_adjacent_to_any(const BoxNode& box,
+							 const std::unordered_set<int>& box_ids,
+							 double tolerance) const;
+	std::vector<int> adjacent_box_ids(const BoxNode& box,
+									  double tolerance) const;
+	AdaptiveGridPartitionConnectivityDominance classify_connectivity_dominance(
+		const BoxNode& box,
+		double tolerance) const;
+	int sync_segment_edges(const SegmentEdgeList& edges);
+	bool append_segment_edge(const SegmentEdge& edge);
 
 	int locate_containing_box(const Eigen::Ref<const Eigen::VectorXd>& q,
 							  bool nearest_if_outside,
