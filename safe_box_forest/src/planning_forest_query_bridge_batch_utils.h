@@ -50,6 +50,19 @@ struct QueryBridgeParallelRrtOptions {
     double early_stop_additive = 0.75;
 };
 
+struct QueryBridgeDetourOptions {
+    bool enabled = false;
+    bool candidate = false;
+    double replace_factor = 1.0;
+    int dims = 4;
+    int rounds = 2;
+    int max_candidates = 32;
+    bool multi_axis = false;
+    int random_candidates = 0;
+    double offset = 0.35;
+    double two_bend_alpha = 0.35;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -94,6 +107,11 @@ bool query_bridge_parallel_rrt_path_good_enough(const Eigen::VectorXd& start,
                                                 const Eigen::VectorXd& goal,
                                                 const std::vector<Eigen::VectorXd>& path,
                                                 const QueryBridgeParallelRrtOptions& options);
+
+QueryBridgeDetourOptions query_bridge_detour_options_from_env();
+
+void record_query_bridge_detour_diagnostics(StageContext& context,
+                                            const QueryBridgeDetourOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

@@ -1264,20 +1264,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             "query_bridge.direct_line_on_no_path_successes");
         return path;
     };
-    const bool detour_on_no_path =
-        env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ON_NO_PATH", 0) != 0;
-    const bool detour_candidate =
-        env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_CANDIDATE", 0) != 0;
-    const double detour_replace_factor =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_REPLACE_FACTOR", 1.0));
-    batch_context.diagnostics().set_value(
-        "query_bridge.detour_on_no_path",
-        detour_on_no_path ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.detour_candidate",
-        detour_candidate ? 1.0 : 0.0);
+    const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
+    record_query_bridge_detour_diagnostics(batch_context, detour_options);
     auto deterministic_detour_fallback_path = [&](const QueryBridgeSearchTask& task) {
-        if (!detour_on_no_path ||
+        if (!detour_options.enabled ||
             task.start.size() != task.goal.size() ||
             task.start.size() <= 0) {
             return std::vector<Eigen::VectorXd>{};
@@ -1304,27 +1294,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
             return lhs < rhs;
         });
-        const int dim_limit = std::min<int>(
-            std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_DIMS", 4)),
-            static_cast<int>(dims.size()));
-        const int rounds = std::max(
-            1,
-            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ROUNDS", 2));
-        const int max_candidates = std::max(
-            1,
-            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MAX_CANDIDATES", 32));
-        const bool multi_axis_detour =
-            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MULTI_AXIS", 0) != 0;
-        const int random_candidates = std::max(
-            0,
-            env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_RANDOM_CANDIDATES", 0));
-        const double base_offset = std::max(
-            1e-4,
-            env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_OFFSET", 0.35));
-        const double two_bend_alpha = std::min(
-            0.45,
-            std::max(0.15,
-                     env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_TWO_BEND_ALPHA", 0.35)));
+        const int dim_limit = std::min<int>(detour_options.dims,
+                                            static_cast<int>(dims.size()));
+        const int rounds = detour_options.rounds;
+        const int max_candidates = detour_options.max_candidates;
+        const bool multi_axis_detour = detour_options.multi_axis;
+        const int random_candidates = detour_options.random_candidates;
+        const double base_offset = detour_options.offset;
+        const double two_bend_alpha = detour_options.two_bend_alpha;
         const Eigen::VectorXd mid = 0.5 * (task.start + task.goal);
         double best_length = std::numeric_limits<double>::infinity();
         std::vector<Eigen::VectorXd> best_path;
@@ -1501,8 +1478,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     };
     auto maybe_apply_detour_path = [&](const QueryBridgeSearchTask& task,
                                        double& best_length,
-                                       std::vector<Eigen::VectorXd>& waypoint_path) {
-        if (!waypoint_path.empty() && !detour_candidate) {
+        std::vector<Eigen::VectorXd>& waypoint_path) {
+        if (!waypoint_path.empty() && !detour_options.candidate) {
             return false;
         }
         auto detour_path = deterministic_detour_fallback_path(task);
@@ -1511,7 +1488,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         const double detour_length = path_length(detour_path);
         if (!waypoint_path.empty() &&
-            detour_length > best_length * detour_replace_factor + 1e-12) {
+            detour_length > best_length * detour_options.replace_factor + 1e-12) {
             batch_context.diagnostics().add_counter(
                 "query_bridge.detour_candidate_not_shorter");
             return false;

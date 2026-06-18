@@ -170,6 +170,45 @@ bool query_bridge_parallel_rrt_path_good_enough(
                               direct + options.early_stop_additive);
 }
 
+QueryBridgeDetourOptions query_bridge_detour_options_from_env() {
+    QueryBridgeDetourOptions options;
+    options.enabled =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ON_NO_PATH", 0) != 0;
+    options.candidate =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_CANDIDATE", 0) != 0;
+    options.replace_factor = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_REPLACE_FACTOR", 1.0));
+    options.dims =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_DIMS", 4));
+    options.rounds =
+        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_ROUNDS", 2));
+    options.max_candidates =
+        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MAX_CANDIDATES", 32));
+    options.multi_axis =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_MULTI_AXIS", 0) != 0;
+    options.random_candidates =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_DETOUR_RANDOM_CANDIDATES", 0));
+    options.offset = std::max(
+        1e-4,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_DETOUR_OFFSET", 0.35));
+    options.two_bend_alpha = std::min(
+        0.45,
+        std::max(0.15,
+                 detail::env_double_or_default(
+                     "RBF_QUERY_BRIDGE_DETOUR_TWO_BEND_ALPHA",
+                     0.35)));
+    return options;
+}
+
+void record_query_bridge_detour_diagnostics(StageContext& context,
+                                            const QueryBridgeDetourOptions& options) {
+    context.diagnostics().set_value("query_bridge.detour_on_no_path",
+                                    options.enabled ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.detour_candidate",
+                                    options.candidate ? 1.0 : 0.0);
+}
+
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after) {
