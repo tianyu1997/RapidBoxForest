@@ -171,6 +171,24 @@ bool query_bridge_should_check_current_query(
     return retry_options.skip_deferred_short_edges;
 }
 
+bool query_bridge_has_segment_only_task(
+    const std::vector<QueryBridgeSearchTask>& tasks,
+    const QueryBridgeIndexOptions& index_options) {
+    return std::any_of(tasks.begin(), tasks.end(), [&](const QueryBridgeSearchTask& task) {
+        return query_bridge_index_segment_only(index_options, task.index);
+    });
+}
+
+bool query_bridge_parallel_task_rrt_enabled(
+    const QueryBridgeBatchExecutionOptions& batch_options,
+    bool has_segment_only_task,
+    const QueryBridgeRetryOptions& retry_options) {
+    return batch_options.parallel_task_rrt &&
+           !has_segment_only_task &&
+           retry_options.no_path_retry_attempts == 0 &&
+           retry_options.no_path_retry_budget_stages == 0;
+}
+
 void query_bridge_mark_task_skip(BuildProfile& profile,
                                  std::size_t index,
                                  double code,

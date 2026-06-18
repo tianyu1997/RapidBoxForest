@@ -207,6 +207,15 @@ bool query_bridge_should_check_current_query(
     const QueryBridgeIndexOptions& index_options,
     const QueryBridgeRetryOptions& retry_options);
 
+bool query_bridge_has_segment_only_task(
+    const std::vector<QueryBridgeSearchTask>& tasks,
+    const QueryBridgeIndexOptions& index_options);
+
+bool query_bridge_parallel_task_rrt_enabled(
+    const QueryBridgeBatchExecutionOptions& batch_options,
+    bool has_segment_only_task,
+    const QueryBridgeRetryOptions& retry_options);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,

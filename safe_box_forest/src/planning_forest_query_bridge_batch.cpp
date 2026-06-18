@@ -1669,12 +1669,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
     const bool has_segment_only_task =
-        std::any_of(tasks.begin(), tasks.end(), [&](const QueryBridgeSearchTask& task) {
-            return query_bridge_index_segment_only(index_options, task.index);
-        });
-    if (batch_execution_options.parallel_task_rrt && !has_segment_only_task &&
-        retry_options.no_path_retry_attempts == 0 &&
-        retry_options.no_path_retry_budget_stages == 0) {
+        query_bridge_has_segment_only_task(tasks, index_options);
+    if (query_bridge_parallel_task_rrt_enabled(batch_execution_options,
+                                               has_segment_only_task,
+                                               retry_options)) {
         struct PreparedTask {
             bool skipped = false;
             bool forced = false;
