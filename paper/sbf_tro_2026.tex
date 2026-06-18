@@ -172,6 +172,8 @@ rebuild.
 Snapshot creation and loading costs, along with resident memory, are outside
 the reported timing rows; update rows report maintenance only, not the full
 update-and-query pipeline.
+The open-source implementation is available at
+\url{https://github.com/tianyu1997/RapidBoxForest}.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -957,7 +959,7 @@ within each scope.
 
 \begin{figure}[!t]
   \centering
-  \includegraphics[width=\columnwidth]{figures/Marcucci_scene.png}
+  \includegraphics[width=0.94\columnwidth]{figures/Marcucci_scene.png}
   \caption{Canonical Marcucci Shelf+IIWA scene with the fixed saved
   five-anchor query cycle.}
   \label{fig:tro_shelf_scene}
@@ -1128,17 +1130,19 @@ five-query cycle, not a universal amortization claim.
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
 
-The random-scene study uses saved random-scene catalogs, with ten pre-generated
-queries per scene shared by every method. Across KUKA LBR iiwa, UR5, and Panda,
-the medium and hard catalogs over ten seeds contain 600 saved query instances
-before the method-independent pruning rule below is applied. For each robot and
-seed, medium and hard rows share the saved start-goal set; hard rows append saved
-obstacle prefixes instead of regenerating unrelated scenes. Before any method
-summary is computed, a fixed manifest rule removes direct-line cases, where the
-start-goal segment validates directly. The trade-off plot uses Build/5 +
+The random-scene study uses saved random-scene catalogs: each scene has ten
+pre-generated queries shared by every method. Across KUKA LBR iiwa, UR5, and
+Panda, the medium and hard catalogs over ten seeds contain 600 saved query
+instances before the method-independent pruning rule below is applied. For each
+robot and seed, medium and hard rows share the saved start-goal set; hard rows
+append saved obstacle prefixes instead of regenerating unrelated scenes. Before
+any method summary is computed, a fixed manifest rule removes direct-line cases
+where the start-goal segment validates directly. This pruning affects reported
+summaries only; the stored catalogs still retain ten queries per scene. The
+trade-off plot uses Build/5 +
 \onlineq{} for reusable-build rows and \onlineq{} otherwise, as a fixed
 five-query display point; \(K\) is a reuse horizon, not a post-pruning
-retained-query count. The stored catalogs still retain ten queries per scene.
+retained-query count.
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
@@ -1150,15 +1154,15 @@ finite-cover \cspace{} OBB-corridor regions; the generated summaries list no
 residual ordinary (non-corridor) segments for those \rbf{} rows. PRM is built
 once per scene, whereas \mbox{RRT-Connect} and BIT* solve each query
 independently.
-The archived \mbox{IRIS-NP/GCS} saved-catalog run is retained only as a
-feasibility diagnostic: its strict saved-catalog success was too low to support
-comparable \onlineq{} and path-ratio rows. The table-generation manifest
-therefore excludes it from Table~\ref{tab:tro-random-summary} and
+The archived \mbox{IRIS-NP/GCS} saved-catalog run is a feasibility diagnostic:
+its strict saved-catalog success was too low to support comparable \onlineq{}
+and path-ratio rows. The table-generation manifest therefore excludes it from
+Table~\ref{tab:tro-random-summary} and
 Fig.~\ref{fig:tro_random_tradeoff}; the comparison reports \onlineq{} and
 audited path ratios for \rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared
 catalogs.
-\mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
-points; Panda-Hard is the exception. \mbox{RRT-Connect}'s median audited path
+\mbox{RRT-Connect} has the lowest median \onlineq{} in five of the six
+reported operating points; Panda-Hard is the exception. Its median audited path
 ratio is higher, hence worse, than \rbf{} in all six. With scene-forest reuse,
 \rbf{} has lower median \onlineq{} than BIT* in all six cases;
 \(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision in the two IIWA rows
@@ -1187,8 +1191,10 @@ simplification, audit, or query timing is included.
 \input{generated/tab_tro_dynamic_update.tex}
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
-both diagnostic configurations. The 0/8 result is a scope check, not a
-measurement of post-edit query success or an end-to-end replanning benchmark.
+both diagnostic configurations. The 0/8 result is a scope check: without bridge
+and repair, the maintenance-only configuration is not an end-to-end planning
+pipeline, so the row should not be read as post-edit query success or a
+replanning benchmark.
 
 \section{Conclusion}\label{sec:conclusion}
 
@@ -1205,20 +1211,20 @@ Under saved catalogs, audit-separated timing, and explicit cache accounting,
 warm-cache depth-23 LECT replay on Shelf+IIWA yields a 0.166~s median reusable
 build and 0.130~s median \onlineq{}, whereas live \mbox{HIFK-5} materialization
 takes 7.006~s. In saved random scenes, \mbox{RRT-Connect} is faster in five
-cases but has worse path ratios than \rbf{}; against BIT*, \rbf{} has lower
-median \onlineq{} in all six, while BIT* has better ratios in the four
+cases but has higher path ratios than \rbf{}; against BIT*, \rbf{} has lower
+median \onlineq{} in all six, while BIT* has lower path ratios in the four
 UR5/Panda cases.
 The dynamic-update rows measure scene-cache maintenance rather than full
 update-and-query performance.
 Within these scopes, the results characterize \rbf{} as a reusable-region
-construction method for repeated queries. These scopes also define the remaining limitations:
-certificates do not cover repaired, shortened, post-processed, or
-\mbox{filter-only} paths unless converted into conservative regions; LECT
-snapshot creation and loading
-costs, resident memory, and memory break-even analyses are not reported; and
-validation beyond active-link obstacle collision, including self-collision,
-\mbox{payload} and gripper models, and task-specific regions, remains future
-work.
+construction method for repeated queries, not as a complete replacement for
+single-query planners or full-scene replanning. The remaining limitations follow
+from the same boundaries. Certificates do not cover repaired, shortened,
+post-processed, or \mbox{filter-only} paths unless those paths are converted
+into conservative regions. LECT snapshot creation and loading costs, resident
+memory, and memory break-even analyses are not reported. Validation beyond
+active-link obstacle collision, including self-collision, \mbox{payload} and
+gripper models, and task-specific regions, remains future work.
 
 \begingroup
 \let\origthebibliography\thebibliography
