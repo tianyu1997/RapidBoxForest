@@ -7,6 +7,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_bridge_batch_utils.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
 
@@ -50,67 +51,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     auto finish_batch_bridge = [&]() {
         if (oracle_counters_before_valid && oracle_) {
             const auto after = oracle_->counters();
-            auto add_counter_delta = [&](const std::string& key, auto after_value, auto before_value) {
-                last_build_.diagnostics[key] +=
-                    static_cast<double>(after_value - before_value);
-            };
-            add_counter_delta("query_bridge.oracle_node_validations",
-                              after.node_validations,
-                              oracle_counters_before.node_validations);
-            add_counter_delta("query_bridge.oracle_validation_cache_hits",
-                              after.validation_cache_hits,
-                              oracle_counters_before.validation_cache_hits);
-            add_counter_delta("query_bridge.oracle_validation_cache_misses",
-                              after.validation_cache_misses,
-                              oracle_counters_before.validation_cache_misses);
-            add_counter_delta("query_bridge.oracle_materializations",
-                              after.materializations,
-                              oracle_counters_before.materializations);
-            add_counter_delta("query_bridge.oracle_external_exact_hits",
-                              after.materialization_external_exact_hits,
-                              oracle_counters_before.materialization_external_exact_hits);
-            add_counter_delta("query_bridge.oracle_external_exact_misses",
-                              after.materialization_external_exact_misses,
-                              oracle_counters_before.materialization_external_exact_misses);
-            add_counter_delta("query_bridge.oracle_interval_replay_compatibility_checks",
-                              after.interval_replay_compatibility_checks,
-                              oracle_counters_before.interval_replay_compatibility_checks);
-            add_counter_delta("query_bridge.oracle_interval_replay_compatible",
-                              after.interval_replay_compatible,
-                              oracle_counters_before.interval_replay_compatible);
-            add_counter_delta("query_bridge.oracle_interval_replay_incompatible",
-                              after.interval_replay_incompatible,
-                              oracle_counters_before.interval_replay_incompatible);
-            add_counter_delta("query_bridge.oracle_interval_replay_direct_exact_hits",
-                              after.interval_replay_direct_exact_hits,
-                              oracle_counters_before.interval_replay_direct_exact_hits);
-            add_counter_delta("query_bridge.oracle_interval_replay_key_only_blocked",
-                              after.interval_replay_key_only_blocked,
-                              oracle_counters_before.interval_replay_key_only_blocked);
-            add_counter_delta("query_bridge.oracle_shared_endpoint_cache_hits",
-                              after.materialization_reused_shared_endpoint_cache,
-                              oracle_counters_before.materialization_reused_shared_endpoint_cache);
-            add_counter_delta("query_bridge.oracle_endpoint_path_ms",
-                              after.validate_node_endpoint_path_time_us * 1.0e-3,
-                              oracle_counters_before.validate_node_endpoint_path_time_us * 1.0e-3);
-            add_counter_delta("query_bridge.oracle_classify_ms",
-                              after.validate_node_classify_time_us * 1.0e-3,
-                              oracle_counters_before.validate_node_classify_time_us * 1.0e-3);
-            add_counter_delta("query_bridge.oracle_validate_total_ms",
-                              after.validate_node_total_time_us * 1.0e-3,
-                              oracle_counters_before.validate_node_total_time_us * 1.0e-3);
-            add_counter_delta("query_bridge.oracle_materialization_endpoint_ms",
-                              after.materialization_endpoint_time_us * 1.0e-3,
-                              oracle_counters_before.materialization_endpoint_time_us * 1.0e-3);
-            add_counter_delta("query_bridge.oracle_materialization_envelope_ms",
-                              after.materialization_envelope_time_us * 1.0e-3,
-                              oracle_counters_before.materialization_envelope_time_us * 1.0e-3);
-            add_counter_delta("query_bridge.oracle_envelope_collision_queries",
-                              after.envelope_collision_queries,
-                              oracle_counters_before.envelope_collision_queries);
-            add_counter_delta("query_bridge.oracle_envelope_gjk_tests",
-                              after.envelope_collision_gjk_tests,
-                              oracle_counters_before.envelope_collision_gjk_tests);
+            add_query_bridge_oracle_counter_delta(last_build_, oracle_counters_before, after);
         }
         const bool changed = boxes_.size() != partition_refresh_base ||
                              segment_edges_.size() != segment_edges_before_partition_refresh ||
@@ -133,30 +74,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     }
     oracle_counters_before = oracle_->counters();
     oracle_counters_before_valid = true;
-
-    struct BridgeSearchTask {
-        std::size_t index = 0;
-        int query_index = 0;
-        Eigen::VectorXd start;
-        Eigen::VectorXd goal;
-        bool short_local_bridge = false;
-        RRTConnectConfig bridge_rrt;
-        std::vector<RRTConnectConfig> short_local_profiles;
-        int attempts = 1;
-        std::vector<Eigen::VectorXd> waypoint_path;
-        std::vector<std::vector<Eigen::VectorXd>> waypoint_fallback_paths;
-        bool waypoint_path_from_partition_query = false;
-        std::vector<Eigen::VectorXd> hipac_candidate_path;
-        bool hipac_online_satisfied = false;
-        bool direct_start_goal_satisfied = false;
-        int hipac_prebridge_resolves_used = 0;
-        int hipac_transition_resolves_used = 0;
-        int hipac_online_resolves_used = 0;
-    };
-    struct BridgeSearchJob {
-        std::size_t task_index = 0;
-        int attempt = 0;
-    };
 
     const double bridge_accept_segment_fraction =
         std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION", 0.25));
@@ -249,7 +166,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                  env_double_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_MAX_SEGMENT_FRACTION",
                                        0.95));
 
-    std::vector<BridgeSearchTask> tasks;
+    std::vector<QueryBridgeSearchTask> tasks;
     tasks.reserve(starts.size());
     for (std::size_t index = 0; index < starts.size(); ++index) {
         if (starts[index].size() != goals[index].size()) {
@@ -307,7 +224,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             continue;
         }
 
-        BridgeSearchTask task;
+        QueryBridgeSearchTask task;
         task.index = index;
         task.query_index =
             env_index_list_value_or_default("RBF_QUERY_BRIDGE_GLOBAL_INDICES",
@@ -391,8 +308,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         tasks.push_back(std::move(task));
     }
 
-    std::stable_sort(tasks.begin(), tasks.end(), [](const BridgeSearchTask& lhs,
-                                                    const BridgeSearchTask& rhs) {
+    std::stable_sort(tasks.begin(), tasks.end(), [](const QueryBridgeSearchTask& lhs,
+                                                    const QueryBridgeSearchTask& rhs) {
         const bool lhs_short = lhs.short_local_bridge;
         const bool rhs_short = rhs.short_local_bridge;
         if (lhs_short != rhs_short) {
@@ -426,7 +343,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     auto task_key = [](std::size_t index, const std::string& suffix) {
         return "query_bridge.batch_task." + std::to_string(index) + "." + suffix;
     };
-    auto edge_query_index_for = [&](const BridgeSearchTask& task) {
+    auto edge_query_index_for = [&](const QueryBridgeSearchTask& task) {
         return scene_reusable_query_bridge_edges ? -1 : task.query_index;
     };
     const bool direct_start_goal_segment =
@@ -449,7 +366,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.fast_direct_segment_after_rrt",
         fast_direct_segment_after_rrt ? 1.0 : 0.0);
-    auto try_direct_start_goal_segment = [&](BridgeSearchTask& task) -> int {
+    auto try_direct_start_goal_segment = [&](QueryBridgeSearchTask& task) -> int {
         if (!direct_start_goal_segment || task.direct_start_goal_satisfied) {
             return 0;
         }
@@ -507,7 +424,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         refresh_adaptive_partition_diagnostics(&last_build_);
         return 1;
     };
-    auto try_fast_direct_segment_after_rrt = [&](BridgeSearchTask& task) -> int {
+    auto try_fast_direct_segment_after_rrt = [&](QueryBridgeSearchTask& task) -> int {
         if (!fast_direct_segment_after_rrt || task.waypoint_path.empty()) {
             return 0;
         }
@@ -822,7 +739,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        }
 	        return best;
 	    };
-	    auto try_hipac_prebridge_portal = [&](BridgeSearchTask& task) -> int {
+	    auto try_hipac_prebridge_portal = [&](QueryBridgeSearchTask& task) -> int {
 	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
 	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
 	            !last_adaptive_partition_config_.hipac_online_prebridge_portal ||
@@ -990,7 +907,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        }
 	        return added;
 	    };
-	    auto try_hipac_online_bridge = [&](BridgeSearchTask& task) -> int {
+	    auto try_hipac_online_bridge = [&](QueryBridgeSearchTask& task) -> int {
 	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
 	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
 	            !partition_native_mode() ||
@@ -1099,7 +1016,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        }
 	        return added;
 	    };
-	    auto try_hipac_transition_portal = [&](BridgeSearchTask& task) -> int {
+	    auto try_hipac_transition_portal = [&](QueryBridgeSearchTask& task) -> int {
 	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
 	            !last_adaptive_partition_config_.hipac_online_before_query_bridge ||
 	            !last_adaptive_partition_config_.hipac_online_transition_portal ||
@@ -1342,7 +1259,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	                                              transition_ms);
 	        return total_added;
 	    };
-	    auto maybe_promote_query_repair = [&](const BridgeSearchTask& task,
+	    auto maybe_promote_query_repair = [&](const QueryBridgeSearchTask& task,
 	                                          int bridge_added) -> int {
 	        if (!last_adaptive_partition_config_.hipac_online_connectivity ||
 	            !last_adaptive_partition_config_.hipac_promote_query_repairs ||
@@ -1500,7 +1417,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE", 0.75));
     batch_context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
                                           parallel_rrt_early_stop ? 1.0 : 0.0);
-    auto rrt_path_good_enough_for_task = [&](const BridgeSearchTask& task,
+    auto rrt_path_good_enough_for_task = [&](const QueryBridgeSearchTask& task,
                                              const std::vector<Eigen::VectorXd>& path) {
         if (path.empty()) {
             return false;
@@ -1513,10 +1430,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return length <= std::max(direct * parallel_rrt_early_stop_ratio,
                                   direct + parallel_rrt_early_stop_additive);
     };
-    auto query_bridge_forced = [&](const BridgeSearchTask& task) {
+    auto query_bridge_forced = [&](const QueryBridgeSearchTask& task) {
         return query_bridge_forced_index(task.index);
     };
-    auto current_query_good = [&](const BridgeSearchTask& task, bool respect_forced) {
+    auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
         if (env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index)) {
             return false;
         }
@@ -1528,7 +1445,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return query_result_good(query(task.start, task.goal), task.start, task.goal);
     };
-    auto run_task_attempt = [&](const BridgeSearchTask& task,
+    auto run_task_attempt = [&](const QueryBridgeSearchTask& task,
                                 int attempt,
                                 int override_fixed_iters,
                                 std::shared_ptr<std::atomic<bool>> cancel_override =
@@ -1589,7 +1506,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.direct_line_on_no_path",
         direct_line_on_no_path ? 1.0 : 0.0);
-    auto direct_line_fallback_path = [&](const BridgeSearchTask& task) {
+    auto direct_line_fallback_path = [&](const QueryBridgeSearchTask& task) {
         if (!direct_line_on_no_path) {
             return std::vector<Eigen::VectorXd>{};
         }
@@ -1623,7 +1540,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.detour_candidate",
         detour_candidate ? 1.0 : 0.0);
-    auto deterministic_detour_fallback_path = [&](const BridgeSearchTask& task) {
+    auto deterministic_detour_fallback_path = [&](const QueryBridgeSearchTask& task) {
         if (!detour_on_no_path ||
             task.start.size() != task.goal.size() ||
             task.start.size() <= 0) {
@@ -1846,7 +1763,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return best_path;
     };
-    auto maybe_apply_detour_path = [&](const BridgeSearchTask& task,
+    auto maybe_apply_detour_path = [&](const QueryBridgeSearchTask& task,
                                        double& best_length,
                                        std::vector<Eigen::VectorXd>& waypoint_path) {
         if (!waypoint_path.empty() && !detour_candidate) {
@@ -1886,7 +1803,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.waypoint_quality_retry",
         waypoint_quality_retry ? 1.0 : 0.0);
-	    auto improve_waypoint_if_needed = [&](BridgeSearchTask& task,
+	    auto improve_waypoint_if_needed = [&](QueryBridgeSearchTask& task,
 	                                          int attempts_already_used,
 	                                          double& best_length,
 	                                          std::vector<Eigen::VectorXd>& waypoint_path) {
@@ -1963,7 +1880,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	            "query_bridge.waypoint_quality_retry_ms_total",
 	            elapsed_ms_since(retry_t0));
 	    };
-    auto select_attempt_paths = [&](BridgeSearchTask& task,
+    auto select_attempt_paths = [&](QueryBridgeSearchTask& task,
                                     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
                                     double& best_length) {
         std::vector<std::pair<double, std::size_t>> valid_paths;
@@ -2093,7 +2010,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	    }
 
     auto bridge_query_with_waypoint_fallbacks =
-        [&](BridgeSearchTask& task,
+        [&](QueryBridgeSearchTask& task,
             int& added_accumulator) -> int {
         const bool evaluate_all_fallback_paths =
             env_int_or_default("RBF_QUERY_BRIDGE_EVALUATE_ALL_FALLBACK_PATHS", 0) != 0;
@@ -2161,7 +2078,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(query_bridge_attempt_offset));
     const bool has_segment_only_task =
-        std::any_of(tasks.begin(), tasks.end(), [](const BridgeSearchTask& task) {
+        std::any_of(tasks.begin(), tasks.end(), [](const QueryBridgeSearchTask& task) {
             return env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES",
                                            task.index);
         });

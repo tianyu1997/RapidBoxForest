@@ -118,6 +118,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query.cpp
     src/planning_forest_query_bridge.cpp
     src/planning_forest_query_bridge_batch.cpp
+    src/planning_forest_query_bridge_batch_utils.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_pair.cpp
     src/planning_forest_query_utils.cpp

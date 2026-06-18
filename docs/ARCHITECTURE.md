@@ -182,6 +182,9 @@ src/planning_forest_query_utils.cpp
                                    partition, OBB, and bridge stages
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
+src/planning_forest_query_bridge_batch_utils.cpp
+                                   query bridge batch task records and oracle
+                                   counter aggregation helpers
 src/planning_forest_query_bridge.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation
