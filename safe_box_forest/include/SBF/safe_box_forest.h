@@ -15,6 +15,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -727,6 +728,23 @@ private:
 		const QueryBridgeRetryOptions& retry_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		const QueryBridgeBatchExecutionOptions& batch_options);
+	void finish_query_bridge_ready_waypoint_task(
+		QueryBridgeSearchTask& task,
+		int& added_for_task,
+		bool forced_task,
+		bool segment_only_task,
+		double best_length,
+		StageContext& context,
+		bool scene_reusable_edges,
+		const QueryBridgeIndexOptions& index_options,
+		const QueryBridgeRetryOptions& retry_options,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		const QueryBridgeBatchExecutionOptions& batch_options,
+		bool fast_direct_segment_after_rrt,
+		bool fast_direct_shortcut,
+		int fast_direct_random_shortcut_iters,
+		double fast_direct_segment_after_rrt_min_length,
+		const std::function<double()>& task_elapsed_ms);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,
 		const Eigen::Ref<const Eigen::VectorXd>& goal,

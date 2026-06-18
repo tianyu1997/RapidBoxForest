@@ -710,6 +710,159 @@ int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
     return total_added;
 }
 
+void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
+    QueryBridgeSearchTask& task,
+    int& added_for_task,
+    bool forced_task,
+    bool segment_only_task,
+    double best_length,
+    StageContext& context,
+    bool scene_reusable_edges,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+    const QueryBridgeBatchExecutionOptions& batch_options,
+    bool fast_direct_segment_after_rrt,
+    bool fast_direct_shortcut,
+    int fast_direct_random_shortcut_iters,
+    double fast_direct_segment_after_rrt_min_length,
+    const std::function<double()>& task_elapsed_ms) {
+    context.diagnostics().set_value(
+        query_bridge_task_key(task.index, "waypoint_length"),
+        best_length);
+    const auto second_probe_t0 = QueryBridgeEdgeClock::now();
+    const bool should_check =
+        query_bridge_should_check_current_query(
+            task,
+            !retry_options.post_rrt_skip_forced,
+            index_options,
+            retry_options);
+    if (should_check &&
+        query_bridge_result_acceptable(query(task.start, task.goal),
+                                       task.start,
+                                       task.goal,
+                                       bridge_acceptance)) {
+        record_query_bridge_batch_task_skipped_after_rrt(
+            context,
+            task.index,
+            forced_task,
+            query_bridge_edge_elapsed_ms_since(second_probe_t0),
+            task_elapsed_ms());
+        return;
+    }
+    context.diagnostics().record_timing(
+        "query_bridge.batch_probe_ms_total",
+        query_bridge_edge_elapsed_ms_since(second_probe_t0));
+
+    if (query_bridge_hipac_after_rrt_available(last_adaptive_partition_config_,
+                                               task)) {
+        task.hipac_candidate_path = task.waypoint_path;
+        int hipac_added = try_hipac_online_bridge_task(
+            task,
+            bridge_acceptance,
+            context,
+            query_bridge_edge_query_index(scene_reusable_edges, task));
+        if (hipac_added > 0) {
+            added_for_task += hipac_added;
+        }
+        if (!task.hipac_online_satisfied) {
+            hipac_added = try_hipac_transition_portal_task(
+                task,
+                bridge_acceptance,
+                context,
+                query_bridge_edge_query_index(scene_reusable_edges, task));
+            if (hipac_added > 0) {
+                added_for_task += hipac_added;
+            }
+        }
+        if (!task.hipac_online_satisfied) {
+            hipac_added = try_hipac_prebridge_portal_task(
+                task,
+                bridge_acceptance,
+                context,
+                query_bridge_edge_query_index(scene_reusable_edges, task));
+            if (hipac_added > 0) {
+                added_for_task += hipac_added;
+            }
+        }
+        if (task.hipac_online_satisfied) {
+            record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
+                context,
+                task.index,
+                task_elapsed_ms());
+            return;
+        }
+    }
+
+    const int fast_direct_added =
+        try_add_query_fast_direct_segment_after_rrt_path(
+            task.start,
+            task.goal,
+            task.waypoint_path,
+            task.bridge_rrt,
+            context,
+            fast_direct_segment_after_rrt,
+            fast_direct_shortcut,
+            fast_direct_random_shortcut_iters,
+            fast_direct_segment_after_rrt_min_length,
+            task.query_index,
+            query_bridge_edge_query_index(scene_reusable_edges, task),
+            static_cast<int>(task.index));
+    if (fast_direct_added > 0) {
+        added_for_task += fast_direct_added;
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "fast_direct_segment_after_rrt"),
+            1.0);
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "added"),
+            static_cast<double>(added_for_task));
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "total_ms"),
+            task_elapsed_ms());
+        return;
+    }
+
+    if (segment_only_task) {
+        const int segment_only_added =
+            try_commit_query_bridge_segment_only_edge(
+                task.start,
+                task.goal,
+                task.waypoint_path,
+                task.bridge_rrt.segment_resolution,
+                query_bridge_edge_query_index(scene_reusable_edges, task),
+                static_cast<int>(task.index),
+                context);
+        if (segment_only_added > 0) {
+            added_for_task += segment_only_added;
+        }
+        context.diagnostics().set_value(
+            query_bridge_task_key(task.index, "total_ms"),
+            task_elapsed_ms());
+        return;
+    }
+
+    const auto pave_t0 = QueryBridgeEdgeClock::now();
+    run_query_bridge_waypoint_fallbacks(task,
+                                        added_for_task,
+                                        context,
+                                        scene_reusable_edges,
+                                        index_options,
+                                        retry_options,
+                                        bridge_acceptance,
+                                        batch_options);
+    const double pave_ms = query_bridge_edge_elapsed_ms_since(pave_t0);
+    context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
+                                        pave_ms);
+    context.diagnostics().set_value(query_bridge_task_key(task.index, "pave_ms"),
+                                    pave_ms);
+    context.diagnostics().set_value(
+        query_bridge_task_key(task.index, "added"),
+        static_cast<double>(added_for_task));
+    context.diagnostics().set_value(
+        query_bridge_task_key(task.index, "total_ms"),
+        task_elapsed_ms());
+}
+
 int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     int source_box_id,
     int target_box_id,
