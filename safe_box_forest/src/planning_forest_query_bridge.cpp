@@ -1448,8 +1448,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         double adaptive_repair_ffb_ms = 0.0;
         double lateral_repair_ffb_ms = 0.0;
         double residual_segment_audit_ms = 0.0;
-        std::vector<QueryBridgeDirectFfbTask> direct_tasks;
-        direct_tasks.reserve(samples.size());
         const int max_transition_hint =
             std::max(0, static_cast<int>(samples.size()) - 2);
         const bool grouped_direct_seeds =
@@ -1461,108 +1459,19 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         const bool center_out_direct_tasks =
             !coverage_order_direct_tasks &&
             env_int_or_default("RBF_QUERY_BRIDGE_CENTER_OUT_DIRECT_TASKS", 1) != 0;
-        int uncovered_gap_groups = 0;
-        auto append_direct_task_for_sample = [&](std::size_t sample_index) {
-            direct_tasks.push_back(
-                {samples[sample_index],
-                 sample_index,
-                 std::min(static_cast<int>(sample_index), max_transition_hint)});
-        };
         const auto direct_task_build_t0 =
             detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        if (grouped_direct_seeds) {
-            std::size_t sample_index = 0;
-            while (sample_index < samples.size()) {
-                while (sample_index < samples.size() && covered[sample_index]) {
-                    ++sample_index;
-                }
-                if (sample_index >= samples.size()) {
-                    break;
-                }
-                const std::size_t begin = sample_index;
-                while (sample_index < samples.size() && !covered[sample_index]) {
-                    ++sample_index;
-                }
-                const std::size_t end = sample_index - 1;
-                uncovered_gap_groups += 1;
-                std::vector<std::size_t> chosen;
-                chosen.reserve(static_cast<std::size_t>(
-                    std::min(max_group_seeds, static_cast<int>(end - begin + 1))));
-                auto push_unique_index = [&](std::size_t index) {
-                    index = std::min(end, std::max(begin, index));
-                    if (std::find(chosen.begin(), chosen.end(), index) == chosen.end()) {
-                        chosen.push_back(index);
-                    }
-                };
-                const std::size_t group_count = end - begin + 1;
-                if (group_count <= static_cast<std::size_t>(max_group_seeds)) {
-                    for (std::size_t index = begin; index <= end; ++index) {
-                        push_unique_index(index);
-                    }
-                } else {
-                    push_unique_index((begin + end) / 2);
-                    if (static_cast<int>(chosen.size()) < max_group_seeds) {
-                        push_unique_index(begin);
-                    }
-                    if (static_cast<int>(chosen.size()) < max_group_seeds) {
-                        push_unique_index(end);
-                    }
-                    if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
-                        push_unique_index(begin + (end - begin) / 4);
-                    }
-                    if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
-                        push_unique_index(begin + (3 * (end - begin)) / 4);
-                    }
-                    for (int rank = 1;
-                         static_cast<int>(chosen.size()) < max_group_seeds &&
-                         rank < max_group_seeds - 1;
-                         ++rank) {
-                        const double alpha = static_cast<double>(rank) /
-                                             static_cast<double>(max_group_seeds - 1);
-                        const auto offset = static_cast<std::size_t>(
-                            std::llround(alpha * static_cast<double>(end - begin)));
-                        push_unique_index(begin + offset);
-                    }
-                }
-                for (std::size_t index : chosen) {
-                    append_direct_task_for_sample(index);
-                }
-            }
-        } else if (center_out_direct_tasks) {
-            std::size_t sample_index = 0;
-            while (sample_index < samples.size()) {
-                while (sample_index < samples.size() && covered[sample_index]) {
-                    ++sample_index;
-                }
-                if (sample_index >= samples.size()) {
-                    break;
-                }
-                const std::size_t begin = sample_index;
-                while (sample_index < samples.size() && !covered[sample_index]) {
-                    ++sample_index;
-                }
-                const std::size_t end = sample_index - 1;
-                uncovered_gap_groups += 1;
-                const std::size_t center = (begin + end) / 2;
-                append_direct_task_for_sample(center);
-                for (std::size_t radius = 1;
-                     center >= begin + radius || center + radius <= end;
-                     ++radius) {
-                    if (center >= begin + radius) {
-                        append_direct_task_for_sample(center - radius);
-                    }
-                    if (center + radius <= end) {
-                        append_direct_task_for_sample(center + radius);
-                    }
-                }
-            }
-        } else {
-            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-                if (!covered[sample_index]) {
-                    append_direct_task_for_sample(sample_index);
-                }
-            }
-        }
+        const QueryBridgeDirectFfbTaskBuildResult direct_task_build =
+            query_bridge_build_direct_ffb_tasks(
+                samples,
+                covered,
+                QueryBridgeDirectFfbTaskBuildOptions{
+                    max_transition_hint,
+                    max_group_seeds,
+                    grouped_direct_seeds,
+                    center_out_direct_tasks});
+        const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_build.tasks;
+        const int uncovered_gap_groups = direct_task_build.uncovered_gap_groups;
         if (detailed_direct_timing) {
             direct_task_build_ms =
                 std::chrono::duration<double, std::milli>(Clock::now() -

@@ -19,6 +19,18 @@ struct QueryBridgeDirectFfbTask {
     int transition_hint = 0;
 };
 
+struct QueryBridgeDirectFfbTaskBuildOptions {
+    int max_transition_hint = 0;
+    int max_group_seeds = 3;
+    bool grouped_direct_seeds = false;
+    bool center_out_direct_tasks = false;
+};
+
+struct QueryBridgeDirectFfbTaskBuildResult {
+    std::vector<QueryBridgeDirectFfbTask> tasks;
+    int uncovered_gap_groups = 0;
+};
+
 struct QueryBridgeLocalDsu {
     std::vector<int> parent;
 
@@ -52,5 +64,10 @@ std::vector<int> query_bridge_order_transitions_by_gap_length(
 int query_bridge_nearest_nonempty_layer(const std::vector<std::vector<int>>& sample_layers,
                                         int start_index,
                                         int direction);
+
+QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<bool>& covered,
+    const QueryBridgeDirectFfbTaskBuildOptions& options);
 
 }  // namespace rbf

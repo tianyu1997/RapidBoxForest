@@ -167,4 +167,117 @@ int query_bridge_nearest_nonempty_layer(const std::vector<std::vector<int>>& sam
     return -1;
 }
 
+QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<bool>& covered,
+    const QueryBridgeDirectFfbTaskBuildOptions& options) {
+    QueryBridgeDirectFfbTaskBuildResult result;
+    result.tasks.reserve(samples.size());
+    const int max_transition_hint = std::max(0, options.max_transition_hint);
+    auto append_sample = [&](std::size_t sample_index) {
+        result.tasks.push_back(
+            {samples[sample_index],
+             sample_index,
+             std::min(static_cast<int>(sample_index), max_transition_hint)});
+    };
+    auto sample_covered = [&](std::size_t sample_index) {
+        return sample_index < covered.size() && covered[sample_index];
+    };
+    if (options.grouped_direct_seeds) {
+        const int max_group_seeds = std::max(1, options.max_group_seeds);
+        std::size_t sample_index = 0;
+        while (sample_index < samples.size()) {
+            while (sample_index < samples.size() && sample_covered(sample_index)) {
+                ++sample_index;
+            }
+            if (sample_index >= samples.size()) {
+                break;
+            }
+            const std::size_t begin = sample_index;
+            while (sample_index < samples.size() && !sample_covered(sample_index)) {
+                ++sample_index;
+            }
+            const std::size_t end = sample_index - 1;
+            result.uncovered_gap_groups += 1;
+            std::vector<std::size_t> chosen;
+            chosen.reserve(static_cast<std::size_t>(
+                std::min(max_group_seeds, static_cast<int>(end - begin + 1))));
+            auto push_unique_index = [&](std::size_t index) {
+                index = std::min(end, std::max(begin, index));
+                if (std::find(chosen.begin(), chosen.end(), index) == chosen.end()) {
+                    chosen.push_back(index);
+                }
+            };
+            const std::size_t group_count = end - begin + 1;
+            if (group_count <= static_cast<std::size_t>(max_group_seeds)) {
+                for (std::size_t index = begin; index <= end; ++index) {
+                    push_unique_index(index);
+                }
+            } else {
+                push_unique_index((begin + end) / 2);
+                if (static_cast<int>(chosen.size()) < max_group_seeds) {
+                    push_unique_index(begin);
+                }
+                if (static_cast<int>(chosen.size()) < max_group_seeds) {
+                    push_unique_index(end);
+                }
+                if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
+                    push_unique_index(begin + (end - begin) / 4);
+                }
+                if (static_cast<int>(chosen.size()) < max_group_seeds && end > begin + 1) {
+                    push_unique_index(begin + (3 * (end - begin)) / 4);
+                }
+                for (int rank = 1;
+                     static_cast<int>(chosen.size()) < max_group_seeds &&
+                     rank < max_group_seeds - 1;
+                     ++rank) {
+                    const double alpha = static_cast<double>(rank) /
+                                         static_cast<double>(max_group_seeds - 1);
+                    const auto offset = static_cast<std::size_t>(
+                        std::llround(alpha * static_cast<double>(end - begin)));
+                    push_unique_index(begin + offset);
+                }
+            }
+            for (std::size_t index : chosen) {
+                append_sample(index);
+            }
+        }
+    } else if (options.center_out_direct_tasks) {
+        std::size_t sample_index = 0;
+        while (sample_index < samples.size()) {
+            while (sample_index < samples.size() && sample_covered(sample_index)) {
+                ++sample_index;
+            }
+            if (sample_index >= samples.size()) {
+                break;
+            }
+            const std::size_t begin = sample_index;
+            while (sample_index < samples.size() && !sample_covered(sample_index)) {
+                ++sample_index;
+            }
+            const std::size_t end = sample_index - 1;
+            result.uncovered_gap_groups += 1;
+            const std::size_t center = (begin + end) / 2;
+            append_sample(center);
+            for (std::size_t radius = 1;
+                 center >= begin + radius || center + radius <= end;
+                 ++radius) {
+                if (center >= begin + radius) {
+                    append_sample(center - radius);
+                }
+                if (center + radius <= end) {
+                    append_sample(center + radius);
+                }
+            }
+        }
+    } else {
+        for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+            if (!sample_covered(sample_index)) {
+                append_sample(sample_index);
+            }
+        }
+    }
+    return result;
+}
+
 }  // namespace rbf

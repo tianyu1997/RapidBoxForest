@@ -194,8 +194,8 @@ src/planning_forest_query_bridge.cpp
                                    repair implementation
 src/planning_forest_query_bridge_corridor_utils.cpp
                                    direct-corridor paving local data structures,
-                                   DSU, transition ordering, and residual-gap
-                                   helper functions
+                                   DSU, FFB task generation, transition
+                                   ordering, and residual-gap helper functions
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting
