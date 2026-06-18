@@ -130,6 +130,9 @@ src/grower_internal.h              grower-local shared commit, lookup, and
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
+src/adaptive_grid_partition_geometry.cpp
+                                   pure geometry, distance, interval, and grid
+                                   utility routines used by the partition
 src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
 src/connector.cpp                  island connector and chain-pave logic
 src/merger.cpp                     box containment and merge helpers
