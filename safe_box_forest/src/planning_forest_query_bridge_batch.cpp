@@ -909,37 +909,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
     record_query_bridge_detour_diagnostics(batch_context, detour_options);
     const auto detour_planning_domain = oracle_->planning_intervals();
-    auto maybe_apply_detour_path = [&](const QueryBridgeSearchTask& task,
-                                       double& best_length,
-        std::vector<Eigen::VectorXd>& waypoint_path) {
-        if (!waypoint_path.empty() && !detour_options.candidate) {
-            return false;
-        }
-        auto detour_path = query_bridge_deterministic_detour_fallback_path(
-            task,
-            audit_robot_,
-            scene_,
-            config_.query,
-            detour_planning_domain,
-            detour_options,
-            config_.grower.rng_seed,
-            batch_context);
-        if (detour_path.empty()) {
-            return false;
-        }
-        const double detour_length = path_length(detour_path);
-        if (!waypoint_path.empty() &&
-            detour_length > best_length * detour_options.replace_factor + 1e-12) {
-            batch_context.diagnostics().add_counter(
-                "query_bridge.detour_candidate_not_shorter");
-            return false;
-        }
-        best_length = detour_length;
-        waypoint_path = std::move(detour_path);
-        batch_context.diagnostics().add_counter(
-            "query_bridge.detour_candidate_selected");
-        return true;
-    };
     const QueryBridgeWaypointQualityRetryOptions quality_retry_options =
         query_bridge_waypoint_quality_retry_options_from_env();
     record_query_bridge_waypoint_quality_retry_diagnostics(batch_context,
@@ -1225,7 +1194,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                         1.0);
                 }
             }
-            if (maybe_apply_detour_path(task, best_length, task.waypoint_path)) {
+            if (query_bridge_maybe_apply_detour_path(task,
+                                                     audit_robot_,
+                                                     scene_,
+                                                     config_.query,
+                                                     detour_planning_domain,
+                                                     detour_options,
+                                                     config_.grower.rng_seed,
+                                                     batch_context,
+                                                     best_length,
+                                                     task.waypoint_path)) {
                 batch_context.diagnostics().set_value(
                     query_bridge_task_key(task.index, "detour_on_no_path"),
                     1.0);

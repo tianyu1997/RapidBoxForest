@@ -991,6 +991,46 @@ std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
     return best_path;
 }
 
+bool query_bridge_maybe_apply_detour_path(
+    const QueryBridgeSearchTask& task,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const QueryConfig& query_config,
+    const std::vector<Interval>& planning_domain,
+    const QueryBridgeDetourOptions& options,
+    int rng_seed_base,
+    StageContext& context,
+    double& best_length,
+    std::vector<Eigen::VectorXd>& waypoint_path) {
+    if (!waypoint_path.empty() && !options.candidate) {
+        return false;
+    }
+    auto detour_path = query_bridge_deterministic_detour_fallback_path(
+        task,
+        audit_robot,
+        scene,
+        query_config,
+        planning_domain,
+        options,
+        rng_seed_base,
+        context);
+    if (detour_path.empty()) {
+        return false;
+    }
+    const double detour_length = path_length(detour_path);
+    if (!waypoint_path.empty() &&
+        detour_length > best_length * options.replace_factor + 1e-12) {
+        context.diagnostics().add_counter(
+            "query_bridge.detour_candidate_not_shorter");
+        return false;
+    }
+    best_length = detour_length;
+    waypoint_path = std::move(detour_path);
+    context.diagnostics().add_counter(
+        "query_bridge.detour_candidate_selected");
+    return true;
+}
+
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,
                                     const Eigen::VectorXd& goal,

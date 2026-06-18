@@ -466,6 +466,18 @@ std::vector<Eigen::VectorXd> query_bridge_deterministic_detour_fallback_path(
     int rng_seed_base,
     StageContext& context);
 
+bool query_bridge_maybe_apply_detour_path(
+    const QueryBridgeSearchTask& task,
+    const Robot& audit_robot,
+    const Scene& scene,
+    const QueryConfig& query_config,
+    const std::vector<Interval>& planning_domain,
+    const QueryBridgeDetourOptions& options,
+    int rng_seed_base,
+    StageContext& context,
+    double& best_length,
+    std::vector<Eigen::VectorXd>& waypoint_path);
+
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,
                                     const Eigen::VectorXd& goal,
