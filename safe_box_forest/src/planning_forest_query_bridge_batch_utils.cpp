@@ -25,6 +25,21 @@ QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env() {
     return thresholds;
 }
 
+QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
+    bool partition_native_mode) {
+    QueryBridgePartitionPathFirstOptions options;
+    options.enabled =
+        partition_native_mode &&
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST", 0) != 0;
+    options.allow_long =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_ALLOW_LONG", 0) != 0;
+    options.max_segment_fraction = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_MAX_SEGMENT_FRACTION",
+                                      0.95));
+    return options;
+}
+
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after) {

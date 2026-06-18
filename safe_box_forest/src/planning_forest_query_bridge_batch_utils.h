@@ -17,6 +17,12 @@ struct QueryBridgeAcceptanceThresholds {
     double max_path_length = 4.5;
 };
 
+struct QueryBridgePartitionPathFirstOptions {
+    bool enabled = false;
+    bool allow_long = false;
+    double max_segment_fraction = 0.95;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -43,6 +49,9 @@ struct QueryBridgeSearchJob {
 };
 
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
+
+QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
+    bool partition_native_mode);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,

@@ -135,15 +135,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     auto query_bridge_forced_index = [](std::size_t index) {
         return env_index_list_contains("RBF_QUERY_BRIDGE_FORCE_INDICES", index);
     };
-    const bool partition_path_first =
-        partition_native_mode() &&
-        env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST", 0) != 0;
-    const bool partition_path_first_allow_long =
-        env_int_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_ALLOW_LONG", 0) != 0;
-    const double partition_path_first_max_segment_fraction =
-        std::max(0.0,
-                 env_double_or_default("RBF_QUERY_BRIDGE_PARTITION_PATH_FIRST_MAX_SEGMENT_FRACTION",
-                                       0.95));
+    const QueryBridgePartitionPathFirstOptions partition_path_first_options =
+        query_bridge_partition_path_first_options_from_env(partition_native_mode());
 
     std::vector<QueryBridgeSearchTask> tasks;
     tasks.reserve(starts.size());
@@ -162,12 +155,12 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         };
         QueryResult initial_query;
         bool has_initial_query = false;
-	        if (!forced_task || partition_path_first) {
-	            initial_query = query(starts[index], goals[index]);
-	            has_initial_query = true;
-	            if (!forced_task && query_result_good(initial_query, starts[index], goals[index])) {
-	                mark_task_skip(1.0, "initial_good");
-	                continue;
+        if (!forced_task || partition_path_first_options.enabled) {
+            initial_query = query(starts[index], goals[index]);
+            has_initial_query = true;
+            if (!forced_task && query_result_good(initial_query, starts[index], goals[index])) {
+                mark_task_skip(1.0, "initial_good");
+                continue;
             }
         }
         int start_box_id = locate_existing_box_for_query_bridge(starts[index]);
@@ -212,19 +205,22 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         last_build_.diagnostics["query_bridge.batch_task." +
                                 std::to_string(index) +
                                 ".global_index"] = static_cast<double>(task.query_index);
-	        task.start = starts[index];
-	        task.goal = goals[index];
-	        if (last_adaptive_partition_config_.hipac_online_connectivity &&
-	            has_initial_query &&
-	            initial_query.success &&
-	            initial_query.audit_passed &&
-	            !initial_query.path.empty()) {
-	            task.hipac_candidate_path = initial_query.path;
-	        }
-	        task.bridge_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, task.start, task.goal);
+        task.start = starts[index];
+        task.goal = goals[index];
+        if (last_adaptive_partition_config_.hipac_online_connectivity &&
+            has_initial_query &&
+            initial_query.success &&
+            initial_query.audit_passed &&
+            !initial_query.path.empty()) {
+            task.hipac_candidate_path = initial_query.path;
+        }
+        task.bridge_rrt = with_query_root_hull_domain(config_.connector.rrt,
+                                                      *oracle_,
+                                                      task.start,
+                                                      task.goal);
         task.bridge_rrt.segment_resolution =
             std::max(task.bridge_rrt.segment_resolution, config_.query.audit_resolution);
-        if (partition_path_first &&
+        if (partition_path_first_options.enabled &&
             has_initial_query &&
             initial_query.success &&
             initial_query.audit_passed &&
@@ -240,7 +236,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     : std::numeric_limits<double>::infinity();
             const bool segment_reasonable =
                 std::isfinite(segment_fraction) &&
-                segment_fraction <= partition_path_first_max_segment_fraction;
+                segment_fraction <= partition_path_first_options.max_segment_fraction;
             const bool length_reasonable =
                 direct <= 1e-9 ||
                 initial_query.path_length <= std::max(direct * bridge_acceptance.path_ratio,
@@ -252,14 +248,15 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             if (!length_reasonable) {
                 last_build_.diagnostics["query_bridge.partition_path_first_reject_length"] += 1.0;
             }
-            if (segment_reasonable && (length_reasonable || partition_path_first_allow_long)) {
+            if (segment_reasonable &&
+                (length_reasonable || partition_path_first_options.allow_long)) {
                 task.waypoint_path = initial_query.path;
                 task.waypoint_path_from_partition_query = true;
                 if (task.hipac_candidate_path.empty()) {
                     task.hipac_candidate_path = initial_query.path;
                 }
-	                last_build_.diagnostics["query_bridge.partition_path_first_accepted"] += 1.0;
-	            }
+                last_build_.diagnostics["query_bridge.partition_path_first_accepted"] += 1.0;
+            }
         }
         const double bridge_distance = (task.goal - task.start).norm();
         task.short_local_bridge = bridge_distance > 0.55 && bridge_distance < 0.85;
@@ -1155,13 +1152,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         bridge_acceptance.max_path_length);
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first",
-        partition_path_first ? 1.0 : 0.0);
+        partition_path_first_options.enabled ? 1.0 : 0.0);
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first_allow_long",
-        partition_path_first_allow_long ? 1.0 : 0.0);
+        partition_path_first_options.allow_long ? 1.0 : 0.0);
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first_max_segment_fraction",
-        partition_path_first_max_segment_fraction);
+        partition_path_first_options.max_segment_fraction);
     const int segment_only_retry_attempts =
         std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
     batch_context.diagnostics().set_value(
