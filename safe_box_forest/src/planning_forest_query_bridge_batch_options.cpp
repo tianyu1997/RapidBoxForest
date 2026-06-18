@@ -204,6 +204,16 @@ bool query_bridge_parallel_rrt_path_good_enough(
                               direct + options.early_stop_additive);
 }
 
+bool query_bridge_task_rrt_path_good_enough(
+    const QueryBridgeSearchTask& task,
+    const std::vector<Eigen::VectorXd>& path,
+    const QueryBridgeParallelRrtOptions& options) {
+    return query_bridge_parallel_rrt_path_good_enough(task.start,
+                                                      task.goal,
+                                                      path,
+                                                      options);
+}
+
 QueryBridgeDetourOptions query_bridge_detour_options_from_env() {
     QueryBridgeDetourOptions options;
     options.enabled =

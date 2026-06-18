@@ -269,6 +269,11 @@ bool query_bridge_parallel_rrt_path_good_enough(const Eigen::VectorXd& start,
                                                 const std::vector<Eigen::VectorXd>& path,
                                                 const QueryBridgeParallelRrtOptions& options);
 
+bool query_bridge_task_rrt_path_good_enough(
+    const QueryBridgeSearchTask& task,
+    const std::vector<Eigen::VectorXd>& path,
+    const QueryBridgeParallelRrtOptions& options);
+
 std::shared_ptr<std::atomic<bool>> query_bridge_parallel_rrt_cancel_flag(
     const QueryBridgeParallelRrtOptions& options,
     const std::shared_ptr<std::atomic<bool>>& fallback_cancel);

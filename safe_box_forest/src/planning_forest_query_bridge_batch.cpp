@@ -856,13 +856,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     record_query_bridge_partition_path_first_diagnostics(batch_context,
                                                         partition_path_first_options);
-    auto rrt_path_good_enough_for_task = [&](const QueryBridgeSearchTask& task,
-                                             const std::vector<Eigen::VectorXd>& path) {
-        return query_bridge_parallel_rrt_path_good_enough(task.start,
-                                                          task.goal,
-                                                          path,
-                                                          parallel_rrt_options);
-    };
     auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
         if (!query_bridge_should_check_current_query(task,
                                                      respect_forced,
@@ -1538,7 +1531,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     }
                     auto path = run_task_attempt(task, attempt, 0, local_cancel);
                     query_bridge_maybe_stop_parallel_rrt_after_success(
-                        rrt_path_good_enough_for_task(task, path),
+                        query_bridge_task_rrt_path_good_enough(task,
+                                                               path,
+                                                               parallel_rrt_options),
                         parallel_rrt_options,
                         early_successes,
                         local_cancel);
@@ -1618,7 +1613,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                              0,
                                              local_cancel);
                 query_bridge_maybe_stop_parallel_rrt_after_success(
-                    rrt_path_good_enough_for_task(tasks[job.task_index], path),
+                    query_bridge_task_rrt_path_good_enough(tasks[job.task_index],
+                                                           path,
+                                                           parallel_rrt_options),
                     parallel_rrt_options,
                     early_successes,
                     local_cancel);
