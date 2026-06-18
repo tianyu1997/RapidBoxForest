@@ -201,6 +201,12 @@ int query_bridge_rrt_seed_for_attempt(const QueryBridgeSearchTask& task,
                                       int rng_seed,
                                       int scheduled_attempt);
 
+bool query_bridge_should_check_current_query(
+    const QueryBridgeSearchTask& task,
+    bool respect_forced,
+    const QueryBridgeIndexOptions& index_options,
+    const QueryBridgeRetryOptions& retry_options);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,

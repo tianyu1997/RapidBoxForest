@@ -890,13 +890,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return query_bridge_index_forced(index_options, task.index);
     };
     auto current_query_good = [&](const QueryBridgeSearchTask& task, bool respect_forced) {
-        if (query_bridge_index_segment_only(index_options, task.index)) {
-            return false;
-        }
-        if (respect_forced && query_bridge_forced(task)) {
-            return false;
-        }
-        if (!retry_options.skip_deferred_short_edges) {
+        if (!query_bridge_should_check_current_query(task,
+                                                     respect_forced,
+                                                     index_options,
+                                                     retry_options)) {
             return false;
         }
         return query_result_good(query(task.start, task.goal), task.start, task.goal);
