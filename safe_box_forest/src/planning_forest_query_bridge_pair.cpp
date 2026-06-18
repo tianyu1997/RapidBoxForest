@@ -3,10 +3,10 @@
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_bridge_batch_utils.h"
 #include "planning_forest_query_bridge_corridor_utils.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
@@ -17,7 +17,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -29,14 +28,6 @@
 #include <vector>
 
 namespace rbf {
-
-using detail::env_double_list_or_empty;
-using detail::env_double_or_default;
-using detail::env_index_list_contains;
-using detail::env_indexed_double_or_default;
-using detail::env_indexed_int_or_default;
-using detail::env_int_list_or_empty;
-using detail::env_int_or_default;
 
 int RBFPlanningForest::bridge_query(const Eigen::Ref<const Eigen::VectorXd>& start,
                                 const Eigen::Ref<const Eigen::VectorXd>& goal) {
@@ -166,8 +157,7 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
     context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
     context.diagnostics().set_value("query_bridge.seed_base", static_cast<double>(bridge_seed_base));
-    const double bridge_rrt_clearance =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+    const double bridge_rrt_clearance = query_bridge_rrt_clearance_from_env();
     Robot bridge_rrt_robot = make_sbf_clearance_robot(audit_robot_, bridge_rrt_clearance);
     CollisionChecker bridge_rrt_checker =
         bridge_rrt_clearance > 0.0

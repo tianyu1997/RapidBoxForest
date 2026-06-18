@@ -14,6 +14,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_obb.h"
+#include "planning_forest_query_bridge_batch_utils.h"
 #include "planning_forest_query_utils.h"
 
 namespace rbf {
@@ -987,8 +988,7 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 std::vector<double> clearances =
                     env_double_list_or_empty("RBF_OBB_CLEARANCE_RETRY_VALUES");
                 if (clearances.empty()) {
-                    const double fallback_clearance =
-                        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+                    const double fallback_clearance = query_bridge_rrt_clearance_from_env();
                     if (fallback_clearance > 0.0) {
                         clearances.push_back(fallback_clearance);
                     }

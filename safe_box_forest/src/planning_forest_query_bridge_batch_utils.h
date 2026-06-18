@@ -125,6 +125,8 @@ QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_f
 
 QueryBridgeRetryOptions query_bridge_retry_options_from_env();
 
+double query_bridge_rrt_clearance_from_env();
+
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options);
 

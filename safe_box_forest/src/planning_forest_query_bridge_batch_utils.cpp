@@ -102,6 +102,11 @@ QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_f
     return options;
 }
 
+double query_bridge_rrt_clearance_from_env() {
+    return std::max(0.0,
+                    detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+}
+
 QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     QueryBridgeRetryOptions options;
     options.skip_deferred_short_edges =
@@ -121,8 +126,7 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     options.rrt_fixed_timeout_ms = std::max(
         0.0,
         detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
-    options.rrt_clearance =
-        std::max(0.0, detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+    options.rrt_clearance = query_bridge_rrt_clearance_from_env();
     options.local_radius_schedule =
         detail::env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
     options.local_radius_append_unrestricted_attempt =
