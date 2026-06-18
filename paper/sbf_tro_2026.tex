@@ -977,9 +977,9 @@ audit time. When the optional per-query audit column (Audit/q) is present, the
 audit-complete reference is \(\onlineq{}\) plus the fixed 0.010~s
 final-simplification budget plus Audit/q. Planning-table entries are medians
 with \([Q_1,Q_3]\) quartiles unless a caption or note states otherwise.
-Path-ratio columns report audited returned length divided by the success-only
-audited query-level reference unless a caption or note states otherwise; lower
-is better. Mechanism-study tables use the aggregation stated in
+Path-ratio columns divide audited returned length by the success-only,
+query-level 0.01-rad audited reference unless a caption or note states
+otherwise; lower is better. Mechanism-study tables use the aggregation stated in
 their notes. The main planning tables
 summarize query-validated outcomes; they are not conservative-corridor
 certificates, repair-free results, or parameter-sensitivity studies. The

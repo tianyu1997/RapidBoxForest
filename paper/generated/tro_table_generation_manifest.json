@@ -6,7 +6,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "fbc2f62aff01d148ac9fd7806c4c87dc1c5fdb9d4e80f5c53fb4d3bf77599f5b"
+      "sha256": "4559458c27bfa883770017c134b0eae516ae40c13992ef57866c6bd7016c92e7"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene five-query amortized-time trade-off curve preview.",
@@ -20,7 +20,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "f55c994f9d93ddb04df747becdabb362212df8fd9cc92c54e8d13b9e2007645c"
+      "sha256": "60b2dd5b31ad25808825839169921f31e5dbb6e2ab2b4f27d7f4e62054efb3b0"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
@@ -34,7 +34,7 @@
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "b132cc6a84db3ea24b50a8bc21968b94620b8c591d112e570f34a970480b5c64"
+      "sha256": "6f010ec1b63b571bd00a45beb8468abcd54a9061b11616ec7f8ab8fddd0889b0"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
@@ -82,15 +82,15 @@
   },
   "environment": {
     "cwd": ".",
-    "git_sha": "99cdb951dbd4",
+    "git_sha": "a601493f9f78",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 22128,
-      "VmHWM_kb": 31908,
-      "VmRSS_kb": 31908,
-      "VmSize_kb": 36824
+      "VmData_kb": 22012,
+      "VmHWM_kb": 31748,
+      "VmRSS_kb": 31748,
+      "VmSize_kb": 36708
     },
     "processor": "x86_64",
     "python": "3.10.19",
