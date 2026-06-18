@@ -963,9 +963,10 @@ Intel i5-12600KF CPU and 31~GiB memory. The generated
 tables and figures are tied to provenance manifests that record sources, thread
 and simplification policies, checksums, and artifact-integrity checks. The
 manifests record an 8-thread budget for \rbf{} and LECT work and matching
-math-library thread limits; OMPL \mbox{RRT-Connect}, PRM, and BIT* are
-single-threaded per-query invocations in these runners. Table headers include a
-reusable-build term only for methods that construct a persistent object before queries:
+math-library thread limits. OMPL \mbox{RRT-Connect}, PRM, and BIT* are
+single-threaded per-query invocations here; table \onlineq{} entries are not
+scene-batch totals. Table headers include a reusable-build term only for methods
+that construct a persistent object before queries:
 \rbf{}, PRM, and the Shelf \mbox{IRIS-NP/GCS} row (nonlinear-programming IRIS
 followed by GCS optimization). \mbox{RRT-Connect} and BIT* are reported as
 per-query timing baselines without a reusable-build term.
