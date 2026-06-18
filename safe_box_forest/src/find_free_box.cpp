@@ -2,7 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <cmath>
 #include <limits>
 #include <memory>
@@ -10,6 +9,7 @@
 #include <utility>
 
 #include "virtual_sparse_ffb.h"
+#include "virtual_sparse_ffb_options.h"
 
 namespace rbf {
 
@@ -139,6 +139,8 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
     OracleSplitOptions split_options = options.split;
 
     const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
+    const detail::VirtualSparseFfbOptions virtual_sparse_options =
+        detail::virtual_sparse_ffb_options_from_env();
     if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth &&
         options.adaptive_depths.empty()) {
         const int virtual_start_depth =
@@ -204,7 +206,9 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             int best_depth = -1;
             FindFreeBoxResult best;
             const int probe_depth =
-                detail::binary_probe_depth_from_env(virtual_start_depth, effective_max_depth);
+                detail::binary_probe_depth(virtual_start_depth,
+                                           effective_max_depth,
+                                           virtual_sparse_options);
             if (probe_depth >= virtual_start_depth && probe_depth < effective_max_depth) {
                 FindFreeBoxResult probe_candidate;
                 const BoxValidation probe_validation = validate_virtual_depth(probe_depth,
@@ -491,7 +495,9 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
         int hi = effective_max_depth;
         FindFreeBoxResult best;
         const int probe_depth =
-            detail::binary_probe_depth_from_env(start_depth, effective_max_depth);
+            detail::binary_probe_depth(start_depth,
+                                       effective_max_depth,
+                                       virtual_sparse_options);
         if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
             FindFreeBoxResult probe_candidate;
             const BoxValidation probe_validation = validate_depth(probe_depth,

@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "virtual_sparse_ffb.h"
+#include "virtual_sparse_ffb_options.h"
 
 namespace rbf {
 
@@ -144,6 +145,8 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
     // Seed-independent: canonical split depends only on (robot, domain). No
     // query-seed coupling is applied to the split values.
     OracleSplitOptions split_options = options.split;
+    const detail::VirtualSparseFfbOptions virtual_sparse_options =
+        detail::virtual_sparse_ffb_options_from_env();
     OracleNodeId node = oracle_->root_node();
     OracleNodeTopology node_topology = oracle_->node_topology(node);
     if (!node_topology.valid) {
@@ -262,7 +265,9 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
             int best_depth = -1;
             FindFreeBoxResult best;
             const int probe_depth =
-                detail::binary_probe_depth_from_env(virtual_start_depth, effective_max_depth);
+                detail::binary_probe_depth(virtual_start_depth,
+                                           effective_max_depth,
+                                           virtual_sparse_options);
             if (probe_depth >= virtual_start_depth && probe_depth < effective_max_depth) {
                 FindFreeBoxResult probe_candidate;
                 const BoxValidation probe_validation = validate_virtual_depth(probe_depth,
@@ -582,7 +587,9 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
         int hi = effective_max_depth;
         FindFreeBoxResult best;
         const int probe_depth =
-            detail::binary_probe_depth_from_env(start_depth, effective_max_depth);
+            detail::binary_probe_depth(start_depth,
+                                       effective_max_depth,
+                                       virtual_sparse_options);
         if (probe_depth >= start_depth && probe_depth < effective_max_depth) {
             FindFreeBoxResult probe_candidate;
             const BoxValidation probe_validation = validate_depth(probe_depth,
