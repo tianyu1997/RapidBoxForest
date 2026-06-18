@@ -91,6 +91,7 @@ add_library(sbf_core STATIC
     src/adaptive_grid_partition_indices.cpp
     src/adaptive_grid_partition_merge.cpp
     src/adaptive_grid_partition_overlay.cpp
+    src/adaptive_grid_partition_point_index.cpp
     src/adaptive_grid_partition_query.cpp
     src/adaptive_grid_partition_sparse.cpp
     src/box_graph.cpp
