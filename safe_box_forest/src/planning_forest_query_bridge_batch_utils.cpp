@@ -40,6 +40,88 @@ QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_f
     return options;
 }
 
+QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
+    QueryBridgeRetryOptions options;
+    options.skip_deferred_short_edges =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_SKIP_DEFERRED_SHORT", 1) != 0;
+    options.segment_only_retry_attempts =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
+    options.no_path_retry_attempts =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS", 1));
+    options.no_path_retry_stop_on_first_success =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS", 0) != 0;
+    options.forced_attempts =
+        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
+    options.attempt_offset =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_OFFSET", 0));
+    options.rrt_fixed_iters =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
+    options.rrt_fixed_timeout_ms = std::max(
+        0.0,
+        detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
+    options.rrt_clearance =
+        std::max(0.0, detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
+    options.local_radius_schedule =
+        detail::env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
+    options.local_radius_append_unrestricted_attempt =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_RADIUS_APPEND_UNRESTRICTED_ATTEMPT",
+                                   1) != 0;
+    options.rrt_optimize_after_first_iters = std::max(
+        0,
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
+    options.attempt_fallback_paths =
+        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS", 0));
+    options.no_path_retry_budget_iters =
+        detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
+    options.no_path_retry_budget_attempts =
+        detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS");
+    options.no_path_retry_budget_stages =
+        std::min(options.no_path_retry_budget_iters.size(),
+                 options.no_path_retry_budget_attempts.size());
+    options.post_rrt_skip_forced =
+        detail::env_int_or_default("RBF_QUERY_BRIDGE_POST_RRT_SKIP_FORCED", 0) != 0;
+    return options;
+}
+
+void record_query_bridge_retry_diagnostics(StageContext& context,
+                                           const QueryBridgeRetryOptions& options) {
+    context.diagnostics().set_value("query_bridge.skip_deferred_short_edges",
+                                    options.skip_deferred_short_edges ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.segment_only_retry_attempts_default",
+                                    static_cast<double>(options.segment_only_retry_attempts));
+    context.diagnostics().set_value("query_bridge.no_path_retry_attempts_default",
+                                    static_cast<double>(options.no_path_retry_attempts));
+    context.diagnostics().set_value("query_bridge.no_path_retry_stop_on_first_success",
+                                    options.no_path_retry_stop_on_first_success ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.rrt_fixed_iters",
+                                    static_cast<double>(options.rrt_fixed_iters));
+    context.diagnostics().set_value("query_bridge.rrt_fixed_timeout_ms",
+                                    options.rrt_fixed_timeout_ms);
+    context.diagnostics().set_value("query_bridge.rrt_clearance",
+                                    options.rrt_clearance);
+    context.diagnostics().set_value("query_bridge.local_radius_schedule_size",
+                                    static_cast<double>(options.local_radius_schedule.size()));
+    context.diagnostics().set_value("query_bridge.local_radius_append_unrestricted_attempt",
+                                    options.local_radius_append_unrestricted_attempt ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.rrt_optimize_after_first_iters",
+                                    static_cast<double>(options.rrt_optimize_after_first_iters));
+    context.diagnostics().set_value("query_bridge.attempt_fallback_paths",
+                                    static_cast<double>(options.attempt_fallback_paths));
+    context.diagnostics().set_value("query_bridge.no_path_retry_budget_stages",
+                                    static_cast<double>(options.no_path_retry_budget_stages));
+    for (std::size_t stage = 0; stage < options.no_path_retry_budget_stages; ++stage) {
+        const std::string prefix =
+            "query_bridge.no_path_retry_budget_stage." + std::to_string(stage) + ".";
+        context.diagnostics().set_value(prefix + "iters",
+                                        static_cast<double>(options.no_path_retry_budget_iters[stage]));
+        context.diagnostics().set_value(
+            prefix + "attempts",
+            static_cast<double>(options.no_path_retry_budget_attempts[stage]));
+    }
+    context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
+                                    options.post_rrt_skip_forced ? 1.0 : 0.0);
+}
+
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
                                            const OracleCounters& after) {

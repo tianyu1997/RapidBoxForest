@@ -1133,11 +1133,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             }
         }
     }
-    const bool skip_deferred_short_edges =
-        env_int_or_default("RBF_QUERY_BRIDGE_SKIP_DEFERRED_SHORT", 1) != 0;
-    batch_context.diagnostics().set_value(
-        "query_bridge.skip_deferred_short_edges",
-        skip_deferred_short_edges ? 1.0 : 0.0);
+    const QueryBridgeRetryOptions retry_options = query_bridge_retry_options_from_env();
+    record_query_bridge_retry_diagnostics(batch_context, retry_options);
     batch_context.diagnostics().set_value(
         "query_bridge.accept_segment_fraction",
         bridge_acceptance.max_segment_fraction);
@@ -1159,81 +1156,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     batch_context.diagnostics().set_value(
         "query_bridge.partition_path_first_max_segment_fraction",
         partition_path_first_options.max_segment_fraction);
-    const int segment_only_retry_attempts =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
-    batch_context.diagnostics().set_value(
-        "query_bridge.segment_only_retry_attempts_default",
-        static_cast<double>(segment_only_retry_attempts));
-    const int no_path_retry_attempts =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS", 1));
-    batch_context.diagnostics().set_value(
-        "query_bridge.no_path_retry_attempts_default",
-        static_cast<double>(no_path_retry_attempts));
-    const bool no_path_retry_stop_on_first_success =
-        env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS", 0) != 0;
-    batch_context.diagnostics().set_value(
-        "query_bridge.no_path_retry_stop_on_first_success",
-        no_path_retry_stop_on_first_success ? 1.0 : 0.0);
-    const int forced_query_attempts =
-        std::max(1, env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
-    const int query_bridge_attempt_offset =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_OFFSET", 0));
-    const int query_bridge_rrt_fixed_iters =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
-    const double query_bridge_rrt_fixed_timeout_ms =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
-    const double query_bridge_rrt_clearance =
-        std::max(0.0, env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
-    const std::vector<double> local_radius_schedule =
-        env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
-    const bool local_radius_append_unrestricted_attempt =
-        env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_RADIUS_APPEND_UNRESTRICTED_ATTEMPT", 1) != 0;
-    const int query_bridge_rrt_optimize_after_first_iters =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
-    const int query_bridge_attempt_fallback_paths =
-        std::max(0, env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS", 0));
-    batch_context.diagnostics().set_value(
-        "query_bridge.rrt_fixed_iters",
-        static_cast<double>(query_bridge_rrt_fixed_iters));
-    batch_context.diagnostics().set_value(
-        "query_bridge.rrt_fixed_timeout_ms",
-        query_bridge_rrt_fixed_timeout_ms);
-    batch_context.diagnostics().set_value(
-        "query_bridge.rrt_clearance",
-        query_bridge_rrt_clearance);
-    batch_context.diagnostics().set_value(
-        "query_bridge.local_radius_schedule_size",
-        static_cast<double>(local_radius_schedule.size()));
-    batch_context.diagnostics().set_value(
-        "query_bridge.local_radius_append_unrestricted_attempt",
-        local_radius_append_unrestricted_attempt ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.rrt_optimize_after_first_iters",
-        static_cast<double>(query_bridge_rrt_optimize_after_first_iters));
-    batch_context.diagnostics().set_value(
-        "query_bridge.attempt_fallback_paths",
-        static_cast<double>(query_bridge_attempt_fallback_paths));
-    const std::vector<int> no_path_retry_budget_iters =
-        env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
-    const std::vector<int> no_path_retry_budget_attempts =
-        env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS");
-    const std::size_t no_path_retry_budget_stages =
-        std::min(no_path_retry_budget_iters.size(), no_path_retry_budget_attempts.size());
-    batch_context.diagnostics().set_value(
-        "query_bridge.no_path_retry_budget_stages",
-        static_cast<double>(no_path_retry_budget_stages));
-    for (std::size_t stage = 0; stage < no_path_retry_budget_stages; ++stage) {
-        const std::string prefix =
-            "query_bridge.no_path_retry_budget_stage." + std::to_string(stage) + ".";
-        batch_context.diagnostics().set_value(prefix + "iters",
-                                              static_cast<double>(no_path_retry_budget_iters[stage]));
-        batch_context.diagnostics().set_value(prefix + "attempts",
-                                              static_cast<double>(no_path_retry_budget_attempts[stage]));
-    }
-    const bool post_rrt_skip_forced =
-        env_int_or_default("RBF_QUERY_BRIDGE_POST_RRT_SKIP_FORCED", 0) != 0;
-    batch_context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
-                                          post_rrt_skip_forced ? 1.0 : 0.0);
     const bool parallel_rrt_early_stop =
         env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
     const int parallel_rrt_early_stop_min_successes =
@@ -1267,7 +1189,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (respect_forced && query_bridge_forced(task)) {
             return false;
         }
-        if (!skip_deferred_short_edges) {
+        if (!retry_options.skip_deferred_short_edges) {
             return false;
         }
         return query_result_good(query(task.start, task.goal), task.start, task.goal);
@@ -1277,10 +1199,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                 int override_fixed_iters,
                                 std::shared_ptr<std::atomic<bool>> cancel_override =
                                     std::shared_ptr<std::atomic<bool>>{}) {
-        const int scheduled_attempt = attempt + query_bridge_attempt_offset;
-        Robot bridge_robot = make_sbf_clearance_robot(audit_robot_, query_bridge_rrt_clearance);
+        const int scheduled_attempt = attempt + retry_options.attempt_offset;
+        Robot bridge_robot = make_sbf_clearance_robot(audit_robot_, retry_options.rrt_clearance);
         CollisionChecker checker =
-            query_bridge_rrt_clearance > 0.0
+            retry_options.rrt_clearance > 0.0
                 ? CollisionChecker(bridge_robot, scene_)
                 : make_audit_checker(audit_robot_, scene_, config_.query);
         RRTConnectConfig config =
@@ -1288,21 +1210,21 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 ? task.bridge_rrt
                 : task.short_local_profiles[
                       static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
-        if (!local_radius_schedule.empty() &&
+        if (!retry_options.local_radius_schedule.empty() &&
             attempt >= 0 &&
-            static_cast<std::size_t>(attempt) < local_radius_schedule.size()) {
+            static_cast<std::size_t>(attempt) < retry_options.local_radius_schedule.size()) {
             const double scheduled_radius =
-                local_radius_schedule[static_cast<std::size_t>(attempt)];
+                retry_options.local_radius_schedule[static_cast<std::size_t>(attempt)];
             if (scheduled_radius >= 0.0) {
                 config.local_sampling_radius = scheduled_radius;
             }
         }
-        config.optimize_after_first_iters = query_bridge_rrt_optimize_after_first_iters;
+        config.optimize_after_first_iters = retry_options.rrt_optimize_after_first_iters;
         const int effective_fixed_iters =
-            override_fixed_iters > 0 ? override_fixed_iters : query_bridge_rrt_fixed_iters;
+            override_fixed_iters > 0 ? override_fixed_iters : retry_options.rrt_fixed_iters;
         if (effective_fixed_iters > 0) {
             config.max_iters = effective_fixed_iters;
-            config.timeout_ms = query_bridge_rrt_fixed_timeout_ms;
+            config.timeout_ms = retry_options.rrt_fixed_timeout_ms;
         } else {
             config.timeout_ms = std::max(1.0, config_.connector.per_pair_timeout_ms);
         }
@@ -1796,9 +1718,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (task.waypoint_path.empty() || valid_paths.front().first < best_length) {
             selected_index = valid_paths.front().second;
             if (!task.waypoint_path.empty() &&
-                query_bridge_attempt_fallback_paths > 0 &&
+                retry_options.attempt_fallback_paths > 0 &&
                 task.waypoint_fallback_paths.size() <
-                    static_cast<std::size_t>(query_bridge_attempt_fallback_paths)) {
+                    static_cast<std::size_t>(retry_options.attempt_fallback_paths)) {
                 task.waypoint_fallback_paths.push_back(std::move(task.waypoint_path));
                 batch_context.diagnostics().add_counter(
                     "query_bridge.attempt_fallback_paths_stored");
@@ -1811,9 +1733,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             if (index == selected_index || attempt_paths[index].empty()) {
                 continue;
             }
-            if (query_bridge_attempt_fallback_paths <= 0 ||
+            if (retry_options.attempt_fallback_paths <= 0 ||
                 task.waypoint_fallback_paths.size() >=
-                    static_cast<std::size_t>(query_bridge_attempt_fallback_paths)) {
+                    static_cast<std::size_t>(retry_options.attempt_fallback_paths)) {
                 break;
             }
             task.waypoint_fallback_paths.push_back(std::move(attempt_paths[index]));
@@ -1902,17 +1824,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         return total_added;
     };
 
-	    const bool parallel_task_rrt =
-	        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
+    const bool parallel_task_rrt =
+        env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
-                                          static_cast<double>(query_bridge_attempt_offset));
+                                          static_cast<double>(retry_options.attempt_offset));
     const bool has_segment_only_task =
         std::any_of(tasks.begin(), tasks.end(), [](const QueryBridgeSearchTask& task) {
             return env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES",
                                            task.index);
         });
-    if (parallel_task_rrt && !has_segment_only_task && no_path_retry_attempts == 0 &&
-        no_path_retry_budget_stages == 0) {
+    if (parallel_task_rrt && !has_segment_only_task && retry_options.no_path_retry_attempts == 0 &&
+        retry_options.no_path_retry_budget_stages == 0) {
         struct PreparedTask {
             bool skipped = false;
             bool forced = false;
@@ -1925,7 +1847,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         };
         std::vector<PreparedTask> prepared(tasks.size());
         std::vector<PreparedJob> jobs;
-	        for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
+        for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
 	            auto& task = tasks[task_offset];
 	            prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
 	            const auto probe_t0 = Clock::now();
@@ -1954,7 +1876,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
             prepared[task_offset].forced = query_bridge_forced(task);
             prepared[task_offset].attempts = prepared[task_offset].forced
-                ? std::max(std::max(1, task.attempts), forced_query_attempts)
+                ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
                 : std::max(1, task.attempts);
             if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
                 prepared[task_offset].attempts = 0;
@@ -1965,11 +1887,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     1.0);
             }
             if (prepared[task_offset].attempts > 0 &&
-                !local_radius_schedule.empty() &&
-                local_radius_append_unrestricted_attempt) {
+                !retry_options.local_radius_schedule.empty() &&
+                retry_options.local_radius_append_unrestricted_attempt) {
                 prepared[task_offset].attempts = std::max(
                     prepared[task_offset].attempts,
-                    static_cast<int>(local_radius_schedule.size()) + 1);
+                    static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
             }
             if (prepared[task_offset].forced) {
                 batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
@@ -2089,7 +2011,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "waypoint_length"),
                                                   best_length);
             const auto second_probe_t0 = Clock::now();
-            if (current_query_good(task, !post_rrt_skip_forced)) {
+            if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
                 batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
                 if (prepared[task_offset].forced) {
                     batch_context.diagnostics().add_counter(
@@ -2200,18 +2122,18 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
         const bool forced_task = query_bridge_forced(task);
         const int attempts = forced_task
-            ? std::max(std::max(1, task.attempts), forced_query_attempts)
+            ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
             : std::max(1, task.attempts);
         int effective_attempts =
             task.waypoint_path_from_partition_query && !task.waypoint_path.empty()
                 ? 0
                 : attempts;
         if (effective_attempts > 0 &&
-            !local_radius_schedule.empty() &&
-            local_radius_append_unrestricted_attempt) {
+            !retry_options.local_radius_schedule.empty() &&
+            retry_options.local_radius_append_unrestricted_attempt) {
             effective_attempts = std::max(
                 effective_attempts,
-                static_cast<int>(local_radius_schedule.size()) + 1);
+                static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
         }
         if (forced_task) {
             batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
@@ -2299,10 +2221,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const bool segment_only_task =
             env_index_list_contains("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", task.index);
         if (task.waypoint_path.empty() && segment_only_task &&
-            segment_only_retry_attempts > 0) {
+            retry_options.segment_only_retry_attempts > 0) {
             const auto retry_t0 = Clock::now();
             int retry_successes = 0;
-            for (int retry = 0; retry < segment_only_retry_attempts; ++retry) {
+            for (int retry = 0; retry < retry_options.segment_only_retry_attempts; ++retry) {
                 auto retry_path = run_task_attempt(task, attempts + retry, 0);
                 if (retry_path.empty()) {
                     continue;
@@ -2313,7 +2235,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                     best_length = length;
                     task.waypoint_path = std::move(retry_path);
                 }
-                if (no_path_retry_stop_on_first_success) {
+                if (retry_options.no_path_retry_stop_on_first_success) {
                     break;
                 }
             }
@@ -2323,13 +2245,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 retry_ms);
             batch_context.diagnostics().add_counter(
                 "query_bridge.batch_segment_only_retry_attempts",
-                static_cast<double>(segment_only_retry_attempts));
+                static_cast<double>(retry_options.segment_only_retry_attempts));
             batch_context.diagnostics().add_counter(
                 "query_bridge.batch_segment_only_retry_successes",
                 static_cast<double>(retry_successes));
             batch_context.diagnostics().set_value(
                 query_bridge_task_key(task.index, "segment_only_retry_attempts"),
-                static_cast<double>(segment_only_retry_attempts));
+                static_cast<double>(retry_options.segment_only_retry_attempts));
             batch_context.diagnostics().set_value(
                 query_bridge_task_key(task.index, "segment_only_retry_ms"),
                 retry_ms);
@@ -2338,7 +2260,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 static_cast<double>(retry_successes));
         }
         if (task.waypoint_path.empty() && !segment_only_task &&
-            (no_path_retry_attempts > 0 || no_path_retry_budget_stages > 0)) {
+            (retry_options.no_path_retry_attempts > 0 || retry_options.no_path_retry_budget_stages > 0)) {
             int retry_attempt_offset = attempts;
             int retry_attempts_total = 0;
             int retry_successes_total = 0;
@@ -2367,7 +2289,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                         best_length = length;
                         task.waypoint_path = std::move(retry_path);
                     }
-                    if (no_path_retry_stop_on_first_success) {
+                    if (retry_options.no_path_retry_stop_on_first_success) {
                         break;
                     }
                 }
@@ -2402,13 +2324,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                         retry_ms);
                 }
             };
-            run_no_path_retry_stage(0, no_path_retry_attempts, 0, false);
+            run_no_path_retry_stage(0, retry_options.no_path_retry_attempts, 0, false);
             for (std::size_t stage = 0;
-                 task.waypoint_path.empty() && stage < no_path_retry_budget_stages;
+                 task.waypoint_path.empty() && stage < retry_options.no_path_retry_budget_stages;
                  ++stage) {
                 run_no_path_retry_stage(static_cast<int>(stage) + 1,
-                                        no_path_retry_budget_attempts[stage],
-                                        no_path_retry_budget_iters[stage],
+                                        retry_options.no_path_retry_budget_attempts[stage],
+                                        retry_options.no_path_retry_budget_iters[stage],
                                         true);
             }
             batch_context.diagnostics().record_timing(
@@ -2441,7 +2363,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "waypoint_length"),
                                               best_length);
         const auto second_probe_t0 = Clock::now();
-            if (current_query_good(task, !post_rrt_skip_forced)) {
+        if (current_query_good(task, !retry_options.post_rrt_skip_forced)) {
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
             if (forced_task) {
                 batch_context.diagnostics().add_counter(

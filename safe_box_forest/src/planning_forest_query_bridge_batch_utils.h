@@ -23,6 +23,26 @@ struct QueryBridgePartitionPathFirstOptions {
     double max_segment_fraction = 0.95;
 };
 
+struct QueryBridgeRetryOptions {
+    bool skip_deferred_short_edges = true;
+    int segment_only_retry_attempts = 0;
+    int no_path_retry_attempts = 0;
+    bool no_path_retry_stop_on_first_success = false;
+    int forced_attempts = 1;
+    int attempt_offset = 0;
+    int rrt_fixed_iters = 0;
+    double rrt_fixed_timeout_ms = 0.0;
+    double rrt_clearance = 0.0;
+    std::vector<double> local_radius_schedule;
+    bool local_radius_append_unrestricted_attempt = true;
+    int rrt_optimize_after_first_iters = 0;
+    int attempt_fallback_paths = 0;
+    std::vector<int> no_path_retry_budget_iters;
+    std::vector<int> no_path_retry_budget_attempts;
+    std::size_t no_path_retry_budget_stages = 0;
+    bool post_rrt_skip_forced = false;
+};
+
 struct QueryBridgeSearchTask {
     std::size_t index = 0;
     int query_index = 0;
@@ -52,6 +72,11 @@ QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 
 QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
     bool partition_native_mode);
+
+QueryBridgeRetryOptions query_bridge_retry_options_from_env();
+
+void record_query_bridge_retry_diagnostics(StageContext& context,
+                                           const QueryBridgeRetryOptions& options);
 
 void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
                                            const OracleCounters& before,
