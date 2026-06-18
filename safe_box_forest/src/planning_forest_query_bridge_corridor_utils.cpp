@@ -1,6 +1,7 @@
 #include "planning_forest_query_bridge_corridor_utils.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <string>
@@ -530,6 +531,42 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
         }
     }
     return result;
+}
+
+QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<bool>& covered,
+    int ffb_start_depth,
+    bool detailed_timing) {
+    using Clock = std::chrono::steady_clock;
+    QueryBridgeDirectFfbTaskPlan plan;
+    plan.runtime = query_bridge_direct_ffb_task_runtime_options(samples.size());
+    const auto build_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
+    QueryBridgeDirectFfbTaskBuildResult build =
+        query_bridge_build_direct_ffb_tasks(samples, covered, plan.runtime.build);
+    if (detailed_timing) {
+        plan.build_ms =
+            std::chrono::duration<double, std::milli>(Clock::now() - build_t0).count();
+    }
+    plan.uncovered_gap_groups = build.uncovered_gap_groups;
+    plan.tasks = std::move(build.tasks);
+
+    context.diagnostics().set_value("query_bridge.direct_corridor_direct_grouped_seeds",
+                                    plan.runtime.build.grouped_direct_seeds ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.direct_corridor_coverage_order_direct_tasks",
+                                    plan.runtime.coverage_order_direct_tasks ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.direct_corridor_center_out_direct_tasks",
+                                    plan.runtime.build.center_out_direct_tasks ? 1.0 : 0.0);
+    context.diagnostics().set_value("query_bridge.direct_corridor_ffb_start_depth",
+                                    static_cast<double>(ffb_start_depth));
+    context.diagnostics().set_value("query_bridge.direct_corridor_uncovered_gap_groups",
+                                    static_cast<double>(plan.uncovered_gap_groups));
+    context.diagnostics().set_value("query_bridge.direct_corridor_direct_max_seeds_per_gap",
+                                    static_cast<double>(plan.runtime.build.max_group_seeds));
+    context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
+                                    static_cast<double>(plan.tasks.size()));
+    return plan;
 }
 
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {

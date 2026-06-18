@@ -1215,37 +1215,15 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         double adaptive_repair_ffb_ms = 0.0;
         double lateral_repair_ffb_ms = 0.0;
         double residual_segment_audit_ms = 0.0;
-        const QueryBridgeDirectFfbTaskRuntimeOptions direct_task_options =
-            query_bridge_direct_ffb_task_runtime_options(samples.size());
-        const auto direct_task_build_t0 =
-            detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        const QueryBridgeDirectFfbTaskBuildResult direct_task_build =
-            query_bridge_build_direct_ffb_tasks(
+        const QueryBridgeDirectFfbTaskPlan direct_task_plan =
+            query_bridge_prepare_direct_ffb_task_plan(
+                context,
                 samples,
                 covered,
-                direct_task_options.build);
-        const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_build.tasks;
-        const int uncovered_gap_groups = direct_task_build.uncovered_gap_groups;
-        if (detailed_direct_timing) {
-            direct_task_build_ms =
-                std::chrono::duration<double, std::milli>(Clock::now() -
-                                                          direct_task_build_t0).count();
-        }
-        context.diagnostics().set_value("query_bridge.direct_corridor_direct_grouped_seeds",
-                                        direct_task_options.build.grouped_direct_seeds ? 1.0 : 0.0);
-        context.diagnostics().set_value("query_bridge.direct_corridor_coverage_order_direct_tasks",
-                                        direct_task_options.coverage_order_direct_tasks ? 1.0 : 0.0);
-        context.diagnostics().set_value("query_bridge.direct_corridor_center_out_direct_tasks",
-                                        direct_task_options.build.center_out_direct_tasks ? 1.0 : 0.0);
-        context.diagnostics().set_value("query_bridge.direct_corridor_ffb_start_depth",
-                                        static_cast<double>(std::max(direct_options.start_depth,
-                                                                    direct_options.skip_to_depth)));
-        context.diagnostics().set_value("query_bridge.direct_corridor_uncovered_gap_groups",
-                                        static_cast<double>(uncovered_gap_groups));
-        context.diagnostics().set_value("query_bridge.direct_corridor_direct_max_seeds_per_gap",
-                                        static_cast<double>(direct_task_options.build.max_group_seeds));
-        context.diagnostics().set_value("query_bridge.direct_corridor_direct_tasks",
-                                        static_cast<double>(direct_tasks.size()));
+                std::max(direct_options.start_depth, direct_options.skip_to_depth),
+                detailed_direct_timing);
+        const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_plan.tasks;
+        direct_task_build_ms = direct_task_plan.build_ms;
         const auto direct_loop_t0 =
             detailed_direct_timing ? Clock::now() : Clock::time_point{};
         for (const auto& task : direct_tasks) {

@@ -40,6 +40,13 @@ struct QueryBridgeDirectFfbTaskRuntimeOptions {
     bool coverage_order_direct_tasks = true;
 };
 
+struct QueryBridgeDirectFfbTaskPlan {
+    std::vector<QueryBridgeDirectFfbTask> tasks;
+    QueryBridgeDirectFfbTaskRuntimeOptions runtime;
+    int uncovered_gap_groups = 0;
+    double build_ms = 0.0;
+};
+
 struct QueryBridgeRepairSubdivisionOptions {
     int base_subdivisions = 0;
     int subdivisions = 0;
@@ -224,6 +231,13 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
 
 QueryBridgeDirectFfbTaskRuntimeOptions query_bridge_direct_ffb_task_runtime_options(
     std::size_t sample_count);
+
+QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
+    StageContext& context,
+    const std::vector<Eigen::VectorXd>& samples,
+    const std::vector<bool>& covered,
+    int ffb_start_depth,
+    bool detailed_timing);
 
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
 
