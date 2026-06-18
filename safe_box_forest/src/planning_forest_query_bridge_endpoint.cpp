@@ -3,10 +3,10 @@
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_bridge_endpoint_options.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
 
@@ -16,7 +16,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <optional>
@@ -28,14 +27,6 @@
 #include <vector>
 
 namespace rbf {
-
-using detail::env_double_list_or_empty;
-using detail::env_double_or_default;
-using detail::env_index_list_contains;
-using detail::env_indexed_double_or_default;
-using detail::env_indexed_int_or_default;
-using detail::env_int_list_or_empty;
-using detail::env_int_or_default;
 
 int RBFPlanningForest::anchor_query_endpoint(const Eigen::Ref<const Eigen::VectorXd>& point) {
     StageContext context = StageContext::from_runtime(config_.runtime);
@@ -971,8 +962,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
                                      std::max(1, requested_anchor_depth));
     }
     options.reject_seed_collision = false;
-    std::vector<int> anchor_depth_schedule =
-        env_int_list_or_empty("RBF_QUERY_ENDPOINT_ANCHOR_FFB_DEPTHS");
+    std::vector<int> anchor_depth_schedule = query_endpoint_anchor_ffb_depths_from_env();
     const int max_tree_depth = std::max(1, config_.database.max_tree_depth);
     auto normalize_depth = [&](int depth) {
         return std::min(max_tree_depth, std::max(1, depth));
@@ -1009,8 +999,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     root_domain.compute_volume();
 
     if (partition_native_mode()) {
-        const bool endpoint_point_anchor =
-            env_int_or_default("RBF_QUERY_ENDPOINT_POINT_ANCHOR", 0) != 0;
+        const bool endpoint_point_anchor = query_endpoint_point_anchor_enabled_from_env();
         context.diagnostics().set_value("query_bridge.endpoint_point_anchor_enabled",
                                         endpoint_point_anchor ? 1.0 : 0.0);
         if (endpoint_point_anchor) {
@@ -1213,8 +1202,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
         if (best_target_id < 0) {
             consider_target(false);
         }
-        const double max_shortlink_length =
-            std::max(0.0, env_double_or_default("RBF_ENDPOINT_SHORTLINK_MAX_LENGTH", 0.25));
+        const double max_shortlink_length = endpoint_shortlink_max_length_from_env();
         if (anchor_box != nullptr &&
             best_target_id >= 0 &&
             best_dist2 > 1e-18 &&
