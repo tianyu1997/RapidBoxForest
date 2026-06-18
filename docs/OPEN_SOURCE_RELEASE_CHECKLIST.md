@@ -388,6 +388,14 @@ Validated on 2026-06-18:
      --verify-local
    ```
 
+   The current strict-release blocker is this filled external cache manifest:
+   using the checked-in example manifest in strict mode fails on TODO fields for
+   `exp04_iiwa_d23_aafk_support_hull`,
+   `exp04_iiwa_d23_critsample_support_hull`,
+   `exp06_iiwa_d23_support_hull`, `exp06_ur5_d20_support_hull`, and
+   `exp06_panda_d20_support_hull`. Fill or replace those records before the
+   final strict release check.
+
 7. If a full paper artifact bundle is published with `outputs/`, validate the
    generated result-source manifest against the unpacked artifacts:
 
