@@ -4,9 +4,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
-#include <cstdlib>
 #include <functional>
-#include <iostream>
 #include <limits>
 #include <numeric>
 #include <queue>
@@ -2114,46 +2112,6 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 		const std::vector<int> candidates = interval_candidate_cells(cell.intervals);
 		for (int other : candidates) {
 			add_edge_if_adjacent(cell_index, other);
-		}
-	}
-	if (const char* debug = std::getenv("RBF_PARTITION_DEBUG_ADJACENCY_MISSES");
-		debug != nullptr && debug[0] != '\0' && debug[0] != '0') {
-		int missing = 0;
-		for (int cell_index = 0; cell_index < static_cast<int>(cells_.size()); ++cell_index) {
-			std::unordered_set<int> indexed(
-				neighbor_cache_[static_cast<std::size_t>(cell_index)].begin(),
-				neighbor_cache_[static_cast<std::size_t>(cell_index)].end());
-			const auto reference = compute_neighbor_cell_indices(cell_index);
-			for (int candidate : reference) {
-				if (indexed.find(candidate) != indexed.end()) {
-					continue;
-				}
-				if (missing < 8) {
-					const auto& a = cells_[static_cast<std::size_t>(cell_index)];
-					const auto& b = cells_[static_cast<std::size_t>(candidate)];
-					std::cerr << "[partition-adj-miss] a=" << cell_index
-							  << " b=" << candidate
-							  << " a_box=" << a.box_id
-							  << " b_box=" << b.box_id
-							  << " a_root=" << a.grid.root_index
-							  << " b_root=" << b.grid.root_index
-							  << " a_grid=" << a.grid_aligned
-							  << " b_grid=" << b.grid_aligned
-							  << '\n';
-					for (int dim = 0; dim < static_cast<int>(a.grid.lo.size()); ++dim) {
-						std::cerr << "  dim" << dim
-								  << " a[" << a.grid.lo[static_cast<std::size_t>(dim)]
-								  << "," << a.grid.hi[static_cast<std::size_t>(dim)]
-								  << ") b[" << b.grid.lo[static_cast<std::size_t>(dim)]
-								  << "," << b.grid.hi[static_cast<std::size_t>(dim)]
-								  << ")\n";
-					}
-				}
-				++missing;
-			}
-		}
-		if (missing > 0) {
-			std::cerr << "[partition-adj-miss] total_missing=" << missing << '\n';
 		}
 	}
 }
