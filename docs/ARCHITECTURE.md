@@ -135,9 +135,10 @@ src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
 src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
 src/planning_forest_dynamic_cache.cpp
-                                   dynamic collision cache, obstacle-removal regrow,
-                                   dynamic segment fallback, and removed-box
-                                   refill helpers
+                                   dynamic obstacle insertion/removal rebuild,
+                                   dirty-region checks, collision-cache promotion,
+                                   dynamic segment fallback, and removed-box refill
+                                   helpers
 src/planning_forest_overlay.cpp    partition overlay corridor helpers
 src/safe_box_forest.cpp            remaining facade orchestration and legacy-large
                                    implementation blocks pending extraction
