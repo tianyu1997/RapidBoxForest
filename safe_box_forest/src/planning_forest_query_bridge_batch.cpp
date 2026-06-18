@@ -1414,6 +1414,37 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
                                               total_ms);
     };
+    auto task_already_satisfied = [&](const QueryBridgeSearchTask& task) {
+        return task.hipac_online_satisfied ||
+               task.direct_start_goal_satisfied ||
+               current_query_good(task, true);
+    };
+    auto base_attempts_for_task = [&](const QueryBridgeSearchTask& task,
+                                      bool forced_task) {
+        return forced_task
+            ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
+            : std::max(1, task.attempts);
+    };
+    auto expand_attempts_for_local_radius = [&](int attempts) {
+        if (attempts <= 0 ||
+            retry_options.local_radius_schedule.empty() ||
+            !retry_options.local_radius_append_unrestricted_attempt) {
+            return attempts;
+        }
+        return std::max(
+            attempts,
+            static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
+    };
+    auto record_forced_and_attempts = [&](const QueryBridgeSearchTask& task,
+                                          bool forced_task,
+                                          int attempts) {
+        if (forced_task) {
+            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
+                                                  1.0);
+        }
+        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
+                                              static_cast<double>(attempts));
+    };
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
@@ -1440,9 +1471,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             auto& task = tasks[task_offset];
             prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
             const auto probe_t0 = Clock::now();
-            if (task.hipac_online_satisfied ||
-                task.direct_start_goal_satisfied ||
-                current_query_good(task, true)) {
+            if (task_already_satisfied(task)) {
                 prepared[task_offset].skipped = true;
                 mark_batch_task_already_satisfied(task, probe_t0);
                 continue;
@@ -1451,26 +1480,17 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                       elapsed_ms_since(probe_t0));
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
             prepared[task_offset].forced = query_bridge_forced(task);
-            prepared[task_offset].attempts = prepared[task_offset].forced
-                ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
-                : std::max(1, task.attempts);
+            prepared[task_offset].attempts =
+                base_attempts_for_task(task, prepared[task_offset].forced);
             if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
                 prepared[task_offset].attempts = 0;
                 mark_partition_path_first_task(task);
             }
-            if (prepared[task_offset].attempts > 0 &&
-                !retry_options.local_radius_schedule.empty() &&
-                retry_options.local_radius_append_unrestricted_attempt) {
-                prepared[task_offset].attempts = std::max(
-                    prepared[task_offset].attempts,
-                    static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
-            }
-            if (prepared[task_offset].forced) {
-                batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
-                                                      1.0);
-            }
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
-                                                  static_cast<double>(prepared[task_offset].attempts));
+            prepared[task_offset].attempts =
+                expand_attempts_for_local_radius(prepared[task_offset].attempts);
+            record_forced_and_attempts(task,
+                                       prepared[task_offset].forced,
+                                       prepared[task_offset].attempts);
             for (int attempt = 0; attempt < prepared[task_offset].attempts; ++attempt) {
                 jobs.push_back({task_offset, attempt});
             }
@@ -1634,9 +1654,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     for (auto& task : tasks) {
         const auto task_t0 = Clock::now();
         const auto probe_t0 = Clock::now();
-        if (task.hipac_online_satisfied ||
-            task.direct_start_goal_satisfied ||
-            current_query_good(task, true)) {
+        if (task_already_satisfied(task)) {
             mark_batch_task_already_satisfied(task, probe_t0);
             batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
                                                   elapsed_ms_since(task_t0));
@@ -1646,26 +1664,13 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                   elapsed_ms_since(probe_t0));
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
         const bool forced_task = query_bridge_forced(task);
-        const int attempts = forced_task
-            ? std::max(std::max(1, task.attempts), retry_options.forced_attempts)
-            : std::max(1, task.attempts);
+        const int attempts = base_attempts_for_task(task, forced_task);
         int effective_attempts =
             task.waypoint_path_from_partition_query && !task.waypoint_path.empty()
                 ? 0
                 : attempts;
-        if (effective_attempts > 0 &&
-            !retry_options.local_radius_schedule.empty() &&
-            retry_options.local_radius_append_unrestricted_attempt) {
-            effective_attempts = std::max(
-                effective_attempts,
-                static_cast<int>(retry_options.local_radius_schedule.size()) + 1);
-        }
-        if (forced_task) {
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "forced"),
-                                                  1.0);
-        }
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "attempts"),
-                                              static_cast<double>(effective_attempts));
+        effective_attempts = expand_attempts_for_local_radius(effective_attempts);
+        record_forced_and_attempts(task, forced_task, effective_attempts);
         if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
             mark_partition_path_first_task(task);
             mark_partition_path_first_rrt_skipped(task);
