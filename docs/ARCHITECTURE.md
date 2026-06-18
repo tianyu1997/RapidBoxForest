@@ -114,6 +114,32 @@ experiments/                       package-local legacy/current scripts
 tests/                             C++ and Python coverage
 ```
 
+Current source-file boundaries:
+
+```text
+src/runtime.cpp                    runtime budget, deadline, and diagnostics helpers
+src/find_free_box.cpp              seed-to-certified-box search service
+src/grower.cpp                     forest grower implementations
+src/leaf_sweep_grower.cpp          leaf-sweep coverage grower
+src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
+src/box_graph.cpp                  explicit box graph, segment edges, Dijkstra helpers
+src/connector.cpp                  island connector and chain-pave logic
+src/merger.cpp                     box containment and merge helpers
+src/query.cpp                      query result/path utility helpers
+src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
+src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
+src/planning_forest_dynamic_cache.cpp
+                                   dynamic collision cache, obstacle-removal regrow,
+                                   and removed-box refill helpers
+src/safe_box_forest.cpp            remaining facade orchestration and legacy-large
+                                   implementation blocks pending extraction
+```
+
+New production features should normally land in the smallest matching module
+above. `src/safe_box_forest.cpp` is currently a compatibility/orchestration
+holding file; adding new algorithm branches there should be treated as a
+temporary step with a follow-up extraction.
+
 ## Planner Data Flow
 
 1. A caller builds a `Robot`, scene obstacles, and `RBFPlanningConfig`.
