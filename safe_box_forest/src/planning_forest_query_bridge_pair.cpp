@@ -7,6 +7,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_bridge_corridor_utils.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
 
@@ -86,9 +87,10 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
+    const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
     const bool direct_start_goal_segment =
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0 &&
-        env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_START_GOAL_SEGMENT", 1) != 0 &&
+        edge_options.direct_segment_after_rrt &&
+        edge_options.direct_start_goal_segment &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
     context.diagnostics().set_value("query_bridge.direct_start_goal_segment",
