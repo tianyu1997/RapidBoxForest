@@ -167,8 +167,8 @@ UR5/Panda cases.
 In a maintenance-only scene-cache study, leaf-sweep insertions show a
 153.3--207.5$\times$ speedup and removals show a
 943.6--3354.0$\times$ speedup relative to the 15-obstacle warm-build baseline.
-Snapshot creation, loading, and resident memory are excluded from the reported
-timing rows; update rows report maintenance only, not the full
+Snapshot creation and loading costs, along with resident memory, are outside
+the reported timing rows; update rows report maintenance only, not the full
 update-and-query pipeline.
 \end{abstract}
 
@@ -263,7 +263,7 @@ replayable kinematics-keyed endpoint and link evidence.
 The evaluation mirrors this certificate boundary. Success is counted only after
 fixed-step query validation unless a row is explicitly conservative. Warm-cache
 Shelf rows include replay-based scene construction and per-query retrieval; they
-exclude snapshot creation, loading, resident memory, and offline setup
+exclude snapshot creation and loading costs, resident memory, and offline setup
 amortization. Dynamic update rows measure scene-cache maintenance, not the
 full update-and-query pipeline. Thus the experiments evaluate low-overhead
 reusable-region construction under a stated validation policy, not claims of
@@ -936,11 +936,10 @@ validation.
 
 \section{Experiments}\label{sec:exp}
 
-The experiments are organized into three declared scopes: a registered
-Shelf+IIWA profile, saved random-scene catalogs, and maintenance-only
-scene-cache updates. For compact presentation, some result tables and
-trade-off plots are grouped, but the discussion interprets them in the same
-scope order. The
+The experiments use three declared scopes: a registered Shelf+IIWA profile,
+saved random-scene catalogs, and maintenance-only scene-cache updates. Tables
+and trade-off plots are grouped for compact presentation, but the discussion
+follows that scope order. The
 Shelf+IIWA study uses the KUKA LBR iiwa shelf-workcell benchmark and the
 manifest-registered \rbf{} configuration; \emph{registered} means fixed in the
 artifact manifest before table extraction. Planning rows share success, audit,
@@ -990,8 +989,8 @@ the certificate.
 
 \paragraph{Cache and profile boundary}
 Warm-cache rows include compatible LECT lookup and evidence reads. Snapshot
-creation, loading, resident memory, and offline setup amortization are outside
-those rows. Here d23 denotes the registered depth-23 LECT snapshot:
+creation and loading costs, resident memory, and offline setup amortization are
+outside those rows. Here d23 denotes the registered depth-23 LECT snapshot:
 16,777,215~records, 12.75\,GiB on disk, and 958.079~s \mbox{prewarm} time.
 Except for \mbox{Live HIFK-5}, Table~\ref{tab:tro-shelf-ablation} rows replay
 compatible d23 evidence; that row materializes \mbox{HIFK-5} evidence live.
@@ -1121,18 +1120,18 @@ five-query cycle, not a universal amortization claim.
 \subsection{Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
 
-The random-scene study uses saved prefix catalogs: ten pre-generated queries
-per scene reused by every method. Across KUKA LBR iiwa, UR5, and Panda,
-medium and hard rows over ten seeds define 600 saved query instances per method
-before manifest pruning. For each robot and seed, medium and hard rows share the
-saved start-goal set; hard rows add later obstacle prefixes instead of
-regenerating unrelated scenes. Before any method summary is computed, a fixed
-manifest rule removes direct-line cases, where the start-goal segment validates
-directly. The
-trade-off plot uses Build/5 + \onlineq{} as a fixed amortization reference for
-rows with reusable builds and \onlineq{} for single-query rows. The stored
-catalogs retain ten queries per scene; the right panel varies the amortization
-count \(K\) as a reuse horizon rather than as a post-pruning sample count.
+The random-scene study uses saved prefix catalogs, with ten pre-generated
+queries per scene shared by every method. Across KUKA LBR iiwa, UR5, and Panda,
+the medium and hard catalogs over ten seeds contain 600 saved query instances
+before the method-independent pruning rule below is applied. For each robot and
+seed, medium and hard rows share the saved start-goal set; hard rows add later
+obstacle prefixes instead of regenerating unrelated scenes. Before any method
+summary is computed, a fixed manifest rule removes direct-line cases, where the
+start-goal segment validates directly. The trade-off plot marks Build/5 +
+\onlineq{} for rows with reusable builds and \onlineq{} for single-query rows as
+a fixed amortization reference. The stored catalogs still retain ten queries per
+scene; the right panel varies the amortization count \(K\) as a reuse horizon
+rather than as a post-pruning sample count.
 \mbox{Table~\ref{tab:tro-random-summary} and Fig.~\ref{fig:tro_random_tradeoff}}
 summarize the operating points and corresponding checkpoint curves.
 \rbf{} builds one query-agnostic forest per scene and reuses it for ten queries;
@@ -1181,9 +1180,7 @@ query bridge, connector, simplification, audit, or query timing is included.
 A diagnostic audit on locally updated forests and matching freshly rebuilt
 forests, each without the query bridge and repair stages, produced 0/8 paths in
 both diagnostic configurations. The 0/8 result is a scope check, not a
-measurement of post-edit query success;
-Table~\ref{tab:tro-dynamic-update} reports local maintenance timing only,
-not end-to-end replanning after an edit.
+measurement of post-edit query success or an end-to-end replanning benchmark.
 
 \FloatBarrier
 \section{Conclusion}\label{sec:conclusion}
@@ -1204,16 +1201,16 @@ takes 7.006~s. In saved random scenes, \rbf{} has lower median \onlineq{} than
 BIT* at all six operating points in Table~\ref{tab:tro-random-summary}, while
 BIT* has lower, hence better, median audited path ratios in the four UR5/Panda
 cases.
-The dynamic-update rows measure scene-cache maintenance rather than the full
-update-and-query pipeline.
+The dynamic-update rows measure scene-cache maintenance rather than full
+update-and-query performance.
 Within this scope, \rbf{} is a low-overhead method for constructing reusable
 regions for repeated queries. The same scope defines the remaining limitations:
 certificates exclude paths that are repaired, shortened, post-processed, or
-derived from \mbox{filter-only} evidence; update rows do not include the full
-update-and-query pipeline; LECT snapshot-load and memory break-even analyses
-are not reported; and validation beyond active-link obstacle collision,
-including self-collision, \mbox{payload} and gripper models, and task-specific
-regions, remains future work.
+derived from \mbox{filter-only} evidence; LECT snapshot creation and loading
+costs, resident memory, and memory break-even analyses are not reported; and
+validation beyond active-link obstacle collision, including self-collision,
+\mbox{payload} and gripper models, and task-specific regions, remains future
+work.
 
 \begingroup
 \let\origthebibliography\thebibliography
