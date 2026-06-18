@@ -114,65 +114,6 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         const int step = depth < 16 ? 1 : 2;
         return std::min(target_leaf_depth, depth + step);
     };
-    auto snapshot_readiness_met = [&](const AdaptiveDepthSnapshot& snapshot) {
-        const int min_covered_probes = std::max(0, adaptive_config.adaptive_depth_min_covered_probes);
-        const int min_main_probes = std::max(0, adaptive_config.adaptive_depth_min_main_probes);
-        const int min_cells = std::max(0, adaptive_config.adaptive_depth_min_cells);
-        const int min_main_cells = std::max(0, adaptive_config.adaptive_depth_min_main_cells);
-        if (snapshot.cell_count <= 0 || snapshot.main_island_cell_count <= 0) {
-            return false;
-        }
-        const bool probe_gate =
-            snapshot.covered_count >= min_covered_probes &&
-            snapshot.main_accessible_count >= min_main_probes &&
-            (min_covered_probes <= 0 ||
-             snapshot.main_connected_ratio >= adaptive_config.adaptive_depth_min_main_ratio);
-        const bool cell_gate =
-            snapshot.cell_count >= min_cells &&
-            snapshot.main_island_cell_count >= min_main_cells;
-        return probe_gate &&
-               cell_gate &&
-               (adaptive_config.adaptive_depth_max_online_cells <= 0 ||
-                snapshot.cell_count <= adaptive_config.adaptive_depth_max_online_cells);
-    };
-    auto snapshot_from_fast_candidate = [&](const AdaptiveLeafSweepResult& candidate,
-                                            int depth) {
-        AdaptiveDepthSnapshot snapshot;
-        snapshot.depth = depth;
-        snapshot.free_probe_count = candidate.seed_probe_free_count;
-        snapshot.covered_count = candidate.seed_probe_box_covered;
-        snapshot.main_accessible_count =
-            std::min(candidate.seed_probe_main_accessible, candidate.seed_probe_box_covered);
-        snapshot.anchor_success_count = candidate.seed_probe_anchor_success;
-        snapshot.anchor_to_main_count =
-            std::max(0, candidate.seed_probe_main_accessible - snapshot.main_accessible_count);
-        const auto attempts_it = candidate.profile.diagnostics.find("adaptive.seed_anchor_probe_attempts");
-        if (attempts_it != candidate.profile.diagnostics.end()) {
-            snapshot.anchor_probe_attempts = static_cast<int>(std::llround(attempts_it->second));
-        }
-        snapshot.cell_count = candidate.partition_cell_count > 0
-            ? candidate.partition_cell_count
-            : candidate.profile.final_boxes;
-        snapshot.collision_count = candidate.shallow_collision_count;
-        snapshot.island_count = candidate.partition_islands > 0
-            ? candidate.partition_islands
-            : candidate.profile.adjacency_islands;
-        snapshot.main_island_cell_count = candidate.partition_largest_island > 0
-            ? candidate.partition_largest_island
-            : candidate.profile.grow_largest_island;
-        const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
-        snapshot.p_box_covered = static_cast<double>(snapshot.covered_count) / free_den;
-        snapshot.p_main_accessible = static_cast<double>(snapshot.main_accessible_count) / free_den;
-        snapshot.main_connected_ratio =
-            static_cast<double>(snapshot.main_accessible_count) /
-            static_cast<double>(std::max(1, snapshot.covered_count));
-        snapshot.p_anchor_to_main_uncovered =
-            static_cast<double>(snapshot.anchor_to_main_count) /
-            static_cast<double>(std::max(1, snapshot.anchor_probe_attempts));
-        snapshot.probe_ms = candidate.coverage_probe_ms;
-        snapshot.readiness_met = snapshot_readiness_met(snapshot);
-        return snapshot;
-    };
     if (adaptive_depth_enabled && adaptive_config.fast_virtual_checkpoint_mode) {
         std::vector<AdaptiveDepthSnapshot> depth_snapshots;
         AdaptiveLeafSweepResult selected;
@@ -465,7 +406,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 std::chrono::duration<double, std::milli>(Clock::now() - adaptive_sweep_start).count();
             AdaptiveLeafSweepResult candidate =
                 materialize_fast_checkpoint_candidate(checkpoint_leaf, depth, sweep_count);
-            auto snapshot = snapshot_from_fast_candidate(candidate, depth);
+            auto snapshot = adaptive_snapshot_from_fast_candidate(candidate, depth, adaptive_config);
             if (snapshot.readiness_met) {
                 snapshot.stop_reason = "coverage_ready";
             } else if (depth >= target_leaf_depth) {
@@ -491,7 +432,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             selected = materialize_fast_checkpoint_candidate(out.leaf_sweep,
                                                              target_leaf_depth,
                                                              sweep_count);
-            auto snapshot = snapshot_from_fast_candidate(selected, target_leaf_depth);
+            auto snapshot = adaptive_snapshot_from_fast_candidate(selected, target_leaf_depth, adaptive_config);
             snapshot.stop_reason = snapshot.readiness_met ? "coverage_ready" : "max_depth";
             depth_snapshots.push_back(snapshot);
             selected.selected_leaf_depth = target_leaf_depth;
@@ -1162,26 +1103,9 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             static_cast<double>(std::max(1, snapshot.anchor_probe_attempts));
         snapshot.probe_ms =
             std::chrono::duration<double, std::milli>(Clock::now() - snapshot_start).count();
-        const int min_covered_probes = std::max(0, adaptive_config.adaptive_depth_min_covered_probes);
-        const int min_main_probes = std::max(0, adaptive_config.adaptive_depth_min_main_probes);
-        const int min_cells = std::max(0, adaptive_config.adaptive_depth_min_cells);
-        const int min_main_cells = std::max(0, adaptive_config.adaptive_depth_min_main_cells);
-        const bool probe_gate =
-            snapshot.covered_count >= min_covered_probes &&
-            snapshot.main_accessible_count >= min_main_probes &&
-            (min_covered_probes <= 0 ||
-             snapshot.main_connected_ratio >= adaptive_config.adaptive_depth_min_main_ratio);
-        const bool cell_gate =
-            snapshot.cell_count >= min_cells &&
-            snapshot.main_island_cell_count >= min_main_cells;
         snapshot.readiness_met =
             adaptive_depth_enabled &&
-            snapshot.cell_count > 0 &&
-            snapshot.main_island_cell_count > 0 &&
-            probe_gate &&
-            cell_gate &&
-            (adaptive_config.adaptive_depth_max_online_cells <= 0 ||
-             snapshot.cell_count <= adaptive_config.adaptive_depth_max_online_cells);
+            adaptive_depth_snapshot_readiness_met(snapshot, adaptive_config);
         return snapshot;
     };
     auto apply_final_depth_snapshot = [&](const AdaptiveDepthSnapshot& snapshot) {

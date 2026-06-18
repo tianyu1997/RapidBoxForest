@@ -60,6 +60,11 @@ struct AdaptiveDepthSnapshot {
     std::string stop_reason;
 };
 
+bool adaptive_depth_snapshot_readiness_met(const AdaptiveDepthSnapshot& snapshot,
+                                           const AdaptiveLeafSweepConfig& config);
+AdaptiveDepthSnapshot adaptive_snapshot_from_fast_candidate(const AdaptiveLeafSweepResult& candidate,
+                                                            int depth,
+                                                            const AdaptiveLeafSweepConfig& config);
 std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnapshot>& snapshots);
 
 bool adaptive_virtual_split_node(const lect_database::SplitPolicyDescriptor& descriptor,
