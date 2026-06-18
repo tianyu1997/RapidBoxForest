@@ -31,11 +31,7 @@
 
 namespace rbf {
 
-using detail::env_double_list_or_empty;
-using detail::env_double_or_default;
 using detail::env_index_list_contains;
-using detail::env_indexed_double_or_default;
-using detail::env_int_list_or_empty;
 
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
                                                    const std::vector<Eigen::VectorXd>& goals) {
@@ -892,14 +888,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 	        const double max_pair_distance =
 	            std::max(0.0, last_adaptive_partition_config_.hipac_transition_max_pair_distance);
 	        const double sample_step =
-	            std::max(1e-4,
-	                     env_indexed_double_or_default(
-	                         "RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
-	                         task.query_index,
-	                         env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
-	                                               config_.query.audit_segment_step > 0.0
-	                                                   ? config_.query.audit_segment_step
-	                                                   : 0.01)));
+	            query_bridge_direct_corridor_runtime_options(
+	                task.query_index,
+	                config_.query.audit_segment_step).sample_step;
 	        std::unordered_map<int, int> component_by_box;
 	        const auto components = adaptive_partition_->component_box_ids_with_overlay();
 	        for (std::size_t component_index = 0; component_index < components.size(); ++component_index) {
