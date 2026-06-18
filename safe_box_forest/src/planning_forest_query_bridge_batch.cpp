@@ -1167,11 +1167,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         }
         return total_added;
     };
-    auto task_already_satisfied = [&](const QueryBridgeSearchTask& task) {
-        return task.hipac_online_satisfied ||
-               task.direct_start_goal_satisfied ||
-               current_query_good(task, true);
-    };
     auto adopt_waypoint_after_rrt =
         [&](QueryBridgeSearchTask& task,
             std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
@@ -1517,7 +1512,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             auto& task = tasks[task_offset];
             prepared[task_offset].task_start_ms = elapsed_ms_since(batch_t0);
             const auto probe_t0 = Clock::now();
-            if (task_already_satisfied(task)) {
+            if (query_bridge_task_has_explicit_satisfaction(task) ||
+                current_query_good(task, true)) {
                 prepared[task_offset].skipped = true;
                 record_query_bridge_batch_task_already_satisfied(
                     batch_context,
@@ -1637,7 +1633,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     for (auto& task : tasks) {
         const auto task_t0 = Clock::now();
         const auto probe_t0 = Clock::now();
-        if (task_already_satisfied(task)) {
+        if (query_bridge_task_has_explicit_satisfaction(task) ||
+            current_query_good(task, true)) {
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,
                 task,

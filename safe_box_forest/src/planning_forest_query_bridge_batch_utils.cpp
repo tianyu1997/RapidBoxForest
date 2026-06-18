@@ -191,6 +191,12 @@ bool query_bridge_parallel_task_rrt_enabled(
            retry_options.no_path_retry_budget_stages == 0;
 }
 
+bool query_bridge_task_has_explicit_satisfaction(
+    const QueryBridgeSearchTask& task) {
+    return task.hipac_online_satisfied ||
+           task.direct_start_goal_satisfied;
+}
+
 void query_bridge_mark_task_skip(BuildProfile& profile,
                                  std::size_t index,
                                  double code,

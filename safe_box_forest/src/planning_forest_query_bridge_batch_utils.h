@@ -227,6 +227,9 @@ bool query_bridge_parallel_task_rrt_enabled(
     bool has_segment_only_task,
     const QueryBridgeRetryOptions& retry_options);
 
+bool query_bridge_task_has_explicit_satisfaction(
+    const QueryBridgeSearchTask& task);
+
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
     const QueryBridgeSearchTask& task,
     bool forced,
