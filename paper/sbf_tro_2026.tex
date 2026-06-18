@@ -208,7 +208,7 @@ Optimization-ready regions with construction and recertification cost. \\
 \rbf{} & Box forest + typed graph + LECT evidence & Yes &
 Joint boxes via link envelopes; query validation for \mbox{filter-only} paths &
 Scene boxes are maintained locally; LECT replays kinematics-keyed evidence &
-Low-overhead volumetric reuse with less expressive boxes and conditional certificates. \\
+Box-level volumetric reuse with less expressive regions and conditional certificates. \\
 \midrule
 \multicolumn{6}{@{}p{0.985\textwidth}@{}}{\emph{Abbrev.:}
 PRM=probabilistic roadmap; RRT=rapidly exploring random tree;
@@ -1189,7 +1189,6 @@ forests, each without the query bridge and repair stages, produced 0/8 paths in
 both diagnostic configurations. The 0/8 result is a scope check, not a
 measurement of post-edit query success or an end-to-end replanning benchmark.
 
-\FloatBarrier
 \section{Conclusion}\label{sec:conclusion}
 
 \rbf{} is a link-envelope-guided box-forest planner for
