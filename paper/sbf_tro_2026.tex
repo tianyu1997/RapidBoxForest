@@ -268,9 +268,9 @@ fixed-step query validation unless a row is explicitly conservative. Warm-cache
 Shelf rows include replay-based scene construction and per-query retrieval; they
 exclude snapshot creation and loading costs, resident memory, and offline setup
 amortization. Dynamic update rows measure scene-cache maintenance, not the
-full update-and-query pipeline. Thus the experiments evaluate low-overhead
-reusable-region construction under a stated validation policy, not claims of
-dominance over single-query planners, repair-free
+full update-and-query pipeline. Thus the experiments evaluate reusable-region
+construction under stated validation and cache-accounting boundaries, not
+claims of dominance over single-query planners, repair-free
 certification, or completeness. This work contributes:
 \begin{enumerate}[nosep,leftmargin=*]
   \item \emph{Box validation:} endpoint-to-link envelopes provide conditional
@@ -568,7 +568,7 @@ the OBB source is a non-conservative filter and not a certificate.
 \end{samepage}
 
 OBB endpoint records feed the same endpoint-to-link construction as joint boxes.
-They refine a local typed edge; they do not add OBB nodes to the global
+These records refine a local typed edge; they do not add OBB nodes to the global
 axis-aligned forest.
 For a zonotope-plus-box endpoint record,
 \[
@@ -622,8 +622,8 @@ their endpoint source and separation tests are conservative.
 SupportHull keeps the two endpoint AABBs and link radius as a compact support
 record. For direction $d$, the support point is selected from the proximal or
 distal endpoint box, and obstacle refinement uses a fixed-size GJK narrow phase
-with outward obstacle inflation. This preserves more directional structure than
-a single AABB while keeping the cached record compact. When present,
+with outward obstacle inflation. The support record preserves more directional
+structure than a single AABB while keeping the cached record compact. When present,
 fixed-direction slab records act only as an intermediate filter between the AABB
 broadphase and SupportHull/GJK refinement; they do not change the certificate
 condition, which still depends on conservative endpoint evidence and outward
@@ -1077,7 +1077,7 @@ five-anchor query cycle AS--TS--CS--LB--RB--AS; the anchor AS is the
 approach-side anchor. TS and CS are shelf-side target anchors, and LB and RB are
 the left and right bin anchors. Table~\ref{tab:tro-shelf-ablation} and
 Fig.~\ref{fig:tro_shelf_tradeoff} report the manifest-registered b100 profile over seeds
-0--7. This fixed cycle is used for mechanism ablations and profile selection;
+0--7. The five-anchor cycle is used for mechanism ablations and profile selection;
 the saved random catalog below tests broader start-goal variation. The table
 reports build time, \onlineq{}, five-query amortized time
 \(\mathrm{Build}/5+\onlineq{}\), and path ratio. The Critical sample row uses
@@ -1131,7 +1131,7 @@ The random-scene study uses saved prefix catalogs, with ten pre-generated
 queries per scene shared by every method. Across KUKA LBR iiwa, UR5, and Panda,
 the medium and hard catalogs over ten seeds contain 600 saved query instances
 before the method-independent pruning rule below is applied. For each robot and
-seed, medium and hard rows share the saved start-goal set; hard rows add later
+seed, medium and hard rows share the saved start-goal set; hard rows add saved
 obstacle prefixes instead of regenerating unrelated scenes. Before any method
 summary is computed, a fixed manifest rule removes direct-line cases, where the
 start-goal segment validates directly. The trade-off plot uses Build/5 +
@@ -1158,8 +1158,8 @@ audited path ratios for \rbf{}, PRM, \mbox{RRT-Connect}, and BIT* under shared
 catalogs.
 \mbox{RRT-Connect} has the lowest median \onlineq{} in five of six operating
 points; Panda-Hard is the exception. \mbox{RRT-Connect}'s median audited path
-ratio is higher, hence worse, than \rbf{} in all six. With the scene forest
-reused, \rbf{} has lower median \onlineq{} than BIT* in all six cases;
+ratio is higher, hence worse, than \rbf{} in all six. Under scene-forest reuse,
+\rbf{} has lower median \onlineq{} than BIT* in all six cases;
 \(L/L^\star_{\mathrm{q}}\) matches BIT* to table precision in the two IIWA rows
 and is higher in the four UR5/Panda rows.
 
@@ -1210,8 +1210,8 @@ median \onlineq{} in all six, while BIT* has better ratios in the four
 UR5/Panda cases.
 The dynamic-update rows measure scene-cache maintenance rather than full
 update-and-query performance.
-Within this scope, \rbf{} is a low-overhead method for constructing reusable
-regions for repeated queries. The same scope defines the remaining limitations:
+Within these scopes, the results characterize \rbf{} as a reusable-region
+construction method for repeated queries. These scopes also define the remaining limitations:
 certificates do not cover repaired, shortened, post-processed, or
 \mbox{filter-only} paths unless converted into conservative regions; LECT
 snapshot creation and loading
