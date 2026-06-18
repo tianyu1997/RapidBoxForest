@@ -634,7 +634,6 @@ class RBFLeafRRTOptions:
     leaf_threads: int = DEFAULT_RBF_THREADS
     envelope: str = "support_hull"
     support_hull_skip_aabb_broadphase: bool = False
-    support_hull_direct_collision: bool = False
     endpoint_source: str = "ifk"
     hifk_max_depth: int = 9
     unsafe_sampling_validation: bool = False
@@ -1209,7 +1208,6 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     if options.envelope != "link_aabb" and hasattr(cfg.envelope_type.support_hull_config, "direct_collision"):
         if hasattr(cfg.envelope_type.support_hull_config, "skip_aabb_broadphase"):
             cfg.envelope_type.support_hull_config.skip_aabb_broadphase = bool(options.support_hull_skip_aabb_broadphase)
-        cfg.envelope_type.support_hull_config.direct_collision = bool(options.support_hull_direct_collision)
     if bool(options.unsafe_sampling_validation):
         cfg.validation.mode = sbf.OracleValidationMode.CoverageHeuristic
         cfg.validation.accept_unsafe_free = True

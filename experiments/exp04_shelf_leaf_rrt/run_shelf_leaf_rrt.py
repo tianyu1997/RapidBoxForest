@@ -403,7 +403,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         leaf_threads=threads,
         envelope="link_aabb" if case == "link_aabb" else "support_hull",
         support_hull_skip_aabb_broadphase=(case == "support_hull_no_aabb"),
-        support_hull_direct_collision=(case == "support_hull_direct"),
         endpoint_source=(
             "critsample"
             if case in {"critsample_support_hull", "critsample_d23_cache"}
@@ -580,7 +579,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.worker_shared_endpoint_cache": bool(options.worker_shared_endpoint_cache),
         "option.envelope": str(options.envelope),
         "option.support_hull_skip_aabb_broadphase": bool(options.support_hull_skip_aabb_broadphase),
-        "option.support_hull_direct_collision": bool(options.support_hull_direct_collision),
         "option.hifk_max_depth": int(options.hifk_max_depth),
         "option.threads": int(options.threads),
         "option.leaf_threads": int(options.leaf_threads),
