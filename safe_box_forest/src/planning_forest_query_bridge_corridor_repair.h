@@ -43,7 +43,6 @@ struct QueryBridgeRepairSubdivisionOptions {
 struct QueryBridgeAdaptiveRepairOptions {
     int priority_mode = 1;
     bool enabled = true;
-    double target_segment_fraction = 0.0;
     int max_subdivisions = 0;
     double fine_step = 0.0;
     int max_calls = 0;

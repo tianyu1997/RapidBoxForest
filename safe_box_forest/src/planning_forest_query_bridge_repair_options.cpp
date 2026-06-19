@@ -29,11 +29,6 @@ QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_
         detail::env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY", 1);
     options.enabled =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR", 1) != 0;
-    options.target_segment_fraction =
-        std::max(0.0,
-                 detail::env_double_or_default(
-                     "RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION",
-                     0.0));
     options.max_subdivisions = std::max(
         subdivisions + 1,
         detail::env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS",

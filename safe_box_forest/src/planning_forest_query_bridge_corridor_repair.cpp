@@ -85,9 +85,6 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
         "query_bridge.direct_corridor_adaptive_repair_priority",
         static_cast<double>(options.priority_mode));
     context.diagnostics().set_value(
-        "query_bridge.direct_corridor_adaptive_repair_target_segment_fraction",
-        options.target_segment_fraction);
-    context.diagnostics().set_value(
         "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
         stats.initial_bad_fraction);
 
@@ -98,12 +95,6 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
                                                         options.priority_mode);
         for (int transition : ordered_final_bad) {
             if (stats.calls >= options.max_calls) {
-                break;
-            }
-            if (options.target_segment_fraction > 0.0 &&
-                bad_fraction(stats.final_bad) <= options.target_segment_fraction) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_adaptive_repair_target_stops");
                 break;
             }
             if (transition_connected(transition) ||
@@ -150,9 +141,6 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
                     }
                     if (commit.added_box) {
                         stats.added += 1;
-                    }
-                    if (options.target_segment_fraction > 0.0) {
-                        stats.final_bad = bad_transitions();
                     }
                     if (transition_connected(transition)) {
                         break;
