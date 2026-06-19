@@ -30,19 +30,13 @@ QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options() {
 QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
     bool direct_segment_after_rrt_candidate) {
     QueryBridgeWaypointShortcutOptions options;
-    options.enabled =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT",
-                                   direct_segment_after_rrt_candidate ? 1 : 0) != 0;
-    options.min_gain =
-        std::max(0.0,
-                 detail::env_double_or_default("RBF_QUERY_BRIDGE_WAYPOINT_SHORTCUT_MIN_GAIN",
-                                               1e-6));
+    options.enabled = direct_segment_after_rrt_candidate;
+    options.min_gain = 1e-6;
     return options;
 }
 
 bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candidate) {
-    return detail::env_int_or_default("RBF_QUERY_BRIDGE_INTERNAL_SIMPLIFY",
-                                      direct_segment_after_rrt_candidate ? 1 : 0) != 0;
+    return direct_segment_after_rrt_candidate;
 }
 
 QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_options(
