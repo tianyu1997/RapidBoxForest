@@ -22,18 +22,9 @@ QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_e
 
 QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env() {
     QueryBridgeBatchExecutionOptions options;
-    options.evaluate_all_fallback_paths =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_EVALUATE_ALL_FALLBACK_PATHS", 0) != 0;
     options.parallel_task_rrt =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
     return options;
-}
-
-void record_query_bridge_batch_execution_diagnostics(
-    StageContext& context,
-    const QueryBridgeBatchExecutionOptions& options) {
-    context.diagnostics().set_value("query_bridge.evaluate_all_fallback_paths",
-                                    options.evaluate_all_fallback_paths ? 1.0 : 0.0);
 }
 
 }  // namespace rbf

@@ -282,7 +282,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
     const QueryBridgeBatchExecutionOptions batch_execution_options =
         query_bridge_batch_execution_options_from_env();
-    record_query_bridge_batch_execution_diagnostics(batch_context, batch_execution_options);
     const QueryBridgeParallelRrtOptions parallel_rrt_options =
         query_bridge_parallel_rrt_options_from_env();
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
@@ -474,7 +473,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 index_options,
                 retry_options,
                 bridge_acceptance,
-                batch_execution_options,
                 fast_direct_segment_after_rrt,
                 edge_options.fast_direct_shortcut,
                 edge_options.fast_direct_random_shortcut_iters,
@@ -614,7 +612,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             index_options,
             retry_options,
             bridge_acceptance,
-            batch_execution_options,
             fast_direct_segment_after_rrt,
             edge_options.fast_direct_shortcut,
             edge_options.fast_direct_random_shortcut_iters,

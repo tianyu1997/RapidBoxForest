@@ -53,7 +53,6 @@ struct QueryBridgeHybridizeAttemptOptions {
 };
 
 struct QueryBridgeBatchExecutionOptions {
-    bool evaluate_all_fallback_paths = false;
     bool parallel_task_rrt = true;
 };
 
@@ -112,10 +111,6 @@ std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
 
 QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env();
-
-void record_query_bridge_batch_execution_diagnostics(
-    StageContext& context,
-    const QueryBridgeBatchExecutionOptions& options);
 
 QueryBridgeIndexOptions query_bridge_index_options_from_env();
 

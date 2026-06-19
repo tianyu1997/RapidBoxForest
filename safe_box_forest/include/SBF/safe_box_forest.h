@@ -773,8 +773,7 @@ private:
 		bool scene_reusable_edges,
 		const QueryBridgeIndexOptions& index_options,
 		const QueryBridgeRetryOptions& retry_options,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		const QueryBridgeBatchExecutionOptions& batch_options);
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance);
 	void finish_query_bridge_ready_waypoint_task(
 		QueryBridgeSearchTask& task,
 		int& added_for_task,
@@ -786,7 +785,6 @@ private:
 		const QueryBridgeIndexOptions& index_options,
 		const QueryBridgeRetryOptions& retry_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		const QueryBridgeBatchExecutionOptions& batch_options,
 		bool fast_direct_segment_after_rrt,
 		bool fast_direct_shortcut,
 		int fast_direct_random_shortcut_iters,

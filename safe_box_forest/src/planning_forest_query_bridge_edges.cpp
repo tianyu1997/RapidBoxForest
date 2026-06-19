@@ -134,8 +134,7 @@ int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
     bool scene_reusable_edges,
     const QueryBridgeIndexOptions& index_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-    const QueryBridgeBatchExecutionOptions& batch_options) {
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
     std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
     if (!task.waypoint_path.empty()) {
         candidate_paths.push_back(&task.waypoint_path);
@@ -208,9 +207,7 @@ int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
                     1.0);
                 task.waypoint_path = candidate_path;
             }
-            if (!batch_options.evaluate_all_fallback_paths) {
-                break;
-            }
+            break;
         }
     }
     return total_added;
@@ -227,7 +224,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     const QueryBridgeIndexOptions& index_options,
     const QueryBridgeRetryOptions& retry_options,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-    const QueryBridgeBatchExecutionOptions& batch_options,
     bool fast_direct_segment_after_rrt,
     bool fast_direct_shortcut,
     int fast_direct_random_shortcut_iters,
@@ -330,8 +326,7 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
                                         scene_reusable_edges,
                                         index_options,
                                         retry_options,
-                                        bridge_acceptance,
-                                        batch_options);
+                                        bridge_acceptance);
     const double pave_ms = query_bridge_edge_elapsed_ms_since(pave_t0);
     context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                         pave_ms);
