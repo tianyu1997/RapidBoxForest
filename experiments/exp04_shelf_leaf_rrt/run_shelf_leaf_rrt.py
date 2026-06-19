@@ -5,7 +5,6 @@ import argparse
 import csv
 import json
 import math
-import os
 import sys
 import time
 from pathlib import Path
@@ -15,7 +14,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import (
+    DEFAULT_OUTPUT_ROOT,
+    configure_thread_environment,
+    environment_metadata,
+    run_id,
+    write_json,
+)
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.rbf_leaf_rrt import (
@@ -177,18 +182,6 @@ ALLOWED_CONFIG_DIFFS = {
         "cfg.endpoint_source.source",
     },
 }
-
-
-def configure_thread_environment(threads: int) -> None:
-    value = str(max(1, int(threads)))
-    for key in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[key] = value
 
 
 def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, Any]]:

@@ -5,7 +5,6 @@ import argparse
 import csv
 import hashlib
 import math
-import os
 import random
 import sys
 import time
@@ -18,6 +17,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from experiments.common.experiment_io import (
     DEFAULT_OUTPUT_ROOT,
+    configure_thread_environment,
     environment_metadata,
     namespace_dict,
     run_id,
@@ -71,18 +71,6 @@ DEFAULT_MAX_OBSTACLES = 3
 
 def parse_int_list(text: str) -> list[int]:
     return [int(item.strip()) for item in str(text).split(",") if item.strip()]
-
-
-def set_thread_env(threads: int) -> None:
-    value = str(max(1, int(threads)))
-    for key in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[key] = value
 
 
 def finite(value: Any) -> float:
@@ -704,7 +692,7 @@ def main() -> int:
         args.seeds = ",".join(str(seed) for seed in parse_int_list(args.seeds)[:3])
         args.min_obstacles = DEFAULT_MIN_OBSTACLES
         args.max_obstacles = DEFAULT_MAX_OBSTACLES
-    set_thread_env(int(args.threads))
+    configure_thread_environment(int(args.threads))
 
     catalog_path = Path(args.scene_catalog or (args.out_dir / "ordered_obstacle_catalog.json"))
     if args.dry_run:

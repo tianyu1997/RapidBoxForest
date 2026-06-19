@@ -18,6 +18,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "outputs" / "new_experiments"
 
 
+def configure_thread_environment(threads: int) -> None:
+    """Apply one thread-count setting consistently across numeric libraries."""
+
+    value = str(max(1, int(threads)))
+    for key in (
+        "OMP_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+    ):
+        os.environ[key] = value
+
+
 def csv_list(raw: str) -> list[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
 

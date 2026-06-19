@@ -7,7 +7,6 @@ import csv
 import hashlib
 import json
 import math
-import os
 import re
 import sys
 import time
@@ -18,7 +17,14 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_list, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import (
+    DEFAULT_OUTPUT_ROOT,
+    configure_thread_environment,
+    csv_list,
+    environment_metadata,
+    run_id,
+    write_json,
+)
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import DEFAULT_QUERIES_PER_SCENE, generate_catalog, make_robot, queries_for_key, scene_for_key
@@ -220,18 +226,6 @@ def resolved_adaptive_target_depth(args: argparse.Namespace) -> int:
 def resolved_adaptive_grid_target_depth(args: argparse.Namespace) -> int:
     value = int(getattr(args, "adaptive_grid_target_depth", 0))
     return value if value > 0 else resolved_adaptive_target_depth(args)
-
-
-def configure_thread_environment(threads: int) -> None:
-    value = str(max(1, int(threads)))
-    for key in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[key] = value
 
 
 def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace,
