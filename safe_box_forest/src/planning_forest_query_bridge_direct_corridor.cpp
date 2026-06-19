@@ -71,7 +71,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     const int partition_append_batch_size = immediate_partition_append
         ? direct_corridor_options.partition_append_batch_size
         : 0;
-    const bool detailed_direct_timing = direct_corridor_options.detailed_timing;
+    constexpr bool detailed_direct_timing = false;
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_partition_neighbor_candidates_enabled",
         use_partition_neighbor_candidates ? 1.0 : 0.0);
@@ -81,9 +81,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_partition_append_batch_size",
         static_cast<double>(partition_append_batch_size));
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_detailed_timing_enabled",
-        detailed_direct_timing ? 1.0 : 0.0);
     BoxSpatialIndex direct_box_index;
     if (!use_partition_cover_index) {
         direct_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
