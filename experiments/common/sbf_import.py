@@ -9,7 +9,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def configure_sbf_python_path() -> None:
-    """Expose the local SBF Python binding without importing legacy experiments."""
+    """Expose the local SBF Python binding without importing archived experiments."""
     candidates = [
         REPO_ROOT / "build" / "python",
         REPO_ROOT / "build-leaf-sweep" / "python",

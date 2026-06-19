@@ -115,7 +115,7 @@ def run_shelf_iris_anytime(
     if not script.exists():
         raise RuntimeError(
             "IRIS/GCS shelf runner is not bundled in the clean public release. "
-            f"Set {SHELF_IRIS_SCRIPT_ENV} to the legacy runner path or import the "
+            f"Set {SHELF_IRIS_SCRIPT_ENV} to an external runner path or import the "
             "published baseline artifact instead."
         )
     out_json.parent.mkdir(parents=True, exist_ok=True)
