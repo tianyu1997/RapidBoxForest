@@ -249,6 +249,12 @@ src/planning_forest_query_bridge_direct_segments.cpp
 src/planning_forest_query_bridge_edges.cpp
                                    query bridge box-corridor, residual segment,
                                    and waypoint task edge completion helpers
+src/planning_forest_query_bridge_endpoint_direct.cpp
+                                   direct endpoint-to-main audited segment
+                                   insertion helper
+src/planning_forest_query_bridge_endpoint.cpp
+                                   endpoint-to-main box-corridor attachment
+                                   implementation
 src/planning_forest_query_bridge_pave.cpp
                                    query bridge chain-pave execution and
                                    partition append helpers
