@@ -153,7 +153,18 @@ def ensure_robot_lectdb_cache(
     )
     forest = sbf.SafeBoxForest(robot, cfg)
     start = time.perf_counter()
-    result = dict(forest.prewarm_lifelong_cache(actual_depth, [far_obstacle()]))
+    result = dict(
+        forest.prewarm_lifelong_cache(
+            actual_depth,
+            [far_obstacle()],
+            gray_leaf_order=True,
+            show_progress=True,
+            streaming=False,
+            streaming_cap=2_000_000,
+            checkpoint_interval_s=0.0,
+            legacy_prewarm=False,
+        )
+    )
     wall_s = time.perf_counter() - start
     verify_ok = bool(forest.database_verify(True)) if verify and hasattr(forest, "database_verify") else True
     snapshot_ok = bool(forest.database_wait_for_snapshot_publish()) if publish_snapshot and hasattr(forest, "database_wait_for_snapshot_publish") else False

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import shutil
 import sys
 import time
@@ -120,20 +119,6 @@ def main() -> int:
         shutil.rmtree(cache_path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if bool(args.streaming):
-        os.environ["SBF_PREWARM_STREAMING"] = "1"
-        os.environ["SBF_PREWARM_RESIDENT_CAP"] = str(max(1, int(args.resident_cap)))
-    else:
-        os.environ.pop("SBF_PREWARM_STREAMING", None)
-        os.environ.pop("SBF_PREWARM_RESIDENT_CAP", None)
-    if float(args.checkpoint_seconds) > 0.0:
-        os.environ["SBF_PREWARM_CHECKPOINT_SECONDS"] = str(float(args.checkpoint_seconds))
-    else:
-        os.environ.pop("SBF_PREWARM_CHECKPOINT_SECONDS", None)
-    os.environ["SBF_PREWARM_PROGRESS"] = "1" if bool(args.progress) else "0"
-    os.environ.setdefault("SBF_PREWARM_VERIFY", "0")
-    os.environ.setdefault("SBF_PREWARM_VERIFY_STRICT", "0")
-
     print(
         "prewarm config: "
         f"depth={int(args.depth)} max_depth={int(args.max_depth)} threads={int(args.threads)} "
@@ -153,7 +138,18 @@ def main() -> int:
     )
     forest = sbf.SafeBoxForest(robot, cfg)
     t0 = time.perf_counter()
-    prewarm = dict(forest.prewarm_lifelong_cache(int(args.depth), [far_obstacle()]))
+    prewarm = dict(
+        forest.prewarm_lifelong_cache(
+            int(args.depth),
+            [far_obstacle()],
+            gray_leaf_order=True,
+            show_progress=bool(args.progress),
+            streaming=bool(args.streaming),
+            streaming_cap=max(1, int(args.resident_cap)),
+            checkpoint_interval_s=max(0.0, float(args.checkpoint_seconds)),
+            legacy_prewarm=False,
+        )
+    )
     wall_s = time.perf_counter() - t0
     verify_ok = bool(forest.database_verify(True)) if bool(args.verify) else True
     snapshot_ok = bool(forest.database_wait_for_snapshot_publish()) if bool(args.publish_snapshot) else False

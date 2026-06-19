@@ -2320,43 +2320,28 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              [](rbf::RBFPlanningForest& forest,
                 int target_depth,
                 const std::vector<rbf::Obstacle>& obstacles,
-                bool gray_leaf_order) {
+                bool gray_leaf_order,
+                bool show_progress,
+                bool streaming,
+                std::size_t streaming_cap,
+                double checkpoint_interval_s,
+                bool legacy_prewarm) {
                  if (obstacles.empty()) {
                      throw std::invalid_argument("prewarm_lifelong_cache requires a non-empty obstacle scene so endpoint evidence is materialized");
                  }
                  const auto start = std::chrono::steady_clock::now();
                  const int materialize_depth = std::max(0, target_depth);
-                 // Progress bar + ETA to stderr (disable with SBF_PREWARM_PROGRESS=0).
-                 const char* progress_env = std::getenv("SBF_PREWARM_PROGRESS");
-                 const bool show_progress = (progress_env == nullptr || std::string(progress_env) != "0");
-                 // Prewarm persistence mode (env-selected):
+                 // Prewarm persistence mode:
                  //   default                    -> bulk: all records resident,
                  //       fastest, RAM ~ O(records). Good up to ~D20.
-                 //   SBF_PREWARM_STREAMING=1     -> streaming: resident cache is
-                 //       capped (SBF_PREWARM_RESIDENT_CAP records, default 2,000,000)
+                 //   streaming=true             -> resident cache is capped
                  //       so peak RAM stays bounded for deep trees (e.g. D25 ~62M
                  //       records). Records are appended to the durable store as
                  //       built; evicted child records are reloaded on demand by the
                  //       bottom-up parent sweep. Output is bit-identical to bulk.
-                 //   SBF_DISABLE_BULK_PREWARM=1  -> legacy path (A/B baseline only).
-                 const bool legacy_prewarm = std::getenv("SBF_DISABLE_BULK_PREWARM") != nullptr;
-                 const bool streaming_prewarm = std::getenv("SBF_PREWARM_STREAMING") != nullptr;
-                 std::size_t streaming_cap = 2000000;
-                 if (const char* cap_env = std::getenv("SBF_PREWARM_RESIDENT_CAP")) {
-                     char* endp = nullptr;
-                     const unsigned long long parsed = std::strtoull(cap_env, &endp, 10);
-                     if (endp != cap_env && parsed > 0) {
-                         streaming_cap = static_cast<std::size_t>(parsed);
-                     }
-                 }
-                 double checkpoint_interval_s = 0.0;
-                 if (const char* checkpoint_env = std::getenv("SBF_PREWARM_CHECKPOINT_SECONDS")) {
-                     char* endp = nullptr;
-                     const double parsed = std::strtod(checkpoint_env, &endp);
-                     if (endp != checkpoint_env && parsed > 0.0) {
-                         checkpoint_interval_s = parsed;
-                     }
-                 }
+                 const bool streaming_prewarm = streaming;
+                 streaming_cap = std::max<std::size_t>(std::size_t{1}, streaming_cap);
+                 checkpoint_interval_s = std::max(0.0, checkpoint_interval_s);
                  std::size_t periodic_checkpoint_attempts = 0;
                  std::size_t periodic_checkpoint_failures = 0;
                  auto last_checkpoint_time = start;
@@ -2657,7 +2642,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  result["wall_s"] = std::chrono::duration<double>(end - start).count();
                  return result;
              },
-             py::arg("target_depth"), py::arg("obstacles"), py::arg("gray_leaf_order") = true)
+             py::arg("target_depth"),
+             py::arg("obstacles"),
+             py::arg("gray_leaf_order") = true,
+             py::arg("show_progress") = true,
+             py::arg("streaming") = false,
+             py::arg("streaming_cap") = static_cast<std::size_t>(2000000),
+             py::arg("checkpoint_interval_s") = 0.0,
+             py::arg("legacy_prewarm") = false)
         .def("debug_validate_intervals",
              [](rbf::RBFPlanningForest& forest,
                 const std::vector<rbf::Obstacle>& obstacles,
