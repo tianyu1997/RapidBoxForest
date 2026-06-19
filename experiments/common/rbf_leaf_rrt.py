@@ -36,7 +36,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
-    DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -676,7 +675,6 @@ class RBFLeafRRTOptions:
     )
     query_bridge_partition_neighbor_candidates: bool = DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES
     query_bridge_direct_append_partition_immediate: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE
-    query_bridge_local_sample_assimilation: bool = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION
     query_bridge_direct_partition_append_batch_size: int = (
         DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE
     )
@@ -2083,9 +2081,6 @@ def bridge_all_queries(
         env_updates["RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE"] = (
             "1" if bool(getattr(options, "query_bridge_direct_append_partition_immediate", False)) else "0"
         )
-        env_updates["RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION"] = (
-            "1" if bool(getattr(options, "query_bridge_local_sample_assimilation", True)) else "0"
-        )
         env_updates["RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE"] = str(
             int(getattr(options, "query_bridge_direct_partition_append_batch_size", 32))
         )
@@ -2675,7 +2670,6 @@ def run_leaf_rrt(
         "obb_fallback_orientations_on_primary_fail": bool(
             getattr(options, "obb_fallback_orientations_on_primary_fail", False)
         ),
-        "query_bridge_local_sample_assimilation": bool(options.query_bridge_local_sample_assimilation),
         "query_bridge_direct_partition_append_batch_size": int(
             options.query_bridge_direct_partition_append_batch_size
         ),

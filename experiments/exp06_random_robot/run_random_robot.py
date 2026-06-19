@@ -50,7 +50,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
-    DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
     DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
@@ -556,9 +555,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["direct_append_partition_immediate"] = bool(
         args.query_bridge_direct_append_partition_immediate
     )
-    profile["query_bridge"]["local_sample_assimilation"] = bool(
-        args.query_bridge_local_sample_assimilation
-    )
     profile["query_bridge"]["direct_partition_append_batch_size"] = int(
         args.query_bridge_direct_partition_append_batch_size
     )
@@ -774,11 +770,6 @@ def parse_args() -> argparse.Namespace:
         "--query-bridge-direct-append-partition-immediate",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
-    )
-    parser.add_argument(
-        "--query-bridge-local-sample-assimilation",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     )
     parser.add_argument(
         "--query-bridge-direct-partition-append-batch-size",
@@ -1471,7 +1462,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_direct_append_partition_immediate=bool(
                 args.query_bridge_direct_append_partition_immediate
             ),
-            query_bridge_local_sample_assimilation=bool(args.query_bridge_local_sample_assimilation),
             query_bridge_direct_partition_append_batch_size=int(
                 args.query_bridge_direct_partition_append_batch_size
             ),
@@ -1591,7 +1581,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "obb_fast_primary_orientation": bool(args.obb_fast_primary_orientation),
             "obb_fallback_orientations_on_primary_fail": bool(args.obb_fallback_orientations_on_primary_fail),
             "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
-            "query_bridge_local_sample_assimilation": bool(args.query_bridge_local_sample_assimilation),
             "query_bridge_direct_partition_append_batch_size": int(
                 args.query_bridge_direct_partition_append_batch_size
             ),

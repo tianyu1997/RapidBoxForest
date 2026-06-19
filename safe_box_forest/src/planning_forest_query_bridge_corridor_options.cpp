@@ -63,8 +63,6 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
                        "RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE",
                        32))
         : 0;
-    options.local_sample_assimilation =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION", 1) != 0;
     options.full_residual_overlay_when_connected =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
                                    0) != 0;
