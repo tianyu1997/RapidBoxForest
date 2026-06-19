@@ -15,8 +15,14 @@ if str(REPO_ROOT) not in sys.path:
 from experiments.common.experiment_io import write_json
 from experiments.common.rbf_defaults import (
     CANONICAL_SYMMETRY_DESCRIPTOR,
-    D23_CACHE_ROOT,
+    CRITSAMPLE_D23_CACHE_LABEL,
     D23_CACHE_LABEL,
+    D23_CACHE_PREWARM_CHECKPOINT_SECONDS,
+    D23_CACHE_PREWARM_DEPTH,
+    D23_CACHE_PREWARM_RESIDENT_CAP,
+    D23_CACHE_ROOT,
+    DEFAULT_RBF_THREADS,
+    ROBOT_LECTDB_MAX_DEPTH,
 )
 from experiments.common.rbf_leaf_rrt import make_aafk_split_policy
 from experiments.common.sbf_import import import_sbf
@@ -87,17 +93,17 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--cache-label", default=D23_CACHE_LABEL)
-    parser.add_argument("--depth", type=int, default=23)
-    parser.add_argument("--max-depth", type=int, default=40)
+    parser.add_argument("--depth", type=int, default=D23_CACHE_PREWARM_DEPTH)
+    parser.add_argument("--max-depth", type=int, default=ROBOT_LECTDB_MAX_DEPTH)
     parser.add_argument("--root-mode", choices=["full_root"], default="full_root")
     parser.add_argument("--endpoint-source", choices=["ifk", "critsample"], default="ifk")
-    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--clean", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--verify", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--publish-snapshot", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--streaming", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--resident-cap", type=int, default=500_000)
-    parser.add_argument("--checkpoint-seconds", type=float, default=0.0)
+    parser.add_argument("--resident-cap", type=int, default=D23_CACHE_PREWARM_RESIDENT_CAP)
+    parser.add_argument("--checkpoint-seconds", type=float, default=D23_CACHE_PREWARM_CHECKPOINT_SECONDS)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out-json", type=Path, default=None)
     return parser.parse_args()
@@ -105,13 +111,15 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if int(args.depth) > 23:
+    if int(args.depth) > D23_CACHE_PREWARM_DEPTH:
         raise SystemExit(
-            "Refusing to prewarm depth > 23 for Exp4 cache. Depth is canonical LECT tree depth; use depth <= 23."
+            "Refusing to prewarm depth > "
+            f"{D23_CACHE_PREWARM_DEPTH} for Exp4 cache. Depth is canonical LECT tree depth; "
+            f"use depth <= {D23_CACHE_PREWARM_DEPTH}."
         )
     endpoint_label = endpoint_source_label(str(args.endpoint_source))
     if endpoint_label == "critsample" and str(args.cache_label) == D23_CACHE_LABEL:
-        args.cache_label = "iiwa_critsample_p23_canonical_full_root"
+        args.cache_label = CRITSAMPLE_D23_CACHE_LABEL
     cache_path = Path(args.cache_root) / str(args.cache_label)
     root_tag = "full_root"
     out_json = args.out_json or (cache_path.parent.parent / f"d{int(args.depth)}_prewarm_{root_tag}_{endpoint_label}_volume_min.json")
