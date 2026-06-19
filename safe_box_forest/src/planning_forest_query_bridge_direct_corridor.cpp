@@ -71,7 +71,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     const int partition_append_batch_size = immediate_partition_append
         ? direct_corridor_options.partition_append_batch_size
         : 0;
-    constexpr bool detailed_direct_timing = false;
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_partition_neighbor_candidates_enabled",
         use_partition_neighbor_candidates ? 1.0 : 0.0);
@@ -176,19 +175,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         if (!force && pending < static_cast<std::size_t>(partition_append_batch_size)) {
             return 0;
         }
-        const auto partition_append_t0 =
-            detailed_direct_timing ? Clock::now() : Clock::time_point{};
         const int appended = adaptive_partition_->append_boxes(
             boxes_,
             direct_partition_append_base,
             config_.query.adjacency_tolerance);
-        if (detailed_direct_timing) {
-            runtime_stats.commit_partition_append_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() -
-                                                          partition_append_t0).count();
-        }
-        runtime_stats.direct_partition_append_calls += 1;
-        runtime_stats.direct_partition_append_boxes += std::max(0, appended);
         context.diagnostics().add_counter(
             appended > 0
                 ? "query_bridge.direct_corridor_batched_partition_appends"
@@ -197,45 +187,30 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         return appended;
     };
     auto transition_connected = [&](int transition) {
-        const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        auto finish = [&](bool value) {
-            if (detailed_direct_timing) {
-                runtime_stats.transition_connected_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                runtime_stats.transition_connected_calls += 1;
-            }
-            return value;
-        };
         if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
-            return finish(false);
+            return false;
         }
         const auto& lhs_layer = sample_layers[static_cast<std::size_t>(transition)];
         const auto& rhs_layer = sample_layers[static_cast<std::size_t>(transition + 1)];
         if (lhs_layer.empty() || rhs_layer.empty()) {
-            return finish(false);
+            return false;
         }
         for (int lhs : lhs_layer) {
             const int root = dsu.find(lhs);
             for (int rhs : rhs_layer) {
                 if (root == dsu.find(rhs)) {
-                    return finish(true);
+                    return true;
                 }
             }
         }
-        return finish(false);
+        return false;
     };
     auto bad_transitions = [&]() {
-        const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         std::vector<int> bad;
         for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
             if (!transition_connected(static_cast<int>(sample_index))) {
                 bad.push_back(static_cast<int>(sample_index));
             }
-        }
-        if (detailed_direct_timing) {
-            runtime_stats.bad_transitions_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-            runtime_stats.bad_transitions_calls += 1;
         }
         return bad;
     };
@@ -322,21 +297,12 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     }
     auto find_duplicate_box_index = [&](OracleNodeId node,
                                         const std::vector<Interval>& intervals) {
-        const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        auto finish = [&](int value) {
-            if (detailed_direct_timing) {
-                runtime_stats.duplicate_lookup_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                runtime_stats.duplicate_lookup_calls += 1;
-            }
-            return value;
-        };
         if (node != kInvalidOracleNodeId) {
             const auto node_it = node_to_box_index.find(node);
             if (node_it != node_to_box_index.end()) {
-                return finish(node_it->second);
+                return node_it->second;
             }
-            return finish(-1);
+            return -1;
         }
         for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
             const auto& box = boxes_[box_index];
@@ -352,16 +318,13 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 }
             }
             if (same) {
-                return finish(static_cast<int>(box_index));
+                return static_cast<int>(box_index);
             }
         }
-        return finish(-1);
+        return -1;
     };
     std::vector<int> repair_indices;
     auto assimilate_box = [&](int box_index, int transition_hint) {
-        if (detailed_direct_timing) {
-            runtime_stats.assimilate_calls += 1;
-        }
         const auto assimilate_t0 = Clock::now();
         const int box_id = boxes_[static_cast<std::size_t>(box_index)].id;
         if (!graphless_direct_corridor) {
@@ -370,7 +333,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         int first_covered_sample = static_cast<int>(samples.size());
         int last_covered_sample = -1;
         int covered_sample_count = 0;
-        const auto sample_scan_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         const auto& box_intervals = boxes_[static_cast<std::size_t>(box_index)].joint_intervals;
         auto record_sample_coverage = [&](std::size_t sample_index) {
             const int sample_index_int = static_cast<int>(sample_index);
@@ -451,11 +413,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 "query_bridge.direct_corridor_assimilate_covered_samples",
                 static_cast<double>(covered_sample_count));
         }
-        if (detailed_direct_timing) {
-            runtime_stats.assimilate_sample_scan_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - sample_scan_t0).count();
-        }
-        const auto candidate_build_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         std::vector<int> candidates;
         auto add_layer = [&](int layer_index) {
             if (layer_index < 0 || layer_index >= static_cast<int>(sample_layers.size())) {
@@ -494,11 +451,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         }
         std::sort(candidates.begin(), candidates.end());
         candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
-        if (detailed_direct_timing) {
-            runtime_stats.assimilate_candidate_build_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - candidate_build_t0).count();
-        }
-        const auto adjacency_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         int local_edges = 0;
         for (int candidate : candidates) {
             if (candidate == box_index ||
@@ -521,10 +473,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 }
             }
         }
-        if (detailed_direct_timing) {
-            runtime_stats.assimilate_adjacency_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - adjacency_t0).count();
-        }
         context.diagnostics().add_counter(
             "query_bridge.direct_corridor_incremental_adjacency_checks",
             static_cast<double>(candidates.size()));
@@ -542,38 +490,20 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     auto commit_result = [&](FindFreeBoxResult result,
                              const Eigen::VectorXd& seed,
                              int transition_hint) -> int {
-        const auto commit_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        auto finish = [&](int value) {
-            if (detailed_direct_timing) {
-                runtime_stats.commit_total_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - commit_t0).count();
-                runtime_stats.commit_calls += 1;
-            }
-            return value;
-        };
         if (!result.found ||
             !intervals_contain_point_local(result.intervals,
                                            seed,
                                            config_.query.adjacency_tolerance)) {
-            return finish(-1);
+            return -1;
         }
         const int duplicate_index = find_duplicate_box_index(result.node,
                                                              result.intervals);
         if (duplicate_index >= 0) {
             assimilate_box(duplicate_index, transition_hint);
-            return finish(duplicate_index);
+            return duplicate_index;
         }
-        const auto dynamic_policy_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
-            if (detailed_direct_timing) {
-                runtime_stats.commit_dynamic_policy_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
-            }
-            return finish(-1);
-        }
-        if (detailed_direct_timing) {
-            runtime_stats.commit_dynamic_policy_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
+            return -1;
         }
         BoxNode box;
         box.id = next_id++;
@@ -607,67 +537,32 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         }
         dsu.add();
         assimilate_box(box_index, transition_hint);
-        return finish(box_index);
+        return box_index;
     };
     auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
-        const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        auto finish = [&](bool value) {
-            if (detailed_direct_timing) {
-                runtime_stats.current_cover_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                runtime_stats.current_cover_calls += 1;
-            }
-            return value;
-        };
         if (use_partition_cover_index) {
-            const auto partition_cover_t0 =
-                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const bool partition_covered =
                 !adaptive_partition_->covering_box_ids(point,
                                                        config_.query.adjacency_tolerance).empty();
-            if (detailed_direct_timing) {
-                runtime_stats.current_cover_partition_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              partition_cover_t0).count();
-            }
             if (partition_covered) {
-                return finish(true);
+                return true;
             }
         }
         if (use_partition_cover_index) {
-            const auto corridor_scan_t0 =
-                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             for (int box_index : corridor_new_box_indices) {
                 if (box_index >= 0 &&
                     box_index < static_cast<int>(boxes_.size()) &&
                     intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
                                                    point,
                                                    config_.query.adjacency_tolerance)) {
-                    if (detailed_direct_timing) {
-                        runtime_stats.current_cover_corridor_scan_ms +=
-                            std::chrono::duration<double, std::milli>(Clock::now() -
-                                                                      corridor_scan_t0).count();
-                    }
-                    return finish(true);
+                    return true;
                 }
             }
-            if (detailed_direct_timing) {
-                runtime_stats.current_cover_corridor_scan_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() -
-                                                              corridor_scan_t0).count();
-            }
-            return finish(false);
+            return false;
         }
-        const auto direct_index_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
-        const bool covered_by_direct_index =
-            direct_box_index.covering_box(boxes_,
-                                          point,
-                                          config_.query.adjacency_tolerance) >= 0;
-        if (detailed_direct_timing) {
-            runtime_stats.current_cover_direct_index_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - direct_index_t0).count();
-        }
-        return finish(covered_by_direct_index);
+        return direct_box_index.covering_box(boxes_,
+                                             point,
+                                             config_.query.adjacency_tolerance) >= 0;
     };
     FindFreeBoxOptions direct_options = config_.connector.pave.find_free_box;
     direct_options.max_depth = query_bridge_ffb_depth;
@@ -693,10 +588,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             context,
             samples,
             covered,
-            std::max(direct_options.start_depth, direct_options.skip_to_depth),
-            detailed_direct_timing);
+            std::max(direct_options.start_depth, direct_options.skip_to_depth));
     const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_plan.tasks;
-    runtime_stats.direct_task_build_ms = direct_task_plan.build_ms;
     const QueryBridgeFfbTaskExecutionStats direct_task_stats =
         query_bridge_run_direct_ffb_tasks(
             context,
@@ -715,12 +608,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                                     task.transition_hint);
                 return QueryBridgeFfbTaskCommitResult{box_index,
                                                       boxes_.size() > before_boxes};
-            },
-            detailed_direct_timing);
+            });
     direct_calls = direct_task_stats.calls;
     direct_added = direct_task_stats.added;
     direct_ffb_ms = direct_task_stats.ffb_ms;
-    runtime_stats.direct_loop_ms = direct_task_stats.loop_ms;
     const QueryBridgeRepairSubdivisionOptions repair_subdivision_options =
         query_bridge_repair_subdivision_options(query_index);
     const int subdivisions = repair_subdivision_options.subdivisions;
@@ -748,12 +639,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                     const int box_index = commit_result(std::move(result), seed, transition);
                     return QueryBridgeFfbTaskCommitResult{box_index,
                                                           boxes_.size() > before_boxes};
-                },
-                detailed_direct_timing);
+                });
         repair_calls = repair_stats.calls;
         repair_added = repair_stats.added;
         repair_ffb_ms = repair_stats.ffb_ms;
-        runtime_stats.repair_loop_ms = repair_stats.loop_ms;
         repair_indices.insert(repair_indices.end(),
                               repair_stats.committed_indices.begin(),
                               repair_stats.committed_indices.end());
@@ -795,13 +684,11 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 const int box_index = commit_result(std::move(result), seed, transition);
                 return QueryBridgeFfbTaskCommitResult{box_index,
                                                       boxes_.size() > before_boxes};
-            },
-            detailed_direct_timing);
+            });
     adaptive_repair_calls = adaptive_stats.calls;
     adaptive_repair_added = adaptive_stats.added;
     adaptive_repair_max_subdivisions_used = adaptive_stats.max_subdivisions_used;
     adaptive_repair_ffb_ms = adaptive_stats.ffb_ms;
-    runtime_stats.adaptive_loop_ms = adaptive_stats.loop_ms;
     final_bad = adaptive_stats.final_bad;
     repair_indices.insert(repair_indices.end(),
                           adaptive_stats.committed_indices.begin(),
@@ -833,12 +720,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                     const int box_index = commit_result(std::move(result), seed, transition);
                     return QueryBridgeFfbTaskCommitResult{box_index,
                                                           boxes_.size() > before_boxes};
-                },
-                detailed_direct_timing);
+                });
         lateral_repair_calls = lateral_stats.calls;
         lateral_repair_added = lateral_stats.added;
         lateral_repair_ffb_ms = lateral_stats.ffb_ms;
-        runtime_stats.lateral_loop_ms = lateral_stats.loop_ms;
         repair_indices.insert(repair_indices.end(),
                               lateral_stats.committed_indices.begin(),
                               lateral_stats.committed_indices.end());
@@ -850,8 +735,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         allow_residual_segments &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges) {
-        const auto residual_segment_loop_t0 =
-            detailed_direct_timing ? Clock::now() : Clock::time_point{};
         auto insert_residual_segment = [&](int lhs_index,
                                            int rhs_index,
                                            const Eigen::VectorXd& lhs_point,
@@ -880,8 +763,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                     "query_bridge.direct_corridor_segment_audit_rejects");
                 return false;
             }
-            const auto segment_insert_t0 =
-                detailed_direct_timing ? Clock::now() : Clock::time_point{};
             const int edge_id = add_segment_edge_partition_first(
                 boxes_[static_cast<std::size_t>(lhs_index)].id,
                 boxes_[static_cast<std::size_t>(rhs_index)].id,
@@ -891,11 +772,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 SegmentEdgeValidation::CollisionChecked,
                 true,
                 bridge_edge_query_index);
-            if (detailed_direct_timing) {
-                runtime_stats.segment_insert_ms +=
-                    std::chrono::duration<double, std::milli>(Clock::now() - segment_insert_t0).count();
-                runtime_stats.segment_insert_calls += 1;
-            }
             if (edge_id >= 0) {
                 local_segment_edges_added += 1;
                 local_segment_gap_samples_max =
@@ -912,11 +788,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             final_bad,
             direct_corridor_options.group_residual_gaps,
             insert_residual_segment);
-        if (detailed_direct_timing) {
-            runtime_stats.residual_segment_loop_ms =
-                std::chrono::duration<double, std::milli>(Clock::now() -
-                                                          residual_segment_loop_t0).count();
-        }
     }
     const double direct_corridor_elapsed_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - t0).count();

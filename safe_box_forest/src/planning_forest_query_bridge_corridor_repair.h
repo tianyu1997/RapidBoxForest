@@ -20,7 +20,6 @@ struct QueryBridgeSubdivisionRepairStats {
     int calls = 0;
     int added = 0;
     double ffb_ms = 0.0;
-    double loop_ms = 0.0;
     std::vector<int> committed_indices;
 };
 
@@ -28,7 +27,6 @@ struct QueryBridgeLateralRepairStats {
     int calls = 0;
     int added = 0;
     double ffb_ms = 0.0;
-    double loop_ms = 0.0;
     std::vector<int> committed_indices;
 };
 
@@ -37,7 +35,6 @@ struct QueryBridgeAdaptiveRepairStats {
     int added = 0;
     int max_subdivisions_used = 0;
     double ffb_ms = 0.0;
-    double loop_ms = 0.0;
     double initial_bad_fraction = 0.0;
     double final_bad_fraction = 0.0;
     std::vector<int> committed_indices;
@@ -77,8 +74,7 @@ QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing);
+                                                       int)>& commit_box);
 
 QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
     StageContext& context,
@@ -91,8 +87,7 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing);
+                                                       int)>& commit_box);
 
 void query_bridge_run_residual_segment_gap_pass(
     StageContext& context,
@@ -119,8 +114,7 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing);
+                                                       int)>& commit_box);
 
 std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
 

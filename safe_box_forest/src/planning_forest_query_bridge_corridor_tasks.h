@@ -38,7 +38,6 @@ struct QueryBridgeDirectFfbTaskPlan {
     std::vector<QueryBridgeDirectFfbTask> tasks;
     QueryBridgeDirectFfbTaskRuntimeOptions runtime;
     int uncovered_gap_groups = 0;
-    double build_ms = 0.0;
 };
 
 struct QueryBridgeFfbTaskCommitResult {
@@ -50,7 +49,6 @@ struct QueryBridgeFfbTaskExecutionStats {
     int calls = 0;
     int added = 0;
     double ffb_ms = 0.0;
-    double loop_ms = 0.0;
 };
 
 QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
@@ -65,8 +63,7 @@ QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<bool>& covered,
-    int ffb_start_depth,
-    bool detailed_timing);
+    int ffb_start_depth);
 
 QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
     StageContext& context,
@@ -74,7 +71,6 @@ QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
     const std::vector<bool>& covered,
     const std::function<FindFreeBoxResult(const QueryBridgeDirectFfbTask&)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
-                                                       const QueryBridgeDirectFfbTask&)>& commit_box,
-    bool detailed_timing);
+                                                       const QueryBridgeDirectFfbTask&)>& commit_box);
 
 }  // namespace rbf

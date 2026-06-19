@@ -123,18 +123,11 @@ QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<bool>& covered,
-    int ffb_start_depth,
-    bool detailed_timing) {
-    using Clock = std::chrono::steady_clock;
+    int ffb_start_depth) {
     QueryBridgeDirectFfbTaskPlan plan;
     plan.runtime = query_bridge_direct_ffb_task_runtime_options(samples.size());
-    const auto build_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
     QueryBridgeDirectFfbTaskBuildResult build =
         query_bridge_build_direct_ffb_tasks(samples, covered, plan.runtime.build);
-    if (detailed_timing) {
-        plan.build_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() - build_t0).count();
-    }
     plan.uncovered_gap_groups = build.uncovered_gap_groups;
     plan.tasks = std::move(build.tasks);
 
@@ -161,11 +154,9 @@ QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
     const std::vector<bool>& covered,
     const std::function<FindFreeBoxResult(const QueryBridgeDirectFfbTask&)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
-                                                       const QueryBridgeDirectFfbTask&)>& commit_box,
-    bool detailed_timing) {
+                                                       const QueryBridgeDirectFfbTask&)>& commit_box) {
     using Clock = std::chrono::steady_clock;
     QueryBridgeFfbTaskExecutionStats stats;
-    const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
     for (const auto& task : tasks) {
         if (task.sample_index < covered.size() && covered[task.sample_index]) {
             context.diagnostics().add_counter(
@@ -181,10 +172,6 @@ QueryBridgeFfbTaskExecutionStats query_bridge_run_direct_ffb_tasks(
         if (commit.box_index >= 0 && commit.added_box) {
             stats.added += 1;
         }
-    }
-    if (detailed_timing) {
-        stats.loop_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
     }
     return stats;
 }

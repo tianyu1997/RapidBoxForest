@@ -17,11 +17,9 @@ QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing) {
+                                                       int)>& commit_box) {
     using Clock = std::chrono::steady_clock;
     QueryBridgeSubdivisionRepairStats stats;
-    const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
     for (int transition : transitions) {
         if (transition_connected(transition)) {
             continue;
@@ -60,10 +58,6 @@ QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
             }
         }
     }
-    if (detailed_timing) {
-        stats.loop_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
-    }
     return stats;
 }
 
@@ -78,11 +72,9 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing) {
+                                                       int)>& commit_box) {
     using Clock = std::chrono::steady_clock;
     QueryBridgeLateralRepairStats stats;
-    const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
     for (int transition : transitions) {
         if (stats.calls >= options.max_calls) {
             break;
@@ -136,10 +128,6 @@ QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
             }
         }
     }
-    if (detailed_timing) {
-        stats.loop_ms =
-            std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
-    }
     return stats;
 }
 
@@ -156,8 +144,7 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
     const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
                                                        const Eigen::VectorXd&,
-                                                       int)>& commit_box,
-    bool detailed_timing) {
+                                                       int)>& commit_box) {
     using Clock = std::chrono::steady_clock;
     QueryBridgeAdaptiveRepairStats stats;
     stats.max_subdivisions_used = base_subdivisions;
@@ -175,7 +162,6 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
         stats.initial_bad_fraction);
 
     if (options.enabled && !stats.final_bad.empty()) {
-        const auto loop_t0 = detailed_timing ? Clock::now() : Clock::time_point{};
         std::vector<int> ordered_final_bad =
             query_bridge_order_transitions_by_gap_length(samples,
                                                         stats.final_bad,
@@ -245,10 +231,6 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
             }
         }
         stats.final_bad = bad_transitions();
-        if (detailed_timing) {
-            stats.loop_ms =
-                std::chrono::duration<double, std::milli>(Clock::now() - loop_t0).count();
-        }
     }
     stats.final_bad_fraction = bad_fraction(stats.final_bad);
     context.diagnostics().set_value(
