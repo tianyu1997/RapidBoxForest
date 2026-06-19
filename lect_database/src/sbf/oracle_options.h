@@ -13,10 +13,6 @@ inline bool oracle_canonical_debug_enabled() {
     return value != nullptr && value[0] == '1';
 }
 
-inline bool oracle_envelope_cache_disabled() {
-    return std::getenv("RBF_DISABLE_ENVELOPE_CACHE") != nullptr;
-}
-
 inline bool oracle_envelope_debug_enabled() {
     const char* value = std::getenv("RBF_ENV_DEBUG");
     return value != nullptr && value[0] == '1';

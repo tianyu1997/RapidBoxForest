@@ -798,7 +798,6 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     const LinkEnvelope* envelope = nullptr;
     const bool use_envelope_cache = endpoint_payload.envelope_cacheable &&
         enable_envelope_cache_ &&
-        !oracle_envelope_cache_disabled() &&
         !database_.bulk_prewarm_mode_enabled() &&
         !database_.streaming_prewarm_mode_enabled();
     const std::uint64_t envelope_cache_key = use_envelope_cache
