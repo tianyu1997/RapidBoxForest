@@ -45,6 +45,7 @@ from experiments.common.iris_gcs_dispatch import (
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length
 from experiments.common.progress import progress
+from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
@@ -928,48 +929,17 @@ def summarize_method_run(
     budget_s: float | None = None,
 ) -> dict[str, Any]:
     successes = [row for row in qrows if bool(row["audit_passed"])]
-    query_count = max(1, len(qrows))
     extra_dict = dict(extra or {})
     build_s = float(extra_dict.get("build_s", 0.0) or 0.0)
     online_batch_s = max(0.0, float(planning_s) - build_s)
     if method in {"rrtconnect", "bitstar"}:
         build_s = 0.0
         online_batch_s = float(planning_s)
-    online_simplify_s = 0.0
-    online_solve_s = 0.0
-    split_available = False
-    for query in qrows:
-        try:
-            total_ms = float(query.get("query_ms", math.nan))
-            solve_ms = float(query.get("solve_ms", math.nan))
-            simplify_ms = float(query.get("simplify_ms", math.nan))
-        except (TypeError, ValueError):
-            continue
-        if math.isfinite(solve_ms) or math.isfinite(simplify_ms):
-            split_available = True
-            if math.isfinite(solve_ms):
-                online_solve_s += solve_ms / 1000.0
-            elif math.isfinite(total_ms) and math.isfinite(simplify_ms):
-                online_solve_s += max(0.0, total_ms - simplify_ms) / 1000.0
-            if math.isfinite(simplify_ms):
-                online_simplify_s += simplify_ms / 1000.0
-    if not split_available:
-        online_solve_s = online_batch_s
-        online_simplify_s = 0.0
-    else:
-        residual_s = online_batch_s - online_solve_s - online_simplify_s
-        if residual_s > 1e-9:
-            online_solve_s += residual_s
-    online_total_s = online_batch_s
-    online_batch_s = online_solve_s
-    online_per_query_s = online_solve_s / query_count
-    online_total_per_query_s = online_total_s / query_count
-    online_solve_per_query_s = online_solve_s / query_count
-    online_simplify_per_query_s = online_simplify_s / query_count
-    amortized = {
-        f"amortized_s_k{k}": build_s / float(k) + online_per_query_s
-        for k in (1, 5, 10, 20, 50)
-    }
+    timing = online_timing_from_query_rows(
+        qrows,
+        online_total_s=online_batch_s,
+        build_s=build_s,
+    )
     return {
         "method": method,
         "seed": int(seed),
@@ -978,20 +948,11 @@ def summarize_method_run(
         "status": "ok" if len(successes) == len(qrows) else "partial",
         "success_count": len(successes),
         "query_count": len(qrows),
-        "planning_s": build_s + online_batch_s,
+        "planning_s": build_s + timing["online_batch_s"],
         "planning_total_s": float(planning_s),
         "build_s": build_s,
         "offline_build_s": build_s,
-        "online_batch_s": online_batch_s,
-        "online_total_s": online_total_s,
-        "online_total_batch_s": online_total_s,
-        "online_solve_s": online_solve_s,
-        "online_simplify_s": online_simplify_s,
-        "online_per_query_s": online_per_query_s,
-        "online_total_per_query_s": online_total_per_query_s,
-        "online_solve_per_query_s": online_solve_per_query_s,
-        "online_simplify_per_query_s": online_simplify_per_query_s,
-        **amortized,
+        **timing,
         "audit_s": float(audit_s),
         "path_length_mean": mean(row["path_length"] for row in successes),
         "raw_segment_fraction": 0.0,
