@@ -291,8 +291,8 @@ src/planning_forest_query_bridge_endpoint_direct.cpp
                                    direct endpoint-to-main audited segment
                                    insertion helper
 src/planning_forest_query_bridge_endpoint.cpp
-                                   endpoint-to-main box-corridor attachment
-                                   implementation
+                                   endpoint anchoring and endpoint-to-main
+                                   box-corridor repair
 src/planning_forest_query_bridge_pave.cpp
                                    query bridge chain-pave execution and
                                    partition append helpers
@@ -307,9 +307,6 @@ src/planning_forest_query_bridge_corridor_utils.cpp
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting
-src/planning_forest_query_bridge_endpoint.cpp
-                                   endpoint anchoring and endpoint-to-main
-                                   corridor repair
 src/planning_forest_query_bridge_endpoint_options.h
                                    endpoint-anchor option helpers kept header-only
                                    for the endpoint repair module
