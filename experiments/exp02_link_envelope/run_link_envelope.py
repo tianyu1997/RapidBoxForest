@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 import random
 import statistics
@@ -22,7 +21,7 @@ for candidate in (
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_csv, write_json
 from experiments.common.progress import progress
 
 import link_interval_envelope as lie
@@ -386,49 +385,43 @@ def run_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows
 
 
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "width",
-        "envelope",
-        "endpoint",
-        "split_count",
-        "samples",
-        "collision_repeats",
-        "volume_m3_median",
-        "volume_m3_mean",
-        "envelope_us_median",
-        "envelope_us_mean",
-        "free_collision_us_median",
-        "free_collision_us_mean",
-        "colliding_collision_us_median",
-        "colliding_collision_us_mean",
-        "collision_us_median",
-        "collision_us_mean",
-        "free_collision_gjk_tests_median",
-        "free_collision_gjk_tests_mean",
-        "colliding_collision_gjk_tests_median",
-        "colliding_collision_gjk_tests_mean",
-        "collision_gjk_tests_median",
-        "collision_gjk_tests_mean",
-        "free_collision_gjk_iterations_median",
-        "free_collision_gjk_iterations_mean",
-        "colliding_collision_gjk_iterations_median",
-        "colliding_collision_gjk_iterations_mean",
-        "collision_gjk_iterations_median",
-        "collision_gjk_iterations_mean",
-        "free_collision_maybe_pairs_median",
-        "free_collision_maybe_pairs_mean",
-        "colliding_collision_maybe_pairs_median",
-        "colliding_collision_maybe_pairs_mean",
-        "collision_maybe_pairs_median",
-        "collision_maybe_pairs_mean",
-        "payload_bytes_median",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in rows)
+CSV_FIELDS = [
+    "width",
+    "envelope",
+    "endpoint",
+    "split_count",
+    "samples",
+    "collision_repeats",
+    "volume_m3_median",
+    "volume_m3_mean",
+    "envelope_us_median",
+    "envelope_us_mean",
+    "free_collision_us_median",
+    "free_collision_us_mean",
+    "colliding_collision_us_median",
+    "colliding_collision_us_mean",
+    "collision_us_median",
+    "collision_us_mean",
+    "free_collision_gjk_tests_median",
+    "free_collision_gjk_tests_mean",
+    "colliding_collision_gjk_tests_median",
+    "colliding_collision_gjk_tests_mean",
+    "collision_gjk_tests_median",
+    "collision_gjk_tests_mean",
+    "free_collision_gjk_iterations_median",
+    "free_collision_gjk_iterations_mean",
+    "colliding_collision_gjk_iterations_median",
+    "colliding_collision_gjk_iterations_mean",
+    "collision_gjk_iterations_median",
+    "collision_gjk_iterations_mean",
+    "free_collision_maybe_pairs_median",
+    "free_collision_maybe_pairs_mean",
+    "colliding_collision_maybe_pairs_median",
+    "colliding_collision_maybe_pairs_mean",
+    "collision_maybe_pairs_median",
+    "collision_maybe_pairs_mean",
+    "payload_bytes_median",
+]
 
 
 def tex_num(value: Any, digits: int = 3) -> str:
@@ -505,7 +498,7 @@ def main() -> int:
     tex_path = REPO_ROOT / "paper" / "generated" / "tab_tro_link_envelope.tex"
     rows = planned_rows(args) if args.dry_run else run_rows(args)
     if not args.dry_run:
-        write_csv(csv_path, rows)
+        write_csv(csv_path, rows, CSV_FIELDS)
         write_tex(tex_path, rows)
     payload = {
         "experiment": "exp02_link_envelope",

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 import random
 import statistics
@@ -19,7 +18,7 @@ for candidate in (
     if candidate.exists() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_csv, write_json
 from experiments.common.progress import progress
 
 import link_interval_envelope as lie
@@ -232,21 +231,15 @@ def run_rows(args: argparse.Namespace) -> list[dict[str, Any]]:
     return rows
 
 
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "width", "source", "safe", "samples",
-        "mc_samples_median", "mc_samples_min", "mc_samples_max",
-        "volume_m3_median", "volume_m3_mean",
-        "endpoint_us_median", "endpoint_us_mean",
-        "rel_volume_vs_ifk",
-        "max_negative_gap", "max_gap_to_sampling_union",
-        "combo_count_median", "enumerate_threads_median",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in rows)
+CSV_FIELDS = [
+    "width", "source", "safe", "samples",
+    "mc_samples_median", "mc_samples_min", "mc_samples_max",
+    "volume_m3_median", "volume_m3_mean",
+    "endpoint_us_median", "endpoint_us_mean",
+    "rel_volume_vs_ifk",
+    "max_negative_gap", "max_gap_to_sampling_union",
+    "combo_count_median", "enumerate_threads_median",
+]
 
 
 def tex_num(value: Any, digits: int = 3) -> str:
@@ -330,7 +323,7 @@ def main() -> int:
     tex_path = REPO_ROOT / "paper" / "generated" / "tab_tro_endpoint_envelope.tex"
     rows = planned_rows(args) if args.dry_run else run_rows(args)
     if not args.dry_run:
-        write_csv(csv_path, rows)
+        write_csv(csv_path, rows, CSV_FIELDS)
         write_tex(tex_path, rows)
     payload = {
         "experiment": "exp01_endpoint_envelope",

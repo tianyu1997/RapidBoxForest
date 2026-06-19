@@ -14,7 +14,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, namespace_dict, run_id, write_csv, write_json
 from experiments.common.progress import progress
 
 
@@ -90,26 +90,20 @@ def read_csv_rows(path: Path) -> list[dict[str, Any]]:
         return list(csv.DictReader(handle))
 
 
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fields = [
-        "operation",
-        "stage",
-        "operations",
-        "elapsed_ms",
-        "avg_us_per_op",
-        "ops_per_sec",
-        "nodes",
-        "evidence",
-        "page_reads",
-        "cache_hits",
-        "cache_misses",
-        "ok",
-    ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in rows)
+CSV_FIELDS = [
+    "operation",
+    "stage",
+    "operations",
+    "elapsed_ms",
+    "avg_us_per_op",
+    "ops_per_sec",
+    "nodes",
+    "evidence",
+    "page_reads",
+    "cache_hits",
+    "cache_misses",
+    "ok",
+]
 
 
 def tex_num(value: Any, digits: int = 2) -> str:
@@ -323,7 +317,7 @@ def main() -> int:
     rows = planned_rows(args)
     if not args.dry_run:
         rows, meta = run_benchmark(args)
-        write_csv(summary_csv, rows)
+        write_csv(summary_csv, rows, CSV_FIELDS)
         write_tex(tex_path, rows, meta)
     payload: dict[str, Any] = {
         "experiment": "exp03_lect_performance",
