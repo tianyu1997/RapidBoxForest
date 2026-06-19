@@ -66,6 +66,11 @@ struct ObbPathCoverResult {
     Eigen::VectorXd first_failed_leaf_b;
 };
 
+struct ObbValidationOptions {
+    bool fast_primary_orientation = true;
+    bool fallback_orientations_on_primary_fail = false;
+};
+
 bool validate_obb_zonotope_portal(const Robot& robot,
                                   const Scene& scene,
                                   const std::vector<Interval>& domain,
@@ -78,7 +83,8 @@ bool validate_obb_zonotope_portal(const Robot& robot,
                                   int max_validations,
                                   ObbPortalValidationStats& stats,
                                   Eigen::VectorXd* out_center = nullptr,
-                                  Eigen::MatrixXd* out_generators = nullptr);
+                                  Eigen::MatrixXd* out_generators = nullptr,
+                                  ObbValidationOptions options = {});
 
 void obb_accumulate_stats(ObbPortalValidationStats& dst,
                           const ObbPortalValidationStats& src);
@@ -97,6 +103,7 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
     int grow_iterations,
     int binary_iterations,
     int max_validations,
-    std::vector<Eigen::VectorXd>& out_centerline);
+    std::vector<Eigen::VectorXd>& out_centerline,
+    ObbValidationOptions options = {});
 
 } // namespace rbf

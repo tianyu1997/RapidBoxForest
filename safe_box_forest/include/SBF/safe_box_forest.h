@@ -410,6 +410,10 @@ struct AdaptiveLeafSweepConfig {
 	int segment_edge_obb_split_depth = 1;
 	int obb_max_window_segments = 16;
 	int obb_max_validations_per_window = 16;
+	bool obb_fast_primary_orientation = true;
+	bool obb_fallback_orientations_on_primary_fail = false;
+	bool segment_edge_obb_metadata_only = false;
+	bool segment_edge_obb_metadata_require_cover = false;
 	bool hipac_promote_transition_slices = false;
 	std::string hipac_promote_transition_target_query_indices = "2,3";
 	int hipac_promote_transition_min_boxes = 8;

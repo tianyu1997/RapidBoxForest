@@ -18,6 +18,18 @@
 
 namespace rbf {
 
+namespace {
+
+ObbValidationOptions obb_validation_options_from_config(const AdaptiveLeafSweepConfig& config) {
+    ObbValidationOptions options;
+    options.fast_primary_orientation = config.obb_fast_primary_orientation;
+    options.fallback_orientations_on_primary_fail =
+        config.obb_fallback_orientations_on_primary_fail;
+    return options;
+}
+
+}  // namespace
+
 int RBFPlanningForest::add_partition_box_corridor_overlay(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -241,7 +253,8 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
             last_adaptive_partition_config_.obb_max_validations_per_window,
             obb_stats,
             &obb_center,
-            &obb_generators);
+            &obb_generators,
+            obb_validation_options_from_config(last_adaptive_partition_config_));
         diagnostics[prefix + ".obb_zonotope_variables"] =
             static_cast<double>(obb_stats.variables);
         diagnostics[prefix + ".obb_zonotope_active_links"] =

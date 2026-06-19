@@ -124,7 +124,8 @@ bool obb_validate_path_window(const Robot& robot,
                               int max_validations,
                               ObbPathCoverResult& result,
                               Eigen::VectorXd& center,
-                              Eigen::MatrixXd& generators) {
+                              Eigen::MatrixXd& generators,
+                              ObbValidationOptions options) {
     ++result.windows_attempted;
     std::vector<Eigen::VectorXd> window = obb_path_slice(path, begin, end);
     ObbPortalValidationStats local_stats;
@@ -140,7 +141,8 @@ bool obb_validate_path_window(const Robot& robot,
                                                  max_validations,
                                                  local_stats,
                                                  &center,
-                                                 &generators);
+                                                 &generators,
+                                                 options);
     obb_accumulate_stats(result.stats, local_stats);
     if (ok) {
         ++result.windows_success;
@@ -161,7 +163,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                  int binary_iterations,
                                  int max_validations,
                                  ObbPathCoverResult& result,
-                                 std::vector<Eigen::VectorXd>& centerline) {
+                                 std::vector<Eigen::VectorXd>& centerline,
+                                 ObbValidationOptions options) {
     std::vector<Eigen::VectorXd> segment_path{a, b};
     Eigen::VectorXd center;
     Eigen::MatrixXd generators;
@@ -179,7 +182,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                  max_validations,
                                  result,
                                  center,
-                                 generators)) {
+                                 generators,
+                                 options)) {
         ObbPathCoverRegion region;
         region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
         region.end = region.begin + 1U;
@@ -215,7 +219,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                      fallback_budget,
                                      result,
                                      fallback_center,
-                                     fallback_generators)) {
+                                     fallback_generators,
+                                     options)) {
             Eigen::VectorXd best_center = fallback_center;
             Eigen::MatrixXd best_generators = fallback_generators;
             double lo = 0.0;
@@ -238,7 +243,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                              fallback_budget,
                                              result,
                                              mid_center,
-                                             mid_generators)) {
+                                             mid_generators,
+                                             options)) {
                     lo = mid;
                     best_center = std::move(mid_center);
                     best_generators = std::move(mid_generators);
@@ -294,7 +300,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                                      binary_iterations,
                                                      max_validations,
                                                      result,
-                                                     centerline);
+                                                     centerline,
+                                                     options);
     const bool right_ok = obb_cover_segment_recursive(robot,
                                                       scene,
                                                       domain,
@@ -308,7 +315,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                                       binary_iterations,
                                                       max_validations,
                                                       result,
-                                                      centerline);
+                                                      centerline,
+                                                      options);
     return left_ok && right_ok;
 }
 
@@ -326,7 +334,8 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
     int grow_iterations,
     int binary_iterations,
     int max_validations,
-    std::vector<Eigen::VectorXd>& out_centerline) {
+    std::vector<Eigen::VectorXd>& out_centerline,
+    ObbValidationOptions options) {
     ObbPathCoverResult result;
     out_centerline.clear();
     if (path.size() < 2U) {
@@ -347,7 +356,8 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                                      binary_iterations,
                                                      max_validations,
                                                      result,
-                                                     out_centerline);
+                                                     out_centerline,
+                                                     options);
         return result;
     }
 
@@ -381,7 +391,8 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                          max_validations,
                                          result,
                                          center,
-                                         generators)) {
+                                         generators,
+                                         options)) {
                 good_end = end;
                 good_center = std::move(center);
                 good_generators = std::move(generators);
@@ -417,7 +428,8 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                              max_validations,
                                              result,
                                              center,
-                                             generators)) {
+                                             generators,
+                                             options)) {
                     good_end = mid;
                     good_center = std::move(center);
                     good_generators = std::move(generators);
@@ -445,7 +457,8 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                                               binary_iterations,
                                                               max_validations,
                                                               result,
-                                                              split_line);
+                                                              split_line,
+                                                              options);
             for (const auto& waypoint : split_line) {
                 if (out_centerline.empty() || (out_centerline.back() - waypoint).norm() > 1e-12) {
                     out_centerline.push_back(waypoint);

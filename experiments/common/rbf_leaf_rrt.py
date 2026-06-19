@@ -1520,6 +1520,18 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.obb_max_window_segments = int(options.obb_max_window_segments)
     if hasattr(cfg, "obb_max_validations_per_window"):
         cfg.obb_max_validations_per_window = int(options.obb_max_validations_per_window)
+    if hasattr(cfg, "obb_fast_primary_orientation"):
+        cfg.obb_fast_primary_orientation = bool(options.obb_fast_primary_orientation)
+    if hasattr(cfg, "obb_fallback_orientations_on_primary_fail"):
+        cfg.obb_fallback_orientations_on_primary_fail = bool(
+            options.obb_fallback_orientations_on_primary_fail
+        )
+    if hasattr(cfg, "segment_edge_obb_metadata_only"):
+        cfg.segment_edge_obb_metadata_only = bool(options.segment_edge_obb_metadata_only)
+    if hasattr(cfg, "segment_edge_obb_metadata_require_cover"):
+        cfg.segment_edge_obb_metadata_require_cover = bool(
+            options.segment_edge_obb_metadata_require_cover
+        )
     if hasattr(cfg, "hipac_promote_transition_slices"):
         cfg.hipac_promote_transition_slices = bool(options.hipac_promote_transition_slices)
     if hasattr(cfg, "hipac_promote_transition_target_query_indices"):
@@ -1897,72 +1909,42 @@ def bridge_all_queries(
         }
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
-        env_updates: dict[str, str | None] = {}
-        env_updates["RBF_OBB_FAST_PRIMARY_ORIENTATION"] = (
-            "1" if bool(getattr(options, "obb_fast_primary_orientation", True)) else "0"
-        )
-        env_updates["RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL"] = (
-            "1" if bool(getattr(options, "obb_fallback_orientations_on_primary_fail", False)) else "0"
-        )
-        env_updates["RBF_OBB_METADATA_ONLY"] = (
-            "1"
-            if bool(getattr(options, "segment_edge_obb_metadata_only", False))
-            else "0"
-        )
-        env_updates["RBF_OBB_METADATA_ONLY_REQUIRE_COVER"] = (
-            "1"
-            if bool(getattr(options, "segment_edge_obb_metadata_require_cover", False))
-            else "0"
-        )
-        previous_env = {name: os.environ.get(name) for name in env_updates}
-        for name, value in env_updates.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
-        try:
-            if bool(getattr(options, "query_bridge_sequential_reuse", False)):
-                added_values: list[int] = []
-                reuse_skips = 0
-                for selected_index, (label, start, goal, global_query_index) in enumerate(selected):
-                    q0 = time.perf_counter()
-                    probe = forest.query(start, goal)
-                    forced_query = selected_index in force_indices
-                    if (not forced_query) and query_good_enough(probe, start, goal):
-                        reuse_skips += 1
-                        added_values.append(0)
-                        timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
-                        added_by_label[label] = added_by_label.get(label, 0) + 0
-                        continue
-                    added = int(forest.bridge_queries(
-                        [start],
-                        [goal],
-                        [0] if forced_query else [],
-                        [int(global_query_index)],
-                    )[0])
-                    added_values.append(added)
+        if bool(getattr(options, "query_bridge_sequential_reuse", False)):
+            added_values: list[int] = []
+            reuse_skips = 0
+            for selected_index, (label, start, goal, global_query_index) in enumerate(selected):
+                q0 = time.perf_counter()
+                probe = forest.query(start, goal)
+                forced_query = selected_index in force_indices
+                if (not forced_query) and query_good_enough(probe, start, goal):
+                    reuse_skips += 1
+                    added_values.append(0)
                     timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
-                    added_by_label[label] = added_by_label.get(label, 0) + added
-                added_by_label["__sequential_reuse_skips__"] = (
-                    added_by_label.get("__sequential_reuse_skips__", 0) + reuse_skips
+                    added_by_label[label] = added_by_label.get(label, 0) + 0
+                    continue
+                added = int(forest.bridge_queries(
+                    [start],
+                    [goal],
+                    [0] if forced_query else [],
+                    [int(global_query_index)],
+                )[0])
+                added_values.append(added)
+                timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
+                added_by_label[label] = added_by_label.get(label, 0) + added
+            added_by_label["__sequential_reuse_skips__"] = (
+                added_by_label.get("__sequential_reuse_skips__", 0) + reuse_skips
+            )
+            timing_by_label["__sequential_reuse__"] = time.perf_counter() - t0
+        else:
+            added_values = [
+                int(value)
+                for value in forest.bridge_queries(
+                    starts,
+                    goals,
+                    forced_indices,
+                    global_indices,
                 )
-                timing_by_label["__sequential_reuse__"] = time.perf_counter() - t0
-            else:
-                added_values = [
-                    int(value)
-                    for value in forest.bridge_queries(
-                        starts,
-                        goals,
-                        forced_indices,
-                        global_indices,
-                    )
-                ]
-        finally:
-            for name, previous_value in previous_env.items():
-                if previous_value is None:
-                    os.environ.pop(name, None)
-                else:
-                    os.environ[name] = previous_value
+            ]
         elapsed = time.perf_counter() - t0
         timing_by_label["__batch_total__"] = elapsed
         for (label, _start, _goal, _global_query_index), added in zip(selected, added_values, strict=True):

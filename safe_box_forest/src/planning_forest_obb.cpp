@@ -506,7 +506,8 @@ bool validate_obb_zonotope_portal(const Robot& robot,
                                   int max_validations,
                                   ObbPortalValidationStats& stats,
                                   Eigen::VectorXd* out_center,
-                                  Eigen::MatrixXd* out_generators) {
+                                  Eigen::MatrixXd* out_generators,
+                                  ObbValidationOptions options) {
     if (path.size() < 2U || path.front().size() <= 0 || path.front().size() > MAX_JOINTS) {
         ++stats.degenerate_rejects;
         return false;
@@ -523,9 +524,9 @@ bool validate_obb_zonotope_portal(const Robot& robot,
         }
     }
 
-    const bool fast_primary_orientation = obb_fast_primary_orientation_from_env();
+    const bool fast_primary_orientation = options.fast_primary_orientation;
     const bool fallback_orientations_on_fail =
-        obb_fallback_orientations_on_primary_fail_from_env();
+        options.fallback_orientations_on_primary_fail;
     const bool primary_only =
         fast_primary_orientation && !fallback_orientations_on_fail;
     const auto orientations = obb_orientation_candidates(robot,

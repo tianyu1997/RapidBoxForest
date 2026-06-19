@@ -18,6 +18,18 @@
 
 namespace rbf {
 
+namespace {
+
+ObbValidationOptions obb_validation_options_from_config(const AdaptiveLeafSweepConfig& config) {
+    ObbValidationOptions options;
+    options.fast_primary_orientation = config.obb_fast_primary_orientation;
+    options.fallback_orientations_on_primary_fail =
+        config.obb_fallback_orientations_on_primary_fail;
+    return options;
+}
+
+}  // namespace
+
 int RBFPlanningForest::add_segment_edge_partition_first(
     int source_box_id,
     int target_box_id,
@@ -55,10 +67,10 @@ int RBFPlanningForest::add_segment_edge_partition_first(
     const bool obb_metadata_only =
         eligible_for_obb_cover &&
         !strict_obb_bridge_cover &&
-        obb_metadata_only_from_env();
+        last_adaptive_partition_config_.segment_edge_obb_metadata_only;
     const bool obb_metadata_require_cover =
         obb_metadata_only &&
-        obb_metadata_only_require_cover_from_env();
+        last_adaptive_partition_config_.segment_edge_obb_metadata_require_cover;
     if (eligible_for_obb_cover) {
         const bool greedy_bridge_cover =
             path_is_rrt_bridge_like &&
@@ -108,6 +120,8 @@ int RBFPlanningForest::add_segment_edge_partition_first(
             const double obb_safety_epsilon =
                 std::max(0.0, last_adaptive_partition_config_.segment_edge_obb_safety_epsilon);
             std::vector<Eigen::VectorXd> obb_centerline;
+            const ObbValidationOptions obb_validation_options =
+                obb_validation_options_from_config(last_adaptive_partition_config_);
             ObbPathCoverResult cover = cover_segment_or_bridge_path_with_obbs(
                 robot_,
                 scene_,
@@ -122,7 +136,8 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 last_adaptive_partition_config_.segment_edge_obb_grow_iterations,
                 last_adaptive_partition_config_.segment_edge_obb_binary_iterations,
                 last_adaptive_partition_config_.obb_max_validations_per_window,
-                obb_centerline);
+                obb_centerline,
+                obb_validation_options);
             const ObbPortalValidationStats& obb_stats = cover.stats;
             diagnostics[prefix + "." + obb_diag + "_windows_attempted"] +=
                 static_cast<double>(cover.windows_attempted);
@@ -299,7 +314,8 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                         last_adaptive_partition_config_.segment_edge_obb_grow_iterations,
                         last_adaptive_partition_config_.segment_edge_obb_binary_iterations,
                         last_adaptive_partition_config_.obb_max_validations_per_window,
-                        retry_centerline);
+                        retry_centerline,
+                        obb_validation_options);
                     obb_accumulate_stats(cover.stats, retry_cover.stats);
                     diagnostics[prefix + "." + obb_diag + "_clearance_retry_windows_attempted"] +=
                         static_cast<double>(retry_cover.windows_attempted);

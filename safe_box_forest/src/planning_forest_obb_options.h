@@ -39,22 +39,6 @@ inline bool obb_clearance_first_from_env() {
     return detail::env_int_or_default("RBF_OBB_CLEARANCE_FIRST", 0) != 0;
 }
 
-inline bool obb_fast_primary_orientation_from_env() {
-    return detail::env_flag_or_default("RBF_OBB_FAST_PRIMARY_ORIENTATION", true);
-}
-
-inline bool obb_fallback_orientations_on_primary_fail_from_env() {
-    return detail::env_flag_or_default("RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL", false);
-}
-
-inline bool obb_metadata_only_from_env() {
-    return detail::env_int_or_default("RBF_OBB_METADATA_ONLY", 0) != 0;
-}
-
-inline bool obb_metadata_only_require_cover_from_env() {
-    return detail::env_int_or_default("RBF_OBB_METADATA_ONLY_REQUIRE_COVER", 0) != 0;
-}
-
 inline int obb_clearance_retry_attempts_from_env() {
     return std::max(0, detail::env_int_or_default("RBF_OBB_CLEARANCE_RETRY_ATTEMPTS", 0));
 }
