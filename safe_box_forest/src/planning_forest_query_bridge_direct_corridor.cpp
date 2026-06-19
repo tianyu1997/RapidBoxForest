@@ -165,43 +165,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     mark_from_index(0);
 
     QueryBridgeLocalDsu dsu(boxes_.size());
-    double transition_connected_ms = 0.0;
-    double bad_transitions_ms = 0.0;
-    double current_cover_ms = 0.0;
-    double current_cover_partition_ms = 0.0;
-    double current_cover_corridor_scan_ms = 0.0;
-    double current_cover_direct_index_ms = 0.0;
-    double duplicate_lookup_ms = 0.0;
-    double commit_total_ms = 0.0;
-    double commit_dynamic_policy_ms = 0.0;
-    double commit_partition_append_ms = 0.0;
-    double assimilate_sample_scan_ms = 0.0;
-    double assimilate_candidate_build_ms = 0.0;
-    double assimilate_adjacency_ms = 0.0;
-    double segment_insert_ms = 0.0;
-    double direct_task_build_ms = 0.0;
-    double direct_loop_ms = 0.0;
-    double repair_loop_ms = 0.0;
-    double adaptive_loop_ms = 0.0;
-    double lateral_loop_ms = 0.0;
-    double residual_segment_loop_ms = 0.0;
-    int transition_connected_calls = 0;
-    int bad_transitions_calls = 0;
-    int current_cover_calls = 0;
-    int duplicate_lookup_calls = 0;
-    int commit_calls = 0;
-    int assimilate_calls = 0;
-    int assimilate_coverage_boxes = 0;
-    int assimilate_coverage_span_max = 0;
-    double assimilate_coverage_span_sum = 0.0;
-    int segment_insert_calls = 0;
-    int direct_partition_append_calls = 0;
-    int direct_partition_append_boxes = 0;
+    QueryBridgeDirectCorridorRuntimeStats runtime_stats;
     const bool local_assimilate_sample_scan =
         direct_corridor_options.local_sample_assimilation;
-    int assimilate_local_hits = 0;
-    int assimilate_full_scan_fallbacks = 0;
-    int assimilate_local_sample_tests = 0;
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_local_sample_assimilation_enabled",
         local_assimilate_sample_scan ? 1.0 : 0.0);
@@ -222,12 +188,12 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             direct_partition_append_base,
             config_.query.adjacency_tolerance);
         if (detailed_direct_timing) {
-            commit_partition_append_ms +=
+            runtime_stats.commit_partition_append_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() -
                                                           partition_append_t0).count();
         }
-        direct_partition_append_calls += 1;
-        direct_partition_append_boxes += std::max(0, appended);
+        runtime_stats.direct_partition_append_calls += 1;
+        runtime_stats.direct_partition_append_boxes += std::max(0, appended);
         context.diagnostics().add_counter(
             appended > 0
                 ? "query_bridge.direct_corridor_batched_partition_appends"
@@ -239,9 +205,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         auto finish = [&](bool value) {
             if (detailed_direct_timing) {
-                transition_connected_ms +=
+                runtime_stats.transition_connected_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                transition_connected_calls += 1;
+                runtime_stats.transition_connected_calls += 1;
             }
             return value;
         };
@@ -272,9 +238,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             }
         }
         if (detailed_direct_timing) {
-            bad_transitions_ms +=
+            runtime_stats.bad_transitions_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-            bad_transitions_calls += 1;
+            runtime_stats.bad_transitions_calls += 1;
         }
         return bad;
     };
@@ -364,9 +330,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         auto finish = [&](int value) {
             if (detailed_direct_timing) {
-                duplicate_lookup_ms +=
+                runtime_stats.duplicate_lookup_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                duplicate_lookup_calls += 1;
+                runtime_stats.duplicate_lookup_calls += 1;
             }
             return value;
         };
@@ -399,7 +365,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     std::vector<int> repair_indices;
     auto assimilate_box = [&](int box_index, int transition_hint) {
         if (detailed_direct_timing) {
-            assimilate_calls += 1;
+            runtime_stats.assimilate_calls += 1;
         }
         const auto assimilate_t0 = Clock::now();
         const int box_id = boxes_[static_cast<std::size_t>(box_index)].id;
@@ -429,7 +395,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             if (sample_index < 0 || sample_index >= static_cast<int>(samples.size())) {
                 return false;
             }
-            assimilate_local_sample_tests += 1;
+            runtime_stats.assimilate_local_sample_tests += 1;
             return intervals_contain_point_local(
                 box_intervals,
                 samples[static_cast<std::size_t>(sample_index)],
@@ -465,10 +431,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 for (int sample_index = left; sample_index <= right; ++sample_index) {
                     record_sample_coverage(static_cast<std::size_t>(sample_index));
                 }
-                assimilate_local_hits += 1;
+                runtime_stats.assimilate_local_hits += 1;
             } else {
                 used_full_sample_scan = true;
-                assimilate_full_scan_fallbacks += 1;
+                runtime_stats.assimilate_full_scan_fallbacks += 1;
             }
         }
         if (used_full_sample_scan) {
@@ -483,15 +449,15 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         }
         if (covered_sample_count > 0) {
             const int span = last_covered_sample - first_covered_sample + 1;
-            assimilate_coverage_boxes += 1;
-            assimilate_coverage_span_sum += static_cast<double>(span);
-            assimilate_coverage_span_max = std::max(assimilate_coverage_span_max, span);
+            runtime_stats.assimilate_coverage_boxes += 1;
+            runtime_stats.assimilate_coverage_span_sum += static_cast<double>(span);
+            runtime_stats.assimilate_coverage_span_max = std::max(runtime_stats.assimilate_coverage_span_max, span);
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_assimilate_covered_samples",
                 static_cast<double>(covered_sample_count));
         }
         if (detailed_direct_timing) {
-            assimilate_sample_scan_ms +=
+            runtime_stats.assimilate_sample_scan_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - sample_scan_t0).count();
         }
         const auto candidate_build_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
@@ -534,7 +500,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         std::sort(candidates.begin(), candidates.end());
         candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
         if (detailed_direct_timing) {
-            assimilate_candidate_build_ms +=
+            runtime_stats.assimilate_candidate_build_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - candidate_build_t0).count();
         }
         const auto adjacency_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
@@ -561,7 +527,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             }
         }
         if (detailed_direct_timing) {
-            assimilate_adjacency_ms +=
+            runtime_stats.assimilate_adjacency_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - adjacency_t0).count();
         }
         context.diagnostics().add_counter(
@@ -584,9 +550,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const auto commit_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         auto finish = [&](int value) {
             if (detailed_direct_timing) {
-                commit_total_ms +=
+                runtime_stats.commit_total_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - commit_t0).count();
-                commit_calls += 1;
+                runtime_stats.commit_calls += 1;
             }
             return value;
         };
@@ -609,13 +575,13 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const auto dynamic_policy_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
             if (detailed_direct_timing) {
-                commit_dynamic_policy_ms +=
+                runtime_stats.commit_dynamic_policy_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
             }
             return finish(-1);
         }
         if (detailed_direct_timing) {
-            commit_dynamic_policy_ms +=
+            runtime_stats.commit_dynamic_policy_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - dynamic_policy_t0).count();
         }
         BoxNode box;
@@ -660,9 +626,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const auto timing_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
         auto finish = [&](bool value) {
             if (detailed_direct_timing) {
-                current_cover_ms +=
+                runtime_stats.current_cover_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - timing_t0).count();
-                current_cover_calls += 1;
+                runtime_stats.current_cover_calls += 1;
             }
             return value;
         };
@@ -673,7 +639,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 !adaptive_partition_->covering_box_ids(point,
                                                        config_.query.adjacency_tolerance).empty();
             if (detailed_direct_timing) {
-                current_cover_partition_ms +=
+                runtime_stats.current_cover_partition_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() -
                                                               partition_cover_t0).count();
             }
@@ -691,7 +657,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                                    point,
                                                    config_.query.adjacency_tolerance)) {
                     if (detailed_direct_timing) {
-                        current_cover_corridor_scan_ms +=
+                        runtime_stats.current_cover_corridor_scan_ms +=
                             std::chrono::duration<double, std::milli>(Clock::now() -
                                                                       corridor_scan_t0).count();
                     }
@@ -699,7 +665,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 }
             }
             if (detailed_direct_timing) {
-                current_cover_corridor_scan_ms +=
+                runtime_stats.current_cover_corridor_scan_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() -
                                                               corridor_scan_t0).count();
             }
@@ -711,7 +677,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                           point,
                                           config_.query.adjacency_tolerance) >= 0;
         if (detailed_direct_timing) {
-            current_cover_direct_index_ms +=
+            runtime_stats.current_cover_direct_index_ms +=
                 std::chrono::duration<double, std::milli>(Clock::now() - direct_index_t0).count();
         }
         return finish(covered_by_direct_index);
@@ -746,7 +712,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             std::max(direct_options.start_depth, direct_options.skip_to_depth),
             detailed_direct_timing);
     const std::vector<QueryBridgeDirectFfbTask>& direct_tasks = direct_task_plan.tasks;
-    direct_task_build_ms = direct_task_plan.build_ms;
+    runtime_stats.direct_task_build_ms = direct_task_plan.build_ms;
     const QueryBridgeFfbTaskExecutionStats direct_task_stats =
         query_bridge_run_direct_ffb_tasks(
             context,
@@ -770,7 +736,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     direct_calls = direct_task_stats.calls;
     direct_added = direct_task_stats.added;
     direct_ffb_ms = direct_task_stats.ffb_ms;
-    direct_loop_ms = direct_task_stats.loop_ms;
+    runtime_stats.direct_loop_ms = direct_task_stats.loop_ms;
     const QueryBridgeRepairSubdivisionOptions repair_subdivision_options =
         query_bridge_repair_subdivision_options(query_index);
     const int subdivisions = repair_subdivision_options.subdivisions;
@@ -803,7 +769,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         repair_calls = repair_stats.calls;
         repair_added = repair_stats.added;
         repair_ffb_ms = repair_stats.ffb_ms;
-        repair_loop_ms = repair_stats.loop_ms;
+        runtime_stats.repair_loop_ms = repair_stats.loop_ms;
         repair_indices.insert(repair_indices.end(),
                               repair_stats.committed_indices.begin(),
                               repair_stats.committed_indices.end());
@@ -851,7 +817,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     adaptive_repair_added = adaptive_stats.added;
     adaptive_repair_max_subdivisions_used = adaptive_stats.max_subdivisions_used;
     adaptive_repair_ffb_ms = adaptive_stats.ffb_ms;
-    adaptive_loop_ms = adaptive_stats.loop_ms;
+    runtime_stats.adaptive_loop_ms = adaptive_stats.loop_ms;
     final_bad = adaptive_stats.final_bad;
     repair_indices.insert(repair_indices.end(),
                           adaptive_stats.committed_indices.begin(),
@@ -888,7 +854,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         lateral_repair_calls = lateral_stats.calls;
         lateral_repair_added = lateral_stats.added;
         lateral_repair_ffb_ms = lateral_stats.ffb_ms;
-        lateral_loop_ms = lateral_stats.loop_ms;
+        runtime_stats.lateral_loop_ms = lateral_stats.loop_ms;
         repair_indices.insert(repair_indices.end(),
                               lateral_stats.committed_indices.begin(),
                               lateral_stats.committed_indices.end());
@@ -942,9 +908,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 true,
                 bridge_edge_query_index);
             if (detailed_direct_timing) {
-                segment_insert_ms +=
+                runtime_stats.segment_insert_ms +=
                     std::chrono::duration<double, std::milli>(Clock::now() - segment_insert_t0).count();
-                segment_insert_calls += 1;
+                runtime_stats.segment_insert_calls += 1;
             }
             if (edge_id >= 0) {
                 local_segment_edges_added += 1;
@@ -967,7 +933,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             dsu,
             insert_residual_segment);
         if (detailed_direct_timing) {
-            residual_segment_loop_ms =
+            runtime_stats.residual_segment_loop_ms =
                 std::chrono::duration<double, std::milli>(Clock::now() -
                                                           residual_segment_loop_t0).count();
         }
@@ -986,7 +952,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     summary_stats.adaptive_repair_ffb_ms = adaptive_repair_ffb_ms;
     summary_stats.lateral_repair_ffb_ms = lateral_repair_ffb_ms;
     summary_stats.residual_segment_audit_ms = residual_segment_audit_ms;
-    summary_stats.assimilate_coverage_span_sum = assimilate_coverage_span_sum;
+    summary_stats.assimilate_coverage_span_sum =
+        runtime_stats.assimilate_coverage_span_sum;
     summary_stats.sample_count = samples.size();
     summary_stats.direct_calls = direct_calls;
     summary_stats.repair_calls = repair_calls;
@@ -1003,49 +970,17 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     summary_stats.final_bad_count = static_cast<int>(final_bad.size());
     summary_stats.local_segment_edges_added = local_segment_edges_added;
     summary_stats.local_segment_gap_samples_max = local_segment_gap_samples_max;
-    summary_stats.assimilate_coverage_boxes = assimilate_coverage_boxes;
-    summary_stats.assimilate_coverage_span_max = assimilate_coverage_span_max;
+    summary_stats.assimilate_coverage_boxes =
+        runtime_stats.assimilate_coverage_boxes;
+    summary_stats.assimilate_coverage_span_max =
+        runtime_stats.assimilate_coverage_span_max;
     summary_stats.lateral_repair_enabled = lateral_repair;
     summary_stats.local_corridor_connected = local_corridor_connected;
     query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
 
     if (detailed_direct_timing) {
-        QueryBridgeDirectCorridorDetailedTimingStats timing_stats;
-        timing_stats.transition_connected_ms = transition_connected_ms;
-        timing_stats.bad_transitions_ms = bad_transitions_ms;
-        timing_stats.current_cover_ms = current_cover_ms;
-        timing_stats.current_cover_partition_ms = current_cover_partition_ms;
-        timing_stats.current_cover_corridor_scan_ms = current_cover_corridor_scan_ms;
-        timing_stats.current_cover_direct_index_ms = current_cover_direct_index_ms;
-        timing_stats.duplicate_lookup_ms = duplicate_lookup_ms;
-        timing_stats.commit_total_ms = commit_total_ms;
-        timing_stats.commit_dynamic_policy_ms = commit_dynamic_policy_ms;
-        timing_stats.commit_partition_append_ms = commit_partition_append_ms;
-        timing_stats.assimilate_sample_scan_ms = assimilate_sample_scan_ms;
-        timing_stats.assimilate_candidate_build_ms = assimilate_candidate_build_ms;
-        timing_stats.assimilate_adjacency_ms = assimilate_adjacency_ms;
-        timing_stats.segment_insert_ms = segment_insert_ms;
-        timing_stats.direct_task_build_ms = direct_task_build_ms;
-        timing_stats.direct_loop_ms = direct_loop_ms;
-        timing_stats.repair_loop_ms = repair_loop_ms;
-        timing_stats.adaptive_loop_ms = adaptive_loop_ms;
-        timing_stats.lateral_loop_ms = lateral_loop_ms;
-        timing_stats.residual_segment_loop_ms = residual_segment_loop_ms;
-        timing_stats.assimilate_coverage_span_sum = assimilate_coverage_span_sum;
-        timing_stats.transition_connected_calls = transition_connected_calls;
-        timing_stats.bad_transitions_calls = bad_transitions_calls;
-        timing_stats.current_cover_calls = current_cover_calls;
-        timing_stats.duplicate_lookup_calls = duplicate_lookup_calls;
-        timing_stats.commit_calls = commit_calls;
-        timing_stats.assimilate_calls = assimilate_calls;
-        timing_stats.assimilate_coverage_boxes = assimilate_coverage_boxes;
-        timing_stats.assimilate_coverage_span_max = assimilate_coverage_span_max;
-        timing_stats.segment_insert_calls = segment_insert_calls;
-        timing_stats.direct_partition_append_calls = direct_partition_append_calls;
-        timing_stats.direct_partition_append_boxes = direct_partition_append_boxes;
-        timing_stats.assimilate_local_hits = assimilate_local_hits;
-        timing_stats.assimilate_full_scan_fallbacks = assimilate_full_scan_fallbacks;
-        timing_stats.assimilate_local_sample_tests = assimilate_local_sample_tests;
+        const QueryBridgeDirectCorridorDetailedTimingStats timing_stats =
+            query_bridge_direct_corridor_detailed_timing_from_runtime(runtime_stats);
         query_bridge_record_direct_corridor_detailed_timing(
             context,
             query_index,

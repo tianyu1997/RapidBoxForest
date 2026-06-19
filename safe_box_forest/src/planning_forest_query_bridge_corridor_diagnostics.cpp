@@ -6,6 +6,48 @@
 
 namespace rbf {
 
+QueryBridgeDirectCorridorDetailedTimingStats
+query_bridge_direct_corridor_detailed_timing_from_runtime(
+    const QueryBridgeDirectCorridorRuntimeStats& stats) {
+    QueryBridgeDirectCorridorDetailedTimingStats result;
+    result.transition_connected_ms = stats.transition_connected_ms;
+    result.bad_transitions_ms = stats.bad_transitions_ms;
+    result.current_cover_ms = stats.current_cover_ms;
+    result.current_cover_partition_ms = stats.current_cover_partition_ms;
+    result.current_cover_corridor_scan_ms = stats.current_cover_corridor_scan_ms;
+    result.current_cover_direct_index_ms = stats.current_cover_direct_index_ms;
+    result.duplicate_lookup_ms = stats.duplicate_lookup_ms;
+    result.commit_total_ms = stats.commit_total_ms;
+    result.commit_dynamic_policy_ms = stats.commit_dynamic_policy_ms;
+    result.commit_partition_append_ms = stats.commit_partition_append_ms;
+    result.assimilate_sample_scan_ms = stats.assimilate_sample_scan_ms;
+    result.assimilate_candidate_build_ms = stats.assimilate_candidate_build_ms;
+    result.assimilate_adjacency_ms = stats.assimilate_adjacency_ms;
+    result.segment_insert_ms = stats.segment_insert_ms;
+    result.direct_task_build_ms = stats.direct_task_build_ms;
+    result.direct_loop_ms = stats.direct_loop_ms;
+    result.repair_loop_ms = stats.repair_loop_ms;
+    result.adaptive_loop_ms = stats.adaptive_loop_ms;
+    result.lateral_loop_ms = stats.lateral_loop_ms;
+    result.residual_segment_loop_ms = stats.residual_segment_loop_ms;
+    result.assimilate_coverage_span_sum = stats.assimilate_coverage_span_sum;
+    result.transition_connected_calls = stats.transition_connected_calls;
+    result.bad_transitions_calls = stats.bad_transitions_calls;
+    result.current_cover_calls = stats.current_cover_calls;
+    result.duplicate_lookup_calls = stats.duplicate_lookup_calls;
+    result.commit_calls = stats.commit_calls;
+    result.assimilate_calls = stats.assimilate_calls;
+    result.assimilate_coverage_boxes = stats.assimilate_coverage_boxes;
+    result.assimilate_coverage_span_max = stats.assimilate_coverage_span_max;
+    result.segment_insert_calls = stats.segment_insert_calls;
+    result.direct_partition_append_calls = stats.direct_partition_append_calls;
+    result.direct_partition_append_boxes = stats.direct_partition_append_boxes;
+    result.assimilate_local_hits = stats.assimilate_local_hits;
+    result.assimilate_full_scan_fallbacks = stats.assimilate_full_scan_fallbacks;
+    result.assimilate_local_sample_tests = stats.assimilate_local_sample_tests;
+    return result;
+}
+
 void query_bridge_record_direct_corridor_detailed_timing(
     StageContext& context,
     int query_index,
