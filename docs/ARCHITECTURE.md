@@ -281,8 +281,10 @@ src/planning_forest_query_bridge_attempt_paths.cpp
                                    direct-line/detour fallback, and waypoint
                                    quality retry orchestration
 src/planning_forest_query_bridge_batch_utils.cpp
-                                   query bridge batch task keys, task policy,
-                                   edge ownership, and attempt-plan helpers
+                                   query bridge batch task-key helper
+src/planning_forest_query_bridge_batch_policy.cpp
+                                   query bridge batch task policy, edge
+                                   ownership, and attempt-plan helpers
 src/planning_forest_query_bridge_batch_diagnostics.cpp
                                    query bridge oracle counter deltas, task
                                    skip records, and direct-corridor diagnostic
