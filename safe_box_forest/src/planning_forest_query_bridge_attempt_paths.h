@@ -12,8 +12,6 @@
 
 namespace rbf {
 
-struct QueryBridgeDetourOptions;
-
 void improve_query_bridge_waypoint_if_needed(
     QueryBridgeSearchTask& task,
     int attempts_already_used,
@@ -33,9 +31,7 @@ void adopt_query_bridge_waypoint_after_rrt(
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeDetourOptions& detour_options,
     const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
-    const std::vector<Interval>& detour_planning_domain,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,

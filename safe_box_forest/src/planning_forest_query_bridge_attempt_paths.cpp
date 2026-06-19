@@ -2,7 +2,6 @@
 
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_diagnostics.h"
-#include "planning_forest_query_bridge_detour_utils.h"
 #include "planning_forest_query_utils.h"
 
 #include <SBF/box_graph.h>
@@ -139,9 +138,7 @@ void adopt_query_bridge_waypoint_after_rrt(
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeDetourOptions& detour_options,
     const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
-    const std::vector<Interval>& detour_planning_domain,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,
@@ -155,20 +152,6 @@ void adopt_query_bridge_waypoint_after_rrt(
                                       scene,
                                       config,
                                       context);
-    if (query_bridge_maybe_apply_detour_path(task,
-                                             audit_robot,
-                                             scene,
-                                             config.query,
-                                             detour_planning_domain,
-                                             detour_options,
-                                             config.grower.rng_seed,
-                                             context,
-                                             best_length,
-                                             task.waypoint_path)) {
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "detour_on_no_path"),
-            1.0);
-    }
     improve_query_bridge_waypoint_if_needed(task,
                                             improve_attempts,
                                             best_length,

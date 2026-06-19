@@ -8,7 +8,6 @@
 #include "planning_forest_query_bridge_attempt_paths.h"
 #include "planning_forest_query_bridge_corridor_options.h"
 #include "planning_forest_query_bridge_diagnostics.h"
-#include "planning_forest_query_bridge_detour_utils.h"
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_policy.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
@@ -288,9 +287,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     record_query_bridge_partition_path_first_diagnostics(batch_context,
                                                         partition_path_first_options);
-    const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
-    record_query_bridge_detour_diagnostics(batch_context, detour_options);
-    const auto detour_planning_domain = oracle_->planning_intervals();
     const QueryBridgeWaypointQualityRetryOptions quality_retry_options =
         query_bridge_waypoint_quality_retry_options_from_env();
     record_query_bridge_waypoint_quality_retry_diagnostics(batch_context,
@@ -443,9 +439,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                   best_length,
                                                   hybrid_options,
                                                   retry_options,
-                                                  detour_options,
                                                   quality_retry_options,
-                                                  detour_planning_domain,
                                                   audit_robot_,
                                                   scene_,
                                                   config_,
@@ -545,9 +539,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               best_length,
                                               hybrid_options,
                                               retry_options,
-                                              detour_options,
                                               quality_retry_options,
-                                              detour_planning_domain,
                                               audit_robot_,
                                               scene_,
                                               config_,
