@@ -11,11 +11,11 @@ from typing import Any
 
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.cspace_narrow_benchmark import CSpaceBox, flatten_box, l2, segment_valid
+from experiments.archive.exp06_diagnostics.cspace_narrow_benchmark import CSpaceBox, flatten_box, l2, segment_valid
 from experiments.common.experiment_io import csv_list, environment_metadata, namespace_dict, run_id, write_json
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import default_rbf_profile
