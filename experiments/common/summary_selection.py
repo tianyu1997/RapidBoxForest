@@ -35,6 +35,33 @@ def count_ratio_text(
     return f"{success}/{total}"
 
 
+def full_success_rows(
+    rows: Sequence[dict[str, Any]],
+    success_keys: Sequence[str],
+    total_keys: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Return rows whose preferred success count equals preferred total count."""
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        success = int(finite_float(first_row_value(row, success_keys, 0), fallback=0.0))
+        total = int(finite_float(first_row_value(row, total_keys, 0), fallback=0.0))
+        if success == total:
+            out.append(row)
+    return out
+
+
+def prefer_full_success_rows(
+    rows: Sequence[dict[str, Any]],
+    success_keys: Sequence[str],
+    total_keys: Sequence[str],
+) -> list[dict[str, Any]]:
+    """Prefer fully successful rows but fall back to all candidates."""
+
+    candidates = list(rows)
+    return full_success_rows(candidates, success_keys, total_keys) or candidates
+
+
 def amortized_query_time(
     row: dict[str, Any],
     queries_per_build: int | float,

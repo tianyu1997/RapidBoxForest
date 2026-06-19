@@ -41,6 +41,7 @@ from experiments.common.summary_selection import (
     filter_within_best_path_factor,
     finite_float,
     path_length_stat,
+    prefer_full_success_rows,
 )
 from experiments.common.result_parts import (
     load_result_part,
@@ -2149,11 +2150,7 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
     )
     for robot, difficulty in keys:
         items = [row for row in rows if str(row.get("robot", "")) == robot and str(row.get("difficulty", "")) == difficulty]
-        full = [
-            row for row in items
-            if int(float(row.get("success_scenes", 0) or 0)) == int(float(row.get("scenes", 0) or 0))
-        ]
-        candidates = full or items
+        candidates = prefer_full_success_rows(items, ("success_scenes",), ("scenes",))
         if not candidates:
             continue
         candidates = filter_within_best_path_factor(candidates, 1.08)

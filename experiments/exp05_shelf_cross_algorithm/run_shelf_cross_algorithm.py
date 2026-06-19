@@ -53,7 +53,9 @@ from experiments.common.summary_selection import (
     count_ratio_text,
     filter_within_best_path_factor,
     finite_float,
+    full_success_rows,
     path_length_stat,
+    prefer_full_success_rows,
 )
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
@@ -1165,8 +1167,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         rbf_rows = [
             row for row in rows
             if str(row.get("method")) == "sbf_leaf_rrt"
-            and int(row.get("success_runs", 0) or 0) == int(row.get("runs", 0) or 0)
         ]
+        rbf_rows = full_success_rows(rbf_rows, ("success_runs",), ("runs",))
         selected_rbf = None
         if rbf_rows:
             selected_rbf = sorted(
@@ -1180,11 +1182,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         row_by_method: dict[str, dict[str, Any]] = {}
         for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
             items = [row for row in rows if str(row.get("method")) == method]
-            full = [
-                row for row in items
-                if int(row.get("success_runs", 0) or 0) == int(row.get("runs", 0) or 0)
-            ]
-            candidates = full or items
+            candidates = prefer_full_success_rows(items, ("success_runs",), ("runs",))
             candidates = filter_within_best_path_factor(candidates, 1.08)
             if candidates:
                 row_by_method[method] = sorted(
