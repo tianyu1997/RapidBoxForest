@@ -73,7 +73,6 @@ rbf_v2/
 **/rbf_v2/
 
 # Local experiment result notes and scratch workspaces
-/improve_workspace/
 /docs/improve*.md
 /docs/exp*_status_*.md
 /docs/exp*_results_*.md

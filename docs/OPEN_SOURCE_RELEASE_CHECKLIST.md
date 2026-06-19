@@ -36,7 +36,8 @@ local paths, and discarded implementation attempts.
 - `scripts/export_public_release.py` exports an allowlisted public source tree
   and excludes local outputs, caches, build trees, and historical archives by
   default. It fails if an `improve_workspace` sidecar exists, because optimized
-  implementations belong in the main modules rather than a parallel workspace.
+  implementations must be migrated into the main modules rather than kept in a
+  parallel workspace.
   The generated `PUBLIC_RELEASE_MANIFEST.json` records every exported file and
   its SHA256 hash.
 - `scripts/check_public_release.py` validates the exported tree, checks for
