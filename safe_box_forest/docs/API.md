@@ -132,6 +132,15 @@ State accessors:
 - `last_build_profile()`
 - `lect()`
 
+Diagnostic entry points are intentionally separate from the production planning
+pipeline. Python exposes helpers such as `debug_chain_pave(...)`,
+`debug_chain_pave_waypoints(...)`, `debug_validate_intervals(...)`,
+`debug_find_free_box(...)`, `debug_cover_path_with_ffb(...)`,
+`debug_external_endpoint_lookup(...)`, and `debug_compute_envelope_summary(...)`
+for regression tests, experiment forensics, and cache/canonicalization audits.
+They should not be used as paper-facing planner stages unless the caller records
+them as explicit diagnostics.
+
 `SafeBoxForest::build()` runs the active pipeline in this order:
 
 1. Reset scene and oracle.
