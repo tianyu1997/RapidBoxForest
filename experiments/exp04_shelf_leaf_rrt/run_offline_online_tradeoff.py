@@ -13,7 +13,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import (
+    DEFAULT_OUTPUT_ROOT,
+    configure_thread_environment,
+    environment_metadata,
+    run_id,
+    write_json,
+)
 from experiments.common.metrics import mean, median
 from experiments.common.progress import progress
 from experiments.exp04_shelf_leaf_rrt import run_shelf_leaf_rrt as exp04
@@ -503,7 +509,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    exp04.configure_thread_environment(int(args.threads))
+    configure_thread_environment(int(args.threads))
     args.out_dir.mkdir(parents=True, exist_ok=True)
     seeds = csv_ints(args.seeds)
     configs = grid_configs(args)
