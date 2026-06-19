@@ -45,7 +45,7 @@ Args parse_args(int argc, char** argv) {
         } else if (key == "--out-json") {
             args.out_json = require_value("--out-json");
         } else if (key == "--help" || key == "-h") {
-            std::cout << "Usage: tro2026_graph_equivalence_benchmark [--nx N] [--ny N] [--nz N] [--out-json PATH]\n";
+            std::cout << "Usage: sbf_graph_equivalence_benchmark [--nx N] [--ny N] [--nz N] [--out-json PATH]\n";
             std::exit(0);
         } else {
             throw std::runtime_error("unknown argument: " + key);
