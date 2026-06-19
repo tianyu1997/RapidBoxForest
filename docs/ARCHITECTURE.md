@@ -347,6 +347,9 @@ belong to the main source tree:
   `RBFPlanningConfig`/`AdaptiveLeafSweepConfig` options;
 - LECT evidence, canonical mapping, split policy, and cache reuse optimizations
   belong in `lect_database`, not in planner- or experiment-local sidecars.
+- read-snapshot evidence direct/slot lookup helpers belong in
+  `lect_database/src/lect_database/read_snapshot_evidence.*`, keeping the
+  snapshot facade focused on file loading and public query methods.
 
 The source release tools enforce this rule. If an `improve_workspace/`
 directory exists anywhere in the source tree, release export and readiness
