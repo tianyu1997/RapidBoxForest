@@ -17,7 +17,6 @@ void adopt_query_bridge_waypoint_after_rrt(
     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
-    const QueryBridgeRetryOptions& retry_options,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,

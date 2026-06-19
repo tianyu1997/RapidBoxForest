@@ -64,7 +64,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
-    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
@@ -357,7 +356,6 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_rrt_fixed_iters": "--query-bridge-rrt-fixed-iters",
         "query_bridge_local_radius_schedule": "--query-bridge-local-radius-schedule",
         "query_bridge_rrt_optimize_after_first_iters": "--query-bridge-rrt-optimize-after-first-iters",
-        "query_bridge_attempt_fallback_paths": "--query-bridge-attempt-fallback-paths",
         "query_bridge_hybridize_attempt_paths": "--query-bridge-hybridize-attempt-paths",
         "query_bridge_hybrid_max_paths": "--query-bridge-hybrid-max-paths",
         "query_bridge_hybrid_max_vertices": "--query-bridge-hybrid-max-vertices",
@@ -582,7 +580,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["rrt_optimize_after_first_iters"] = int(
         args.query_bridge_rrt_optimize_after_first_iters
     )
-    profile["query_bridge"]["attempt_fallback_paths"] = int(args.query_bridge_attempt_fallback_paths)
     profile["query_bridge"]["hybridize_attempt_paths"] = bool(args.query_bridge_hybridize_attempt_paths)
     profile["query_bridge"]["hybrid_max_paths"] = int(args.query_bridge_hybrid_max_paths)
     profile["query_bridge"]["hybrid_max_vertices"] = int(args.query_bridge_hybrid_max_vertices)
@@ -830,11 +827,6 @@ def parse_args() -> argparse.Namespace:
         "--query-bridge-rrt-optimize-after-first-iters",
         type=int,
         default=DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
-    )
-    parser.add_argument(
-        "--query-bridge-attempt-fallback-paths",
-        type=int,
-        default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
     )
     parser.add_argument(
         "--query-bridge-parallel-rrt-early-stop",
@@ -1517,7 +1509,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_rrt_optimize_after_first_iters=int(
                 args.query_bridge_rrt_optimize_after_first_iters
             ),
-            query_bridge_attempt_fallback_paths=int(args.query_bridge_attempt_fallback_paths),
             query_bridge_parallel_rrt_early_stop=bool(args.query_bridge_parallel_rrt_early_stop),
             query_bridge_parallel_rrt_early_stop_min_successes=int(
                 args.query_bridge_parallel_rrt_early_stop_min_successes
@@ -1680,7 +1671,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_rrt_optimize_after_first_iters": int(
                 args.query_bridge_rrt_optimize_after_first_iters
             ),
-            "query_bridge_attempt_fallback_paths": int(args.query_bridge_attempt_fallback_paths),
             "query_bridge_parallel_rrt_early_stop": bool(args.query_bridge_parallel_rrt_early_stop),
             "query_bridge_parallel_rrt_early_stop_min_successes": int(
                 args.query_bridge_parallel_rrt_early_stop_min_successes
@@ -2496,9 +2486,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "query_bridge_forced_attempts": median(
                     row.get("query_bridge_forced_attempts", math.nan) for row in items
                 ),
-                "query_bridge_attempt_fallback_paths": median(
-                    row.get("query_bridge_attempt_fallback_paths", math.nan) for row in items
-                ),
                 "query_bridge_parallel_rrt_early_stop": median(
                     1.0 if bool(row.get("query_bridge_parallel_rrt_early_stop", False)) else 0.0
                     for row in items
@@ -2755,7 +2742,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_scene_reusable_edges",
         "query_bridge_edge_cost_penalty",
         "query_bridge_forced_attempts",
-        "query_bridge_attempt_fallback_paths",
         "query_bridge_parallel_rrt_early_stop",
         "query_bridge_parallel_rrt_early_stop_min_successes",
         "query_bridge_parallel_rrt_early_stop_ratio",

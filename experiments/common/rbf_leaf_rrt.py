@@ -56,7 +56,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
-    DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
@@ -282,8 +281,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.rrt_fixed_timeout_ms",
         "query_bridge.local_radius_schedule_size",
         "query_bridge.rrt_optimize_after_first_iters",
-        "query_bridge.attempt_fallback_paths",
-        "query_bridge.attempt_fallback_paths_stored",
         "query_bridge.hybridize_attempt_paths_tasks",
         "query_bridge.hybridize_attempt_paths_candidates",
         "query_bridge.hybridize_attempt_paths_accepts",
@@ -647,7 +644,6 @@ class RBFLeafRRTOptions:
     query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
     query_bridge_local_radius_schedule: str = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE
     query_bridge_rrt_optimize_after_first_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS
-    query_bridge_attempt_fallback_paths: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS
     query_bridge_hybridize_attempt_paths: bool = DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS
     query_bridge_hybrid_max_paths: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS
     query_bridge_hybrid_max_vertices: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES
@@ -1993,9 +1989,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS"] = str(
             int(getattr(options, "query_bridge_rrt_optimize_after_first_iters", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS"] = str(
-            int(getattr(options, "query_bridge_attempt_fallback_paths", 0))
         )
         env_updates["RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS"] = (
             "1"

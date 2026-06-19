@@ -19,7 +19,6 @@ struct QueryBridgeSearchTask {
     std::vector<RRTConnectConfig> short_local_profiles;
     int attempts = 1;
     std::vector<Eigen::VectorXd> waypoint_path;
-    std::vector<std::vector<Eigen::VectorXd>> waypoint_fallback_paths;
     std::vector<Eigen::VectorXd> hipac_candidate_path;
     bool hipac_online_satisfied = false;
     bool direct_start_goal_satisfied = false;

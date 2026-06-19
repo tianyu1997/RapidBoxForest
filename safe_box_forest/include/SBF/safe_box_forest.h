@@ -763,13 +763,11 @@ private:
 		std::vector<int>& added_by_query,
 		StageContext& context,
 		bool scene_reusable_edges);
-	int run_query_bridge_waypoint_fallbacks(
+	int run_query_bridge_waypoint_path(
 		QueryBridgeSearchTask& task,
 		int& added_for_task,
 		StageContext& context,
-		bool scene_reusable_edges,
-		const QueryBridgeIndexOptions& index_options,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance);
+		bool scene_reusable_edges);
 	void finish_query_bridge_ready_waypoint_task(
 		QueryBridgeSearchTask& task,
 		int& added_for_task,

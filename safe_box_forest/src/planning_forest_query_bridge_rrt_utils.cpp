@@ -204,8 +204,6 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     options.rrt_optimize_after_first_iters = std::max(
         0,
         detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
-    options.attempt_fallback_paths =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_FALLBACK_PATHS", 0));
     options.no_path_retry_budget_iters =
         detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
     options.no_path_retry_budget_attempts =
@@ -232,8 +230,6 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
                                     static_cast<double>(options.local_radius_schedule.size()));
     context.diagnostics().set_value("query_bridge.rrt_optimize_after_first_iters",
                                     static_cast<double>(options.rrt_optimize_after_first_iters));
-    context.diagnostics().set_value("query_bridge.attempt_fallback_paths",
-                                    static_cast<double>(options.attempt_fallback_paths));
     context.diagnostics().set_value("query_bridge.no_path_retry_budget_stages",
                                     static_cast<double>(options.no_path_retry_budget_stages));
     for (std::size_t stage = 0; stage < options.no_path_retry_budget_stages; ++stage) {

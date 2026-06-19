@@ -19,7 +19,6 @@ void select_query_bridge_attempt_paths(
     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths,
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
-    const QueryBridgeRetryOptions& retry_options,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,
@@ -97,35 +96,9 @@ void select_query_bridge_attempt_paths(
                   }
                   return lhs.second < rhs.second;
               });
-    std::size_t selected_index = std::numeric_limits<std::size_t>::max();
     if (task.waypoint_path.empty() || valid_paths.front().first < best_length) {
-        selected_index = valid_paths.front().second;
-        if (!task.waypoint_path.empty() &&
-            retry_options.attempt_fallback_paths > 0 &&
-            task.waypoint_fallback_paths.size() <
-                static_cast<std::size_t>(retry_options.attempt_fallback_paths)) {
-            task.waypoint_fallback_paths.push_back(std::move(task.waypoint_path));
-            context.diagnostics().add_counter(
-                "query_bridge.attempt_fallback_paths_stored");
-        }
         best_length = valid_paths.front().first;
-        task.waypoint_path = std::move(attempt_paths[selected_index]);
-    }
-    for (const auto& [length, index] : valid_paths) {
-        (void)length;
-        if (index == selected_index || attempt_paths[index].empty()) {
-            continue;
-        }
-        if (retry_options.attempt_fallback_paths <= 0 ||
-            task.waypoint_fallback_paths.size() >=
-                static_cast<std::size_t>(retry_options.attempt_fallback_paths)) {
-            break;
-        }
-        task.waypoint_fallback_paths.push_back(std::move(attempt_paths[index]));
-        context.diagnostics().add_counter(
-            "query_bridge.attempt_fallback_paths_stored");
-        context.diagnostics().add_counter(
-            query_bridge_task_key(task.index, "attempt_fallback_paths_stored"));
+        task.waypoint_path = std::move(attempt_paths[valid_paths.front().second]);
     }
 }
 
@@ -136,7 +109,6 @@ void adopt_query_bridge_waypoint_after_rrt(
     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
-    const QueryBridgeRetryOptions& retry_options,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,
@@ -145,7 +117,6 @@ void adopt_query_bridge_waypoint_after_rrt(
                                       attempt_paths_for_task,
                                       best_length,
                                       hybrid_options,
-                                      retry_options,
                                       audit_robot,
                                       scene,
                                       config,
