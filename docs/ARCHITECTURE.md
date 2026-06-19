@@ -99,6 +99,11 @@ src/lect_database/                 core persistence implementation
                                    accounting, and node-row flush/read/write
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
+  oracle.cpp                       database-backed SBF oracle, canonical/native
+                                   frame handling, evidence lookup, and box
+                                   validation
+  oracle_support.cpp               oracle-local hashing, timing, blocker,
+                                   cache-key, and counter helpers
 tools/                             database CLI and benchmark
 tests/                             core, cache, and adapter tests
 ```
