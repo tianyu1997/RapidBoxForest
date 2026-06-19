@@ -113,9 +113,10 @@ src/lect_database/                 core persistence implementation
                                    atomic staging directory publish
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
-  oracle.cpp                       database-backed SBF oracle, canonical/native
-                                   frame handling, evidence lookup, and box
-                                   validation
+  oracle.cpp                       database-backed SBF oracle, evidence lookup,
+                                   worker sessions, and box validation
+  oracle_canonical.cpp             canonical-sector and native/canonical
+                                   interval mapping helpers for the oracle
   oracle_material_point.cpp        material-point occupied-certificate helper
                                    for oracle validation
   oracle_options.h                 oracle-local environment/debug option
