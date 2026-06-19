@@ -251,10 +251,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         query_bridge_parallel_rrt_options_from_env();
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
-    const QueryBridgeWaypointQualityRetryOptions quality_retry_options =
-        query_bridge_waypoint_quality_retry_options_from_env();
-    record_query_bridge_waypoint_quality_retry_diagnostics(batch_context,
-                                                           quality_retry_options);
     const QueryBridgeHybridizeAttemptOptions hybrid_options =
         query_bridge_hybridize_attempt_options_from_env();
     if (last_adaptive_partition_config_.hipac_online_connectivity &&
@@ -390,11 +386,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             double best_length = std::numeric_limits<double>::infinity();
             adopt_query_bridge_waypoint_after_rrt(task,
                                                   attempt_paths[task_offset],
-                                                  prepared[task_offset].attempts,
                                                   best_length,
                                                   hybrid_options,
                                                   retry_options,
-                                                  quality_retry_options,
                                                   audit_robot_,
                                                   scene_,
                                                   config_,
@@ -481,11 +475,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         double best_length = std::numeric_limits<double>::infinity();
         adopt_query_bridge_waypoint_after_rrt(task,
                                               attempt_paths,
-                                              attempt_plan.base_attempts,
                                               best_length,
                                               hybrid_options,
                                               retry_options,
-                                              quality_retry_options,
                                               audit_robot_,
                                               scene_,
                                               config_,

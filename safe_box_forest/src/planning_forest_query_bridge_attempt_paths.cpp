@@ -134,11 +134,9 @@ void select_query_bridge_attempt_paths(
 void adopt_query_bridge_waypoint_after_rrt(
     QueryBridgeSearchTask& task,
     std::vector<std::vector<Eigen::VectorXd>>& attempt_paths_for_task,
-    int improve_attempts,
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
     const Robot& audit_robot,
     const Scene& scene,
     const RBFPlanningConfig& config,
@@ -152,16 +150,6 @@ void adopt_query_bridge_waypoint_after_rrt(
                                       scene,
                                       config,
                                       context);
-    improve_query_bridge_waypoint_if_needed(task,
-                                            improve_attempts,
-                                            best_length,
-                                            task.waypoint_path,
-                                            quality_retry_options,
-                                            retry_options,
-                                            audit_robot,
-                                            scene,
-                                            config,
-                                            context);
 }
 
 }  // namespace rbf

@@ -373,11 +373,6 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_sequential_reuse": "--query-bridge-sequential-reuse",
         "query_bridge_scene_reusable_edges": "--query-bridge-scene-reusable-edges",
         "query_bridge_direct_max_length": "--query-bridge-direct-max-length",
-        "query_bridge_waypoint_quality_retry": "--query-bridge-waypoint-quality-retry",
-        "query_bridge_waypoint_quality_retry_attempts": "--query-bridge-waypoint-quality-retry-attempts",
-        "query_bridge_waypoint_quality_retry_iters": "--query-bridge-waypoint-quality-retry-iters",
-        "query_bridge_waypoint_quality_max_ratio": "--query-bridge-waypoint-quality-max-ratio",
-        "query_bridge_waypoint_quality_max_additive": "--query-bridge-waypoint-quality-max-additive",
         "query_bridge_to_main_island": "--query-bridge-to-main-island",
         "query_bridge_failure_fallback_to_main": "--query-bridge-failure-fallback-to-main",
         "hipac_improved_leaf_sweep": "--hipac-improved-leaf-sweep",
@@ -628,11 +623,6 @@ def effective_rbf_profile(args: argparse.Namespace,
         args.query_bridge_to_main_direct_segment_max_length
     )
     profile["query_bridge"]["failure_fallback_to_main"] = bool(args.query_bridge_failure_fallback_to_main)
-    profile["query_bridge"]["waypoint_quality_retry"] = bool(args.query_bridge_waypoint_quality_retry)
-    profile["query_bridge"]["waypoint_quality_retry_attempts"] = int(args.query_bridge_waypoint_quality_retry_attempts)
-    profile["query_bridge"]["waypoint_quality_retry_iters"] = int(args.query_bridge_waypoint_quality_retry_iters)
-    profile["query_bridge"]["waypoint_quality_max_ratio"] = float(args.query_bridge_waypoint_quality_max_ratio)
-    profile["query_bridge"]["waypoint_quality_max_additive"] = float(args.query_bridge_waypoint_quality_max_additive)
     profile["query_bridge"]["group_residual_gaps"] = bool(args.query_bridge_group_residual_gaps)
     profile["query_bridge"]["endpoint_anchor_before_bridge"] = bool(args.query_endpoint_anchor_before_bridge)
     profile["hipac"] = {
@@ -917,11 +907,6 @@ def parse_args() -> argparse.Namespace:
                         default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS)
     parser.add_argument("--query-bridge-no-path-retry-budget-iters", default="")
     parser.add_argument("--query-bridge-no-path-retry-budget-attempts", default="")
-    parser.add_argument("--query-bridge-waypoint-quality-retry", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--query-bridge-waypoint-quality-retry-attempts", type=int, default=4)
-    parser.add_argument("--query-bridge-waypoint-quality-retry-iters", type=int, default=0)
-    parser.add_argument("--query-bridge-waypoint-quality-max-ratio", type=float, default=2.0)
-    parser.add_argument("--query-bridge-waypoint-quality-max-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-failure-fallback-to-main", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
@@ -1568,11 +1553,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_no_path_retry_budget_attempts=str(
                 getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
             ).strip(),
-            query_bridge_waypoint_quality_retry=bool(args.query_bridge_waypoint_quality_retry),
-            query_bridge_waypoint_quality_retry_attempts=int(args.query_bridge_waypoint_quality_retry_attempts),
-            query_bridge_waypoint_quality_retry_iters=int(args.query_bridge_waypoint_quality_retry_iters),
-            query_bridge_waypoint_quality_max_ratio=float(args.query_bridge_waypoint_quality_max_ratio),
-            query_bridge_waypoint_quality_max_additive=float(args.query_bridge_waypoint_quality_max_additive),
             query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
             query_bridge_full_residual_overlay_when_connected=bool(
                 args.query_bridge_full_residual_overlay_when_connected
@@ -1737,11 +1717,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_no_path_retry_budget_attempts": str(
                 getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
             ).strip(),
-            "query_bridge_waypoint_quality_retry": bool(args.query_bridge_waypoint_quality_retry),
-            "query_bridge_waypoint_quality_retry_attempts": int(args.query_bridge_waypoint_quality_retry_attempts),
-            "query_bridge_waypoint_quality_retry_iters": int(args.query_bridge_waypoint_quality_retry_iters),
-            "query_bridge_waypoint_quality_max_ratio": float(args.query_bridge_waypoint_quality_max_ratio),
-            "query_bridge_waypoint_quality_max_additive": float(args.query_bridge_waypoint_quality_max_additive),
             "ffb_start_depth": int(effective_ffb_start_depth),
             "rbf_max_depth": int(args.rbf_max_depth),
             "rbf_robot_tuned_profile": bool(args.rbf_robot_tuned_profile),
@@ -2662,12 +2637,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_fast_direct_segment_after_rrt_edges_median": median(row.get("diag_query_bridge_fast_direct_segment_after_rrt_edges", 0.0) for row in items),
                 "diag_query_bridge_endpoint_point_anchor_attempts_median": median(row.get("diag_query_bridge_endpoint_point_anchor_attempts", 0.0) for row in items),
                 "diag_query_bridge_endpoint_point_anchor_success_median": median(row.get("diag_query_bridge_endpoint_point_anchor_success", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_median": median(row.get("diag_query_bridge_waypoint_quality_retry", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_tasks_median": median(row.get("diag_query_bridge_waypoint_quality_retry_tasks", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_attempts_median": median(row.get("diag_query_bridge_waypoint_quality_retry_attempts", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_successes_median": median(row.get("diag_query_bridge_waypoint_quality_retry_successes", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_fixed_median": median(row.get("diag_query_bridge_waypoint_quality_retry_fixed", 0.0) for row in items),
-                "diag_query_bridge_waypoint_quality_retry_ms_total_median": median(row.get("diag_query_bridge_waypoint_quality_retry_ms_total", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_ms_median": median(row.get("diag_query_bridge_direct_corridor_ms", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_ms_total_median": median(row.get("diag_query_bridge_direct_corridor_ms_total", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_ffb_calls_median": median(row.get("diag_query_bridge_direct_corridor_ffb_calls", 0.0) for row in items),
@@ -2856,12 +2825,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_fast_direct_segment_after_rrt_edges_median",
         "diag_query_bridge_endpoint_point_anchor_attempts_median",
         "diag_query_bridge_endpoint_point_anchor_success_median",
-        "diag_query_bridge_waypoint_quality_retry_median",
-        "diag_query_bridge_waypoint_quality_retry_tasks_median",
-        "diag_query_bridge_waypoint_quality_retry_attempts_median",
-        "diag_query_bridge_waypoint_quality_retry_successes_median",
-        "diag_query_bridge_waypoint_quality_retry_fixed_median",
-        "diag_query_bridge_waypoint_quality_retry_ms_total_median",
         "diag_query_bridge_direct_corridor_ms_median",
         "diag_query_bridge_direct_corridor_ms_total_median",
         "diag_query_bridge_direct_corridor_ffb_calls_median",

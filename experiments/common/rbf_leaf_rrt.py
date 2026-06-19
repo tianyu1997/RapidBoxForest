@@ -314,12 +314,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.direct_segment_after_rrt_edges",
         "query_bridge.direct_segment_after_rrt_audit_rejects",
         "query_bridge.direct_segment_after_rrt_add_fail",
-        "query_bridge.waypoint_quality_retry",
-        "query_bridge.waypoint_quality_retry_tasks",
-        "query_bridge.waypoint_quality_retry_attempts",
-        "query_bridge.waypoint_quality_retry_successes",
-        "query_bridge.waypoint_quality_retry_fixed",
-        "query_bridge.waypoint_quality_retry_ms_total",
         "query_bridge.direct_corridor_ms",
         "query_bridge.direct_corridor_ms_total",
         "query_bridge.direct_corridor_samples",
@@ -649,11 +643,6 @@ class RBFLeafRRTOptions:
     )
     query_bridge_no_path_retry_budget_iters: str = ""
     query_bridge_no_path_retry_budget_attempts: str = ""
-    query_bridge_waypoint_quality_retry: bool = False
-    query_bridge_waypoint_quality_retry_attempts: int = 4
-    query_bridge_waypoint_quality_retry_iters: int = 0
-    query_bridge_waypoint_quality_max_ratio: float = 2.0
-    query_bridge_waypoint_quality_max_additive: float = 0.75
     query_bridge_rrt_fixed_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS
     query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
     query_bridge_local_radius_schedule: str = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE
@@ -1992,23 +1981,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS"] = (
             str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip() or None
-        )
-        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_waypoint_quality_retry", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ATTEMPTS"] = str(
-            int(getattr(options, "query_bridge_waypoint_quality_retry_attempts", 4))
-        )
-        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_RETRY_ITERS"] = str(
-            int(getattr(options, "query_bridge_waypoint_quality_retry_iters", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_RATIO"] = str(
-            float(getattr(options, "query_bridge_waypoint_quality_max_ratio", 2.0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_WAYPOINT_QUALITY_MAX_ADDITIVE"] = str(
-            float(getattr(options, "query_bridge_waypoint_quality_max_additive", 0.75))
         )
         env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_ITERS"] = str(
             int(getattr(options, "query_bridge_rrt_fixed_iters", 0))
