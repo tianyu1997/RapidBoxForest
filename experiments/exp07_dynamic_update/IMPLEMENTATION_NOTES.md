@@ -45,8 +45,8 @@ are intentionally excluded.
 
 ## Update-and-Replan Diagnostic
 
-`run_update_replan_diagnostic.py` is a separate reviewer-risk diagnostic, not
-the source of the main dynamic-update table. It reuses the saved ordered
+The archived update-and-replan diagnostic is a separate reviewer-risk check,
+not the source of the main dynamic-update table. It reuses the saved ordered
 obstacle catalog, samples queries that are free in the target scene, then
 compares:
 

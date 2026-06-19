@@ -57,7 +57,6 @@ DEFAULT_EXCLUDE_PATTERNS = (
     "paper/history/**",
     "safe_box_forest/paper/sbf_old/**",
     "safe_box_forest/scripts/regentable.py",
-    "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
     "openai-skills/**",
     "outputs/**",
     "**/outputs/**",
@@ -112,7 +111,6 @@ ARCHIVE_PATTERNS = (
     "paper/history/**",
     "safe_box_forest/paper/sbf_old/**",
     "safe_box_forest/scripts/regentable.py",
-    "experiments/exp07_dynamic_update/run_update_replan_diagnostic.py",
 )
 
 FORBIDDEN_SOURCE_DIR_NAMES = {
