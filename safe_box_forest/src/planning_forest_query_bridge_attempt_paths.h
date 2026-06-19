@@ -33,7 +33,6 @@ void adopt_query_bridge_waypoint_after_rrt(
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeDirectLineFallbackOptions& direct_line_options,
     const QueryBridgeDetourOptions& detour_options,
     const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
     const std::vector<Interval>& detour_planning_domain,

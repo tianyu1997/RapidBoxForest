@@ -310,10 +310,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.oracle_materialization_envelope_ms",
         "query_bridge.oracle_envelope_collision_queries",
         "query_bridge.oracle_envelope_gjk_tests",
-        "query_bridge.direct_line_on_no_path",
-        "query_bridge.direct_line_on_no_path_attempts",
-        "query_bridge.direct_line_on_no_path_successes",
-        "query_bridge.direct_line_on_no_path_rejects",
         "query_bridge.detour_on_no_path",
         "query_bridge.detour_candidate",
         "query_bridge.detour_on_no_path_attempts",
@@ -464,7 +460,6 @@ def _query_bridge_diagnostic_fields(
             "direct_corridor_segment_edges",
             "direct_corridor_local_connected",
             "direct_corridor_full_residual_edge",
-            "direct_line_on_no_path",
             "detour_on_no_path",
         }:
             continue

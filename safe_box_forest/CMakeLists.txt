@@ -166,7 +166,6 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_corridor_repair.cpp
     src/planning_forest_query_bridge_corridor_tasks.cpp
     src/planning_forest_query_bridge_detour_utils.cpp
-    src/planning_forest_query_bridge_direct_line.cpp
     src/planning_forest_query_bridge_direct_corridor.cpp
     src/planning_forest_query_bridge_direct_promotion.cpp
     src/planning_forest_query_bridge_direct_segments.cpp

@@ -41,10 +41,6 @@ struct QueryBridgeWaypointQualityRetryOptions {
     double max_additive = 0.75;
 };
 
-struct QueryBridgeDirectLineFallbackOptions {
-    bool enabled = false;
-};
-
 struct QueryBridgeHybridizeAttemptOptions {
     bool enabled = false;
     int max_paths = 8;
@@ -93,20 +89,6 @@ bool query_bridge_waypoint_quality_retry_needed(
     const Eigen::VectorXd& goal,
     double best_length,
     const QueryBridgeWaypointQualityRetryOptions& options);
-
-QueryBridgeDirectLineFallbackOptions query_bridge_direct_line_fallback_options_from_env();
-
-void record_query_bridge_direct_line_fallback_diagnostics(
-    StageContext& context,
-    const QueryBridgeDirectLineFallbackOptions& options);
-
-std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(
-    const QueryBridgeSearchTask& task,
-    const Robot& audit_robot,
-    const Scene& scene,
-    const QueryConfig& query_config,
-    const QueryBridgeDirectLineFallbackOptions& options,
-    StageContext& context);
 
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
 

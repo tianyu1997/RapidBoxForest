@@ -139,7 +139,6 @@ void adopt_query_bridge_waypoint_after_rrt(
     double& best_length,
     const QueryBridgeHybridizeAttemptOptions& hybrid_options,
     const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeDirectLineFallbackOptions& direct_line_options,
     const QueryBridgeDetourOptions& detour_options,
     const QueryBridgeWaypointQualityRetryOptions& quality_retry_options,
     const std::vector<Interval>& detour_planning_domain,
@@ -156,22 +155,6 @@ void adopt_query_bridge_waypoint_after_rrt(
                                       scene,
                                       config,
                                       context);
-    if (task.waypoint_path.empty()) {
-        auto direct_path = query_bridge_direct_line_fallback_path(
-            task,
-            audit_robot,
-            scene,
-            config.query,
-            direct_line_options,
-            context);
-        if (!direct_path.empty()) {
-            best_length = path_length(direct_path);
-            task.waypoint_path = std::move(direct_path);
-            context.diagnostics().set_value(
-                query_bridge_task_key(task.index, "direct_line_on_no_path"),
-                1.0);
-        }
-    }
     if (query_bridge_maybe_apply_detour_path(task,
                                              audit_robot,
                                              scene,

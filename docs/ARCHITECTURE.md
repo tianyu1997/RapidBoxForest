@@ -331,7 +331,6 @@ src/planning_forest_query_bridge_corridor_repair.cpp
 src/planning_forest_query_bridge_repair_options.cpp
                                    subdivision, adaptive, and lateral repair
                                    option builders for direct corridor paving
-src/planning_forest_query_bridge_direct_line.cpp
                                    audited direct-line fallback option parsing
                                    and path validation
 src/planning_forest_query_bridge_direct_segments.cpp

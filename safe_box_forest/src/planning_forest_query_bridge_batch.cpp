@@ -288,9 +288,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     record_query_bridge_partition_path_first_diagnostics(batch_context,
                                                         partition_path_first_options);
-    const QueryBridgeDirectLineFallbackOptions direct_line_options =
-        query_bridge_direct_line_fallback_options_from_env();
-    record_query_bridge_direct_line_fallback_diagnostics(batch_context, direct_line_options);
     const QueryBridgeDetourOptions detour_options = query_bridge_detour_options_from_env();
     record_query_bridge_detour_diagnostics(batch_context, detour_options);
     const auto detour_planning_domain = oracle_->planning_intervals();
@@ -446,7 +443,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                   best_length,
                                                   hybrid_options,
                                                   retry_options,
-                                                  direct_line_options,
                                                   detour_options,
                                                   quality_retry_options,
                                                   detour_planning_domain,
@@ -549,7 +545,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               best_length,
                                               hybrid_options,
                                               retry_options,
-                                              direct_line_options,
                                               detour_options,
                                               quality_retry_options,
                                               detour_planning_domain,
