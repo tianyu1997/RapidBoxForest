@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import sys
@@ -21,6 +20,7 @@ from experiments.common.experiment_io import (
     csv_list,
     environment_metadata,
     run_id,
+    write_csv,
     write_json,
 )
 from experiments.common.metrics import mean, median
@@ -364,15 +364,6 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "final_adjacency_islands_median": median(row.get("final_adjacency_islands", math.nan) for row in items),
         })
     return out
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]], fields: list[str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field) for field in fields})
 
 
 def write_per_query(path: Path, rows: list[dict[str, Any]]) -> None:

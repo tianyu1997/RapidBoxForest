@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import math
 import statistics
 import sys
@@ -13,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_ints, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_ints, environment_metadata, run_id, write_csv, write_json
 from experiments.common.metrics import mean, median
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
@@ -121,20 +120,6 @@ def summarize_by_query(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "status": "executed",
         })
     return out
-
-
-def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fields: list[str] = []
-    for row in rows:
-        for key in row:
-            if key not in fields:
-                fields.append(key)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field) for field in fields})
 
 
 def write_report(path: Path, summary: list[dict[str, Any]], rows: list[dict[str, Any]]) -> None:
