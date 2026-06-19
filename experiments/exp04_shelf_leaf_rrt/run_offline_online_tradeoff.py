@@ -22,6 +22,15 @@ from experiments.common.experiment_io import (
 )
 from experiments.common.metrics import mean, median
 from experiments.common.progress import progress
+from experiments.common.rbf_defaults import (
+    DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES,
+    DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
+    DEFAULT_RBF_DEEP_FFB_DEPTH,
+    DEFAULT_RBF_LEAF_START_DEPTH,
+    DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_COUNT,
+    DEFAULT_RBF_THREADS,
+)
 from experiments.exp04_shelf_leaf_rrt import run_shelf_leaf_rrt as exp04
 
 
@@ -179,7 +188,7 @@ def grid_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
 
 def config_id(cfg: dict[str, Any]) -> str:
     base = (
-        f"l{int(cfg.get('leaf_start', 8))}_{int(cfg['leaf_max'])}"
+        f"l{int(cfg.get('leaf_start', DEFAULT_RBF_LEAF_START_DEPTH))}_{int(cfg['leaf_max'])}"
         f"_at{int(cfg.get('adaptive_target_depth', cfg['leaf_max']))}"
         f"_tb{int(cfg.get('adaptive_time_budget_ms', 0))}"
         f"_cm{str(cfg.get('offline_connector_mode', 'box_only')).replace('-', '_')}"
@@ -481,19 +490,19 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Scan query-agnostic offline RBF coverage against online shelf query performance.")
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_OUTPUT_ROOT / "tro2026" / "exp04_offline_online_tradeoff")
     parser.add_argument("--seeds", default="0,1,2")
-    parser.add_argument("--threads", type=int, default=8)
-    parser.add_argument("--leaf-start-depth", type=int, default=8)
+    parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
+    parser.add_argument("--leaf-start-depth", type=int, default=DEFAULT_RBF_LEAF_START_DEPTH)
     parser.add_argument("--leaf-max-depths", default="10,12,13")
     parser.add_argument("--adaptive-target-depths", default="16,24,32")
     parser.add_argument("--adaptive-time-budgets-ms", default="500,1000,2000,5000")
     parser.add_argument("--offline-connector-modes", default="off,box_only,short_segment")
-    parser.add_argument("--offline-anchor-counts", default="16,32")
-    parser.add_argument("--offline-anchor-candidate-counts", default="512,1024")
+    parser.add_argument("--offline-anchor-counts", default=f"{DEFAULT_RBF_OFFLINE_ANCHOR_COUNT},32")
+    parser.add_argument("--offline-anchor-candidate-counts", default=f"{DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT},1024")
     parser.add_argument("--box-budgets", default="400,800")
-    parser.add_argument("--connector-bridge-boxes", default="200,400")
+    parser.add_argument("--connector-bridge-boxes", default=f"{DEFAULT_RBF_CONNECTOR_BRIDGE_BOXES},400")
     parser.add_argument("--connector-pair-timeouts-ms", default="30")
-    parser.add_argument("--connector-max-pairs-per-gap", type=int, default=2)
-    parser.add_argument("--deep-ffb-depth", type=int, default=62)
+    parser.add_argument("--connector-max-pairs-per-gap", type=int, default=DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP)
+    parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--refine-timeout-ms", type=float, default=1200.0)
     parser.add_argument(
         "--configs",
