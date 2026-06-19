@@ -23,6 +23,7 @@ from experiments.common.experiment_io import (
     write_csv as write_csv_rows,
     write_json,
 )
+from experiments.common.formatting import fmt_float
 from experiments.common.checkpoints import (
     bitstar_checkpoint_grid_from_args,
     bitstar_trace_interval_for_grid,
@@ -551,10 +552,6 @@ def prm_build_grid_from_args(args: argparse.Namespace) -> list[float]:
         target_s += interval_s
     values.append(build_s)
     return values
-
-
-def fmt_float(value: float) -> str:
-    return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
 def simplify_path_if_requested(

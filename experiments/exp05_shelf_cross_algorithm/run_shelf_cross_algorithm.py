@@ -30,6 +30,7 @@ from experiments.common.experiment_io import (
     write_csv as write_csv_rows,
     write_json,
 )
+from experiments.common.formatting import fmt_float
 from experiments.common.checkpoints import (
     bitstar_checkpoint_grid_from_args,
     bitstar_trace_interval_for_grid,
@@ -165,10 +166,6 @@ def exp04_registered_rbf_rows(
         "imported_runs": len(imported_rows),
         "imported_summary_rows": len(imported_summary),
     }
-
-
-def fmt_float(value: float) -> str:
-    return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
 def simplify_path_if_requested(
