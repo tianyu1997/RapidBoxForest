@@ -1,16 +1,14 @@
 #pragma once
 
-#include "env_config.h"
-
 namespace rbf::detail {
 
 struct VirtualSparseFfbOptions {
     int binary_probe_depth = -1;
 };
 
-inline VirtualSparseFfbOptions virtual_sparse_ffb_options_from_env() {
+inline VirtualSparseFfbOptions virtual_sparse_ffb_options(int binary_probe_depth) {
     VirtualSparseFfbOptions options;
-    options.binary_probe_depth = env_int_or_default("RBF_FFB_BINARY_PROBE_DEPTH", -1);
+    options.binary_probe_depth = binary_probe_depth;
     return options;
 }
 

@@ -146,7 +146,7 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_in_domain(
     // query-seed coupling is applied to the split values.
     OracleSplitOptions split_options = options.split;
     const detail::VirtualSparseFfbOptions virtual_sparse_options =
-        detail::virtual_sparse_ffb_options_from_env();
+        detail::virtual_sparse_ffb_options(options.binary_probe_depth);
     OracleNodeId node = oracle_->root_node();
     OracleNodeTopology node_topology = oracle_->node_topology(node);
     if (!node_topology.valid) {

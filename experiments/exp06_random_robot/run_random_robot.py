@@ -33,6 +33,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_DEEP_FFB_DEPTH,
     DEFAULT_RBF_DEEP_MAX_BOXES,
     DEFAULT_RBF_FFB_IMPLEMENTATION,
+    DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
@@ -323,6 +324,7 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_pave_depth": "--query-bridge-pave-depth",
         "query_endpoint_anchor_ffb_depth": "--query-endpoint-anchor-ffb-depth",
         "ffb_start_depth": "--ffb-start-depth",
+        "ffb_binary_probe_depth": "--ffb-binary-probe-depth",
         "query_bridge_ffb_start_depth": "--query-bridge-ffb-start-depth",
         "query_bridge_edge_cost_penalty": "--query-bridge-edge-cost-penalty",
         "connector_rrt_step_size": "--connector-rrt-step-size",
@@ -506,6 +508,7 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["deep_refine"]["deep_max_boxes"] = int(args.deep_max_boxes)
     profile["deep_refine"]["deep_ffb_depth"] = int(args.deep_ffb_depth)
     profile["deep_refine"]["ffb_start_depth"] = int(args.ffb_start_depth)
+    profile["deep_refine"]["ffb_binary_probe_depth"] = int(args.ffb_binary_probe_depth)
     profile["deep_refine"]["ffb_search_mode"] = str(args.ffb_search_mode)
     profile["deep_refine"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
     profile["deep_refine"]["split_schedule_kind"] = effective_split
@@ -517,6 +520,7 @@ def effective_rbf_profile(args: argparse.Namespace,
     }
     profile["connector"]["pave_depth"] = int(args.connector_pave_depth)
     profile["connector"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["connector"]["ffb_binary_probe_depth"] = int(args.ffb_binary_probe_depth)
     profile["connector"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
     profile["connector"]["max_pairs_per_gap"] = int(DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP)
     profile["connector"]["per_pair_timeout_ms"] = int(DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS)
@@ -526,6 +530,7 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["pave_depth"] = int(args.query_bridge_pave_depth)
     profile["query_bridge"]["ffb_start_depth"] = int(args.query_bridge_ffb_start_depth)
     profile["query_bridge"]["ffb_search_mode"] = str(args.ffb_search_mode)
+    profile["query_bridge"]["ffb_binary_probe_depth"] = int(args.ffb_binary_probe_depth)
     profile["query_bridge"]["ffb_implementation"] = DEFAULT_RBF_FFB_IMPLEMENTATION
     profile["query_bridge"]["endpoint_anchor_ffb_depth"] = int(args.query_endpoint_anchor_ffb_depth)
     profile["query_bridge"]["all_queries"] = bool(args.query_bridge_all)
@@ -717,6 +722,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
     parser.add_argument("--ur5-ffb-start-depth", type=int, default=-1)
     parser.add_argument("--query-bridge-ffb-start-depth", type=int, default=-1)
+    parser.add_argument("--ffb-binary-probe-depth", type=int, default=DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH)
     parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE)
     parser.add_argument(
         "--lect-split-schedule",
@@ -1296,6 +1302,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_ffb_start_depth=int(args.query_bridge_ffb_start_depth),
             query_endpoint_anchor_ffb_depth=int(args.query_endpoint_anchor_ffb_depth),
             ffb_start_depth=int(effective_ffb_start_depth),
+            ffb_binary_probe_depth=int(args.ffb_binary_probe_depth),
             ffb_search_mode=str(args.ffb_search_mode),
             split_schedule_kind=str(effective_split_schedule_kind),
             use_external_evidence=True,
@@ -1466,6 +1473,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
             "ffb_start_depth": int(effective_ffb_start_depth),
             "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
+            "ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "hipac_transition_obb_portal": bool(args.hipac_transition_obb_portal),
             "hipac_transition_obb_lateral_radius": float(args.hipac_transition_obb_lateral_radius),
             "hipac_transition_obb_longitudinal_margin": float(args.hipac_transition_obb_longitudinal_margin),
@@ -1566,6 +1574,7 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 getattr(args, "query_bridge_no_path_retry_budget_attempts", "")
             ).strip(),
             "ffb_start_depth": int(effective_ffb_start_depth),
+            "ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "rbf_max_depth": int(args.rbf_max_depth),
             "rbf_robot_tuned_profile": bool(args.rbf_robot_tuned_profile),
             "deep_max_boxes": int(args.deep_max_boxes),
@@ -2324,6 +2333,9 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "connector_pave_depth": median(row.get("connector_pave_depth", math.nan) for row in items),
                 "query_bridge_pave_depth": median(row.get("query_bridge_pave_depth", math.nan) for row in items),
                 "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
+                "ffb_binary_probe_depth": median(
+                    row.get("ffb_binary_probe_depth", math.nan) for row in items
+                ),
                 "query_bridge_ffb_start_depth": median(
                     row.get("query_bridge_ffb_start_depth", math.nan) for row in items
                 ),
@@ -2605,6 +2617,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_endpoint_point_anchor",
         "rbf_robot_tuned_profile",
         "ffb_start_depth",
+        "ffb_binary_probe_depth",
         "rbf_max_depth",
         "budget_s",
         "timeout_cap_s",

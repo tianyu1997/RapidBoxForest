@@ -40,6 +40,7 @@ from experiments.common.random_scene_catalog import (
 )
 from experiments.common.rbf_defaults import (
     DEFAULT_RBF_DEEP_FFB_DEPTH,
+    DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
     DEFAULT_RBF_FFB_IMPLEMENTATION,
     DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_START_DEPTH,
@@ -363,6 +364,7 @@ def make_options(args: argparse.Namespace, robot_name: str, seed: int, label: st
         validation_batch_size=int(args.validation_batch_size),
         deep_ffb_depth=int(args.deep_ffb_depth),
         ffb_start_depth=int(args.ffb_start_depth),
+        ffb_binary_probe_depth=int(args.ffb_binary_probe_depth),
         ffb_search_mode=str(args.ffb_search_mode),
         use_external_evidence=True,
         external_evidence_path=robot_external_evidence_path(robot_name, cache_root=Path(args.lect_cache_root)),
@@ -652,6 +654,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adaptive-target-depth", type=int, default=DEFAULT_ADAPTIVE_TARGET_DEPTH)
     parser.add_argument("--deep-ffb-depth", type=int, default=DEFAULT_RBF_DEEP_FFB_DEPTH)
     parser.add_argument("--ffb-start-depth", type=int, default=16)
+    parser.add_argument("--ffb-binary-probe-depth", type=int, default=DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH)
     parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE, choices=["linear", "binary", "binary-depth", "BinaryDepth", "Linear"])
     parser.add_argument("--adaptive-time-budget-ms", type=float, default=60000.0)
     parser.add_argument("--adaptive-node-budget", type=int, default=0)
@@ -752,6 +755,7 @@ def main() -> int:
             "adaptive_target_depth": max(int(args.leaf_max_depth), int(args.adaptive_target_depth)),
             "adaptive_time_budget_ms": float(args.adaptive_time_budget_ms),
             "deep_max_boxes": int(args.deep_max_boxes),
+            "ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "ffb_search_mode": str(args.ffb_search_mode),
             "ffb_implementation": DEFAULT_RBF_FFB_IMPLEMENTATION,
             "use_virtual_topology": bool(args.use_virtual_topology),

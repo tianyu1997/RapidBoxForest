@@ -84,6 +84,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_QUERY_BRIDGE_FORCE_INDICES,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
@@ -366,6 +367,7 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         domain_attempt_cap=int(args.domain_attempt_cap),
         validation_batch_size=int(args.validation_batch_size),
         ffb_start_depth=int(args.ffb_start_depth),
+        ffb_binary_probe_depth=int(args.ffb_binary_probe_depth),
         ffb_search_mode=str(args.ffb_search_mode),
         audit_resolution=int(args.audit_resolution),
         audit_segment_step=float(args.audit_segment_step),
@@ -1406,6 +1408,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--domain-attempt-cap", type=int, default=DEFAULT_RBF_DOMAIN_ATTEMPT_CAP)
     parser.add_argument("--validation-batch-size", type=int, default=DEFAULT_RBF_VALIDATION_BATCH_SIZE)
     parser.add_argument("--ffb-start-depth", type=int, default=DEFAULT_RBF_FFB_START_DEPTH)
+    parser.add_argument("--ffb-binary-probe-depth", type=int, default=DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH)
     parser.add_argument("--ffb-search-mode", default=DEFAULT_RBF_FFB_SEARCH_MODE, choices=["linear", "binary", "binary-depth", "BinaryDepth", "Linear"])
     parser.add_argument("--audit-resolution", type=int, default=DEFAULT_RBF_AUDIT_RESOLUTION)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
@@ -1679,12 +1682,14 @@ def main() -> int:
             },
             "deep_ffb_depth": int(args.deep_ffb_depth),
             "ffb_start_depth": int(args.ffb_start_depth),
+            "ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
             "ffb_search_mode": str(args.ffb_search_mode),
             "lect_leaf_start_depth": int(args.leaf_start_depth),
             "lect_leaf_max_depth": int(args.leaf_max_depth),
             "lect_deep_ffb_depth": int(args.deep_ffb_depth),
             "lect_ffb_start_depth": int(args.ffb_start_depth),
+            "lect_ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "lect_ffb_search_mode": str(args.ffb_search_mode),
             "lect_connector_pave_depth": int(args.connector_pave_depth),
             "lect_connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),

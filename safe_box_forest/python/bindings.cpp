@@ -1350,6 +1350,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("start_depth", &rbf::FindFreeBoxOptions::start_depth)
         .def_readwrite("skip_to_depth", &rbf::FindFreeBoxOptions::skip_to_depth)
         .def_readwrite("search_mode", &rbf::FindFreeBoxOptions::search_mode)
+        .def_readwrite("binary_probe_depth", &rbf::FindFreeBoxOptions::binary_probe_depth)
         .def_readwrite("adaptive_depths", &rbf::FindFreeBoxOptions::adaptive_depths)
         .def_readwrite("deadline_ms", &rbf::FindFreeBoxOptions::deadline_ms)
         .def_readwrite("split_reserved_leaf", &rbf::FindFreeBoxOptions::split_reserved_leaf)

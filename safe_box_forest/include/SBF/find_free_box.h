@@ -22,6 +22,9 @@ struct FindFreeBoxOptions {
 	/// for them and split directly.  Should match lect_build_policy.skip_top_depth.
 	int skip_to_depth = 0;
 	FindFreeBoxSearchMode search_mode = FindFreeBoxSearchMode::BinaryDepth;
+	/// Optional first probe depth for BinaryDepth search. <0 selects the
+	/// default midpoint probe between start_depth/skip_to_depth and max_depth.
+	int binary_probe_depth = -1;
 	/// Optional scheduled-depth checkpoints for a single incremental descent.
 	/// Empty means use search_mode with max_depth only. Values are sanitized and
 	/// capped by max_depth.

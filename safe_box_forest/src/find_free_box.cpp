@@ -140,7 +140,7 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
 
     const int effective_max_depth = std::max(0, std::min(options.max_depth, oracle_.max_tree_depth() - 1));
     const detail::VirtualSparseFfbOptions virtual_sparse_options =
-        detail::virtual_sparse_ffb_options_from_env();
+        detail::virtual_sparse_ffb_options(options.binary_probe_depth);
     if (options.search_mode == FindFreeBoxSearchMode::BinaryDepth &&
         options.adaptive_depths.empty()) {
         const int virtual_start_depth =

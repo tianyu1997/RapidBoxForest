@@ -38,6 +38,7 @@ DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 3
 DEFAULT_RBF_VALIDATION_BATCH_SIZE = 512
 DEFAULT_RBF_THREADS = 8
 DEFAULT_RBF_FFB_START_DEPTH = 32
+DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH = -1
 DEFAULT_RBF_FFB_SEARCH_MODE = "binary"
 DEFAULT_RBF_FFB_IMPLEMENTATION = "virtual_sparse_binary"
 
@@ -470,6 +471,7 @@ def default_rbf_profile() -> dict[str, Any]:
             "deep_max_boxes": DEFAULT_RBF_DEEP_MAX_BOXES,
             "deep_ffb_depth": DEFAULT_RBF_DEEP_FFB_DEPTH,
             "ffb_start_depth": DEFAULT_RBF_FFB_START_DEPTH,
+            "ffb_binary_probe_depth": DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
             "ffb_search_mode": DEFAULT_RBF_FFB_SEARCH_MODE,
             "ffb_implementation": DEFAULT_RBF_FFB_IMPLEMENTATION,
             "domain_seed_cap": DEFAULT_RBF_DOMAIN_SEED_CAP,
@@ -480,6 +482,7 @@ def default_rbf_profile() -> dict[str, Any]:
         "connector": {
             "depth_semantics": "lect_active_tree",
             "ffb_search_mode": DEFAULT_RBF_FFB_SEARCH_MODE,
+            "ffb_binary_probe_depth": DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
             "ffb_implementation": DEFAULT_RBF_FFB_IMPLEMENTATION,
             "segment_edges_enabled": True,
             "segment_edges_fallback_only": False,
@@ -503,6 +506,7 @@ def default_rbf_profile() -> dict[str, Any]:
         "query_bridge": {
             "depth_semantics": "lect_active_tree",
             "ffb_search_mode": DEFAULT_RBF_FFB_SEARCH_MODE,
+            "ffb_binary_probe_depth": DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
             "ffb_implementation": DEFAULT_RBF_FFB_IMPLEMENTATION,
             "pave_depth": DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
             "ffb_start_depth": -1,

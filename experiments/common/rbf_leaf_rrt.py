@@ -72,6 +72,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
+    DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
@@ -522,6 +523,7 @@ class RBFLeafRRTOptions:
     split_schedule_kind: str = "aafk_volume_min"
     ffb_start_depth: int = DEFAULT_RBF_FFB_START_DEPTH
     query_bridge_ffb_start_depth: int = -1
+    ffb_binary_probe_depth: int = DEFAULT_RBF_FFB_BINARY_PROBE_DEPTH
     ffb_search_mode: str = DEFAULT_RBF_FFB_SEARCH_MODE
     audit_resolution: int = DEFAULT_RBF_AUDIT_RESOLUTION
     audit_segment_step: float = DEFAULT_RBF_AUDIT_SEGMENT_STEP
@@ -1323,6 +1325,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.connector.pave.find_free_box.skip_to_depth = int(options.ffb_start_depth)
     if hasattr(cfg.connector.pave.find_free_box, "start_depth"):
         cfg.connector.pave.find_free_box.start_depth = int(options.ffb_start_depth)
+    if hasattr(cfg.connector.pave.find_free_box, "binary_probe_depth"):
+        cfg.connector.pave.find_free_box.binary_probe_depth = int(options.ffb_binary_probe_depth)
     if ffb_search_mode is not None and hasattr(cfg.connector.pave.find_free_box, "search_mode"):
         cfg.connector.pave.find_free_box.search_mode = ffb_search_mode
     cfg.connector.pave.find_free_box.split_reserved_leaf = True
@@ -1340,6 +1344,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.grower.find_free_box.skip_to_depth = int(options.ffb_start_depth)
     if hasattr(cfg.grower.find_free_box, "start_depth"):
         cfg.grower.find_free_box.start_depth = int(options.ffb_start_depth)
+    if hasattr(cfg.grower.find_free_box, "binary_probe_depth"):
+        cfg.grower.find_free_box.binary_probe_depth = int(options.ffb_binary_probe_depth)
     if ffb_search_mode is not None and hasattr(cfg.grower.find_free_box, "search_mode"):
         cfg.grower.find_free_box.search_mode = ffb_search_mode
     if hasattr(cfg.query, "final_rrt_simplify"):
