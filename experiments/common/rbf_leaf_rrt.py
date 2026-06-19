@@ -1291,6 +1291,16 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_full_residual_overlay_when_connected = bool(
             options.query_bridge_full_residual_overlay_when_connected
         )
+    if hasattr(cfg, "query_bridge_adaptive_max_repair_subdivisions"):
+        cfg.query_bridge_adaptive_max_repair_subdivisions = int(
+            options.query_bridge_adaptive_max_repair_subdivisions
+        )
+    if hasattr(cfg, "query_bridge_adaptive_fine_step"):
+        cfg.query_bridge_adaptive_fine_step = float(options.query_bridge_adaptive_fine_step)
+    if hasattr(cfg, "query_bridge_adaptive_max_repair_calls"):
+        cfg.query_bridge_adaptive_max_repair_calls = int(
+            options.query_bridge_adaptive_max_repair_calls
+        )
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1889,15 +1899,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL"] = (
             "1" if bool(getattr(options, "obb_fallback_orientations_on_primary_fail", False)) else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP"] = str(
-            float(getattr(options, "query_bridge_adaptive_fine_step", 0.08))
-        )
-        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS"] = str(
-            int(getattr(options, "query_bridge_adaptive_max_repair_subdivisions", 2))
-        )
-        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS"] = str(
-            int(getattr(options, "query_bridge_adaptive_max_repair_calls", 5))
         )
         env_updates["RBF_OBB_METADATA_ONLY"] = (
             "1"

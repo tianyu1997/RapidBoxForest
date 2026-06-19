@@ -1646,6 +1646,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_direct_sample_step", &rbf::RBFPlanningConfig::query_bridge_direct_sample_step)
         .def_readwrite("query_bridge_direct_sample_steps_by_query", &rbf::RBFPlanningConfig::query_bridge_direct_sample_steps_by_query)
         .def_readwrite("query_bridge_full_residual_overlay_when_connected", &rbf::RBFPlanningConfig::query_bridge_full_residual_overlay_when_connected)
+        .def_readwrite("query_bridge_adaptive_max_repair_subdivisions", &rbf::RBFPlanningConfig::query_bridge_adaptive_max_repair_subdivisions)
+        .def_readwrite("query_bridge_adaptive_fine_step", &rbf::RBFPlanningConfig::query_bridge_adaptive_fine_step)
+        .def_readwrite("query_bridge_adaptive_max_repair_calls", &rbf::RBFPlanningConfig::query_bridge_adaptive_max_repair_calls)
+        .def_readwrite("query_bridge_adaptive_max_repair_calls_by_query", &rbf::RBFPlanningConfig::query_bridge_adaptive_max_repair_calls_by_query)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")

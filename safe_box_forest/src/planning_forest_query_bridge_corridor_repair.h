@@ -16,6 +16,8 @@
 
 namespace rbf {
 
+struct RBFPlanningConfig;
+
 struct QueryBridgeSubdivisionRepairStats {
     int calls = 0;
     int added = 0;
@@ -88,7 +90,8 @@ std::vector<double> query_bridge_center_ordered_fractions(int subdivisions);
 
 QueryBridgeRepairSubdivisionOptions query_bridge_repair_subdivision_options(int query_index);
 
-QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_index,
+QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(const RBFPlanningConfig& config,
+                                                                      int query_index,
                                                                       int subdivisions,
                                                                       double audit_step,
                                                                       double sample_step);

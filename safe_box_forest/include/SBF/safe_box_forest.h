@@ -167,6 +167,12 @@ struct RBFPlanningConfig {
 	double query_bridge_direct_sample_step = 0.01;
 	std::vector<double> query_bridge_direct_sample_steps_by_query;
 	bool query_bridge_full_residual_overlay_when_connected = false;
+	/// Direct corridor adaptive repair policy. Negative values preserve the
+	/// C++ fallback derived from the current sample/audit step.
+	int query_bridge_adaptive_max_repair_subdivisions = -1;
+	double query_bridge_adaptive_fine_step = -1.0;
+	int query_bridge_adaptive_max_repair_calls = -1;
+	std::vector<int> query_bridge_adaptive_max_repair_calls_by_query;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

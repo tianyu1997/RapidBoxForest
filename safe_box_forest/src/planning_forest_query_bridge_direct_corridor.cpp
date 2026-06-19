@@ -642,7 +642,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                                 query_bridge_waypoint_length(samples));
     };
     const QueryBridgeAdaptiveRepairOptions adaptive_repair_options =
-        query_bridge_adaptive_repair_options(query_index,
+        query_bridge_adaptive_repair_options(config_,
+                                             query_index,
                                              subdivisions,
                                              audit_step,
                                              sample_step);
