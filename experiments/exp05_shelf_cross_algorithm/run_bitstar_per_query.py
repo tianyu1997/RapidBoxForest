@@ -16,6 +16,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_csv as write_csv_rows, write_json
+from experiments.common.path_tools import audit_path, path_length
 from experiments.common.rbf_defaults import (
     DEFAULT_OMPL_SIMPLIFY_TIME_S,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
@@ -25,46 +26,6 @@ from experiments.common.sbf_import import import_sbf
 
 
 sbf = import_sbf()
-
-
-def path_length(path: list[list[float]]) -> float:
-    if len(path) < 2:
-        return math.nan
-    return sum(
-        math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
-        for a, b in zip(path, path[1:])
-    )
-
-
-def interpolate(a: list[float], b: list[float], alpha: float) -> list[float]:
-    return [(1.0 - alpha) * float(x) + alpha * float(y) for x, y in zip(a, b)]
-
-
-def audit_path(
-    robot: Any,
-    obstacles: list[Any],
-    path: list[list[float]],
-    segment_step: float,
-    start: list[float],
-    goal: list[float],
-    collision_tolerance: float,
-) -> tuple[bool, float, str]:
-    t0 = time.perf_counter()
-    if len(path) < 2:
-        return False, time.perf_counter() - t0, "empty_path"
-    if math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(path[0], start))) > 1e-6:
-        return False, time.perf_counter() - t0, "start_mismatch"
-    if math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(path[-1], goal))) > 1e-6:
-        return False, time.perf_counter() - t0, "goal_mismatch"
-    step = max(1e-9, float(segment_step))
-    for a, b in zip(path, path[1:]):
-        distance = math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
-        steps = max(1, int(math.ceil(distance / step)))
-        for index in range(steps + 1):
-            q = interpolate(a, b, index / steps)
-            if sbf.check_config_collision(robot, obstacles, q, float(collision_tolerance)):
-                return False, time.perf_counter() - t0, "collision"
-    return True, time.perf_counter() - t0, "passed"
 
 
 def query_specs() -> list[dict[str, Any]]:
@@ -125,13 +86,14 @@ def run_query_once(args: argparse.Namespace) -> dict[str, Any]:
         if bool(simplified.get("ok")) and len(maybe_path) >= 2:
             path = maybe_path
     audit_passed, audit_s, audit_status = audit_path(
+        sbf,
         robot,
         obstacles,
         path,
         float(args.audit_segment_step),
-        list(query["start"]),
-        list(query["goal"]),
-        float(args.audit_collision_tolerance),
+        start=list(query["start"]),
+        goal=list(query["goal"]),
+        collision_tolerance=float(args.audit_collision_tolerance),
     )
     ok = bool(raw.get("ok")) and audit_passed
     row = {

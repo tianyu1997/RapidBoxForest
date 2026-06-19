@@ -11,7 +11,7 @@ import sys
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -38,6 +38,7 @@ from experiments.common.iris_gcs_dispatch import (
     shelf_iris_summary_rows,
 )
 from experiments.common.metrics import mean, median, tex_num
+from experiments.common.path_tools import audit_path, path_length
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
@@ -202,24 +203,6 @@ def fmt_float(value: float) -> str:
     return f"{float(value):g}".replace("-", "m").replace(".", "p")
 
 
-def path_length(path: Iterable[Iterable[float]]) -> float:
-    pts = [[float(value) for value in point] for point in path]
-    if len(pts) < 2:
-        return math.nan
-    total = 0.0
-    for a, b in zip(pts, pts[1:]):
-        total += math.sqrt(sum((x - y) * (x - y) for x, y in zip(a, b)))
-    return total
-
-
-def interpolate(a: list[float], b: list[float], alpha: float) -> list[float]:
-    return [(1.0 - alpha) * x + alpha * y for x, y in zip(a, b)]
-
-
-def point_distance(a: list[float], b: list[float]) -> float:
-    return math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
-
-
 def simplify_path_if_requested(
     robot: Any,
     obstacles: list[Any],
@@ -240,39 +223,6 @@ def simplify_path_if_requested(
     if bool(result.get("ok")) and len(simplified) >= 2:
         return simplified, float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
     return path, float(result.get("t_s", 0.0)), str(result.get("reason", "simplify_failed"))
-
-
-def audit_path(
-    robot: Any,
-    obstacles: list[Any],
-    path: list[list[float]],
-    segment_step: float,
-    *,
-    start: list[float] | None = None,
-    goal: list[float] | None = None,
-    endpoint_tol: float = 1e-6,
-    collision_tolerance: float = DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
-) -> tuple[bool, float, str]:
-    t0 = time.perf_counter()
-    if len(path) < 2:
-        return False, time.perf_counter() - t0, "empty_path"
-    if start is not None and point_distance(path[0], list(start)) > float(endpoint_tol):
-        return False, time.perf_counter() - t0, "start_mismatch"
-    if goal is not None and point_distance(path[-1], list(goal)) > float(endpoint_tol):
-        return False, time.perf_counter() - t0, "goal_mismatch"
-    step = max(1e-9, float(segment_step))
-    for a, b in zip(path, path[1:]):
-        distance = math.sqrt(sum((x - y) * (x - y) for x, y in zip(a, b)))
-        steps = max(1, int(math.ceil(distance / step)))
-        for index in range(steps + 1):
-            if sbf.check_config_collision(
-                robot,
-                obstacles,
-                interpolate(a, b, index / steps),
-                float(collision_tolerance),
-            ):
-                return False, time.perf_counter() - t0, "collision"
-    return True, time.perf_counter() - t0, "passed"
 
 
 def shelf_queries(robot: Any) -> list[dict[str, Any]]:
@@ -359,6 +309,7 @@ def run_rrtconnect(seed: int, args: argparse.Namespace, robot: Any, obstacles: l
         planning_s += total_s
         path = [[float(value) for value in point] for point in result.get("path", [])]
         audit_passed, audit_time_s, audit_status = audit_path(
+            sbf,
             robot,
             obstacles,
             path,
@@ -620,6 +571,7 @@ def run_bitstar_trace(
                 float(args.ompl_simplify_time_s),
             )
             audit_passed, audit_time_s, audit_status = audit_path(
+                sbf,
                 robot,
                 obstacles,
                 path,
@@ -792,6 +744,7 @@ def run_prm(
     for query, qresult in zip(progress(queries, desc=f"exp05 prm audit seed={seed}", total=len(queries)), qresult_items):
         path = [[float(value) for value in point] for point in qresult.get("path", [])]
         audit_passed, audit_time_s, audit_status = audit_path(
+            sbf,
             robot,
             obstacles,
             path,
@@ -902,6 +855,7 @@ def run_prm_cumulative(
             raw_length = math.nan
             if bool(qresult.get("ok")) and len(path) >= 2:
                 raw_audit_passed, audit_time_s, audit_status = audit_path(
+                    sbf,
                     robot,
                     obstacles,
                     path,
