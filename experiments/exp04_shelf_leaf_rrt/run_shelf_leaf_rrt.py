@@ -67,6 +67,10 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
+    DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU,
+    DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA,
     DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
@@ -1482,11 +1486,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY)
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS)
-    parser.add_argument("--offline-anchor-count", type=int, default=16)
-    parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
+    parser.add_argument("--offline-anchor-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_COUNT)
+    parser.add_argument("--offline-anchor-candidate-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT)
     parser.add_argument("--offline-anchor-sampling", choices=["random", "halton", "mixed"], default="random")
-    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
-    parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA)
+    parser.add_argument("--offline-anchor-distance-mu", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU)
     parser.add_argument("--offline-connector-mode", choices=["off", "box_only", "short_segment"], default="box_only")
     parser.add_argument("--offline-shortcut-edges", type=int, default=0)
     parser.add_argument("--offline-shortcut-candidate-limit", type=int, default=48)
