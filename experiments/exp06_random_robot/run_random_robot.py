@@ -34,6 +34,7 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length
 from experiments.common.progress import progress
 from experiments.common.query_timing import online_timing_from_query_rows
+from experiments.common.summary_selection import finite_float, path_length_stat
 from experiments.common.result_parts import (
     load_result_part,
     planned_row_part_path,
@@ -2150,16 +2151,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Select one readable row per robot/difficulty; full budget curves stay in the figure/CSV."""
-    def path_stat(row: dict[str, Any]) -> float:
-        for key in ("path_length_mean", "path_length_median"):
-            try:
-                value = float(row.get(key, math.nan))
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(value):
-                return value
-        return math.nan
-
     out: list[dict[str, Any]] = []
     robot_order = {"iiwa": 0, "ur5": 1, "panda": 2}
     difficulty_order = {"easy": 0, "medium": 1, "hard": 2}
@@ -2182,27 +2173,23 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         if not candidates:
             continue
         finite_path = [
-            path_stat(row)
+            path_length_stat(row)
             for row in candidates
-            if math.isfinite(path_stat(row))
+            if math.isfinite(path_length_stat(row))
         ]
         if finite_path:
             best_path = min(finite_path)
             candidates = [
                 row for row in candidates
-                if math.isfinite(path_stat(row))
-                and path_stat(row) <= 1.08 * best_path
+                if math.isfinite(path_length_stat(row))
+                and path_length_stat(row) <= 1.08 * best_path
             ] or candidates
         out.append(sorted(
             candidates,
             key=lambda row: (
-                float(row.get("online_per_query_s_median", math.nan)) if math.isfinite(float(row.get("online_per_query_s_median", math.nan))) else 1e9,
-                (
-                    float(row.get("offline_build_s_median", row.get("build_s", 0.0))) / 10.0
-                    + float(row.get("online_per_query_s_median", math.nan))
-                    if math.isfinite(float(row.get("online_per_query_s_median", math.nan)))
-                    else 1e9
-                ),
+                finite_float(row.get("online_per_query_s_median")),
+                finite_float(row.get("offline_build_s_median", row.get("build_s", 0.0))) / 10.0
+                + finite_float(row.get("online_per_query_s_median")),
                 int(float(row.get("deep_max_boxes", 0) or 0)),
             ),
         )[0])

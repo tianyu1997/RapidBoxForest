@@ -47,6 +47,7 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length
 from experiments.common.progress import progress
 from experiments.common.query_timing import online_timing_from_query_rows
+from experiments.common.summary_selection import finite_float, path_length_stat
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
@@ -1175,23 +1176,6 @@ def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
-    def path_stat(row: dict[str, Any]) -> float:
-        for key in ("path_length_mean", "path_length_median"):
-            try:
-                value = float(row.get(key, math.nan))
-            except (TypeError, ValueError):
-                continue
-            if math.isfinite(value):
-                return value
-        return math.nan
-
-    def finite_value(value: Any, fallback: float = 1e9) -> float:
-        try:
-            out = float(value)
-        except (TypeError, ValueError):
-            return fallback
-        return out if math.isfinite(out) else fallback
-
     def selected_rows() -> list[dict[str, Any]]:
         rbf_rows = [
             row for row in rows
@@ -1203,9 +1187,9 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             selected_rbf = sorted(
                 rbf_rows,
                 key=lambda row: (
-                    finite_value(row.get("online_per_query_s_median")),
-                    finite_value(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
-                    + finite_value(row.get("online_per_query_s_median")),
+                    finite_float(row.get("online_per_query_s_median")),
+                    finite_float(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
+                    + finite_float(row.get("online_per_query_s_median")),
                     int(float(row.get("deep_max_boxes", 0) or 0)),
                 ),
             )[0]
@@ -1218,25 +1202,25 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             ]
             candidates = full or items
             finite_path = [
-                path_stat(row)
+                path_length_stat(row)
                 for row in candidates
-                if math.isfinite(path_stat(row))
+                if math.isfinite(path_length_stat(row))
             ]
             if finite_path:
                 best_path = min(finite_path)
                 candidates = [
                     row for row in candidates
-                    if math.isfinite(path_stat(row))
-                    and path_stat(row) <= 1.08 * best_path
+                    if math.isfinite(path_length_stat(row))
+                    and path_length_stat(row) <= 1.08 * best_path
                 ] or candidates
             if candidates:
                 row_by_method[method] = sorted(
                     candidates,
                     key=lambda row: (
-                        finite_value(row.get("online_per_query_s_median")),
-                        finite_value(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
-                        + finite_value(row.get("online_per_query_s_median")),
-                        finite_value(row.get("budget_s")),
+                        finite_float(row.get("online_per_query_s_median")),
+                        finite_float(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
+                        + finite_float(row.get("online_per_query_s_median")),
+                        finite_float(row.get("budget_s")),
                     ),
                 )[0]
         if selected_rbf is not None:
@@ -1268,8 +1252,8 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{method} & {tex_num(row.get('offline_build_s_median', row.get('build_s')))} & "
             f"{tex_num(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median')))} & "
             f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
-            f"{tex_num(finite_value(row.get('offline_build_s_median', row.get('build_s'))) / 5.0 + finite_value(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median'))))} & "
-            f"{tex_num(path_stat(row))} & {sr} \\\\"
+            f"{tex_num(finite_float(row.get('offline_build_s_median', row.get('build_s'))) / 5.0 + finite_float(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median'))))} & "
+            f"{tex_num(path_length_stat(row))} & {sr} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
     path.parent.mkdir(parents=True, exist_ok=True)
