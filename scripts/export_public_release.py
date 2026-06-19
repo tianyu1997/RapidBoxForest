@@ -36,7 +36,6 @@ ALLOWED_PREFIXES = (
 
 DEFAULT_EXCLUDE_PATTERNS = (
     "experiments/archive/**",
-    "experiments/exp06_random_robot/run_saved_catalog_iris_gcs.py",
     "docs/archive/**",
     "docs/internal/**",
     "docs/*PLAN*.md",
@@ -99,7 +98,6 @@ DEFAULT_EXCLUDE_PATTERNS = (
 
 ARCHIVE_PATTERNS = (
     "experiments/archive/**",
-    "experiments/exp06_random_robot/run_saved_catalog_iris_gcs.py",
     "docs/archive/**",
     "docs/internal/**",
     "docs/*PLAN*.md",

@@ -210,6 +210,11 @@ def check_tracking_only_staged_scope(root: Path) -> list[str]:
         public_exported = export_allowed(path) and not export_excluded(path, include_archive=False)
         if public_exported:
             continue
+        if status.startswith("R") and len(parts) >= 3:
+            source_path = parts[1]
+            source_public_exported = export_allowed(source_path) and not export_excluded(source_path, include_archive=False)
+            if not source_public_exported or path.startswith(("experiments/archive/", "docs/archive/")):
+                continue
         if status.startswith("D") and not public_exported:
             continue
         if path.startswith("tmp/") and status.startswith("D"):
