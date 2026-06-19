@@ -556,7 +556,6 @@ class RBFLeafRRTOptions:
     worker_shared_endpoint_cache: bool = False
     external_evidence_path: Path | None = None
     external_evidence_verify_identity: bool = True
-    use_shelf_root_override: bool = False
     root_override_tuples: list[tuple[float, float]] | None = None
     coverage_override_tuples: list[tuple[float, float]] | None = None
     symmetry_aligned_native_root: bool = False
@@ -1122,11 +1121,6 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
             for lo, hi in robot_symmetry_aligned_root_tuples(robot)
         ]
         cfg.database.root_intervals_override = root_intervals
-    elif options.use_shelf_root_override:
-        raise RuntimeError(
-            "use_shelf_root_override is deprecated: current experiments use native full-joint "
-            "space outside LECT and canonical mapping only inside LECT."
-        )
     if options.coverage_override_tuples is not None:
         cfg.database.coverage_intervals_override = [
             sbf.Interval(float(lo), float(hi)) for lo, hi in options.coverage_override_tuples

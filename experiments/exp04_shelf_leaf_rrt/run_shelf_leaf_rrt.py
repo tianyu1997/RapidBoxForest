@@ -411,7 +411,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         worker_shared_endpoint_cache=bool(args.worker_shared_endpoint_cache),
         external_evidence_path=Path(args.rbf_cache_root) / warm_cache_label,
         external_evidence_verify_identity=False,
-        use_shelf_root_override=False,
         root_override_tuples=active_root,
         coverage_override_tuples=coverage_root,
         symmetry_aligned_native_root=False,
