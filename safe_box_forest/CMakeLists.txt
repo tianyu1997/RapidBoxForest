@@ -97,6 +97,7 @@ add_library(sbf_core STATIC
     src/adaptive_grid_partition_sparse.cpp
     src/box_graph.cpp
     src/box_graph_edges.cpp
+    src/box_graph_topology.cpp
     src/connector.cpp
     src/connector_birrt.cpp
     src/connector_internal.cpp
