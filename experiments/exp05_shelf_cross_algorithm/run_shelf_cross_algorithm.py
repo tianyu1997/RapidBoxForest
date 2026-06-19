@@ -17,7 +17,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import (
+    DEFAULT_OUTPUT_ROOT,
+    configure_thread_environment,
+    environment_metadata,
+    run_id,
+    write_json,
+)
 from experiments.common.iris_gcs_dispatch import (
     default_gcs_repo,
     default_iris_python,
@@ -240,18 +246,6 @@ def interpolate(a: list[float], b: list[float], alpha: float) -> list[float]:
 
 def point_distance(a: list[float], b: list[float]) -> float:
     return math.sqrt(sum((float(x) - float(y)) ** 2 for x, y in zip(a, b)))
-
-
-def configure_thread_environment(threads: int) -> None:
-    value = str(max(1, int(threads)))
-    for key in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[key] = value
 
 
 def simplify_path_if_requested(
