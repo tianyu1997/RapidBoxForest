@@ -87,6 +87,8 @@ include/LECTDatabase/sbf/          planner adapter API
 src/lect_database/                 core persistence implementation
   database.cpp                     database state machine, manifests, node
                                    pages, evidence index, journal, checkpoint
+  database_evidence_index.cpp      in-memory open-addressed evidence index
+                                   reserve/find/upsert operations
   database_evidence_codec.h        evidence binary/text codec, sidecar layout,
                                    payload checksum, and half-float quantizer
   database_file_layout.cpp         manifest, node-page, journal, and evidence
