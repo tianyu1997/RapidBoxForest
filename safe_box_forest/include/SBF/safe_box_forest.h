@@ -148,6 +148,10 @@ struct RBFPlanningConfig {
 	std::vector<double> query_bridge_local_radius_schedule;
 	std::vector<int> query_bridge_no_path_retry_budget_iters;
 	std::vector<int> query_bridge_no_path_retry_budget_attempts;
+	bool query_bridge_hybridize_attempt_paths = false;
+	int query_bridge_hybrid_max_paths = 8;
+	int query_bridge_hybrid_max_vertices = 128;
+	int query_bridge_hybrid_max_cross_checks = 4096;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

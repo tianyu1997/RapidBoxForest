@@ -275,7 +275,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     const QueryBridgeHybridizeAttemptOptions hybrid_options =
-        query_bridge_hybridize_attempt_options_from_env();
+        query_bridge_hybridize_attempt_options_from_config(config_);
     if (last_adaptive_partition_config_.hipac_online_connectivity &&
         last_adaptive_partition_config_.hipac_online_before_query_bridge) {
         for (auto& task : tasks) {

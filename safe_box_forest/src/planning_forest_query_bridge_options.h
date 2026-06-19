@@ -31,7 +31,8 @@ void record_query_bridge_acceptance_diagnostics(
     StageContext& context,
     const QueryBridgeAcceptanceThresholds& thresholds);
 
-QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
+QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_config(
+    const RBFPlanningConfig& config);
 
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,

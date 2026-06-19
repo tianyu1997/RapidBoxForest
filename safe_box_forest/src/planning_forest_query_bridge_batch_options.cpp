@@ -1,22 +1,18 @@
 #include "planning_forest_query_bridge_options.h"
 
-#include "env_config.h"
-
 #include <algorithm>
 namespace rbf {
 
-QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env() {
+QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_config(
+    const RBFPlanningConfig& config) {
     QueryBridgeHybridizeAttemptOptions options;
-    options.enabled =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS", 0) != 0;
+    options.enabled = config.query_bridge_hybridize_attempt_paths;
     options.max_paths =
-        std::max(2, detail::env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS", 8));
+        std::max(2, config.query_bridge_hybrid_max_paths);
     options.max_vertices =
-        std::max(8, detail::env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES", 128));
+        std::max(8, config.query_bridge_hybrid_max_vertices);
     options.max_cross_checks =
-        std::max(1,
-                 detail::env_int_or_default("RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS",
-                                            4096));
+        std::max(1, config.query_bridge_hybrid_max_cross_checks);
     return options;
 }
 

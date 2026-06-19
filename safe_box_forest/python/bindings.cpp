@@ -1630,6 +1630,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_local_radius_schedule", &rbf::RBFPlanningConfig::query_bridge_local_radius_schedule)
         .def_readwrite("query_bridge_no_path_retry_budget_iters", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_budget_iters)
         .def_readwrite("query_bridge_no_path_retry_budget_attempts", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_budget_attempts)
+        .def_readwrite("query_bridge_hybridize_attempt_paths", &rbf::RBFPlanningConfig::query_bridge_hybridize_attempt_paths)
+        .def_readwrite("query_bridge_hybrid_max_paths", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_paths)
+        .def_readwrite("query_bridge_hybrid_max_vertices", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_vertices)
+        .def_readwrite("query_bridge_hybrid_max_cross_checks", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_cross_checks)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")

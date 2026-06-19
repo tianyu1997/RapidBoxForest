@@ -1249,6 +1249,14 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_no_path_retry_budget_attempts = parse_int_csv(
             options.query_bridge_no_path_retry_budget_attempts
         )
+    if hasattr(cfg, "query_bridge_hybridize_attempt_paths"):
+        cfg.query_bridge_hybridize_attempt_paths = bool(options.query_bridge_hybridize_attempt_paths)
+    if hasattr(cfg, "query_bridge_hybrid_max_paths"):
+        cfg.query_bridge_hybrid_max_paths = int(options.query_bridge_hybrid_max_paths)
+    if hasattr(cfg, "query_bridge_hybrid_max_vertices"):
+        cfg.query_bridge_hybrid_max_vertices = int(options.query_bridge_hybrid_max_vertices)
+    if hasattr(cfg, "query_bridge_hybrid_max_cross_checks"):
+        cfg.query_bridge_hybrid_max_cross_checks = int(options.query_bridge_hybrid_max_cross_checks)
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1839,20 +1847,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {}
-        env_updates["RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_hybridize_attempt_paths", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS"] = str(
-            int(getattr(options, "query_bridge_hybrid_max_paths", 8))
-        )
-        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES"] = str(
-            int(getattr(options, "query_bridge_hybrid_max_vertices", 128))
-        )
-        env_updates["RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS"] = str(
-            int(getattr(options, "query_bridge_hybrid_max_cross_checks", 4096))
-        )
         env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP"] = (
             "1"
             if bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False))
