@@ -33,8 +33,7 @@ from experiments.common.checkpoints import (
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
-from experiments.common.query_summary import query_success_summary
-from experiments.common.query_timing import online_timing_from_query_rows, online_timing_medians
+from experiments.common.query_timing import online_timing_medians
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
@@ -118,7 +117,12 @@ from experiments.common.robot_lectdb_cache import (
     ensure_robot_lectdb_cache,
     robot_external_evidence_path,
 )
-from experiments.common.run_summary import diagnostics_timeout_s, external_pending_run_row, run_success_summary
+from experiments.common.run_summary import (
+    diagnostics_timeout_s,
+    external_pending_run_row,
+    run_success_summary,
+    summarize_query_batch_run,
+)
 from experiments.common.sbf_import import import_sbf
 
 
@@ -1072,39 +1076,26 @@ def summarize_query_batch_method(
     stage_id: str | None = None,
     budget_s: float | None = None,
 ) -> dict[str, Any]:
-    success_summary = query_success_summary(qrows)
-    online_s = (
-        sum(float(row.get("query_ms", 0.0)) for row in qrows) / 1000.0
-        if online_batch_s is None
-        else float(online_batch_s)
-    )
-    timing = online_timing_from_query_rows(
+    return summarize_query_batch_run(
+        method,
         qrows,
-        online_total_s=online_s,
         build_s=float(offline_build_s),
+        online_batch_s=online_batch_s,
+        audit_s=float(audit_s),
+        diagnostics=dict(diagnostics or {}),
+        stage_id=stage_id or method,
+        budget_s=budget_s,
+        raw_segment_fraction=0.0 if any(bool(row.get("audit_passed")) for row in qrows) else math.nan,
+        extra={
+            "robot": robot_name,
+            "difficulty": difficulty,
+            "scene_seed": int(scene_seed),
+            "deep_max_boxes": 0,
+            "obstacle_count": len(scene.obstacles),
+            "queries_per_scene": len(qrows),
+            "final_boxes": math.nan,
+        },
     )
-    return {
-        "method": method,
-        "robot": robot_name,
-        "difficulty": difficulty,
-        "scene_seed": int(scene_seed),
-        "deep_max_boxes": 0,
-        "stage_id": stage_id or method,
-        "budget_s": float(budget_s) if budget_s is not None else math.nan,
-        "obstacle_count": len(scene.obstacles),
-        "queries_per_scene": len(qrows),
-        **success_summary,
-        "planning_s": float(offline_build_s) + timing["online_batch_s"],
-        "planning_total_s": float(offline_build_s) + timing["online_total_s"],
-        "build_s": float(offline_build_s),
-        "offline_build_s": float(offline_build_s),
-        **timing,
-        "audit_s": float(audit_s),
-        "raw_segment_fraction": 0.0 if int(success_summary["success_count"]) > 0 else math.nan,
-        "final_boxes": math.nan,
-        "queries": qrows,
-        "diagnostics": dict(diagnostics or {}),
-    }
 
 
 def run_rrtconnect_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:

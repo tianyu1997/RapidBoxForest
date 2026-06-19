@@ -46,8 +46,7 @@ from experiments.common.iris_gcs_dispatch import (
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
-from experiments.common.query_summary import query_success_summary
-from experiments.common.query_timing import online_timing_from_query_rows, online_timing_medians
+from experiments.common.query_timing import online_timing_medians
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
@@ -82,6 +81,7 @@ from experiments.common.run_summary import (
     empty_pending_summary_row,
     external_pending_run_row,
     run_success_summary,
+    summarize_query_batch_run,
 )
 from experiments.common.sbf_import import import_sbf
 from experiments.exp05_shelf_cross_algorithm.import_old_shelf_baselines import import_old_baselines
@@ -923,34 +923,24 @@ def summarize_method_run(
     stage_id: str | None = None,
     budget_s: float | None = None,
 ) -> dict[str, Any]:
-    success_summary = query_success_summary(qrows)
     extra_dict = dict(extra or {})
     build_s = float(extra_dict.get("build_s", 0.0) or 0.0)
     online_batch_s = max(0.0, float(planning_s) - build_s)
     if method in {"rrtconnect", "bitstar"}:
         build_s = 0.0
         online_batch_s = float(planning_s)
-    timing = online_timing_from_query_rows(
+    return summarize_query_batch_run(
+        method,
         qrows,
-        online_total_s=online_batch_s,
         build_s=build_s,
+        online_batch_s=online_batch_s,
+        audit_s=float(audit_s),
+        diagnostics=extra_dict,
+        stage_id=stage_id or method,
+        budget_s=budget_s,
+        raw_segment_fraction=0.0,
+        extra={"seed": int(seed)},
     )
-    return {
-        "method": method,
-        "seed": int(seed),
-        "stage_id": stage_id or method,
-        "budget_s": float(budget_s) if budget_s is not None else math.nan,
-        **success_summary,
-        "planning_s": build_s + timing["online_batch_s"],
-        "planning_total_s": float(planning_s),
-        "build_s": build_s,
-        "offline_build_s": build_s,
-        **timing,
-        "audit_s": float(audit_s),
-        "raw_segment_fraction": 0.0,
-        "queries": qrows,
-        "diagnostics": extra_dict,
-    }
 
 
 def run_method(method: str, seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], budget_s: float | None = None) -> dict[str, Any]:

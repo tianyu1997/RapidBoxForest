@@ -3,6 +3,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from experiments.common.query_summary import query_success_summary
+from experiments.common.query_timing import online_timing_from_query_rows
+
 
 def fully_successful_run_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Return run rows whose all registered queries succeeded."""
@@ -38,6 +41,54 @@ def diagnostics_timeout_s(row: dict[str, Any]) -> float:
         if math.isfinite(value):
             return value
     return math.nan
+
+
+def summarize_query_batch_run(
+    method: str,
+    qrows: list[dict[str, Any]],
+    *,
+    build_s: float = 0.0,
+    online_batch_s: float | None = None,
+    planning_s: float | None = None,
+    audit_s: float = 0.0,
+    diagnostics: dict[str, Any] | None = None,
+    stage_id: str | None = None,
+    budget_s: float | None = None,
+    raw_segment_fraction: float = 0.0,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build the common run-row payload for independently timed query rows."""
+
+    build_value = float(build_s)
+    if online_batch_s is None:
+        if planning_s is not None:
+            online_value = max(0.0, float(planning_s) - build_value)
+        else:
+            online_value = sum(float(row.get("query_ms", 0.0)) for row in qrows) / 1000.0
+    else:
+        online_value = float(online_batch_s)
+    timing = online_timing_from_query_rows(
+        qrows,
+        online_total_s=online_value,
+        build_s=build_value,
+    )
+    row = {
+        "method": method,
+        "stage_id": stage_id or method,
+        "budget_s": float(budget_s) if budget_s is not None else math.nan,
+        **query_success_summary(qrows),
+        "planning_s": build_value + timing["online_batch_s"],
+        "planning_total_s": build_value + timing["online_total_s"],
+        "build_s": build_value,
+        "offline_build_s": build_value,
+        **timing,
+        "audit_s": float(audit_s),
+        "raw_segment_fraction": float(raw_segment_fraction),
+        "queries": qrows,
+        "diagnostics": dict(diagnostics or {}),
+    }
+    row.update(dict(extra or {}))
+    return row
 
 
 def external_pending_run_row(
