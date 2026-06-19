@@ -26,7 +26,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
     DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
     DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
@@ -596,7 +595,6 @@ class RBFLeafRRTOptions:
     connector_adaptive_min_segment_fraction: float = DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION
     query_bridge_pave_depth: int = DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH
     query_endpoint_anchor_ffb_depth: int = 0
-    query_bridge_adaptive_ffb_depths: str = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS
     connector_pave_fill_gaps: bool = DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS
     connector_pave_require_connected_chain: bool = DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN
     final_collision_shortcut: bool = DEFAULT_RBF_FINAL_COLLISION_SHORTCUT
@@ -1268,12 +1266,6 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_ffb_start_depth = int(getattr(options, "query_bridge_ffb_start_depth", -1))
     if hasattr(cfg, "query_endpoint_anchor_ffb_depth"):
         cfg.query_endpoint_anchor_ffb_depth = int(options.query_endpoint_anchor_ffb_depth)
-    if hasattr(cfg, "query_bridge_adaptive_ffb_depths"):
-        cfg.query_bridge_adaptive_ffb_depths = [
-            int(item.strip())
-            for item in str(options.query_bridge_adaptive_ffb_depths).split(",")
-            if item.strip()
-        ]
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):

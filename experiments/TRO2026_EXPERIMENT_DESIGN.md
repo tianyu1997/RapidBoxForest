@@ -96,8 +96,8 @@ paper-facing rows.
   - `connector_segment_resolution`, `connector_adaptive_min_segment_fraction`
   - `connector_pave_depth`, `connector_pave_max_chain`, `connector_pave_steps`
   - `connector_pave_fill_gaps`
-  - `query_bridge_pave_depth`, `query_bridge_adaptive_ffb_depths`,
-    `query_bridge_direct_sample_step`, `query_bridge_adaptive_step_repair`,
+  - `query_bridge_pave_depth`, `query_bridge_direct_sample_step`,
+    `query_bridge_adaptive_step_repair`,
     `query_bridge_adaptive_fine_step`,
     `query_bridge_adaptive_max_repair_subdivisions`,
     `query_bridge_adaptive_max_repair_calls`,

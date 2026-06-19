@@ -135,9 +135,6 @@ struct RBFPlanningConfig {
 	/// Optional endpoint-anchor FFB depth for online queries. <=0 reuses
 	/// query_bridge_pave_depth, then connector.pave.
 	int query_endpoint_anchor_ffb_depth = 0;
-	/// Deprecated: query-bridge FFB now follows FindFreeBoxOptions::search_mode
-	/// and ignores shallow-to-deep depth schedules.
-	std::vector<int> query_bridge_adaptive_ffb_depths;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.
