@@ -243,9 +243,12 @@ src/planning_forest_query_bridge_corridor_options.cpp
 src/planning_forest_query_bridge_repair_options.cpp
                                    subdivision, adaptive, and lateral repair
                                    option builders for direct corridor paving
+src/planning_forest_query_bridge_direct_segments.cpp
+                                   direct start-goal and fast post-RRT segment
+                                   edge insertion helpers
 src/planning_forest_query_bridge_edges.cpp
-                                   query bridge segment/box-corridor edge
-                                   insertion helpers
+                                   query bridge box-corridor, residual segment,
+                                   and waypoint task edge completion helpers
 src/planning_forest_query_bridge_pave.cpp
                                    query bridge chain-pave execution and
                                    partition append helpers
