@@ -273,6 +273,9 @@ src/planning_forest_query_utils_rrt.cpp
                                    parallel attempt diagnostics
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
+src/planning_forest_query_bridge_acceptance_options.cpp
+                                   query bridge acceptance-threshold option
+                                   parsing and diagnostics
 src/planning_forest_query_bridge_batch_utils.cpp
                                    query bridge batch task records, acceptance,
                                    and route scoring helpers
