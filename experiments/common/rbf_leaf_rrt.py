@@ -33,7 +33,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
-    DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
+    DEFAULT_QUERY_BRIDGE_FORCE_INDICES,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
@@ -583,7 +583,7 @@ class RBFLeafRRTOptions:
     query_bridge_scene_reusable_edges: bool = False
     query_endpoint_anchor_before_bridge: bool = DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE
     query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
-    query_bridge_force_indices: str = DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES
+    query_bridge_force_indices: str = DEFAULT_QUERY_BRIDGE_FORCE_INDICES
     query_bridge_force_selected: bool = DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED
     query_bridge_forced_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS
     query_bridge_attempt_offset: int = DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET
@@ -1790,17 +1790,15 @@ def bridge_all_queries(
     ):
         starts = [item[1] for item in selected]
         goals = [item[2] for item in selected]
-        global_indices_text = ",".join(str(int(item[3])) for item in selected)
+        global_indices = [int(item[3]) for item in selected]
         force_indices = {
             int(item.strip())
             for item in str(options.query_bridge_force_indices).split(",")
             if item.strip()
         }
         force_indices.update(force_selected_indices)
-        force_indices_text = ",".join(str(item) for item in sorted(force_indices))
+        forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {
-            "RBF_QUERY_BRIDGE_FORCE_INDICES":
-                force_indices_text or None,
             "RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION":
                 str(float(options.query_bridge_accept_segment_fraction)),
             "RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO":
@@ -1809,8 +1807,6 @@ def bridge_all_queries(
                 str(float(options.query_bridge_accept_path_additive)),
             "RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH":
                 str(float(options.query_bridge_adaptive_max_path_length)),
-            "RBF_QUERY_BRIDGE_GLOBAL_INDICES":
-                global_indices_text or None,
         }
         if int(options.query_bridge_forced_attempts) > 1:
             env_updates["RBF_QUERY_BRIDGE_FORCED_ATTEMPTS"] = str(int(options.query_bridge_forced_attempts))
@@ -1940,12 +1936,12 @@ def bridge_all_queries(
                         timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
                         added_by_label[label] = added_by_label.get(label, 0) + 0
                         continue
-                    os.environ["RBF_QUERY_BRIDGE_GLOBAL_INDICES"] = str(int(global_query_index))
-                    if forced_query:
-                        os.environ["RBF_QUERY_BRIDGE_FORCE_INDICES"] = "0"
-                    else:
-                        os.environ.pop("RBF_QUERY_BRIDGE_FORCE_INDICES", None)
-                    added = int(forest.bridge_queries([start], [goal])[0])
+                    added = int(forest.bridge_queries(
+                        [start],
+                        [goal],
+                        [0] if forced_query else [],
+                        [int(global_query_index)],
+                    )[0])
                     added_values.append(added)
                     timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)
                     added_by_label[label] = added_by_label.get(label, 0) + added
@@ -1954,7 +1950,15 @@ def bridge_all_queries(
                 )
                 timing_by_label["__sequential_reuse__"] = time.perf_counter() - t0
             else:
-                added_values = [int(value) for value in forest.bridge_queries(starts, goals)]
+                added_values = [
+                    int(value)
+                    for value in forest.bridge_queries(
+                        starts,
+                        goals,
+                        forced_indices,
+                        global_indices,
+                    )
+                ]
         finally:
             for name, previous_value in previous_env.items():
                 if previous_value is None:

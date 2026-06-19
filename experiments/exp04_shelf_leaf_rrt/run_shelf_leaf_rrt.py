@@ -81,7 +81,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_ALL,
-    DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
+    DEFAULT_QUERY_BRIDGE_FORCE_INDICES,
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
@@ -1463,7 +1463,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-labels", default=DEFAULT_RBF_QUERY_BRIDGE_LABELS)
     parser.add_argument(
         "--query-bridge-force-indices",
-        default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
+        default=DEFAULT_QUERY_BRIDGE_FORCE_INDICES,
         help="Comma-separated zero-based shelf query indices that must run query bridge even if normally deferred.",
     )
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED)

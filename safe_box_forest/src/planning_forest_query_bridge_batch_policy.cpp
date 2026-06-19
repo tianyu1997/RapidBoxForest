@@ -5,8 +5,10 @@ namespace rbf {
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
-    const QueryBridgeIndexOptions& index_options) {
-    if (respect_forced && query_bridge_index_forced(index_options, task.index)) {
+    const std::unordered_set<int>& forced_query_indices) {
+    if (respect_forced &&
+        forced_query_indices.find(static_cast<int>(task.index)) !=
+            forced_query_indices.end()) {
         return false;
     }
     return true;
@@ -31,13 +33,14 @@ int query_bridge_edge_query_index(bool scene_reusable_edges,
 
 QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
     const QueryBridgeSearchTask& task,
-    const QueryBridgeIndexOptions& index_options,
+    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeRetryOptions& retry_options,
     StageContext& context) {
+    const bool forced =
+        forced_query_indices.find(static_cast<int>(task.index)) !=
+        forced_query_indices.end();
     QueryBridgeAttemptPlan plan =
-        query_bridge_attempt_plan(task,
-                                  query_bridge_index_forced(index_options, task.index),
-                                  retry_options);
+        query_bridge_attempt_plan(task, forced, retry_options);
     record_query_bridge_forced_attempts(context,
                                         task.index,
                                         plan.forced,

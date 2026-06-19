@@ -11,7 +11,6 @@
 
 namespace rbf {
 
-struct QueryBridgeIndexOptions;
 struct QueryBridgeSearchTask;
 
 struct QueryBridgeRetryOptions {

@@ -5,12 +5,14 @@
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_bridge_task.h"
 
+#include <unordered_set>
+
 namespace rbf {
 
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
-    const QueryBridgeIndexOptions& index_options);
+    const std::unordered_set<int>& forced_query_indices);
 
 bool query_bridge_parallel_task_rrt_enabled(
     const QueryBridgeRetryOptions& retry_options);
@@ -23,7 +25,7 @@ int query_bridge_edge_query_index(bool scene_reusable_edges,
 
 QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
     const QueryBridgeSearchTask& task,
-    const QueryBridgeIndexOptions& index_options,
+    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeRetryOptions& retry_options,
     StageContext& context);
 

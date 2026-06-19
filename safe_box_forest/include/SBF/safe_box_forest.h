@@ -26,7 +26,6 @@
 namespace rbf {
 
 struct QueryBridgeAcceptanceThresholds;
-struct QueryBridgeIndexOptions;
 struct QueryBridgeRetryOptions;
 struct QueryBridgeSearchTask;
 
@@ -147,6 +146,16 @@ struct RBFPlanningConfig {
 	std::filesystem::path database_evidence_spill_path;
 	/// Also checkpoint the database after an automatic online spill.
 	bool database_evidence_spill_checkpoint_after_spill = false;
+};
+
+struct QueryBridgeBatchOptions {
+	/// Local indices in the starts/goals batch that should be bridged even if
+	/// the current graph query already satisfies the acceptance thresholds.
+	std::vector<int> forced_query_indices;
+	/// Optional stable query ids, one per starts/goals batch entry. These ids are
+	/// stored on query-bridge edges so later graph searches can distinguish
+	/// same-query and cross-query reuse without relying on process environment.
+	std::vector<int> global_query_indices;
 };
 
 struct RebuildProfile {
@@ -470,6 +479,9 @@ public:
 								  const Eigen::Ref<const Eigen::VectorXd>& goal);
 	std::vector<int> bridge_queries(const std::vector<Eigen::VectorXd>& starts,
 									const std::vector<Eigen::VectorXd>& goals);
+	std::vector<int> bridge_queries(const std::vector<Eigen::VectorXd>& starts,
+									const std::vector<Eigen::VectorXd>& goals,
+									const QueryBridgeBatchOptions& options);
 	/// Isolated chain_pave debug entry: build the BiRRT bridge between the boxes
 	/// containing @p start and @p goal, then run chain_pave_along_path() with the
 	/// supplied @p pave config (the IslandConnector gap step is skipped) so the
@@ -741,7 +753,7 @@ private:
 			double best_length,
 			StageContext& context,
 		bool scene_reusable_edges,
-		const QueryBridgeIndexOptions& index_options,
+		const std::unordered_set<int>& forced_query_indices,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		bool fast_direct_segment_after_rrt,
 		int fast_direct_random_shortcut_iters,

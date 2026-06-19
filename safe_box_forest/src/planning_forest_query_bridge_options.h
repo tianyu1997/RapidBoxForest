@@ -6,7 +6,6 @@
 
 #include <Eigen/Core>
 
-#include <string>
 #include <vector>
 
 namespace rbf {
@@ -25,11 +24,6 @@ struct QueryBridgeHybridizeAttemptOptions {
     int max_cross_checks = 4096;
 };
 
-struct QueryBridgeIndexOptions {
-    std::string force_indices_csv;
-    std::string global_indices_csv;
-};
-
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 
 void record_query_bridge_acceptance_diagnostics(
@@ -37,15 +31,6 @@ void record_query_bridge_acceptance_diagnostics(
     const QueryBridgeAcceptanceThresholds& thresholds);
 
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
-
-QueryBridgeIndexOptions query_bridge_index_options_from_env();
-
-bool query_bridge_index_forced(const QueryBridgeIndexOptions& options,
-                               std::size_t index);
-
-int query_bridge_index_global(const QueryBridgeIndexOptions& options,
-                              std::size_t position,
-                              int fallback);
 
 bool query_bridge_result_acceptable(const QueryResult& current,
                                     const Eigen::VectorXd& start,

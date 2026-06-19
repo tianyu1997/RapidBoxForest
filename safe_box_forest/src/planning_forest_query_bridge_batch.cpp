@@ -23,6 +23,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace rbf {
@@ -39,18 +40,37 @@ double query_bridge_elapsed_ms_since(QueryBridgeClock::time_point t0) {
 bool query_bridge_current_query_good(
     const RBFPlanningForest& forest,
     const QueryBridgeSearchTask& task,
-    bool respect_forced,
-    const QueryBridgeIndexOptions& index_options,
+    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
-    if (!query_bridge_should_check_current_query(task,
-                                                 respect_forced,
-                                                 index_options)) {
+    if (forced_query_indices.find(static_cast<int>(task.index)) !=
+        forced_query_indices.end()) {
         return false;
     }
     return query_bridge_result_acceptable(forest.query(task.start, task.goal),
                                           task.start,
                                           task.goal,
                                           bridge_acceptance);
+}
+
+std::unordered_set<int> make_forced_query_index_set(
+    const std::vector<int>& forced_query_indices,
+    std::size_t batch_size) {
+    std::unordered_set<int> result;
+    result.reserve(forced_query_indices.size());
+    for (int index : forced_query_indices) {
+        if (index >= 0 && static_cast<std::size_t>(index) < batch_size) {
+            result.insert(index);
+        }
+    }
+    return result;
+}
+
+int batch_global_query_index(const QueryBridgeBatchOptions& options,
+                             std::size_t index) {
+    if (index < options.global_query_indices.size()) {
+        return options.global_query_indices[index];
+    }
+    return static_cast<int>(index);
 }
 
 }  // namespace
@@ -86,6 +106,12 @@ std::vector<int> RBFPlanningForest::finish_query_bridge_batch_result(
 
 std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
                                                    const std::vector<Eigen::VectorXd>& goals) {
+    return bridge_queries(starts, goals, QueryBridgeBatchOptions{});
+}
+
+std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::VectorXd>& starts,
+                                                   const std::vector<Eigen::VectorXd>& goals,
+                                                   const QueryBridgeBatchOptions& options) {
     if (starts.size() != goals.size()) {
         throw std::invalid_argument("bridge_queries requires starts/goals with matching sizes");
     }
@@ -102,7 +128,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     const QueryBridgeAcceptanceThresholds bridge_acceptance =
         query_bridge_acceptance_thresholds_from_env();
-    const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
+    const std::unordered_set<int> forced_query_indices =
+        make_forced_query_index_set(options.forced_query_indices, starts.size());
 
     std::vector<QueryBridgeSearchTask> tasks;
     tasks.reserve(starts.size());
@@ -110,7 +137,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (starts[index].size() != goals[index].size()) {
             throw std::invalid_argument("bridge_queries received a start/goal dimension mismatch");
         }
-        const bool forced_task = query_bridge_index_forced(index_options, index);
+        const bool forced_task =
+            forced_query_indices.find(static_cast<int>(index)) !=
+            forced_query_indices.end();
         QueryResult initial_query;
         bool has_initial_query = false;
         if (!forced_task) {
@@ -158,9 +187,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         QueryBridgeSearchTask task;
         task.index = index;
-        task.query_index = query_bridge_index_global(index_options,
-                                                     index,
-                                                     static_cast<int>(index));
+        task.query_index = batch_global_query_index(options, index);
         last_build_.diagnostics["query_bridge.batch_task." +
                                 std::to_string(index) +
                                 ".global_index"] = static_cast<double>(task.query_index);
@@ -277,8 +304,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             if (query_bridge_task_has_explicit_satisfaction(task) ||
                 query_bridge_current_query_good(*this,
                                                 task,
-                                                true,
-                                                index_options,
+                                                forced_query_indices,
                                                 bridge_acceptance)) {
                 prepared[task_offset].skipped = true;
                 record_query_bridge_batch_task_already_satisfied(
@@ -292,7 +318,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
             const QueryBridgeAttemptPlan attempt_plan =
                 query_bridge_prepare_attempt_plan(task,
-                                                  index_options,
+                                                  forced_query_indices,
                                                   retry_options,
                                                   batch_context);
             prepared[task_offset].forced = attempt_plan.forced;
@@ -399,7 +425,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 best_length,
                 batch_context,
                 scene_reusable_edges,
-                index_options,
+                forced_query_indices,
                 bridge_acceptance,
                 fast_direct_segment_after_rrt,
                 edge_options.fast_direct_random_shortcut_iters,
@@ -425,8 +451,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         if (query_bridge_task_has_explicit_satisfaction(task) ||
             query_bridge_current_query_good(*this,
                                             task,
-                                            true,
-                                            index_options,
+                                            forced_query_indices,
                                             bridge_acceptance)) {
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,
@@ -441,7 +466,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
         const QueryBridgeAttemptPlan attempt_plan =
             query_bridge_prepare_attempt_plan(task,
-                                              index_options,
+                                              forced_query_indices,
                                               retry_options,
                                               batch_context);
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
@@ -499,7 +524,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             best_length,
             batch_context,
             scene_reusable_edges,
-            index_options,
+            forced_query_indices,
             bridge_acceptance,
             fast_direct_segment_after_rrt,
             edge_options.fast_direct_random_shortcut_iters,

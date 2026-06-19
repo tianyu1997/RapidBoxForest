@@ -170,7 +170,7 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     double best_length,
     StageContext& context,
     bool scene_reusable_edges,
-    const QueryBridgeIndexOptions& index_options,
+    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance,
     bool fast_direct_segment_after_rrt,
     int fast_direct_random_shortcut_iters,
@@ -183,7 +183,7 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
         query_bridge_should_check_current_query(
             task,
             true,
-            index_options);
+            forced_query_indices);
     if (should_check &&
         query_bridge_result_acceptable(query(task.start, task.goal),
                                        task.start,

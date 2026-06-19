@@ -174,7 +174,6 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_endpoint_direct.cpp
     src/planning_forest_query_bridge_hipac.cpp
     src/planning_forest_query_bridge_hipac_utils.cpp
-    src/planning_forest_query_bridge_index_options.cpp
     src/planning_forest_query_bridge_pair.cpp
     src/planning_forest_query_bridge_pave.cpp
     src/planning_forest_query_bridge_rrt_utils.cpp

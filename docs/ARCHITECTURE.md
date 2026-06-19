@@ -294,9 +294,6 @@ src/planning_forest_query_bridge_batch_diagnostics.cpp
 src/planning_forest_query_bridge_batch_options.cpp
                                    environment/config parsing for batch bridge
                                    hybridization and batch execution controls
-src/planning_forest_query_bridge_index_options.cpp
-                                   query-index override option parsing for
-                                   force/global bridge selection
 src/planning_forest_query_bridge_task_key.cpp
                                    query bridge per-task diagnostics key helper
 src/planning_forest_query_bridge_path_utils.cpp

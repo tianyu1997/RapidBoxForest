@@ -1879,7 +1879,9 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 .def("bridge_queries",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<std::vector<double>>& starts,
-                                const std::vector<std::vector<double>>& goals) {
+                                const std::vector<std::vector<double>>& goals,
+                                const std::vector<int>& forced_query_indices,
+                                const std::vector<int>& global_query_indices) {
                                     if (starts.size() != goals.size()) {
                                         throw std::invalid_argument("bridge_queries requires starts/goals with matching sizes");
                                     }
@@ -1891,9 +1893,15 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                         eigen_starts.push_back(eigen_vector_from_list(starts[i]));
                                         eigen_goals.push_back(eigen_vector_from_list(goals[i]));
                                     }
-                                    return forest.bridge_queries(eigen_starts, eigen_goals);
+                                    rbf::QueryBridgeBatchOptions options;
+                                    options.forced_query_indices = forced_query_indices;
+                                    options.global_query_indices = global_query_indices;
+                                    return forest.bridge_queries(eigen_starts, eigen_goals, options);
                          },
-                         py::arg("starts"), py::arg("goals"))
+                         py::arg("starts"),
+                         py::arg("goals"),
+                         py::arg("forced_query_indices") = std::vector<int>{},
+                         py::arg("global_query_indices") = std::vector<int>{})
                 .def("debug_chain_pave",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<double>& start,
