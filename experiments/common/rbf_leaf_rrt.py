@@ -1725,7 +1725,7 @@ def query_rows(
             "audit_ms": float(result.audit_time_ms),
             "final_simplify_ms": simplify_ms,
             "failed_segment_index": int(getattr(result, "failed_segment_index", -1)),
-            "failed_debug_path_length": path_length(actual_path) if canonical_path and reflected_ok else math.nan,
+            "failed_reflected_path_length": path_length(actual_path) if canonical_path and reflected_ok else math.nan,
             "path_length": audited_path_length,
             "final_path_length": audited_path_length,
             "raw_path_length": raw_path_length,
