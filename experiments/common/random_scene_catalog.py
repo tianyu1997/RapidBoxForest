@@ -1719,7 +1719,15 @@ def make_nested_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
     raise RuntimeError(f"could not sample a valid {robot_name}/{difficulty} scene after {max_scene_tries} attempts: {last_error}")
 
 
-def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int, balanced: bool, timed: bool = False, strict_time: bool = False) -> SceneSpec:
+def make_direct_blocker_random_scene(
+    robot_name: str,
+    difficulty: str,
+    seed: int,
+    max_scene_tries: int,
+    balanced: bool,
+    timed: bool = False,
+    strict_time: bool = False,
+) -> SceneSpec:
     robot = make_robot(robot_name)
     last_error: Exception | None = None
     for scene_try in range(max(1, int(max_scene_tries))):
@@ -1759,7 +1767,10 @@ def make_legacy_random_scene(robot_name: str, difficulty: str, seed: int, max_sc
             )
         except RuntimeError as exc:
             last_error = exc
-    raise RuntimeError(f"could not sample a valid {robot_name}/{difficulty} legacy scene after {max_scene_tries} attempts: {last_error}")
+    raise RuntimeError(
+        f"could not sample a valid {robot_name}/{difficulty} direct-blocker scene "
+        f"after {max_scene_tries} attempts: {last_error}"
+    )
 
 
 def make_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tries: int = 64, scene_profile: str = "balanced") -> SceneSpec:
@@ -1771,7 +1782,7 @@ def make_random_scene(robot_name: str, difficulty: str, seed: int, max_scene_tri
         return make_narrow_passage_scene(robot_name, difficulty, seed, max_scene_tries, strict_time=strict_time)
     if scene_profile_uses_nested_prefixes(scene_profile):
         return make_nested_random_scene(robot_name, difficulty, seed, max_scene_tries, scene_profile_requires_balanced_probe(scene_profile), timed, strict_time)
-    return make_legacy_random_scene(robot_name, difficulty, seed, max_scene_tries, balanced=False, timed=timed, strict_time=strict_time)
+    return make_direct_blocker_random_scene(robot_name, difficulty, seed, max_scene_tries, balanced=False, timed=timed, strict_time=strict_time)
 
 
 def scene_cache_key(robot_name: str, difficulty: str, scene_seed: int) -> str:

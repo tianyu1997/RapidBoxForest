@@ -653,7 +653,7 @@ def parse_args() -> argparse.Namespace:
             "balanced", "balanced_independent", "balanced_probe",
             "timed_probe", "timed_probe_independent",
             "narrow_passage", "narrow_passage_independent",
-            "legacy",
+            "direct_blocker",
         ],
         default="timed_probe_independent",
     )
