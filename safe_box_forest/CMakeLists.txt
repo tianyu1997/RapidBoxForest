@@ -179,6 +179,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_index_options.cpp
     src/planning_forest_query_bridge_pair.cpp
     src/planning_forest_query_bridge_pave.cpp
+    src/planning_forest_query_bridge_partition_path_first.cpp
     src/planning_forest_query_bridge_rrt_utils.cpp
     src/planning_forest_query_bridge_waypoint_quality.cpp
     src/planning_forest_query_bridge_waypoint.cpp

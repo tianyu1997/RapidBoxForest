@@ -281,22 +281,25 @@ src/planning_forest_query_bridge_attempt_paths.cpp
                                    direct-line/detour fallback, and waypoint
                                    quality retry orchestration
 src/planning_forest_query_bridge_batch_utils.cpp
-                                   query bridge batch task records, acceptance,
-                                   and route scoring helpers
+                                   query bridge batch task keys, task policy,
+                                   edge ownership, and attempt-plan helpers
 src/planning_forest_query_bridge_batch_diagnostics.cpp
                                    query bridge oracle counter deltas, task
                                    skip records, and direct-corridor diagnostic
                                    aggregation
 src/planning_forest_query_bridge_batch_options.cpp
                                    environment/config parsing for batch bridge
-                                   retries, parallel RRT, detours, and batch
-                                   execution controls
+                                   hybridization and batch execution controls
 src/planning_forest_query_bridge_waypoint_quality.cpp
                                    waypoint-quality retry option parsing,
                                    diagnostics, and retry execution
 src/planning_forest_query_bridge_index_options.cpp
                                    query-index override option parsing for
                                    force/global/segment-only bridge selection
+src/planning_forest_query_bridge_partition_path_first.cpp
+                                   partition-first query acceptance option
+                                   parsing, diagnostics, and initial path
+                                   decision
 src/planning_forest_query_bridge_path_utils.cpp
                                    waypoint path length, shortcut, and internal
                                    simplification helpers shared by bridge
