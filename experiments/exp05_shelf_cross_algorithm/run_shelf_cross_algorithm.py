@@ -77,7 +77,12 @@ from experiments.common.rbf_defaults import (
     shelf_d23_rbf_profile,
 )
 from experiments.common.rbf_leaf_rrt import RBFLeafRRTOptions, canonical_q, run_leaf_rrt
-from experiments.common.run_summary import diagnostics_timeout_s, run_success_summary
+from experiments.common.run_summary import (
+    diagnostics_timeout_s,
+    empty_pending_summary_row,
+    external_pending_run_row,
+    run_success_summary,
+)
 from experiments.common.sbf_import import import_sbf
 from experiments.exp05_shelf_cross_algorithm.import_old_shelf_baselines import import_old_baselines
 from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query as bitstar_per_query
@@ -948,24 +953,6 @@ def summarize_method_run(
     }
 
 
-def external_pending_row(method: str, seed: int, reason: str) -> dict[str, Any]:
-    return {
-        "method": method,
-        "seed": int(seed),
-        "stage_id": method,
-        "budget_s": math.nan,
-        "status": "external_pending",
-        "success_count": 0,
-        "query_count": 0,
-        "planning_s": math.nan,
-        "audit_s": math.nan,
-        "path_length_mean": math.nan,
-        "raw_segment_fraction": math.nan,
-        "queries": [],
-        "diagnostics": {"reason": reason},
-    }
-
-
 def run_method(method: str, seed: int, args: argparse.Namespace, robot: Any, obstacles: list[Any], queries: list[dict[str, Any]], budget_s: float | None = None) -> dict[str, Any]:
     if method == "sbf_leaf_rrt":
         return run_sbf(seed, args, robot, obstacles, queries, int(args.sbf_box_budget))
@@ -976,7 +963,11 @@ def run_method(method: str, seed: int, args: argparse.Namespace, robot: Any, obs
     if method == "bitstar":
         raise ValueError("BIT* uses run_bitstar_trace() so one fixed-timeout run can emit all checkpoints")
     if method == "iris_np_gcs":
-        return external_pending_row(method, seed, "IRIS/GCS is executed once through the prefix-anytime dispatcher, not per seed in this loop.")
+        return external_pending_run_row(
+            method,
+            seed,
+            "IRIS/GCS is executed once through the prefix-anytime dispatcher, not per seed in this loop.",
+        )
     raise ValueError(f"unknown method {method!r}")
 
 
@@ -1002,35 +993,12 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and row.get("status") == "external_pending"
         ]
         if not items:
-            out.append({
-                "method": method,
-                "stage_id": stage_id,
-                "budget_s": None,
-                "timeout_cap_s": None,
-                "deep_max_boxes": budget,
-                "runs": len(pending),
-                "success_runs": 0,
-                "success_queries": 0,
-                "total_queries": 0,
-                "offline_build_s_median": None,
-                "online_batch_s_median": None,
-                "online_solve_s_median": None,
-                "online_simplify_s_median": None,
-                "online_solve_per_query_s_median": None,
-                "online_simplify_per_query_s_median": None,
-                "online_per_query_s_median": None,
-                "amortized_s_k1": None,
-                "amortized_s_k5": None,
-                "amortized_s_k10": None,
-                "amortized_s_k20": None,
-                "amortized_s_k50": None,
-                "measured_time_s_median": None,
-                "planning_s_median": None,
-                "audit_s_median": None,
-                "path_length_mean": None,
-                "raw_segment_fraction_median": None,
-                "status": "external_pending" if pending else "missing",
-            })
+            out.append(empty_pending_summary_row(
+                method,
+                stage_id,
+                pending_count=len(pending),
+                deep_max_boxes=budget,
+            ))
             continue
         planning_s_median = median(row["planning_s"] for row in items)
         success = run_success_summary(items)

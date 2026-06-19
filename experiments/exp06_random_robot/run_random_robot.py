@@ -118,7 +118,7 @@ from experiments.common.robot_lectdb_cache import (
     ensure_robot_lectdb_cache,
     robot_external_evidence_path,
 )
-from experiments.common.run_summary import diagnostics_timeout_s, run_success_summary
+from experiments.common.run_summary import diagnostics_timeout_s, external_pending_run_row, run_success_summary
 from experiments.common.sbf_import import import_sbf
 
 
@@ -1638,24 +1638,19 @@ def run_baseline_scene(args: argparse.Namespace, catalog: dict[str, Any], method
         return run_prm_scene(args, catalog, robot, difficulty, seed, float(budget_s if budget_s is not None else args.prm_build_s))
     if method == "bitstar":
         return run_bitstar_scene(args, catalog, robot, difficulty, seed, float(budget_s if budget_s is not None else args.bitstar_timeout_s))
-    return {
-        "method": method,
-        "robot": robot,
-        "difficulty": difficulty,
-        "scene_seed": int(seed),
-        "deep_max_boxes": 0,
-        "stage_id": method,
-        "budget_s": math.nan,
-        "status": "external_pending",
-        "success_count": 0,
-        "query_count": 1,
-        "planning_s": math.nan,
-        "audit_s": math.nan,
-        "path_length_mean": math.nan,
-        "raw_segment_fraction": math.nan,
-        "final_boxes": math.nan,
-        "diagnostics": {"reason": "IRIS/GCS backend is not executed by this self-contained runner."},
-    }
+    return external_pending_run_row(
+        method,
+        int(seed),
+        "IRIS/GCS backend is not executed by this self-contained runner.",
+        query_count=1,
+        extra={
+            "robot": robot,
+            "difficulty": difficulty,
+            "scene_seed": int(seed),
+            "deep_max_boxes": 0,
+            "final_boxes": math.nan,
+        },
+    )
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
