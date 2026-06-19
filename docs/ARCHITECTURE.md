@@ -157,6 +157,8 @@ Python binding ownership:
 
 ```text
 python/bindings.cpp                pybind11 module registration only
+python/binding_basic_types.h       robot, interval, canonical helper, and
+                                   common enum registration
 python/binding_utils.h             Python/Eigen/interval/oracle conversion helpers
 python/ompl_binding_utils.h        OMPL baseline sampler, seeding, C-space,
                                    planner, and path extraction helpers
