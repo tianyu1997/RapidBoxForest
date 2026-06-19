@@ -1447,7 +1447,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             endpoint_main_fine_step=float(args.endpoint_main_fine_step),
             endpoint_main_max_ffb_calls=int(args.endpoint_main_max_ffb_calls),
             endpoint_main_max_boxes=int(args.endpoint_main_max_boxes),
-            endpoint_main_adaptive_ffb_depths=str(args.endpoint_main_adaptive_ffb_depths),
             endpoint_main_residual_segment_max_length=float(args.endpoint_main_residual_segment_max_length),
             endpoint_main_lateral_offset=float(args.endpoint_main_lateral_offset),
             endpoint_main_lateral_rounds=int(args.endpoint_main_lateral_rounds),

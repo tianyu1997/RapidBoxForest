@@ -1237,7 +1237,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("fine_step", &rbf::EndpointMainBoxCorridorConfig::fine_step)
         .def_readwrite("max_ffb_calls", &rbf::EndpointMainBoxCorridorConfig::max_ffb_calls)
         .def_readwrite("max_boxes", &rbf::EndpointMainBoxCorridorConfig::max_boxes)
-        .def_readwrite("adaptive_ffb_depths", &rbf::EndpointMainBoxCorridorConfig::adaptive_ffb_depths)
         .def_readwrite("residual_segment_max_length", &rbf::EndpointMainBoxCorridorConfig::residual_segment_max_length)
         .def_readwrite("lateral_offset", &rbf::EndpointMainBoxCorridorConfig::lateral_offset)
         .def_readwrite("lateral_rounds", &rbf::EndpointMainBoxCorridorConfig::lateral_rounds)
@@ -2324,8 +2323,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                 bool show_progress,
                 bool streaming,
                 std::size_t streaming_cap,
-                double checkpoint_interval_s,
-                bool legacy_prewarm) {
+                double checkpoint_interval_s) {
                  if (obstacles.empty()) {
                      throw std::invalid_argument("prewarm_lifelong_cache requires a non-empty obstacle scene so endpoint evidence is materialized");
                  }
@@ -2389,12 +2387,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                              expected_leaf_records <= (std::numeric_limits<std::size_t>::max() - 64) / 2
                          ? expected_leaf_records * 2 + 64
                          : 0;
-                 if (!legacy_prewarm) {
-                     if (streaming_prewarm) {
-                         forest.database().set_streaming_prewarm_mode(true, streaming_cap);
-                     } else {
-                         forest.database().set_bulk_prewarm_mode(true, expected_prewarm_records);
-                     }
+                 if (streaming_prewarm) {
+                     forest.database().set_streaming_prewarm_mode(true, streaming_cap);
+                 } else {
+                     forest.database().set_bulk_prewarm_mode(true, expected_prewarm_records);
                  }
                  if (show_progress) {
                      std::fprintf(stderr, "[prewarm setup] ensure_depth 0/%d\n", materialize_depth);
@@ -2482,7 +2478,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                  // identical to a full pass, so the stored payloads are
                  // bit-for-bit unchanged -- this is a pure prewarm speedup.
                  const auto leaf_layer = forest.database().layer_nodes(materialize_depth);
-                 if (!legacy_prewarm && !streaming_prewarm && leaf_layer.size() > expected_leaf_records) {
+                 if (!streaming_prewarm && leaf_layer.size() > expected_leaf_records) {
                      forest.database().set_bulk_prewarm_mode(true, leaf_layer.size() * 2 + 64);
                  }
                  std::vector<rbf::lect_database::NodeId> ordered_leaves;
@@ -2648,8 +2644,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
              py::arg("show_progress") = true,
              py::arg("streaming") = false,
              py::arg("streaming_cap") = static_cast<std::size_t>(2000000),
-             py::arg("checkpoint_interval_s") = 0.0,
-             py::arg("legacy_prewarm") = false)
+             py::arg("checkpoint_interval_s") = 0.0)
         .def("debug_validate_intervals",
              [](rbf::RBFPlanningForest& forest,
                 const std::vector<rbf::Obstacle>& obstacles,

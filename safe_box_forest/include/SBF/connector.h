@@ -85,10 +85,6 @@ struct ChainPaveConfig {
 	// When true, the RRT shortcut polyline is densified and chain-paved with
 	// graph-adjacent boxes instead of being used as a loose witness only.
 	bool require_connected_chain = false;
-	// Deprecated: connector paving now uses find_free_box.max_depth/search_mode.
-	// Kept only so older serialized Python configs can be loaded without
-	// silently changing their object shape.
-	std::vector<int> adaptive_ffb_depths;
 	FindFreeBoxOptions find_free_box;
 	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;
 };

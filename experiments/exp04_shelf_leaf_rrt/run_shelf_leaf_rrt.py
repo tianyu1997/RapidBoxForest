@@ -429,7 +429,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         endpoint_main_fine_step=float(args.endpoint_main_fine_step),
         endpoint_main_max_ffb_calls=int(args.endpoint_main_max_ffb_calls),
         endpoint_main_max_boxes=int(args.endpoint_main_max_boxes),
-        endpoint_main_adaptive_ffb_depths=str(args.endpoint_main_adaptive_ffb_depths),
         endpoint_main_residual_segment_max_length=float(args.endpoint_main_residual_segment_max_length),
         endpoint_main_lateral_offset=float(args.endpoint_main_lateral_offset),
         endpoint_main_lateral_rounds=int(args.endpoint_main_lateral_rounds),
@@ -626,7 +625,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.endpoint_main_fine_step": float(options.endpoint_main_fine_step),
         "option.endpoint_main_max_ffb_calls": int(options.endpoint_main_max_ffb_calls),
         "option.endpoint_main_max_boxes": int(options.endpoint_main_max_boxes),
-        "option.endpoint_main_adaptive_ffb_depths": str(options.endpoint_main_adaptive_ffb_depths),
         "option.endpoint_main_residual_segment_max_length": float(options.endpoint_main_residual_segment_max_length),
         "option.endpoint_main_lateral_offset": float(options.endpoint_main_lateral_offset),
         "option.endpoint_main_lateral_rounds": int(options.endpoint_main_lateral_rounds),
@@ -1428,7 +1426,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-main-fine-step", type=float, default=0.02)
     parser.add_argument("--endpoint-main-max-ffb-calls", type=int, default=48)
     parser.add_argument("--endpoint-main-max-boxes", type=int, default=64)
-    parser.add_argument("--endpoint-main-adaptive-ffb-depths", default="")
     parser.add_argument("--endpoint-main-residual-segment-max-length", type=float, default=0.25)
     parser.add_argument("--endpoint-main-lateral-offset", type=float, default=0.03)
     parser.add_argument("--endpoint-main-lateral-rounds", type=int, default=2)
@@ -1726,7 +1723,6 @@ def main() -> int:
             "endpoint_main_fine_step": float(args.endpoint_main_fine_step),
             "endpoint_main_max_ffb_calls": int(args.endpoint_main_max_ffb_calls),
             "endpoint_main_max_boxes": int(args.endpoint_main_max_boxes),
-            "endpoint_main_adaptive_ffb_depths": str(args.endpoint_main_adaptive_ffb_depths),
             "endpoint_main_residual_segment_max_length": float(args.endpoint_main_residual_segment_max_length),
             "endpoint_main_lateral_offset": float(args.endpoint_main_lateral_offset),
             "endpoint_main_lateral_rounds": int(args.endpoint_main_lateral_rounds),
@@ -1763,7 +1759,6 @@ def main() -> int:
             "endpoint_main_fine_step": float(args.endpoint_main_fine_step),
             "endpoint_main_max_ffb_calls": int(args.endpoint_main_max_ffb_calls),
             "endpoint_main_max_boxes": int(args.endpoint_main_max_boxes),
-            "endpoint_main_adaptive_ffb_depths": str(args.endpoint_main_adaptive_ffb_depths),
             "endpoint_main_residual_segment_max_length": float(args.endpoint_main_residual_segment_max_length),
             "endpoint_main_lateral_offset": float(args.endpoint_main_lateral_offset),
             "endpoint_main_lateral_rounds": int(args.endpoint_main_lateral_rounds),

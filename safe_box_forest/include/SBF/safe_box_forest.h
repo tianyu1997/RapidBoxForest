@@ -479,9 +479,6 @@ struct EndpointMainBoxCorridorConfig {
 	double fine_step = 0.02;
 	int max_ffb_calls = 48;
 	int max_boxes = 64;
-	// Deprecated: endpoint-to-main FFB ignores this legacy schedule and uses the
-	// configured FindFreeBoxOptions::search_mode path.
-	std::vector<int> adaptive_ffb_depths;
 	double residual_segment_max_length = 0.25;
 	double lateral_offset = 0.03;
 	int lateral_rounds = 2;

@@ -78,7 +78,6 @@ def explicit_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
                 "lateral_offset": "endpoint_main_lateral_offset",
                 "lateral_rounds": "endpoint_main_lateral_rounds",
                 "face_epsilon": "endpoint_main_face_epsilon",
-                "depths": "endpoint_main_adaptive_ffb_depths",
             }
             key = aliases.get(key, key)
             if key in {
@@ -130,8 +129,6 @@ def explicit_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
                     cfg["query_bridge_to_main_box_corridor"] = value.lower() not in {"0", "false", "no", "off"}
                 else:
                     cfg[key] = value.lower() not in {"0", "false", "no", "off"}
-            elif key in {"endpoint_main_adaptive_ffb_depths", "endpoint_main_depths"}:
-                cfg["endpoint_main_adaptive_ffb_depths"] = value
             elif key in {"offline_connector_mode", "connector_mode"}:
                 cfg["offline_connector_mode"] = value
             elif key in {"to_main", "query_bridge_to_main_island"}:
@@ -207,9 +204,6 @@ def config_id(cfg: dict[str, Any]) -> str:
             base += f"_emc{int(cfg['endpoint_main_max_ffb_calls'])}"
         if "endpoint_main_max_boxes" in cfg:
             base += f"_emb{int(cfg['endpoint_main_max_boxes'])}"
-        if "endpoint_main_adaptive_ffb_depths" in cfg:
-            depths = str(cfg["endpoint_main_adaptive_ffb_depths"]).replace(",", "d")
-            base += f"_emd{depths}"
     return base
 
 
@@ -259,8 +253,6 @@ def apply_config(base: argparse.Namespace, cfg: dict[str, Any], out_dir: Path, s
         args.endpoint_main_max_ffb_calls = int(cfg["endpoint_main_max_ffb_calls"])
     if "endpoint_main_max_boxes" in cfg:
         args.endpoint_main_max_boxes = int(cfg["endpoint_main_max_boxes"])
-    if "endpoint_main_adaptive_ffb_depths" in cfg:
-        args.endpoint_main_adaptive_ffb_depths = str(cfg["endpoint_main_adaptive_ffb_depths"])
     if "endpoint_main_residual_segment_max_length" in cfg:
         args.endpoint_main_residual_segment_max_length = float(
             cfg["endpoint_main_residual_segment_max_length"]
@@ -324,7 +316,6 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "endpoint_main_fine_step": median(row.get("endpoint_main_fine_step", math.nan) for row in items),
             "endpoint_main_max_ffb_calls": median(row.get("endpoint_main_max_ffb_calls", math.nan) for row in items),
             "endpoint_main_max_boxes": median(row.get("endpoint_main_max_boxes", math.nan) for row in items),
-            "endpoint_main_adaptive_ffb_depths": str(items[0].get("endpoint_main_adaptive_ffb_depths", "")),
             "endpoint_main_residual_segment_max_length": median(row.get("endpoint_main_residual_segment_max_length", math.nan) for row in items),
             "offline_build_s_median": median(row.get("offline_build_s", math.nan) for row in items),
             "leaf_sweep_s_median": median(row.get("leaf_sweep_s", math.nan) for row in items),
@@ -562,7 +553,6 @@ def main() -> int:
             "endpoint_main_fine_step": float(run_args.endpoint_main_fine_step),
             "endpoint_main_max_ffb_calls": int(run_args.endpoint_main_max_ffb_calls),
             "endpoint_main_max_boxes": int(run_args.endpoint_main_max_boxes),
-            "endpoint_main_adaptive_ffb_depths": str(run_args.endpoint_main_adaptive_ffb_depths),
             "endpoint_main_residual_segment_max_length": float(run_args.endpoint_main_residual_segment_max_length),
             "offline_shortcut_edges_requested": int(run_args.offline_shortcut_edges),
             "offline_shortcut_edges_added": int(row.get("offline_shortcut_edges_added", 0)),
@@ -592,7 +582,6 @@ def main() -> int:
         "endpoint_main_fine_step",
         "endpoint_main_max_ffb_calls",
         "endpoint_main_max_boxes",
-        "endpoint_main_adaptive_ffb_depths",
         "endpoint_main_residual_segment_max_length",
         "offline_build_s", "leaf_sweep_s", "deep_refine_s", "connector_s",
         "query_bridge_s", "query_bridge_per_query_s",
@@ -625,7 +614,6 @@ def main() -> int:
         "endpoint_main_fine_step",
         "endpoint_main_max_ffb_calls",
         "endpoint_main_max_boxes",
-        "endpoint_main_adaptive_ffb_depths",
         "endpoint_main_residual_segment_max_length",
         "offline_build_s_median", "leaf_sweep_s_median",
         "deep_refine_s_median", "connector_s_median",

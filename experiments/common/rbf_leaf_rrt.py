@@ -645,7 +645,6 @@ class RBFLeafRRTOptions:
     endpoint_main_fine_step: float = 0.02
     endpoint_main_max_ffb_calls: int = 48
     endpoint_main_max_boxes: int = 64
-    endpoint_main_adaptive_ffb_depths: str = ""
     endpoint_main_residual_segment_max_length: float = 0.25
     endpoint_main_lateral_offset: float = 0.03
     endpoint_main_lateral_rounds: int = 2
@@ -1878,11 +1877,6 @@ def bridge_all_queries(
                 corridor_cfg.fine_step = float(getattr(options, "endpoint_main_fine_step", 0.02))
                 corridor_cfg.max_ffb_calls = int(getattr(options, "endpoint_main_max_ffb_calls", 48))
                 corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
-                corridor_cfg.adaptive_ffb_depths = [
-                    int(item.strip())
-                    for item in str(getattr(options, "endpoint_main_adaptive_ffb_depths", "")).split(",")
-                    if item.strip()
-                ]
                 corridor_cfg.residual_segment_max_length = float(
                     getattr(options, "endpoint_main_residual_segment_max_length", 0.25)
                 )

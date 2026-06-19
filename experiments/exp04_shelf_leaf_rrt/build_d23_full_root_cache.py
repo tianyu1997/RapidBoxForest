@@ -147,7 +147,6 @@ def main() -> int:
             streaming=bool(args.streaming),
             streaming_cap=max(1, int(args.resident_cap)),
             checkpoint_interval_s=max(0.0, float(args.checkpoint_seconds)),
-            legacy_prewarm=False,
         )
     )
     wall_s = time.perf_counter() - t0

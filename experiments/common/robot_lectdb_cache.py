@@ -162,7 +162,6 @@ def ensure_robot_lectdb_cache(
             streaming=False,
             streaming_cap=2_000_000,
             checkpoint_interval_s=0.0,
-            legacy_prewarm=False,
         )
     )
     wall_s = time.perf_counter() - start
