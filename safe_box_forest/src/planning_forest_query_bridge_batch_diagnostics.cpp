@@ -212,59 +212,6 @@ void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
         "query_bridge.direct_corridor_ffb_binary_virtual_unsupported_total");
     add("direct_corridor_ffb_linear_descent_calls",
         "query_bridge.direct_corridor_ffb_linear_descent_calls_total");
-    add("direct_corridor_transition_connected_ms",
-        "query_bridge.direct_corridor_transition_connected_ms");
-    add("direct_corridor_transition_connected_calls",
-        "query_bridge.direct_corridor_transition_connected_calls");
-    add("direct_corridor_bad_transitions_ms",
-        "query_bridge.direct_corridor_bad_transitions_ms");
-    add("direct_corridor_bad_transitions_calls",
-        "query_bridge.direct_corridor_bad_transitions_calls");
-    add("direct_corridor_current_cover_ms", "query_bridge.direct_corridor_current_cover_ms");
-    add("direct_corridor_current_cover_calls", "query_bridge.direct_corridor_current_cover_calls");
-    add("direct_corridor_current_cover_partition_ms",
-        "query_bridge.direct_corridor_current_cover_partition_ms");
-    add("direct_corridor_current_cover_corridor_scan_ms",
-        "query_bridge.direct_corridor_current_cover_corridor_scan_ms");
-    add("direct_corridor_current_cover_direct_index_ms",
-        "query_bridge.direct_corridor_current_cover_direct_index_ms");
-    add("direct_corridor_duplicate_lookup_ms", "query_bridge.direct_corridor_duplicate_lookup_ms");
-    add("direct_corridor_duplicate_lookup_calls",
-        "query_bridge.direct_corridor_duplicate_lookup_calls");
-    add("direct_corridor_commit_total_ms", "query_bridge.direct_corridor_commit_total_ms");
-    add("direct_corridor_commit_calls", "query_bridge.direct_corridor_commit_calls");
-    add("direct_corridor_commit_dynamic_policy_ms",
-        "query_bridge.direct_corridor_commit_dynamic_policy_ms");
-    add("direct_corridor_commit_partition_append_ms",
-        "query_bridge.direct_corridor_commit_partition_append_ms");
-    add("direct_corridor_partition_append_calls",
-        "query_bridge.direct_corridor_partition_append_calls");
-    add("direct_corridor_partition_append_boxes",
-        "query_bridge.direct_corridor_partition_append_boxes");
-    add("direct_corridor_assimilate_calls", "query_bridge.direct_corridor_assimilate_calls");
-    add("direct_corridor_assimilate_sample_scan_ms",
-        "query_bridge.direct_corridor_assimilate_sample_scan_ms");
-    add("direct_corridor_assimilate_local_hits",
-        "query_bridge.direct_corridor_assimilate_local_hits");
-    add("direct_corridor_assimilate_full_scan_fallbacks",
-        "query_bridge.direct_corridor_assimilate_full_scan_fallbacks");
-    add("direct_corridor_assimilate_local_sample_tests",
-        "query_bridge.direct_corridor_assimilate_local_sample_tests");
-    add("direct_corridor_assimilate_candidate_build_ms",
-        "query_bridge.direct_corridor_assimilate_candidate_build_ms");
-    add("direct_corridor_assimilate_adjacency_ms",
-        "query_bridge.direct_corridor_assimilate_adjacency_ms");
-    add("direct_corridor_segment_insert_ms", "query_bridge.direct_corridor_segment_insert_ms");
-    add("direct_corridor_segment_insert_calls",
-        "query_bridge.direct_corridor_segment_insert_calls");
-    add("direct_corridor_direct_task_build_ms",
-        "query_bridge.direct_corridor_direct_task_build_ms");
-    add("direct_corridor_direct_loop_ms", "query_bridge.direct_corridor_direct_loop_ms");
-    add("direct_corridor_repair_loop_ms", "query_bridge.direct_corridor_repair_loop_ms");
-    add("direct_corridor_adaptive_loop_ms", "query_bridge.direct_corridor_adaptive_loop_ms");
-    add("direct_corridor_lateral_loop_ms", "query_bridge.direct_corridor_lateral_loop_ms");
-    add("direct_corridor_residual_segment_loop_ms",
-        "query_bridge.direct_corridor_residual_segment_loop_ms");
 }
 
 }  // namespace rbf

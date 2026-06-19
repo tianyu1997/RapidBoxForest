@@ -958,14 +958,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     summary_stats.local_corridor_connected = local_corridor_connected;
     query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
 
-    if (detailed_direct_timing) {
-        const QueryBridgeDirectCorridorDetailedTimingStats timing_stats =
-            query_bridge_direct_corridor_detailed_timing_from_runtime(runtime_stats);
-        query_bridge_record_direct_corridor_detailed_timing(
-            context,
-            query_index,
-            timing_stats);
-    }
     if (final_bad.empty() &&
         source_box_id >= 0 &&
         target_box_id >= 0 &&

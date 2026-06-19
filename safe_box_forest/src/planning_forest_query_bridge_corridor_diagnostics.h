@@ -6,44 +6,6 @@
 
 namespace rbf {
 
-struct QueryBridgeDirectCorridorDetailedTimingStats {
-    double transition_connected_ms = 0.0;
-    double bad_transitions_ms = 0.0;
-    double current_cover_ms = 0.0;
-    double current_cover_partition_ms = 0.0;
-    double current_cover_corridor_scan_ms = 0.0;
-    double current_cover_direct_index_ms = 0.0;
-    double duplicate_lookup_ms = 0.0;
-    double commit_total_ms = 0.0;
-    double commit_dynamic_policy_ms = 0.0;
-    double commit_partition_append_ms = 0.0;
-    double assimilate_sample_scan_ms = 0.0;
-    double assimilate_candidate_build_ms = 0.0;
-    double assimilate_adjacency_ms = 0.0;
-    double segment_insert_ms = 0.0;
-    double direct_task_build_ms = 0.0;
-    double direct_loop_ms = 0.0;
-    double repair_loop_ms = 0.0;
-    double adaptive_loop_ms = 0.0;
-    double lateral_loop_ms = 0.0;
-    double residual_segment_loop_ms = 0.0;
-    double assimilate_coverage_span_sum = 0.0;
-    int transition_connected_calls = 0;
-    int bad_transitions_calls = 0;
-    int current_cover_calls = 0;
-    int duplicate_lookup_calls = 0;
-    int commit_calls = 0;
-    int assimilate_calls = 0;
-    int assimilate_coverage_boxes = 0;
-    int assimilate_coverage_span_max = 0;
-    int segment_insert_calls = 0;
-    int direct_partition_append_calls = 0;
-    int direct_partition_append_boxes = 0;
-    int assimilate_local_hits = 0;
-    int assimilate_full_scan_fallbacks = 0;
-    int assimilate_local_sample_tests = 0;
-};
-
 struct QueryBridgeDirectCorridorRuntimeStats {
     double transition_connected_ms = 0.0;
     double bad_transitions_ms = 0.0;
@@ -110,15 +72,6 @@ struct QueryBridgeDirectCorridorSummaryStats {
     bool lateral_repair_enabled = false;
     bool local_corridor_connected = false;
 };
-
-QueryBridgeDirectCorridorDetailedTimingStats
-query_bridge_direct_corridor_detailed_timing_from_runtime(
-    const QueryBridgeDirectCorridorRuntimeStats& stats);
-
-void query_bridge_record_direct_corridor_detailed_timing(
-    StageContext& context,
-    int query_index,
-    const QueryBridgeDirectCorridorDetailedTimingStats& stats);
 
 void query_bridge_record_direct_corridor_summary(
     StageContext& context,
