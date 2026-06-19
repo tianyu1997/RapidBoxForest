@@ -1,6 +1,7 @@
-#include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_attempt_paths.h"
 
 #include "planning_forest_audit.h"
+#include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_detour_utils.h"
 #include "planning_forest_query_utils.h"
 

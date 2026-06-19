@@ -14,7 +14,6 @@
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_obb.h"
 #include "planning_forest_obb_options.h"
-#include "planning_forest_query_bridge_batch_utils.h"
 #include "planning_forest_query_utils.h"
 
 namespace rbf {

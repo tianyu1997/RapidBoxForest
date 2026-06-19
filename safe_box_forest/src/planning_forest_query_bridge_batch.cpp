@@ -5,9 +5,14 @@
 
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
-#include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_attempt_paths.h"
 #include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_detour_utils.h"
+#include "planning_forest_query_bridge_options.h"
+#include "planning_forest_query_bridge_policy.h"
+#include "planning_forest_query_bridge_rrt_utils.h"
+#include "planning_forest_query_bridge_task.h"
 #include "planning_forest_query_utils.h"
 #include "virtual_sparse_ffb.h"
 

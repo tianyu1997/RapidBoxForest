@@ -3,7 +3,7 @@
 #include <SBF/adaptive_grid_partition.h>
 #include <SBF/safe_box_forest.h>
 
-#include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_task.h"
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>

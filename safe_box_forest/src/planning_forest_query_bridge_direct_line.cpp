@@ -1,4 +1,4 @@
-#include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_options.h"
 
 #include "env_config.h"
 #include "planning_forest_audit.h"

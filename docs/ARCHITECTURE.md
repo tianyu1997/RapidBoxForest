@@ -348,6 +348,24 @@ src/planning_forest_query_bridge_corridor_utils.cpp
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting
+src/planning_forest_query_bridge_task.h
+                                   query bridge task/job state shared by batch,
+                                   RRT, direct segment, HiPaC, and edge modules
+src/planning_forest_query_bridge_options.h
+                                   query bridge environment option structs and
+                                   option-specific parser/diagnostic declarations
+src/planning_forest_query_bridge_policy.h
+                                   batch-policy and edge-ownership declarations
+                                   for query bridge task execution
+src/planning_forest_query_bridge_diagnostics.h
+                                   per-task key, oracle-counter delta, skip, and
+                                   direct-corridor aggregate diagnostic declarations
+src/planning_forest_query_bridge_attempt_paths.h
+                                   attempt-path adoption and waypoint retry
+                                   declarations for the batch scheduler
+src/planning_forest_query_bridge_batch_utils.h
+                                   compatibility facade only; new code should
+                                   include the narrower query bridge headers above
 src/planning_forest_query_bridge_endpoint_options.h
                                    endpoint-anchor option helpers kept header-only
                                    for the endpoint repair module

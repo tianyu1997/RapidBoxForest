@@ -2,7 +2,7 @@
 
 #include "env_config.h"
 #include "planning_forest_audit.h"
-#include "planning_forest_query_bridge_batch_utils.h"
+#include "planning_forest_query_bridge_task.h"
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>
