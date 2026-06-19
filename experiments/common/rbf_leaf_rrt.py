@@ -46,7 +46,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
-    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
@@ -268,7 +267,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.batch_tasks_no_path",
         "query_bridge.parallel_task_rrt_jobs",
         "query_bridge.rrt_fixed_iters",
-        "query_bridge.rrt_fixed_timeout_ms",
         "query_bridge.local_radius_schedule_size",
         "query_bridge.hybridize_attempt_paths_tasks",
         "query_bridge.hybridize_attempt_paths_candidates",
@@ -625,7 +623,6 @@ class RBFLeafRRTOptions:
     query_bridge_no_path_retry_budget_iters: str = ""
     query_bridge_no_path_retry_budget_attempts: str = ""
     query_bridge_rrt_fixed_iters: int = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS
-    query_bridge_rrt_fixed_timeout_ms: float = DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS
     query_bridge_local_radius_schedule: str = DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE
     query_bridge_hybridize_attempt_paths: bool = DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS
     query_bridge_hybrid_max_paths: int = DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS
@@ -1945,9 +1942,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_ITERS"] = str(
             int(getattr(options, "query_bridge_rrt_fixed_iters", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS"] = str(
-            float(getattr(options, "query_bridge_rrt_fixed_timeout_ms", 0.0))
         )
         env_updates["RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE"] = (
             str(getattr(options, "query_bridge_local_radius_schedule", "") or "")

@@ -20,7 +20,6 @@ struct QueryBridgeRetryOptions {
     int forced_attempts = 1;
     int attempt_offset = 0;
     int rrt_fixed_iters = 0;
-    double rrt_fixed_timeout_ms = 0.0;
     std::vector<double> local_radius_schedule;
     std::vector<int> no_path_retry_budget_iters;
     std::vector<int> no_path_retry_budget_attempts;

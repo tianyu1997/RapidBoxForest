@@ -62,7 +62,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
-    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
@@ -446,7 +445,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_no_path_retry_attempts=int(args.query_bridge_no_path_retry_attempts),
         query_bridge_no_path_retry_stop_on_first_success=query_bridge_no_path_retry_stop_on_first_success,
         query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
-        query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
         query_bridge_direct_segment_after_rrt=bool(args.query_bridge_direct_segment_after_rrt),
         query_bridge_fast_direct_segment_after_rrt=bool(args.query_bridge_fast_direct_segment_after_rrt),
@@ -658,7 +656,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
             options.query_bridge_no_path_retry_stop_on_first_success
         ),
         "option.query_bridge_rrt_fixed_iters": int(options.query_bridge_rrt_fixed_iters),
-        "option.query_bridge_rrt_fixed_timeout_ms": float(options.query_bridge_rrt_fixed_timeout_ms),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
         "option.query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
         "option.query_bridge_fast_direct_segment_after_rrt": bool(
@@ -843,7 +840,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
             "diag_query_bridge_parallel_task_rrt_jobs_median": median(row.get("diag_query_bridge_parallel_task_rrt_jobs", 0.0) for row in items),
             "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
-            "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
             "diag_query_bridge_batch_tasks_initial_median": median(row.get("diag_query_bridge_batch_tasks_initial", 0.0) for row in items),
             "diag_query_bridge_batch_tasks_attempted_median": median(row.get("diag_query_bridge_batch_tasks_attempted", 0.0) for row in items),
             "diag_query_bridge_batch_tasks_no_path_median": median(row.get("diag_query_bridge_batch_tasks_no_path", 0.0) for row in items),
@@ -1149,7 +1145,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_batch_pave_ms_total_median",
         "diag_query_bridge_parallel_task_rrt_jobs_median",
         "diag_query_bridge_rrt_fixed_iters_median",
-        "diag_query_bridge_rrt_fixed_timeout_ms_median",
         "diag_query_bridge_batch_tasks_initial_median",
         "diag_query_bridge_batch_tasks_attempted_median",
         "diag_query_bridge_batch_tasks_no_path_median",
@@ -1590,7 +1585,6 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
     )
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
-    parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-hybridize-attempt-paths", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS)
     parser.add_argument("--query-bridge-hybrid-max-paths", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS)
     parser.add_argument("--query-bridge-hybrid-max-vertices", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES)

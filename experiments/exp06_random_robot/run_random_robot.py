@@ -62,7 +62,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
-    DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     ROBOT_LECTDB_CACHE_ROOT,
     EXP06_REGISTERED_RBF_PROFILE_NAME,
     EXP06_REGISTERED_RBF_SETTINGS,
@@ -557,7 +556,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["forced_attempts"] = int(args.query_bridge_forced_attempts)
     profile["query_bridge"]["attempt_offset"] = int(args.query_bridge_attempt_offset)
     profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
-    profile["query_bridge"]["rrt_fixed_timeout_ms"] = float(args.query_bridge_rrt_fixed_timeout_ms)
     profile["query_bridge"]["local_radius_schedule"] = str(args.query_bridge_local_radius_schedule)
     profile["query_bridge"]["hybridize_attempt_paths"] = bool(args.query_bridge_hybridize_attempt_paths)
     profile["query_bridge"]["hybrid_max_paths"] = int(args.query_bridge_hybrid_max_paths)
@@ -774,7 +772,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
     parser.add_argument("--query-bridge-attempt-offset", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET)
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
-    parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-local-radius-schedule", default=DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE)
     parser.add_argument(
         "--query-bridge-parallel-rrt-early-stop",
@@ -1437,7 +1434,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
             query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
             query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
-            query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
             query_bridge_local_radius_schedule=str(args.query_bridge_local_radius_schedule),
             query_bridge_parallel_rrt_early_stop=bool(args.query_bridge_parallel_rrt_early_stop),
             query_bridge_parallel_rrt_early_stop_min_successes=int(
@@ -1586,7 +1582,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
             "query_bridge_attempt_offset": int(args.query_bridge_attempt_offset),
             "query_bridge_rrt_fixed_iters": int(args.query_bridge_rrt_fixed_iters),
-            "query_bridge_rrt_fixed_timeout_ms": float(args.query_bridge_rrt_fixed_timeout_ms),
             "query_bridge_local_radius_schedule": str(args.query_bridge_local_radius_schedule),
             "query_bridge_parallel_rrt_early_stop": bool(args.query_bridge_parallel_rrt_early_stop),
             "query_bridge_parallel_rrt_early_stop_min_successes": int(
@@ -2512,7 +2507,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_batch_probe_ms_total_median": median(row.get("diag_query_bridge_batch_probe_ms_total", 0.0) for row in items),
                 "diag_query_bridge_batch_pave_ms_total_median": median(row.get("diag_query_bridge_batch_pave_ms_total", 0.0) for row in items),
                 "diag_query_bridge_rrt_fixed_iters_median": median(row.get("diag_query_bridge_rrt_fixed_iters", 0.0) for row in items),
-                "diag_query_bridge_rrt_fixed_timeout_ms_median": median(row.get("diag_query_bridge_rrt_fixed_timeout_ms", 0.0) for row in items),
                 "diag_query_bridge_hybridize_attempt_paths_tasks_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_tasks", 0.0) for row in items),
                 "diag_query_bridge_hybridize_attempt_paths_candidates_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_candidates", 0.0) for row in items),
                 "diag_query_bridge_hybridize_attempt_paths_accepts_median": median(row.get("diag_query_bridge_hybridize_attempt_paths_accepts", 0.0) for row in items),
@@ -2695,7 +2689,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_batch_probe_ms_total_median",
         "diag_query_bridge_batch_pave_ms_total_median",
         "diag_query_bridge_rrt_fixed_iters_median",
-        "diag_query_bridge_rrt_fixed_timeout_ms_median",
         "diag_query_bridge_hybridize_attempt_paths_tasks_median",
         "diag_query_bridge_hybridize_attempt_paths_candidates_median",
         "diag_query_bridge_hybridize_attempt_paths_accepts_median",
