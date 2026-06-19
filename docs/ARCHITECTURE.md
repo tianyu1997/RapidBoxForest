@@ -172,11 +172,12 @@ src/box_graph_sequence.cpp         box-sequence shortcut and bridge-node
                                    compression helpers
 src/box_graph_topology.cpp         island and articulation-point graph
                                    topology helpers
-src/connector.cpp                  island connector orchestration, frontier
-                                   bridge, point-gap fallback, and bridge
+src/connector.cpp                  island connector orchestration and bridge
                                    commit loop
 src/connector_birrt.cpp            RRTConnect/BiRRT connector path search and
                                    diagnostics
+src/connector_frontier_bridge.cpp  frontier bridge box insertion and
+                                   point-gap fallback helpers
 src/connector_internal.cpp         connector-local geometry, broadphase,
                                    incremental graph, and diagnostics helpers
 src/connector_chain_pave.cpp       connector chain-pave box insertion along

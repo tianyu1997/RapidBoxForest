@@ -103,6 +103,7 @@ add_library(sbf_core STATIC
     src/box_graph_topology.cpp
     src/connector.cpp
     src/connector_birrt.cpp
+    src/connector_frontier_bridge.cpp
     src/connector_internal.cpp
     src/connector_chain_pave.cpp
     src/find_free_box.cpp
