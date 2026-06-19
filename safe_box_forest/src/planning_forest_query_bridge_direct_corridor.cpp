@@ -99,8 +99,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     std::size_t direct_partition_append_base = boxes_.size();
     std::vector<std::vector<int>> sample_layers(samples.size());
     std::vector<bool> covered(samples.size(), false);
-    std::vector<QueryBridgeResidualMilestone> repair_milestones;
-    repair_milestones.reserve(samples.size());
     auto mark_from_index = [&](std::size_t from_index) {
         const auto mark_t0 = Clock::now();
         int changed = 0;
@@ -565,11 +563,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         const int duplicate_index = find_duplicate_box_index(result.node,
                                                              result.intervals);
         if (duplicate_index >= 0) {
-            const int covered_count = assimilate_box(duplicate_index, transition_hint);
-            if (covered_count == 0) {
-                repair_milestones.push_back(
-                    {query_bridge_seed_path_param(samples, seed, transition_hint), seed, duplicate_index});
-            }
+            assimilate_box(duplicate_index, transition_hint);
             return finish(duplicate_index);
         }
         const auto dynamic_policy_t0 = detailed_direct_timing ? Clock::now() : Clock::time_point{};
@@ -615,11 +609,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             box_id_to_index[box.id] = box_index;
         }
         dsu.add();
-        const int covered_count = assimilate_box(box_index, transition_hint);
-        if (covered_count == 0) {
-            repair_milestones.push_back(
-                {query_bridge_seed_path_param(samples, seed, transition_hint), seed, box_index});
-        }
+        assimilate_box(box_index, transition_hint);
         return finish(box_index);
     };
     auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
@@ -925,12 +915,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             context,
             samples,
             sample_layers,
-            repair_milestones,
             final_bad,
-            static_cast<int>(boxes_.size()),
             direct_corridor_options.group_residual_gaps,
-            direct_corridor_options.residual_milestone_segments,
-            dsu,
             insert_residual_segment);
         if (detailed_direct_timing) {
             runtime_stats.residual_segment_loop_ms =

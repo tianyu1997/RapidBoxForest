@@ -16,12 +16,6 @@
 
 namespace rbf {
 
-struct QueryBridgeResidualMilestone {
-    double param = 0.0;
-    Eigen::VectorXd point;
-    int box_index = -1;
-};
-
 struct QueryBridgeSubdivisionRepairStats {
     int calls = 0;
     int added = 0;
@@ -104,12 +98,8 @@ void query_bridge_run_residual_segment_gap_pass(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<std::vector<int>>& sample_layers,
-    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
     const std::vector<int>& final_bad,
-    int box_count,
     bool group_residual_gaps,
-    bool residual_milestone_segments,
-    QueryBridgeLocalDsu& dsu,
     const std::function<bool(int,
                              int,
                              const Eigen::VectorXd&,
@@ -155,12 +145,5 @@ std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
     const std::vector<int>& final_bad,
     std::size_t layer_count,
     bool group_residual_gaps);
-
-std::vector<QueryBridgeResidualMilestone> query_bridge_compact_residual_milestones(
-    const std::vector<Eigen::VectorXd>& samples,
-    const std::vector<std::vector<int>>& sample_layers,
-    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
-    int box_count,
-    QueryBridgeLocalDsu& dsu);
 
 }  // namespace rbf

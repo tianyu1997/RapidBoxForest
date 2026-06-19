@@ -50,37 +50,6 @@ void QueryBridgeLocalDsu::unite(int lhs, int rhs) {
     }
 }
 
-double query_bridge_seed_path_param(const std::vector<Eigen::VectorXd>& samples,
-                                    const Eigen::VectorXd& seed,
-                                    int transition_hint) {
-    if (samples.empty()) {
-        return 0.0;
-    }
-    if (transition_hint >= 0 &&
-        transition_hint + 1 < static_cast<int>(samples.size())) {
-        const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition_hint)];
-        const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition_hint + 1)];
-        const Eigen::VectorXd delta = b - a;
-        const double denom = delta.squaredNorm();
-        double u = 0.5;
-        if (denom > 1e-18) {
-            u = (seed - a).dot(delta) / denom;
-            u = std::min(1.0, std::max(0.0, u));
-        }
-        return static_cast<double>(transition_hint) + u;
-    }
-    double best_distance = std::numeric_limits<double>::infinity();
-    std::size_t best_index = 0;
-    for (std::size_t index = 0; index < samples.size(); ++index) {
-        const double distance = (seed - samples[index]).squaredNorm();
-        if (distance < best_distance) {
-            best_distance = distance;
-            best_index = index;
-        }
-    }
-    return static_cast<double>(best_index);
-}
-
 double query_bridge_transition_length(const std::vector<Eigen::VectorXd>& samples,
                                       int transition) {
     if (transition < 0 ||

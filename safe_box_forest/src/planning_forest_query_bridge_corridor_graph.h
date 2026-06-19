@@ -36,10 +36,6 @@ struct QueryBridgeLocalDsu {
     void unite(int lhs, int rhs);
 };
 
-double query_bridge_seed_path_param(const std::vector<Eigen::VectorXd>& samples,
-                                    const Eigen::VectorXd& seed,
-                                    int transition_hint);
-
 double query_bridge_transition_length(const std::vector<Eigen::VectorXd>& samples,
                                       int transition);
 

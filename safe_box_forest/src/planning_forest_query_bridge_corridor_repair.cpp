@@ -261,12 +261,8 @@ void query_bridge_run_residual_segment_gap_pass(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<std::vector<int>>& sample_layers,
-    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
     const std::vector<int>& final_bad,
-    int box_count,
     bool group_residual_gaps,
-    bool residual_milestone_segments,
-    QueryBridgeLocalDsu& dsu,
     const std::function<bool(int,
                              int,
                              const Eigen::VectorXd&,
@@ -279,39 +275,6 @@ void query_bridge_run_residual_segment_gap_pass(
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_segment_gap_groups",
         static_cast<double>(gap_groups.size()));
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_residual_milestone_segments",
-        residual_milestone_segments ? 1.0 : 0.0);
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_repair_milestones",
-        static_cast<double>(repair_milestones.size()));
-
-    if (residual_milestone_segments) {
-        const std::vector<QueryBridgeResidualMilestone> compact =
-            query_bridge_compact_residual_milestones(samples,
-                                                     sample_layers,
-                                                     repair_milestones,
-                                                     box_count,
-                                                     dsu);
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_residual_milestones",
-            static_cast<double>(compact.size()));
-        for (std::size_t index = 0; index + 1 < compact.size(); ++index) {
-            const auto& lhs = compact[index];
-            const auto& rhs = compact[index + 1];
-            if (rhs.param <= lhs.param + 1e-9) {
-                continue;
-            }
-            const int sample_gap = static_cast<int>(
-                std::ceil(std::max(0.0, rhs.param - lhs.param)));
-            insert_segment(lhs.box_index,
-                           rhs.box_index,
-                           lhs.point,
-                           rhs.point,
-                           sample_gap);
-        }
-        return;
-    }
 
     std::vector<std::pair<int, int>> pending_gap_groups;
     pending_gap_groups.reserve(gap_groups.size());
@@ -434,52 +397,6 @@ std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
         }
     }
     return gap_groups;
-}
-
-std::vector<QueryBridgeResidualMilestone> query_bridge_compact_residual_milestones(
-    const std::vector<Eigen::VectorXd>& samples,
-    const std::vector<std::vector<int>>& sample_layers,
-    const std::vector<QueryBridgeResidualMilestone>& repair_milestones,
-    int box_count,
-    QueryBridgeLocalDsu& dsu) {
-    std::vector<QueryBridgeResidualMilestone> milestones;
-    milestones.reserve(samples.size() + repair_milestones.size());
-    for (std::size_t sample_index = 0; sample_index < sample_layers.size(); ++sample_index) {
-        const auto& layer = sample_layers[sample_index];
-        if (!layer.empty()) {
-            milestones.push_back({static_cast<double>(sample_index),
-                                  samples[sample_index],
-                                  layer.front()});
-        }
-    }
-    for (const auto& milestone : repair_milestones) {
-        if (milestone.box_index >= 0 && milestone.box_index < box_count) {
-            milestones.push_back(milestone);
-        }
-    }
-    std::stable_sort(milestones.begin(),
-                     milestones.end(),
-                     [](const QueryBridgeResidualMilestone& lhs,
-                        const QueryBridgeResidualMilestone& rhs) {
-                         if (std::abs(lhs.param - rhs.param) > 1e-9) {
-                             return lhs.param < rhs.param;
-                         }
-                         return lhs.box_index < rhs.box_index;
-                     });
-    std::vector<QueryBridgeResidualMilestone> compact;
-    compact.reserve(milestones.size());
-    for (const auto& milestone : milestones) {
-        if (milestone.box_index < 0) {
-            continue;
-        }
-        if (!compact.empty() &&
-            std::abs(compact.back().param - milestone.param) <= 1e-9 &&
-            dsu.find(compact.back().box_index) == dsu.find(milestone.box_index)) {
-            continue;
-        }
-        compact.push_back(milestone);
-    }
-    return compact;
 }
 
 }  // namespace rbf

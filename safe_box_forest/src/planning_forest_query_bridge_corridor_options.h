@@ -30,7 +30,6 @@ struct QueryBridgeDirectCorridorRuntimeOptions {
     bool local_sample_assimilation = true;
     bool ffb_diagnostics = false;
     bool group_residual_gaps = false;
-    bool residual_milestone_segments = false;
     bool full_residual_overlay_when_connected = false;
 };
 
