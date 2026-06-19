@@ -93,6 +93,8 @@ src/lect_database/                 core persistence implementation
                                    file-path helpers plus node-row text codec
   database_mapped_file.cpp         platform-specific read-only evidence mmap
                                    and prefetch RAII wrapper
+  database_node_pages.cpp          LECT node page cache, resident-page
+                                   accounting, and node-row flush/read/write
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
 tools/                             database CLI and benchmark
