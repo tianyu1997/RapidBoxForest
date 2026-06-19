@@ -11,6 +11,8 @@
 
 namespace rbf {
 
+struct QueryBridgeParallelRrtOptions;
+
 inline constexpr int kSeedAttemptStride = 7919;
 inline constexpr int kSeedQueryStride = 104729;
 inline constexpr int kSeedRepairLocalOffset = 101;
@@ -142,6 +144,7 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
     int seed_base,
     int audit_resolution,
     double audit_segment_step,
+    const QueryBridgeParallelRrtOptions& parallel_options,
     const std::vector<RRTConnectConfig>* attempt_configs = nullptr,
     int seed_stride = kSeedAttemptStride);
 

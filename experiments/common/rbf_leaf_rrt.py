@@ -1257,6 +1257,20 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_hybrid_max_vertices = int(options.query_bridge_hybrid_max_vertices)
     if hasattr(cfg, "query_bridge_hybrid_max_cross_checks"):
         cfg.query_bridge_hybrid_max_cross_checks = int(options.query_bridge_hybrid_max_cross_checks)
+    if hasattr(cfg, "query_bridge_parallel_rrt_early_stop"):
+        cfg.query_bridge_parallel_rrt_early_stop = bool(options.query_bridge_parallel_rrt_early_stop)
+    if hasattr(cfg, "query_bridge_parallel_rrt_early_stop_min_successes"):
+        cfg.query_bridge_parallel_rrt_early_stop_min_successes = int(
+            options.query_bridge_parallel_rrt_early_stop_min_successes
+        )
+    if hasattr(cfg, "query_bridge_parallel_rrt_early_stop_ratio"):
+        cfg.query_bridge_parallel_rrt_early_stop_ratio = float(
+            options.query_bridge_parallel_rrt_early_stop_ratio
+        )
+    if hasattr(cfg, "query_bridge_parallel_rrt_early_stop_additive"):
+        cfg.query_bridge_parallel_rrt_early_stop_additive = float(
+            options.query_bridge_parallel_rrt_early_stop_additive
+        )
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1847,20 +1861,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {}
-        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES"] = str(
-            int(getattr(options, "query_bridge_parallel_rrt_early_stop_min_successes", 1))
-        )
-        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO"] = str(
-            float(getattr(options, "query_bridge_parallel_rrt_early_stop_ratio", 1.75))
-        )
-        env_updates["RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE"] = str(
-            float(getattr(options, "query_bridge_parallel_rrt_early_stop_additive", 0.75))
-        )
         env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT"] = (
             "1"
             if bool(getattr(options, "query_bridge_direct_segment_after_rrt", False))

@@ -85,7 +85,8 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_config(
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options);
 
-QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_env();
+QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_config(
+    const RBFPlanningConfig& config);
 
 void record_query_bridge_parallel_rrt_diagnostics(
     StageContext& context,

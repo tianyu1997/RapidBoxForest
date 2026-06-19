@@ -111,6 +111,8 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
     context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
     context.diagnostics().set_value("query_bridge.seed_base", static_cast<double>(bridge_seed_base));
+    const QueryBridgeParallelRrtOptions parallel_options =
+        query_bridge_parallel_rrt_options_from_config(config_);
     auto waypoint_path = best_audited_rrt_bridge_path(start,
                                                       goal,
                                                       checker,
@@ -122,6 +124,7 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
                                                       bridge_seed_base,
                                                       config_.query.audit_resolution,
                                                       config_.query.audit_segment_step,
+                                                      parallel_options,
                                                       short_local_profiles.empty() ? nullptr : &short_local_profiles,
                                                       short_local_bridge ? 1 : 7919);
     if (waypoint_path.empty()) {

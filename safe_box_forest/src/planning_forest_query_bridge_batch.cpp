@@ -271,7 +271,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         query_bridge_retry_options_from_config(config_);
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
     const QueryBridgeParallelRrtOptions parallel_rrt_options =
-        query_bridge_parallel_rrt_options_from_env();
+        query_bridge_parallel_rrt_options_from_config(config_);
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
     const QueryBridgeHybridizeAttemptOptions hybrid_options =

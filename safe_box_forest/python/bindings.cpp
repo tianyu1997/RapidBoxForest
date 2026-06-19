@@ -1634,6 +1634,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_hybrid_max_paths", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_paths)
         .def_readwrite("query_bridge_hybrid_max_vertices", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_vertices)
         .def_readwrite("query_bridge_hybrid_max_cross_checks", &rbf::RBFPlanningConfig::query_bridge_hybrid_max_cross_checks)
+        .def_readwrite("query_bridge_parallel_rrt_early_stop", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop)
+        .def_readwrite("query_bridge_parallel_rrt_early_stop_min_successes", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_min_successes)
+        .def_readwrite("query_bridge_parallel_rrt_early_stop_ratio", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_ratio)
+        .def_readwrite("query_bridge_parallel_rrt_early_stop_additive", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_additive)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")

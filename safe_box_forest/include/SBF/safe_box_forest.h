@@ -152,6 +152,10 @@ struct RBFPlanningConfig {
 	int query_bridge_hybrid_max_paths = 8;
 	int query_bridge_hybrid_max_vertices = 128;
 	int query_bridge_hybrid_max_cross_checks = 4096;
+	bool query_bridge_parallel_rrt_early_stop = false;
+	int query_bridge_parallel_rrt_early_stop_min_successes = 1;
+	double query_bridge_parallel_rrt_early_stop_ratio = 1.75;
+	double query_bridge_parallel_rrt_early_stop_additive = 0.75;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

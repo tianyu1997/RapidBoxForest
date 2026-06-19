@@ -231,25 +231,16 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
     }
 }
 
-QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_env() {
+QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_config(
+    const RBFPlanningConfig& config) {
     QueryBridgeParallelRrtOptions options;
-    options.early_stop =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP", 0) != 0;
+    options.early_stop = config.query_bridge_parallel_rrt_early_stop;
     options.early_stop_min_successes =
-        std::max(1,
-                 detail::env_int_or_default(
-                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES",
-                     1));
+        std::max(1, config.query_bridge_parallel_rrt_early_stop_min_successes);
     options.early_stop_ratio =
-        std::max(1.0,
-                 detail::env_double_or_default(
-                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO",
-                     1.75));
+        std::max(1.0, config.query_bridge_parallel_rrt_early_stop_ratio);
     options.early_stop_additive =
-        std::max(0.0,
-                 detail::env_double_or_default(
-                     "RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE",
-                     0.75));
+        std::max(0.0, config.query_bridge_parallel_rrt_early_stop_additive);
     return options;
 }
 

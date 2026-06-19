@@ -23,6 +23,7 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
     int seed_base,
     int audit_resolution,
     double audit_segment_step,
+    const QueryBridgeParallelRrtOptions& parallel_options,
     const std::vector<RRTConnectConfig>* attempt_configs,
     int seed_stride) {
     using Clock = std::chrono::steady_clock;
@@ -30,8 +31,6 @@ std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
     double best_length = std::numeric_limits<double>::infinity();
     const int safe_attempts = std::max(1, attempts);
     const double safe_total_ms = total_timeout_ms > 0.0 ? total_timeout_ms : base_config.timeout_ms;
-    const QueryBridgeParallelRrtOptions parallel_options =
-        query_bridge_parallel_rrt_options_from_env();
     auto early_stop_path_good = [&](const std::vector<Eigen::VectorXd>& path) {
         return query_bridge_parallel_rrt_path_good_enough(start,
                                                          goal,
