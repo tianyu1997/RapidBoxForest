@@ -61,3 +61,26 @@ def path_length_stat(
         if math.isfinite(value):
             return value
     return math.nan
+
+
+def filter_within_best_path_factor(
+    rows: Sequence[dict[str, Any]],
+    factor: float = 1.08,
+) -> list[dict[str, Any]]:
+    """Keep rows whose path length is within a relative factor of the best row."""
+
+    candidates = list(rows)
+    finite_paths = [
+        path_length_stat(row)
+        for row in candidates
+        if math.isfinite(path_length_stat(row))
+    ]
+    if not finite_paths:
+        return candidates
+    best_path = min(finite_paths)
+    filtered = [
+        row for row in candidates
+        if math.isfinite(path_length_stat(row))
+        and path_length_stat(row) <= float(factor) * best_path
+    ]
+    return filtered or candidates

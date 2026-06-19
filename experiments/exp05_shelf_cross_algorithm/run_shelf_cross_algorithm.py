@@ -51,6 +51,7 @@ from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
+    filter_within_best_path_factor,
     finite_float,
     path_length_stat,
 )
@@ -1184,18 +1185,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                 if int(row.get("success_runs", 0) or 0) == int(row.get("runs", 0) or 0)
             ]
             candidates = full or items
-            finite_path = [
-                path_length_stat(row)
-                for row in candidates
-                if math.isfinite(path_length_stat(row))
-            ]
-            if finite_path:
-                best_path = min(finite_path)
-                candidates = [
-                    row for row in candidates
-                    if math.isfinite(path_length_stat(row))
-                    and path_length_stat(row) <= 1.08 * best_path
-                ] or candidates
+            candidates = filter_within_best_path_factor(candidates, 1.08)
             if candidates:
                 row_by_method[method] = sorted(
                     candidates,

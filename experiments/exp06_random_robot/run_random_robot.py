@@ -38,6 +38,7 @@ from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
+    filter_within_best_path_factor,
     finite_float,
     path_length_stat,
 )
@@ -2155,18 +2156,7 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         candidates = full or items
         if not candidates:
             continue
-        finite_path = [
-            path_length_stat(row)
-            for row in candidates
-            if math.isfinite(path_length_stat(row))
-        ]
-        if finite_path:
-            best_path = min(finite_path)
-            candidates = [
-                row for row in candidates
-                if math.isfinite(path_length_stat(row))
-                and path_length_stat(row) <= 1.08 * best_path
-            ] or candidates
+        candidates = filter_within_best_path_factor(candidates, 1.08)
         out.append(sorted(
             candidates,
             key=lambda row: (
