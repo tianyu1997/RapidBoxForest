@@ -41,12 +41,10 @@ bool query_bridge_current_query_good(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
     const QueryBridgeIndexOptions& index_options,
-    const QueryBridgeRetryOptions& retry_options,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
     if (!query_bridge_should_check_current_query(task,
                                                  respect_forced,
-                                                 index_options,
-                                                 retry_options)) {
+                                                 index_options)) {
         return false;
     }
     return query_bridge_result_acceptable(forest.query(task.start, task.goal),
@@ -296,7 +294,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                 task,
                                                 true,
                                                 index_options,
-                                                retry_options,
                                                 bridge_acceptance)) {
                 prepared[task_offset].skipped = true;
                 record_query_bridge_batch_task_already_satisfied(
@@ -424,7 +421,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 batch_context,
                 scene_reusable_edges,
                 index_options,
-                retry_options,
                 bridge_acceptance,
                 fast_direct_segment_after_rrt,
                 edge_options.fast_direct_random_shortcut_iters,
@@ -453,7 +449,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                             task,
                                             true,
                                             index_options,
-                                            retry_options,
                                             bridge_acceptance)) {
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,
@@ -552,7 +547,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context,
             scene_reusable_edges,
             index_options,
-            retry_options,
             bridge_acceptance,
             fast_direct_segment_after_rrt,
             edge_options.fast_direct_random_shortcut_iters,

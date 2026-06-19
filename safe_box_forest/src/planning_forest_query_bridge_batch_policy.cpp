@@ -7,15 +7,14 @@ namespace rbf {
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
-    const QueryBridgeIndexOptions& index_options,
-    const QueryBridgeRetryOptions& retry_options) {
+    const QueryBridgeIndexOptions& index_options) {
     if (query_bridge_index_segment_only(index_options, task.index)) {
         return false;
     }
     if (respect_forced && query_bridge_index_forced(index_options, task.index)) {
         return false;
     }
-    return retry_options.skip_deferred_short_edges;
+    return true;
 }
 
 bool query_bridge_has_segment_only_task(

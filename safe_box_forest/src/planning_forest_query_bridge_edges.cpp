@@ -133,7 +133,6 @@ int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
     StageContext& context,
     bool scene_reusable_edges,
     const QueryBridgeIndexOptions& index_options,
-    const QueryBridgeRetryOptions& retry_options,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
     std::vector<const std::vector<Eigen::VectorXd>*> candidate_paths;
     if (!task.waypoint_path.empty()) {
@@ -191,8 +190,7 @@ int RBFPlanningForest::run_query_bridge_waypoint_fallbacks(
         const bool should_check =
             query_bridge_should_check_current_query(task,
                                                     false,
-                                                    index_options,
-                                                    retry_options);
+                                                    index_options);
         if (should_check &&
             query_bridge_result_acceptable(query(task.start, task.goal),
                                            task.start,
@@ -222,7 +220,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     StageContext& context,
     bool scene_reusable_edges,
     const QueryBridgeIndexOptions& index_options,
-    const QueryBridgeRetryOptions& retry_options,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance,
     bool fast_direct_segment_after_rrt,
     int fast_direct_random_shortcut_iters,
@@ -235,9 +232,8 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     const bool should_check =
         query_bridge_should_check_current_query(
             task,
-            !retry_options.post_rrt_skip_forced,
-            index_options,
-            retry_options);
+            true,
+            index_options);
     if (should_check &&
         query_bridge_result_acceptable(query(task.start, task.goal),
                                        task.start,
@@ -323,7 +319,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
                                         context,
                                         scene_reusable_edges,
                                         index_options,
-                                        retry_options,
                                         bridge_acceptance);
     const double pave_ms = query_bridge_edge_elapsed_ms_since(pave_t0);
     context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",

@@ -770,7 +770,6 @@ private:
 		StageContext& context,
 		bool scene_reusable_edges,
 		const QueryBridgeIndexOptions& index_options,
-		const QueryBridgeRetryOptions& retry_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance);
 	void finish_query_bridge_ready_waypoint_task(
 		QueryBridgeSearchTask& task,
@@ -781,7 +780,6 @@ private:
 		StageContext& context,
 		bool scene_reusable_edges,
 		const QueryBridgeIndexOptions& index_options,
-		const QueryBridgeRetryOptions& retry_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		bool fast_direct_segment_after_rrt,
 		int fast_direct_random_shortcut_iters,

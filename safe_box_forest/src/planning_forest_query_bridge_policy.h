@@ -12,8 +12,7 @@ namespace rbf {
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
-    const QueryBridgeIndexOptions& index_options,
-    const QueryBridgeRetryOptions& retry_options);
+    const QueryBridgeIndexOptions& index_options);
 
 bool query_bridge_has_segment_only_task(
     const std::vector<QueryBridgeSearchTask>& tasks,

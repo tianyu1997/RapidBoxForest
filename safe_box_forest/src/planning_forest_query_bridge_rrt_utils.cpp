@@ -195,8 +195,6 @@ double query_bridge_rrt_clearance_from_env() {
 
 QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     QueryBridgeRetryOptions options;
-    options.skip_deferred_short_edges =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_SKIP_DEFERRED_SHORT", 1) != 0;
     options.segment_only_retry_attempts =
         std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
     options.no_path_retry_attempts =
@@ -230,15 +228,11 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     options.no_path_retry_budget_stages =
         std::min(options.no_path_retry_budget_iters.size(),
                  options.no_path_retry_budget_attempts.size());
-    options.post_rrt_skip_forced =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_POST_RRT_SKIP_FORCED", 0) != 0;
     return options;
 }
 
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options) {
-    context.diagnostics().set_value("query_bridge.skip_deferred_short_edges",
-                                    options.skip_deferred_short_edges ? 1.0 : 0.0);
     context.diagnostics().set_value("query_bridge.segment_only_retry_attempts_default",
                                     static_cast<double>(options.segment_only_retry_attempts));
     context.diagnostics().set_value("query_bridge.no_path_retry_attempts_default",
@@ -271,8 +265,6 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
             prefix + "attempts",
             static_cast<double>(options.no_path_retry_budget_attempts[stage]));
     }
-    context.diagnostics().set_value("query_bridge.post_rrt_skip_forced",
-                                    options.post_rrt_skip_forced ? 1.0 : 0.0);
 }
 
 QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_env() {

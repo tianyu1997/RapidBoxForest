@@ -15,7 +15,6 @@ struct QueryBridgeIndexOptions;
 struct QueryBridgeSearchTask;
 
 struct QueryBridgeRetryOptions {
-    bool skip_deferred_short_edges = true;
     int segment_only_retry_attempts = 0;
     int no_path_retry_attempts = 0;
     bool no_path_retry_stop_on_first_success = false;
@@ -31,7 +30,6 @@ struct QueryBridgeRetryOptions {
     std::vector<int> no_path_retry_budget_iters;
     std::vector<int> no_path_retry_budget_attempts;
     std::size_t no_path_retry_budget_stages = 0;
-    bool post_rrt_skip_forced = false;
 };
 
 struct QueryBridgeAttemptPlan {
