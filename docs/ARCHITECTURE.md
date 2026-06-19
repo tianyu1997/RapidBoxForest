@@ -210,6 +210,9 @@ src/planning_forest_query.cpp      online query entry point, strict audit,
 src/planning_forest_query_utils.cpp
                                    query/path utility functions shared by graph,
                                    partition, OBB, and bridge stages
+src/planning_forest_query_utils_rrt.cpp
+                                   audited RRT bridge attempt selection and
+                                   parallel attempt diagnostics
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
 src/planning_forest_query_bridge_batch_utils.cpp
