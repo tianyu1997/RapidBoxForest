@@ -67,7 +67,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE,
     DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
-    DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS,
     DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS,
     DEFAULT_RBF_CONNECTOR_RRT_ITERS,
     DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE,
@@ -438,7 +437,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
         query_bridge_ffb_start_depth=int(args.query_bridge_ffb_start_depth),
         query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
-        query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
         query_bridge_force_indices=str(args.query_bridge_force_indices),
         query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
         query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
@@ -647,7 +645,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_foreign_edge_cost_penalty": float(options.query_foreign_edge_cost_penalty),
         "option.query_bridge_edge_cost_penalty": float(options.query_bridge_edge_cost_penalty),
         "option.query_bridge_direct_sample_step": float(options.query_bridge_direct_sample_step),
-        "option.query_bridge_repair_subdivisions": int(options.query_bridge_repair_subdivisions),
         "option.query_bridge_force_indices": str(options.query_bridge_force_indices),
         "option.query_bridge_forced_attempts": int(options.query_bridge_forced_attempts),
         "option.query_bridge_attempt_offset": int(options.query_bridge_attempt_offset),
@@ -1531,7 +1528,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
     parser.add_argument("--query-bridge-ffb-start-depth", type=int, default=-1)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
-    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)
@@ -1835,7 +1831,6 @@ def main() -> int:
             "query_bridge_accept_path_additive": float(args.query_bridge_accept_path_additive),
             "query_endpoint_anchor_before_bridge": bool(args.query_endpoint_anchor_before_bridge),
             "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
-            "query_bridge_repair_subdivisions": int(args.query_bridge_repair_subdivisions),
             "query_bridge_force_indices": str(args.query_bridge_force_indices),
             "query_bridge_force_selected": bool(args.query_bridge_force_selected),
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),

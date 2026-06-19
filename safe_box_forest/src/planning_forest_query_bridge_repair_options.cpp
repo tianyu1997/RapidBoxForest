@@ -8,14 +8,9 @@
 namespace rbf {
 
 QueryBridgeRepairSubdivisionOptions query_bridge_repair_subdivision_options(int query_index) {
+    (void)query_index;
     QueryBridgeRepairSubdivisionOptions options;
-    options.base_subdivisions =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS", 6);
-    options.subdivisions = std::max(
-        0,
-        detail::env_indexed_int_or_default("RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS",
-                                           query_index,
-                                           options.base_subdivisions));
+    options.subdivisions = 1;
     options.fractions = query_bridge_center_ordered_fractions(options.subdivisions);
     return options;
 }

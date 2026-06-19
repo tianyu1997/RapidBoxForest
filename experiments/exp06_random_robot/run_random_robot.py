@@ -535,7 +535,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["adaptive_all"] = bool(args.query_bridge_adaptive_all)
     profile["query_bridge"]["adaptive_max_path_length"] = float(args.query_bridge_adaptive_max_path_length)
     profile["query_bridge"]["direct_sample_step"] = float(args.query_bridge_direct_sample_step)
-    profile["query_bridge"]["repair_subdivisions"] = int(args.query_bridge_repair_subdivisions)
     profile["query_bridge"]["direct_max_length"] = float(args.query_bridge_direct_max_length)
     profile["query_bridge"]["full_residual_overlay_when_connected"] = bool(
         args.query_bridge_full_residual_overlay_when_connected
@@ -750,7 +749,6 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     )
-    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=1)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
     parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
@@ -1423,7 +1421,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_direct_partition_append_batch_size=int(
                 args.query_bridge_direct_partition_append_batch_size
             ),
-            query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
             query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
             query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
             query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),

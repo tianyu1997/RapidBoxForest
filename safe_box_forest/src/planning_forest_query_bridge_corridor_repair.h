@@ -35,7 +35,6 @@ struct QueryBridgeAdaptiveRepairStats {
 };
 
 struct QueryBridgeRepairSubdivisionOptions {
-    int base_subdivisions = 0;
     int subdivisions = 0;
     std::vector<double> fractions;
 };

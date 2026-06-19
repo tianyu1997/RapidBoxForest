@@ -140,7 +140,6 @@ def make_args(base: argparse.Namespace, out_dir: Path, ffb_depth: int, leaf_max_
         query_bridge_force_indices=str(base.query_bridge_force_indices),
         query_bridge_forced_attempts=int(base.query_bridge_forced_attempts),
         query_bridge_direct_sample_step=float(base.query_bridge_direct_sample_step),
-        query_bridge_repair_subdivisions=int(base.query_bridge_repair_subdivisions),
         query_bridge_direct_max_length=float(base.query_bridge_direct_max_length),
         run_rrt_grower=bool(base.run_rrt_grower),
         rrt_grower_extra_boxes=int(base.rrt_grower_extra_boxes),
@@ -306,7 +305,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-force-indices", default="")
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=1)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.0)
-    parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=-1)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
