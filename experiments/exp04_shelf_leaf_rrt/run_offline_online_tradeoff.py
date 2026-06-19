@@ -16,6 +16,9 @@ if str(REPO_ROOT) not in sys.path:
 from experiments.common.experiment_io import (
     DEFAULT_OUTPUT_ROOT,
     configure_thread_environment,
+    csv_floats,
+    csv_ints,
+    csv_list,
     environment_metadata,
     run_id,
     write_json,
@@ -32,18 +35,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_THREADS,
 )
 from experiments.exp04_shelf_leaf_rrt import run_shelf_leaf_rrt as exp04
-
-
-def csv_ints(raw: str) -> list[int]:
-    return [int(item.strip()) for item in str(raw).split(",") if item.strip()]
-
-
-def csv_floats(raw: str) -> list[float]:
-    return [float(item.strip()) for item in str(raw).split(",") if item.strip()]
-
-
-def csv_strings(raw: str) -> list[str]:
-    return [item.strip() for item in str(raw).split(",") if item.strip()]
 
 
 def fmt_float(value: float) -> str:
@@ -162,7 +153,7 @@ def grid_configs(args: argparse.Namespace) -> list[dict[str, Any]]:
     for leaf_max in csv_ints(args.leaf_max_depths):
         for adaptive_target_depth in csv_ints(args.adaptive_target_depths):
             for adaptive_time_budget_ms in csv_ints(args.adaptive_time_budgets_ms):
-                for connector_mode in csv_strings(args.offline_connector_modes):
+                for connector_mode in csv_list(args.offline_connector_modes):
                     for anchors in csv_ints(args.offline_anchor_counts):
                         for candidates in csv_ints(args.offline_anchor_candidate_counts):
                             for boxes in csv_ints(args.box_budgets):

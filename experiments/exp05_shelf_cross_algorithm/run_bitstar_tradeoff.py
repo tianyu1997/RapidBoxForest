@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_floats, write_json
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
     DEFAULT_OMPL_SIMPLIFY_TIME_S,
@@ -21,10 +21,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
 )
 from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query
-
-
-def csv_floats(raw: str) -> list[float]:
-    return [float(item.strip()) for item in str(raw).split(",") if item.strip()]
 
 
 def summarize_rows(rows: list[dict[str, Any]], stage_id: str) -> dict[str, Any]:

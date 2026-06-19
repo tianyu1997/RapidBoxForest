@@ -13,7 +13,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, run_id, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_ints, environment_metadata, run_id, write_json
 from experiments.common.metrics import mean, median
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
@@ -36,10 +36,6 @@ from experiments.exp05_shelf_cross_algorithm.run_shelf_cross_algorithm import (
     sbf,
     shelf_queries,
 )
-
-
-def csv_ints(raw: str) -> list[int]:
-    return [int(item.strip()) for item in str(raw).split(",") if item.strip()]
 
 
 def safe_label(label: str) -> str:

@@ -49,6 +49,10 @@ def csv_ints(raw: str) -> list[int]:
     return [int(item) for item in csv_list(raw)]
 
 
+def csv_floats(raw: str) -> list[float]:
+    return [float(item) for item in csv_list(raw)]
+
+
 def as_jsonable(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
