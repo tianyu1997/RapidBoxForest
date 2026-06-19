@@ -47,7 +47,7 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
 from experiments.common.query_summary import query_success_summary
-from experiments.common.query_timing import online_timing_from_query_rows
+from experiments.common.query_timing import online_timing_from_query_rows, online_timing_medians
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
@@ -1048,43 +1048,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "source": "current_execution",
             "build_s": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
             "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
-            "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0))) for row in items),
-            "online_total_s_median": median(row.get("online_total_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) for row in items),
-            "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) for row in items),
-            "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
-            "online_solve_per_query_s_median": median(
-                row.get(
-                    "online_solve_per_query_s",
-                    row.get("online_solve_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
-                )
-                for row in items
-            ),
-            "online_simplify_per_query_s_median": median(
-                row.get(
-                    "online_simplify_per_query_s",
-                    row.get("online_simplify_s", 0.0) / max(1, int(row.get("query_count", 1))),
-                )
-                for row in items
-            ),
-            "online_per_query_s_median": median(
-                row.get(
-                    "online_per_query_s",
-                    row.get("online_solve_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0))) / max(1, int(row.get("query_count", 1))),
-                )
-                for row in items
-            ),
-            "online_total_per_query_s_median": median(
-                row.get(
-                    "online_total_per_query_s",
-                    row.get("online_total_s", row.get("online_batch_s", max(0.0, row["planning_s"] - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
-                )
-                for row in items
-            ),
-            "amortized_s_k1": median(row.get("amortized_s_k1", row["planning_s"]) for row in items),
-            "amortized_s_k5": median(row.get("amortized_s_k5", row["planning_s"] / 5.0) for row in items),
-            "amortized_s_k10": median(row.get("amortized_s_k10", row["planning_s"] / 10.0) for row in items),
-            "amortized_s_k20": median(row.get("amortized_s_k20", row["planning_s"] / 20.0) for row in items),
-            "amortized_s_k50": median(row.get("amortized_s_k50", row["planning_s"] / 50.0) for row in items),
+            **online_timing_medians(items),
             "query_s_median": median(median(q.get("query_ms", math.nan) / 1000.0 for q in row.get("queries", [])) for row in items),
             "measured_time_s_median": planning_s_median,
             "planning_s_median": planning_s_median,

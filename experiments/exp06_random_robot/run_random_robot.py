@@ -34,7 +34,7 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
 from experiments.common.query_summary import query_success_summary
-from experiments.common.query_timing import online_timing_from_query_rows
+from experiments.common.query_timing import online_timing_from_query_rows, online_timing_medians
 from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
@@ -1785,38 +1785,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "offline_coverage_s_median": median(row.get("offline_coverage_s", math.nan) for row in items),
                 "offline_connector_mode": str(items[0].get("offline_connector_mode", "")),
                 "offline_connector_s_median": median(row.get("offline_connector_s", math.nan) for row in items),
-                "online_batch_s_median": median(row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0))) for row in items),
-                "online_total_s_median": median(row.get("online_total_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
-                "online_solve_s_median": median(row.get("online_solve_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) for row in items),
-                "online_simplify_s_median": median(row.get("online_simplify_s", 0.0) for row in items),
-                "online_solve_per_query_s_median": median(
-                    row.get(
-                        "online_solve_per_query_s",
-                        row.get("online_solve_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
-                    )
-                    for row in items
-                ),
-                "online_simplify_per_query_s_median": median(
-                    row.get(
-                        "online_simplify_per_query_s",
-                        row.get("online_simplify_s", 0.0) / max(1, int(row.get("query_count", 1))),
-                    )
-                    for row in items
-                ),
-                "online_per_query_s_median": median(
-                    row.get(
-                        "online_per_query_s",
-                        row.get("online_solve_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0))) / max(1, int(row.get("query_count", 1))),
-                    )
-                    for row in items
-                ),
-                "online_total_per_query_s_median": median(
-                    row.get(
-                        "online_total_per_query_s",
-                        row.get("online_total_s", row.get("online_batch_s", max(0.0, row.get("planning_s", 0.0) - row.get("build_s", 0.0)))) / max(1, int(row.get("query_count", 1))),
-                    )
-                    for row in items
-                ),
+                **online_timing_medians(items),
                 "query_bridge_per_query_s_median": median(
                     row.get(
                         "query_bridge_per_query_s",
@@ -1874,11 +1843,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_direct_corridor_full_residual_audit_rejects_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_audit_rejects", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_full_residual_edges_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay_median": median(row.get("diag_query_bridge_direct_corridor_full_residual_edges_without_local_overlay", 0.0) for row in items),
-                "amortized_s_k1": median(row.get("amortized_s_k1", row.get("planning_s", math.nan)) for row in items),
-                "amortized_s_k5": median(row.get("amortized_s_k5", row.get("planning_s", math.nan) / 5.0) for row in items),
-                "amortized_s_k10": median(row.get("amortized_s_k10", row.get("planning_s", math.nan) / 10.0) for row in items),
-                "amortized_s_k20": median(row.get("amortized_s_k20", row.get("planning_s", math.nan) / 20.0) for row in items),
-                "amortized_s_k50": median(row.get("amortized_s_k50", row.get("planning_s", math.nan) / 50.0) for row in items),
                 "audit_s_median": median(row.get("audit_s", math.nan) for row in items),
                 "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success["success_rows"]),
                 "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success["success_rows"]),
