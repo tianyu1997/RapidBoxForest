@@ -88,7 +88,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
     }
     StageContext context = StageContext::from_runtime(config_.runtime);
     const QueryBridgeEdgeRuntimeOptions edge_options =
-        query_bridge_edge_runtime_options();
+        query_bridge_edge_runtime_options_from_config(config_);
     const int bridge_edge_query_index =
         edge_options.scene_reusable_edges ? -1 : query_index;
     context.diagnostics().set_value("query_bridge.scene_reusable_edges",
@@ -165,7 +165,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         ? config_.query.audit_segment_step
         : 0.01;
     const QueryBridgeDirectCorridorRuntimeOptions direct_corridor_options =
-        query_bridge_direct_corridor_runtime_options(query_index,
+        query_bridge_direct_corridor_runtime_options(config_,
+                                                     query_index,
                                                      direct_corridor_audit_step);
     const double dense_box_corridor_max_length = direct_corridor_options.max_length;
     const bool dense_box_corridor_candidate =

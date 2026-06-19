@@ -236,7 +236,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     }
     const auto batch_t0 = QueryBridgeClock::now();
     StageContext batch_context = StageContext::from_runtime(config_.runtime);
-    const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
+    const QueryBridgeEdgeRuntimeOptions edge_options =
+        query_bridge_edge_runtime_options_from_config(config_);
     const bool scene_reusable_edges = edge_options.scene_reusable_edges;
     batch_context.diagnostics().set_value("query_bridge.scene_reusable_edges",
                                           scene_reusable_edges ? 1.0 : 0.0);

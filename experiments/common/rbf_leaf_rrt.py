@@ -1271,6 +1271,26 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_parallel_rrt_early_stop_additive = float(
             options.query_bridge_parallel_rrt_early_stop_additive
         )
+    if hasattr(cfg, "query_bridge_scene_reusable_edges"):
+        cfg.query_bridge_scene_reusable_edges = bool(options.query_bridge_scene_reusable_edges)
+    if hasattr(cfg, "query_bridge_direct_segment_after_rrt"):
+        cfg.query_bridge_direct_segment_after_rrt = bool(options.query_bridge_direct_segment_after_rrt)
+    if hasattr(cfg, "query_bridge_fast_direct_segment_after_rrt"):
+        cfg.query_bridge_fast_direct_segment_after_rrt = bool(
+            options.query_bridge_fast_direct_segment_after_rrt
+        )
+    if hasattr(cfg, "query_bridge_fast_direct_random_shortcut_iters"):
+        cfg.query_bridge_fast_direct_random_shortcut_iters = int(
+            options.query_bridge_fast_direct_random_shortcut_iters
+        )
+    if hasattr(cfg, "query_bridge_direct_max_length"):
+        cfg.query_bridge_direct_max_length = float(options.query_bridge_direct_max_length)
+    if hasattr(cfg, "query_bridge_direct_sample_step"):
+        cfg.query_bridge_direct_sample_step = float(options.query_bridge_direct_sample_step)
+    if hasattr(cfg, "query_bridge_full_residual_overlay_when_connected"):
+        cfg.query_bridge_full_residual_overlay_when_connected = bool(
+            options.query_bridge_full_residual_overlay_when_connected
+        )
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1861,19 +1881,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {}
-        env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_direct_segment_after_rrt", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_fast_direct_segment_after_rrt", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS"] = str(
-            int(getattr(options, "query_bridge_fast_direct_random_shortcut_iters", 0))
-        )
         env_updates["RBF_QUERY_ENDPOINT_POINT_ANCHOR"] = (
             "1" if bool(getattr(options, "query_endpoint_point_anchor", False)) else "0"
         )
@@ -1883,8 +1890,6 @@ def bridge_all_queries(
         env_updates["RBF_OBB_FALLBACK_ORIENTATIONS_ON_PRIMARY_FAIL"] = (
             "1" if bool(getattr(options, "obb_fallback_orientations_on_primary_fail", False)) else "0"
         )
-        if float(options.query_bridge_direct_sample_step) > 0.0:
-            env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
         env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP"] = str(
             float(getattr(options, "query_bridge_adaptive_fine_step", 0.08))
         )
@@ -1893,16 +1898,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS"] = str(
             int(getattr(options, "query_bridge_adaptive_max_repair_calls", 5))
-        )
-        env_updates["RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_scene_reusable_edges", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_full_residual_overlay_when_connected", False))
-            else "0"
         )
         env_updates["RBF_OBB_METADATA_ONLY"] = (
             "1"
@@ -1914,8 +1909,6 @@ def bridge_all_queries(
             if bool(getattr(options, "segment_edge_obb_metadata_require_cover", False))
             else "0"
         )
-        if float(options.query_bridge_direct_max_length) > 0.0:
-            env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
         previous_env = {name: os.environ.get(name) for name in env_updates}
         for name, value in env_updates.items():
             if value is None:

@@ -70,7 +70,8 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
         return 0;
     }
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-    const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
+    const QueryBridgeEdgeRuntimeOptions edge_options =
+        query_bridge_edge_runtime_options_from_config(config_);
     const bool direct_start_goal_segment =
         edge_options.direct_segment_after_rrt &&
         config_.connector.segment_edges_enabled &&

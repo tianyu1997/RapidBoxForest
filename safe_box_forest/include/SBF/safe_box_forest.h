@@ -156,6 +156,17 @@ struct RBFPlanningConfig {
 	int query_bridge_parallel_rrt_early_stop_min_successes = 1;
 	double query_bridge_parallel_rrt_early_stop_ratio = 1.75;
 	double query_bridge_parallel_rrt_early_stop_additive = 0.75;
+	/// Query-bridge corridor/runtime policy. These used to be process-wide
+	/// environment overrides; keeping them in the planner config makes
+	/// multi-run experiments deterministic within one Python process.
+	bool query_bridge_scene_reusable_edges = false;
+	bool query_bridge_direct_segment_after_rrt = false;
+	bool query_bridge_fast_direct_segment_after_rrt = false;
+	int query_bridge_fast_direct_random_shortcut_iters = 0;
+	double query_bridge_direct_max_length = 6.5;
+	double query_bridge_direct_sample_step = 0.01;
+	std::vector<double> query_bridge_direct_sample_steps_by_query;
+	bool query_bridge_full_residual_overlay_when_connected = false;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

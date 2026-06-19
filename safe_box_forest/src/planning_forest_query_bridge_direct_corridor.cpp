@@ -46,7 +46,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         ? config_.query.audit_segment_step
         : 0.01;
     const QueryBridgeDirectCorridorRuntimeOptions direct_corridor_options =
-        query_bridge_direct_corridor_runtime_options(query_index,
+        query_bridge_direct_corridor_runtime_options(config_,
+                                                     query_index,
                                                      direct_corridor_audit_step);
     const double audit_step = direct_corridor_options.audit_step;
     const double sample_step = direct_corridor_options.sample_step;

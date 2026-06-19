@@ -1638,6 +1638,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_parallel_rrt_early_stop_min_successes", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_min_successes)
         .def_readwrite("query_bridge_parallel_rrt_early_stop_ratio", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_ratio)
         .def_readwrite("query_bridge_parallel_rrt_early_stop_additive", &rbf::RBFPlanningConfig::query_bridge_parallel_rrt_early_stop_additive)
+        .def_readwrite("query_bridge_scene_reusable_edges", &rbf::RBFPlanningConfig::query_bridge_scene_reusable_edges)
+        .def_readwrite("query_bridge_direct_segment_after_rrt", &rbf::RBFPlanningConfig::query_bridge_direct_segment_after_rrt)
+        .def_readwrite("query_bridge_fast_direct_segment_after_rrt", &rbf::RBFPlanningConfig::query_bridge_fast_direct_segment_after_rrt)
+        .def_readwrite("query_bridge_fast_direct_random_shortcut_iters", &rbf::RBFPlanningConfig::query_bridge_fast_direct_random_shortcut_iters)
+        .def_readwrite("query_bridge_direct_max_length", &rbf::RBFPlanningConfig::query_bridge_direct_max_length)
+        .def_readwrite("query_bridge_direct_sample_step", &rbf::RBFPlanningConfig::query_bridge_direct_sample_step)
+        .def_readwrite("query_bridge_direct_sample_steps_by_query", &rbf::RBFPlanningConfig::query_bridge_direct_sample_steps_by_query)
+        .def_readwrite("query_bridge_full_residual_overlay_when_connected", &rbf::RBFPlanningConfig::query_bridge_full_residual_overlay_when_connected)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")

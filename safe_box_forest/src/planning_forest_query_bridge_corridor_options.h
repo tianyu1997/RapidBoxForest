@@ -4,6 +4,8 @@
 
 namespace rbf {
 
+struct RBFPlanningConfig;
+
 struct QueryBridgeEdgeRuntimeOptions {
     bool scene_reusable_edges = false;
     bool direct_segment_after_rrt = false;
@@ -24,7 +26,8 @@ struct QueryBridgeDirectCorridorRuntimeOptions {
     bool full_residual_overlay_when_connected = false;
 };
 
-QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options();
+QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options_from_config(
+    const RBFPlanningConfig& config);
 
 QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
     bool direct_segment_after_rrt_candidate);
@@ -32,6 +35,7 @@ QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(
 bool query_bridge_internal_simplify_enabled(bool direct_segment_after_rrt_candidate);
 
 QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_options(
+    const RBFPlanningConfig& config,
     int query_index,
     double audit_step);
 
