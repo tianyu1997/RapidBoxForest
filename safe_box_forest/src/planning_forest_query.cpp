@@ -261,6 +261,9 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         AdaptiveGridPartitionQueryOptions partition_options;
         partition_options.nearest_if_outside = query_config.nearest_if_outside;
         partition_options.shortcut_boxes = query_config.shortcut_boxes;
+        partition_options.shortcut_cost.cost_aware = query_config.shortcut_cost_aware;
+        partition_options.shortcut_cost.cost_factor =
+            std::max(1.0, query_config.shortcut_cost_factor);
         partition_options.max_expansions = last_build_.diagnostics.count("adaptive.grid_planning_max_expansions") > 0
             ? static_cast<int>(last_build_.diagnostics.at("adaptive.grid_planning_max_expansions"))
             : 0;

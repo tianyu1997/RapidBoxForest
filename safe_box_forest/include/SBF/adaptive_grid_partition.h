@@ -134,6 +134,7 @@ struct AdaptiveGridPartitionDeltaResult {
 struct AdaptiveGridPartitionQueryOptions {
 	bool nearest_if_outside = false;
 	bool shortcut_boxes = true;
+	QueryShortcutCostOptions shortcut_cost;
 	int max_expansions = 0;
 	double adjacency_tolerance = 1e-9;
 	QueryGraphCostOptions graph_cost;
@@ -353,7 +354,8 @@ private:
 	std::vector<int> compute_neighbor_cell_indices(int cell_index) const;
 	std::vector<int> neighbor_cell_indices(int cell_index) const;
 	std::vector<int> shortcut_sequence(const std::vector<int>& sequence,
-									   const std::unordered_map<int, int>& cell_by_box_id) const;
+									   const std::unordered_map<int, int>& cell_by_box_id,
+									   const QueryShortcutCostOptions& shortcut_options) const;
 	void clear_runtime_indices();
 	void rebuild_point_index();
 	SparseCellKey sparse_key_for_grid_range(const GridRange& range) const;

@@ -1583,6 +1583,8 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def(py::init<>())
         .def_readwrite("nearest_if_outside", &rbf::QueryConfig::nearest_if_outside)
         .def_readwrite("shortcut_boxes", &rbf::QueryConfig::shortcut_boxes)
+        .def_readwrite("shortcut_cost_aware", &rbf::QueryConfig::shortcut_cost_aware)
+        .def_readwrite("shortcut_cost_factor", &rbf::QueryConfig::shortcut_cost_factor)
         .def_readwrite("collision_shortcut", &rbf::QueryConfig::collision_shortcut)
         .def_readwrite("collision_shortcut_resolution", &rbf::QueryConfig::collision_shortcut_resolution)
         .def_readwrite("strict_path_audit", &rbf::QueryConfig::strict_path_audit)

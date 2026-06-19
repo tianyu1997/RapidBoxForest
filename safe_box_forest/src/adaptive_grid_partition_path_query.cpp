@@ -2,7 +2,6 @@
 
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_options.h"
-#include "query_graph_cost_options.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,12 +26,11 @@ using partition_detail::transition_waypoint_toward_goal;
 
 std::vector<int> AdaptiveGridPartition::shortcut_sequence(
 	const std::vector<int>& sequence,
-	const std::unordered_map<int, int>& cell_by_box_id) const {
+	const std::unordered_map<int, int>& cell_by_box_id,
+	const QueryShortcutCostOptions& shortcut_options) const {
 	if (sequence.size() <= 2) {
 		return sequence;
 	}
-	const QueryShortcutCostOptions shortcut_options =
-		query_shortcut_cost_options_from_env(true);
 	auto transition_cost = [&](int lhs_box_id, int rhs_box_id) {
 		const auto lhs_it = cell_by_box_id.find(lhs_box_id);
 		const auto rhs_it = cell_by_box_id.find(rhs_box_id);
@@ -357,7 +355,9 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 		result.segment_edge_sequence.push_back(edge_id);
 	}
 	if (options.shortcut_boxes && !used_overlay) {
-		result.box_sequence = shortcut_sequence(result.box_sequence, cell_by_box_id_);
+		result.box_sequence = shortcut_sequence(result.box_sequence,
+												cell_by_box_id_,
+												options.shortcut_cost);
 		result.segment_edge_sequence.assign(
 			result.box_sequence.size() > 0 ? result.box_sequence.size() - 1 : 0,
 			-1);

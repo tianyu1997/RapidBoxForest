@@ -5,8 +5,6 @@
 #include <limits>
 #include <vector>
 
-#include "query_graph_cost_options.h"
-
 namespace rbf {
 
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const AdjacencyGraph& graph) {
@@ -17,12 +15,16 @@ std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const A
 }
 
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const QueryGraphCache& cache) {
+    return shortcut_box_sequence(sequence, cache, {});
+}
+
+std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence,
+                                       const QueryGraphCache& cache,
+                                       const QueryShortcutCostOptions& shortcut_options) {
     if (sequence.size() <= 2) {
         return sequence;
     }
 
-    const QueryShortcutCostOptions shortcut_options =
-        query_shortcut_cost_options_from_env(cache.boxes != nullptr);
     auto transition_cost = [&](int lhs, int rhs) {
         if (const SegmentEdge* edge = find_segment_edge(cache, lhs, rhs)) {
             return edge->length > 0.0 ? edge->length : 0.0;

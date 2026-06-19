@@ -2,7 +2,6 @@
 
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_options.h"
-#include "query_graph_cost_options.h"
 
 #include <algorithm>
 #include <chrono>

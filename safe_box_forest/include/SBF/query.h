@@ -10,6 +10,8 @@ namespace rbf {
 struct QueryConfig {
 	bool nearest_if_outside = false;
 	bool shortcut_boxes = true;
+	bool shortcut_cost_aware = true;
+	double shortcut_cost_factor = 1.05;
 	bool collision_shortcut = true;
 	bool strict_path_audit = false;
 	int audit_resolution = 16;

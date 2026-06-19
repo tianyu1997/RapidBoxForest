@@ -1,8 +1,20 @@
 #include <SBF/query.h>
 
+#include <algorithm>
 #include <chrono>
 
 namespace rbf {
+
+namespace {
+
+QueryShortcutCostOptions shortcut_cost_options_from_query_config(const QueryConfig& config) {
+    QueryShortcutCostOptions options;
+    options.cost_aware = config.shortcut_cost_aware;
+    options.cost_factor = std::max(1.0, config.shortcut_cost_factor);
+    return options;
+}
+
+}  // namespace
 
 QueryResult CorridorQuery::run(const std::vector<BoxNode>& boxes,
                                const AdjacencyGraph& graph,
@@ -46,7 +58,11 @@ QueryResult CorridorQuery::run(const QueryGraphCache& cache,
         result.query_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return result;
     }
-    result.box_sequence = config_.shortcut_boxes ? shortcut_box_sequence(dijkstra.box_sequence, cache) : dijkstra.box_sequence;
+    result.box_sequence = config_.shortcut_boxes
+        ? shortcut_box_sequence(dijkstra.box_sequence,
+                                cache,
+                                shortcut_cost_options_from_query_config(config_))
+        : dijkstra.box_sequence;
     result.path = extract_waypoints(result.box_sequence, cache, start, goal);
     result.segment_edge_sequence.clear();
     for (std::size_t index = 1; index < result.box_sequence.size(); ++index) {
