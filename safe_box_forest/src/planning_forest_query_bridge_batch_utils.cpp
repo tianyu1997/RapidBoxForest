@@ -322,26 +322,4 @@ std::vector<Eigen::VectorXd> query_bridge_direct_line_fallback_path(
     return path;
 }
 
-bool query_bridge_result_acceptable(const QueryResult& current,
-                                    const Eigen::VectorXd& start,
-                                    const Eigen::VectorXd& goal,
-                                    const QueryBridgeAcceptanceThresholds& thresholds) {
-    if (!current.success || !current.audit_passed) {
-        return false;
-    }
-    const double raw_length =
-        current.raw_path_length > 1e-12 ? current.raw_path_length : current.path_length;
-    const double segment_fraction =
-        raw_length > 1e-12 ? current.segment_edge_length / raw_length
-                           : std::numeric_limits<double>::infinity();
-    if (!(segment_fraction <= thresholds.max_segment_fraction)) {
-        return false;
-    }
-    const double direct = (goal - start).norm();
-    return direct <= 1e-9 ||
-           current.path_length <= std::max(direct * thresholds.path_ratio,
-                                            direct + thresholds.path_additive) ||
-           current.path_length <= thresholds.max_path_length;
-}
-
 }  // namespace rbf
