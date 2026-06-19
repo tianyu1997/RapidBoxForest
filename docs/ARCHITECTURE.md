@@ -363,9 +363,6 @@ src/planning_forest_query_bridge_diagnostics.h
 src/planning_forest_query_bridge_attempt_paths.h
                                    attempt-path adoption and waypoint retry
                                    declarations for the batch scheduler
-src/planning_forest_query_bridge_batch_utils.h
-                                   compatibility facade only; new code should
-                                   include the narrower query bridge headers above
 src/planning_forest_query_bridge_endpoint_options.h
                                    endpoint-anchor option helpers kept header-only
                                    for the endpoint repair module
