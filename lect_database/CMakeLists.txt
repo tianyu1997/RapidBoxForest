@@ -64,6 +64,7 @@ add_library(lect_database_core STATIC
     src/lect_database/database_node_pages.cpp
     src/lect_database/read_snapshot.cpp
     src/lect_database/read_snapshot_mapped_file.cpp
+    src/lect_database/read_snapshot_payload.cpp
 )
 add_library(LECTDatabase::core ALIAS lect_database_core)
 

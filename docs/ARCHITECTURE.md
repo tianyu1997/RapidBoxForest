@@ -101,6 +101,8 @@ src/lect_database/                 core persistence implementation
                                    snapshot open/load paths
   read_snapshot_format.h           read-snapshot and legacy sidecar binary
                                    layout constants/records
+  read_snapshot_payload.cpp        half-float payload decode helper for
+                                   read-only snapshots
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, canonical/native
