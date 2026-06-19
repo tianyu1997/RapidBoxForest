@@ -33,6 +33,7 @@ from experiments.common.checkpoints import (
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
+from experiments.common.query_summary import query_success_summary
 from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import (
     amortized_query_time,
@@ -1069,7 +1070,7 @@ def summarize_query_batch_method(
     stage_id: str | None = None,
     budget_s: float | None = None,
 ) -> dict[str, Any]:
-    successes = [row for row in qrows if bool(row.get("audit_passed"))]
+    success_summary = query_success_summary(qrows)
     online_s = (
         sum(float(row.get("query_ms", 0.0)) for row in qrows) / 1000.0
         if online_batch_s is None
@@ -1090,17 +1091,14 @@ def summarize_query_batch_method(
         "budget_s": float(budget_s) if budget_s is not None else math.nan,
         "obstacle_count": len(scene.obstacles),
         "queries_per_scene": len(qrows),
-        "status": "ok" if len(successes) == len(qrows) else "partial",
-        "success_count": len(successes),
-        "query_count": len(qrows),
+        **success_summary,
         "planning_s": float(offline_build_s) + timing["online_batch_s"],
         "planning_total_s": float(offline_build_s) + timing["online_total_s"],
         "build_s": float(offline_build_s),
         "offline_build_s": float(offline_build_s),
         **timing,
         "audit_s": float(audit_s),
-        "path_length_mean": mean(row["path_length"] for row in successes),
-        "raw_segment_fraction": 0.0 if successes else math.nan,
+        "raw_segment_fraction": 0.0 if int(success_summary["success_count"]) > 0 else math.nan,
         "final_boxes": math.nan,
         "queries": qrows,
         "diagnostics": dict(diagnostics or {}),

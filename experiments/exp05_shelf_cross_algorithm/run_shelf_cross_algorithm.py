@@ -46,6 +46,7 @@ from experiments.common.iris_gcs_dispatch import (
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
+from experiments.common.query_summary import query_success_summary
 from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import (
     amortized_query_time,
@@ -912,7 +913,7 @@ def summarize_method_run(
     stage_id: str | None = None,
     budget_s: float | None = None,
 ) -> dict[str, Any]:
-    successes = [row for row in qrows if bool(row["audit_passed"])]
+    success_summary = query_success_summary(qrows)
     extra_dict = dict(extra or {})
     build_s = float(extra_dict.get("build_s", 0.0) or 0.0)
     online_batch_s = max(0.0, float(planning_s) - build_s)
@@ -929,16 +930,13 @@ def summarize_method_run(
         "seed": int(seed),
         "stage_id": stage_id or method,
         "budget_s": float(budget_s) if budget_s is not None else math.nan,
-        "status": "ok" if len(successes) == len(qrows) else "partial",
-        "success_count": len(successes),
-        "query_count": len(qrows),
+        **success_summary,
         "planning_s": build_s + timing["online_batch_s"],
         "planning_total_s": float(planning_s),
         "build_s": build_s,
         "offline_build_s": build_s,
         **timing,
         "audit_s": float(audit_s),
-        "path_length_mean": mean(row["path_length"] for row in successes),
         "raw_segment_fraction": 0.0,
         "queries": qrows,
         "diagnostics": extra_dict,
