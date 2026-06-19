@@ -23,13 +23,6 @@ struct QueryBridgeSubdivisionRepairStats {
     std::vector<int> committed_indices;
 };
 
-struct QueryBridgeLateralRepairStats {
-    int calls = 0;
-    int added = 0;
-    double ffb_ms = 0.0;
-    std::vector<int> committed_indices;
-};
-
 struct QueryBridgeAdaptiveRepairStats {
     int calls = 0;
     int added = 0;
@@ -56,32 +49,11 @@ struct QueryBridgeAdaptiveRepairOptions {
     int max_calls = 0;
 };
 
-struct QueryBridgeLateralRepairOptions {
-    bool enabled = false;
-    int dims = 0;
-    int rounds = 1;
-    int max_calls = 0;
-    double offset = 0.0;
-};
-
 QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<int>& transitions,
     const std::vector<double>& fractions,
-    const std::function<bool(int)>& transition_connected,
-    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
-    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
-    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
-                                                       const Eigen::VectorXd&,
-                                                       int)>& commit_box);
-
-QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
-    StageContext& context,
-    const std::vector<Eigen::VectorXd>& samples,
-    const std::vector<int>& transitions,
-    const std::vector<Interval>& domain,
-    const QueryBridgeLateralRepairOptions& options,
     const std::function<bool(int)>& transition_connected,
     const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
     const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
@@ -124,16 +96,6 @@ QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_
                                                                       int subdivisions,
                                                                       double audit_step,
                                                                       double sample_step);
-
-QueryBridgeLateralRepairOptions query_bridge_lateral_repair_options(double sample_step);
-
-std::vector<Eigen::VectorXd> query_bridge_lateral_candidates(
-    const Eigen::VectorXd& seed,
-    const Eigen::VectorXd& direction,
-    const std::vector<Interval>& domain,
-    int lateral_dims,
-    int lateral_rounds,
-    double lateral_offset);
 
 std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
     const std::vector<int>& final_bad,

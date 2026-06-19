@@ -581,7 +581,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     double direct_ffb_ms = 0.0;
     double repair_ffb_ms = 0.0;
     double adaptive_repair_ffb_ms = 0.0;
-    double lateral_repair_ffb_ms = 0.0;
     double residual_segment_audit_ms = 0.0;
     const QueryBridgeDirectFfbTaskPlan direct_task_plan =
         query_bridge_prepare_direct_ffb_task_plan(
@@ -693,42 +692,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     repair_indices.insert(repair_indices.end(),
                           adaptive_stats.committed_indices.begin(),
                           adaptive_stats.committed_indices.end());
-    int lateral_repair_calls = 0;
-    int lateral_repair_added = 0;
-    const QueryBridgeLateralRepairOptions lateral_repair_options =
-        query_bridge_lateral_repair_options(sample_step);
-    const bool lateral_repair = lateral_repair_options.enabled;
-    if (lateral_repair && !final_bad.empty()) {
-        const auto domain = oracle_->planning_intervals();
-        const QueryBridgeLateralRepairStats lateral_stats =
-            query_bridge_run_lateral_repair_pass(
-                context,
-                samples,
-                final_bad,
-                domain,
-                lateral_repair_options,
-                transition_connected,
-                current_boxes_cover_point,
-                [&](const Eigen::VectorXd& seed, int) {
-                    return find_free_box_in_domain(seed,
-                                                   direct_planning_domain,
-                                                   context,
-                                                   direct_options);
-                },
-                [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
-                    const std::size_t before_boxes = boxes_.size();
-                    const int box_index = commit_result(std::move(result), seed, transition);
-                    return QueryBridgeFfbTaskCommitResult{box_index,
-                                                          boxes_.size() > before_boxes};
-                });
-        lateral_repair_calls = lateral_stats.calls;
-        lateral_repair_added = lateral_stats.added;
-        lateral_repair_ffb_ms = lateral_stats.ffb_ms;
-        repair_indices.insert(repair_indices.end(),
-                              lateral_stats.committed_indices.begin(),
-                              lateral_stats.committed_indices.end());
-        final_bad = bad_transitions();
-    }
     int local_segment_edges_added = 0;
     int local_segment_gap_samples_max = 0;
     if (!final_bad.empty() &&
@@ -801,7 +764,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     summary_stats.direct_ffb_ms = direct_ffb_ms;
     summary_stats.repair_ffb_ms = repair_ffb_ms;
     summary_stats.adaptive_repair_ffb_ms = adaptive_repair_ffb_ms;
-    summary_stats.lateral_repair_ffb_ms = lateral_repair_ffb_ms;
     summary_stats.residual_segment_audit_ms = residual_segment_audit_ms;
     summary_stats.assimilate_coverage_span_sum =
         runtime_stats.assimilate_coverage_span_sum;
@@ -809,11 +771,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     summary_stats.direct_calls = direct_calls;
     summary_stats.repair_calls = repair_calls;
     summary_stats.adaptive_repair_calls = adaptive_repair_calls;
-    summary_stats.lateral_repair_calls = lateral_repair_calls;
     summary_stats.direct_added = direct_added;
     summary_stats.repair_added = repair_added;
     summary_stats.adaptive_repair_added = adaptive_repair_added;
-    summary_stats.lateral_repair_added = lateral_repair_added;
     summary_stats.adaptive_repair_max_subdivisions_used =
         adaptive_repair_max_subdivisions_used;
     summary_stats.repair_subdivisions = subdivisions;
@@ -825,7 +785,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         runtime_stats.assimilate_coverage_boxes;
     summary_stats.assimilate_coverage_span_max =
         runtime_stats.assimilate_coverage_span_max;
-    summary_stats.lateral_repair_enabled = lateral_repair;
     summary_stats.local_corridor_connected = local_corridor_connected;
     query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
 

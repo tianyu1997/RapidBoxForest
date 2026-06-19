@@ -161,8 +161,6 @@ void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
     add("direct_corridor_repair_ffb_ms", "query_bridge.direct_corridor_repair_ffb_ms");
     add("direct_corridor_adaptive_repair_ffb_ms",
         "query_bridge.direct_corridor_adaptive_repair_ffb_ms");
-    add("direct_corridor_lateral_repair_ffb_ms",
-        "query_bridge.direct_corridor_lateral_repair_ffb_ms");
     add("direct_corridor_segment_audit_ms",
         "query_bridge.direct_corridor_segment_audit_ms");
     add("direct_corridor_added", "query_bridge.direct_corridor_added_total");
@@ -172,10 +170,6 @@ void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
         "query_bridge.direct_corridor_adaptive_repair_calls_total");
     add("direct_corridor_adaptive_repair_added",
         "query_bridge.direct_corridor_adaptive_repair_added_total");
-    add("direct_corridor_lateral_repair_calls",
-        "query_bridge.direct_corridor_lateral_repair_calls_total");
-    add("direct_corridor_lateral_repair_added",
-        "query_bridge.direct_corridor_lateral_repair_added_total");
     add("direct_corridor_bad_initial", "query_bridge.direct_corridor_bad_initial_total");
     add("direct_corridor_bad_final", "query_bridge.direct_corridor_bad_final_total");
     add("direct_corridor_segment_edges", "query_bridge.direct_corridor_segment_edges_total");

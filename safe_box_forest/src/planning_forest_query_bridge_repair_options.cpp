@@ -52,21 +52,4 @@ QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_
     return options;
 }
 
-QueryBridgeLateralRepairOptions query_bridge_lateral_repair_options(double sample_step) {
-    QueryBridgeLateralRepairOptions options;
-    options.enabled =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR", 0) != 0;
-    options.dims =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_DIMS", 2));
-    options.rounds =
-        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_ROUNDS", 1));
-    options.max_calls =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_MAX_CALLS", 24));
-    options.offset =
-        std::max(1e-6,
-                 detail::env_double_or_default("RBF_QUERY_BRIDGE_LATERAL_REPAIR_OFFSET",
-                                               std::max(0.01, sample_step * 0.25)));
-    return options;
-}
-
 }  // namespace rbf

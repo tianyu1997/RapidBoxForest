@@ -34,8 +34,7 @@ void query_bridge_record_direct_corridor_summary(
     };
 
     const int all_ffb_calls = stats.direct_calls + stats.repair_calls +
-                              stats.adaptive_repair_calls +
-                              stats.lateral_repair_calls;
+                              stats.adaptive_repair_calls;
     const double sample_count = static_cast<double>(stats.sample_count);
     const double direct_calls = static_cast<double>(stats.direct_calls);
     const double all_ffb = static_cast<double>(all_ffb_calls);
@@ -46,10 +45,6 @@ void query_bridge_record_direct_corridor_summary(
         static_cast<double>(stats.adaptive_repair_calls);
     const double adaptive_repair_added =
         static_cast<double>(stats.adaptive_repair_added);
-    const double lateral_repair_calls =
-        static_cast<double>(stats.lateral_repair_calls);
-    const double lateral_repair_added =
-        static_cast<double>(stats.lateral_repair_added);
     const double initial_bad = static_cast<double>(stats.initial_bad_count);
     const double final_bad = static_cast<double>(stats.final_bad_count);
     const double segment_edges =
@@ -69,7 +64,6 @@ void query_bridge_record_direct_corridor_summary(
     set("direct_ffb_ms", stats.direct_ffb_ms);
     set("repair_ffb_ms", stats.repair_ffb_ms);
     set("adaptive_repair_ffb_ms", stats.adaptive_repair_ffb_ms);
-    set("lateral_repair_ffb_ms", stats.lateral_repair_ffb_ms);
     set("segment_audit_ms", stats.residual_segment_audit_ms);
     set("all_ffb_calls", all_ffb);
     add_total("all_ffb_calls", all_ffb);
@@ -83,11 +77,6 @@ void query_bridge_record_direct_corridor_summary(
     add_total("adaptive_repair_calls", adaptive_repair_calls);
     set("adaptive_repair_added", adaptive_repair_added);
     add_total("adaptive_repair_added", adaptive_repair_added);
-    set("lateral_repair_enabled", stats.lateral_repair_enabled ? 1.0 : 0.0);
-    set("lateral_repair_calls", lateral_repair_calls);
-    add_total("lateral_repair_calls", lateral_repair_calls);
-    set("lateral_repair_added", lateral_repair_added);
-    add_total("lateral_repair_added", lateral_repair_added);
     set("adaptive_repair_max_subdivisions",
         static_cast<double>(stats.adaptive_repair_max_subdivisions_used));
     set("repair_subdivisions", static_cast<double>(stats.repair_subdivisions));
@@ -110,7 +99,6 @@ void query_bridge_record_direct_corridor_summary(
     set_task("direct_ffb_ms", stats.direct_ffb_ms);
     set_task("repair_ffb_ms", stats.repair_ffb_ms);
     set_task("adaptive_repair_ffb_ms", stats.adaptive_repair_ffb_ms);
-    set_task("lateral_repair_ffb_ms", stats.lateral_repair_ffb_ms);
     set_task("segment_audit_ms", stats.residual_segment_audit_ms);
     set_task("all_ffb_calls", all_ffb);
     set_task("added", direct_added);
@@ -118,8 +106,6 @@ void query_bridge_record_direct_corridor_summary(
     set_task("repair_added", repair_added);
     set_task("adaptive_repair_calls", adaptive_repair_calls);
     set_task("adaptive_repair_added", adaptive_repair_added);
-    set_task("lateral_repair_calls", lateral_repair_calls);
-    set_task("lateral_repair_added", lateral_repair_added);
     set_task("bad_initial", initial_bad);
     set_task("bad_final", final_bad);
     set_task("segment_edges", segment_edges);

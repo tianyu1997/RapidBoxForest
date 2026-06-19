@@ -61,76 +61,6 @@ QueryBridgeSubdivisionRepairStats query_bridge_run_subdivision_repair_pass(
     return stats;
 }
 
-QueryBridgeLateralRepairStats query_bridge_run_lateral_repair_pass(
-    StageContext& context,
-    const std::vector<Eigen::VectorXd>& samples,
-    const std::vector<int>& transitions,
-    const std::vector<Interval>& domain,
-    const QueryBridgeLateralRepairOptions& options,
-    const std::function<bool(int)>& transition_connected,
-    const std::function<bool(const Eigen::VectorXd&)>& seed_covered,
-    const std::function<FindFreeBoxResult(const Eigen::VectorXd&, int)>& find_box,
-    const std::function<QueryBridgeFfbTaskCommitResult(FindFreeBoxResult&&,
-                                                       const Eigen::VectorXd&,
-                                                       int)>& commit_box) {
-    using Clock = std::chrono::steady_clock;
-    QueryBridgeLateralRepairStats stats;
-    for (int transition : transitions) {
-        if (stats.calls >= options.max_calls) {
-            break;
-        }
-        if (transition_connected(transition) ||
-            transition < 0 ||
-            transition + 1 >= static_cast<int>(samples.size())) {
-            continue;
-        }
-        const Eigen::VectorXd& a = samples[static_cast<std::size_t>(transition)];
-        const Eigen::VectorXd& b = samples[static_cast<std::size_t>(transition + 1)];
-        const Eigen::VectorXd seed = 0.5 * (a + b);
-        const Eigen::VectorXd direction = b - a;
-        for (const Eigen::VectorXd& lateral_seed :
-             query_bridge_lateral_candidates(seed,
-                                             direction,
-                                             domain,
-                                             options.dims,
-                                             options.rounds,
-                                             options.offset)) {
-            if (stats.calls >= options.max_calls) {
-                break;
-            }
-            if (transition_connected(transition)) {
-                break;
-            }
-            if (seed_covered(lateral_seed)) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_lateral_repair_skip_covered");
-                continue;
-            }
-            const auto ffb_t0 = Clock::now();
-            FindFreeBoxResult result = find_box(lateral_seed, transition);
-            stats.ffb_ms +=
-                std::chrono::duration<double, std::milli>(Clock::now() - ffb_t0).count();
-            stats.calls += 1;
-            const QueryBridgeFfbTaskCommitResult commit =
-                commit_box(std::move(result), lateral_seed, transition);
-            if (commit.box_index >= 0) {
-                if (std::find(stats.committed_indices.begin(),
-                              stats.committed_indices.end(),
-                              commit.box_index) == stats.committed_indices.end()) {
-                    stats.committed_indices.push_back(commit.box_index);
-                }
-                if (commit.added_box) {
-                    stats.added += 1;
-                }
-                if (transition_connected(transition)) {
-                    break;
-                }
-            }
-        }
-    }
-    return stats;
-}
-
 QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     StageContext& context,
     const std::vector<Eigen::VectorXd>& samples,
@@ -313,51 +243,6 @@ std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
         return std::abs(lhs - 0.5) < std::abs(rhs - 0.5);
     });
     return fractions;
-}
-
-std::vector<Eigen::VectorXd> query_bridge_lateral_candidates(
-    const Eigen::VectorXd& seed,
-    const Eigen::VectorXd& direction,
-    const std::vector<Interval>& domain,
-    int lateral_dims,
-    int lateral_rounds,
-    double lateral_offset) {
-    std::vector<int> dims;
-    dims.reserve(static_cast<std::size_t>(seed.size()));
-    for (int dim = 0; dim < seed.size(); ++dim) {
-        dims.push_back(dim);
-    }
-    std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
-        const double lhs_abs = std::abs(direction[lhs]);
-        const double rhs_abs = std::abs(direction[rhs]);
-        if (std::abs(lhs_abs - rhs_abs) > 1e-12) {
-            return lhs_abs < rhs_abs;
-        }
-        return lhs < rhs;
-    });
-    std::vector<Eigen::VectorXd> out;
-    const int dim_limit = std::min<int>(std::max(0, lateral_dims),
-                                        static_cast<int>(dims.size()));
-    const int rounds = std::max(0, lateral_rounds);
-    out.reserve(static_cast<std::size_t>(dim_limit * rounds * 2));
-    for (int item = 0; item < dim_limit; ++item) {
-        const int dim = dims[static_cast<std::size_t>(item)];
-        for (int round = 1; round <= rounds; ++round) {
-            for (double sign : {1.0, -1.0}) {
-                Eigen::VectorXd candidate = seed;
-                candidate[dim] += sign * lateral_offset * static_cast<double>(round);
-                if (dim < static_cast<int>(domain.size())) {
-                    candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
-                                              std::max(domain[static_cast<std::size_t>(dim)].lo,
-                                                       candidate[dim]));
-                }
-                if ((candidate - seed).norm() > 1e-12) {
-                    out.push_back(std::move(candidate));
-                }
-            }
-        }
-    }
-    return out;
 }
 
 std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
