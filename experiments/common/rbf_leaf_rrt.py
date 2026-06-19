@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 import os
-import random
 import shutil
 import time
 import copy
@@ -19,6 +18,7 @@ from experiments.common.rbf_diagnostics import (
     external_evidence_diagnostic_fields as _external_evidence_diagnostic_fields,
     query_bridge_diagnostic_fields as _query_bridge_diagnostic_fields,
 )
+from experiments.common.rbf_offline_anchors import empty_offline_anchor_metrics, generate_offline_anchor_points
 from experiments.common.rbf_defaults import (
     CANONICAL_SYMMETRY_DESCRIPTOR,
     DEFAULT_RBF_AUDIT_RESOLUTION,
@@ -86,8 +86,16 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
-    robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
+)
+from experiments.common.rbf_split_policy import (
+    make_aafk_split_policy,
+    make_aafk_split_policy_from_cache_prefix,
+    normalized_split_schedule_kind as _normalized_split_schedule_kind,
+    parse_float_csv,
+    parse_int_csv,
+    read_lect_cache_depth_dimensions,
+    serialize_depth_dimensions,
 )
 from experiments.common.sbf_import import import_sbf
 
@@ -419,37 +427,6 @@ def canonical_priority_points(robot: Any, queries: Iterable[Any], canonicalize: 
     return points
 
 
-def serialize_depth_dimensions(depth_dimensions: Iterable[int]) -> str:
-    return ",".join(str(int(dim)) for dim in depth_dimensions)
-
-
-def _normalized_split_schedule_kind(kind: str) -> str:
-    key = str(kind or "aafk_volume_min").strip().lower().replace("-", "_")
-    if key in {"aafk", "aafk_volume", "aafk_volume_min", "endpoint_aafk"}:
-        return "aafk_volume_min"
-    if key in {"support_hull", "support_hull_volume", "support_hull_volume_min", "sh", "sh_volume_min"}:
-        return "support_hull_volume_min"
-    raise ValueError(f"unknown LECT split schedule kind: {kind!r}")
-
-
-def _volume_min_depth_schedule(
-    robot: Any,
-    root_intervals: Iterable[Any] | None,
-    max_depth: int,
-    sample_nodes_per_depth: int,
-    split_schedule_kind: str,
-) -> list[int]:
-    kind = _normalized_split_schedule_kind(split_schedule_kind)
-    schedule_fn = (
-        sbf.support_hull_volume_min_depth_schedule
-        if kind == "support_hull_volume_min"
-        else sbf.aafk_volume_min_depth_schedule
-    )
-    if root_intervals is None:
-        return list(schedule_fn(robot, int(max_depth), int(sample_nodes_per_depth)))
-    return list(schedule_fn(robot, list(root_intervals), int(max_depth), int(sample_nodes_per_depth)))
-
-
 def interval_pairs(intervals: Iterable[Any]) -> list[list[float]]:
     pairs: list[list[float]] = []
     for interval in intervals:
@@ -459,314 +436,6 @@ def interval_pairs(intervals: Iterable[Any]) -> list[list[float]]:
             lo, hi = interval
             pairs.append([float(lo), float(hi)])
     return pairs
-
-
-def read_lect_cache_depth_dimensions(cache_path: Path | None) -> list[int]:
-    if cache_path is None:
-        return []
-    manifest = Path(cache_path) / "manifest.json"
-    if not manifest.exists():
-        return []
-    for line in manifest.read_text().splitlines():
-        if not line.startswith("split_depth_dimensions="):
-            continue
-        raw = line.split("=", 1)[1].strip()
-        return [int(item.strip()) for item in raw.split(",") if item.strip()]
-    return []
-
-
-def parse_int_csv(raw: Any) -> list[int]:
-    return [int(item.strip()) for item in str(raw).split(",") if item.strip()]
-
-
-def parse_float_csv(raw: Any) -> list[float]:
-    return [float(item.strip()) for item in str(raw).split(",") if item.strip()]
-
-
-def make_aafk_split_policy(
-    robot: Any,
-    max_depth: int,
-    root_intervals: Iterable[Any] | None = None,
-    *,
-    force_dim0_first_two: bool = False,
-    forced_tail_schedule: Iterable[int] | None = None,
-    split_schedule_kind: str = "aafk_volume_min",
-) -> Any:
-    split_schedule_kind = _normalized_split_schedule_kind(split_schedule_kind)
-    if force_dim0_first_two:
-        tail = [int(dim) for dim in (forced_tail_schedule or [])]
-        schedule_root = list(root_intervals) if root_intervals is not None else list(
-            sbf.canonical_root_intervals_for_robot(
-                robot,
-                True,
-                CANONICAL_SYMMETRY_DESCRIPTOR,
-            )
-        )
-        if schedule_root:
-            # The first two binary splits cover the four dim0 symmetry sectors.
-            # The remaining schedule should match the per-sector shelf/root
-            # resolution, not the widened native dim0 hull.
-            schedule_root[0] = sbf.Interval(0.0, 0.5 * math.pi)
-        if not tail:
-            tail_depth = max(0, int(max_depth) - 2)
-            tail = _volume_min_depth_schedule(robot, schedule_root, tail_depth, 8, split_schedule_kind)
-        elif len(tail) + 2 < int(max_depth):
-            extra_depth = int(max_depth) - 2 - len(tail)
-            extra = _volume_min_depth_schedule(robot, schedule_root, extra_depth, 8, split_schedule_kind)
-            tail.extend(int(dim) for dim in extra)
-        schedule = [0, 0] + [int(dim) for dim in tail]
-    else:
-        schedule = _volume_min_depth_schedule(robot, root_intervals, int(max_depth), 8, split_schedule_kind)
-    if len(schedule) < int(max_depth):
-        raise RuntimeError(f"AAFKVolumeMin schedule has {len(schedule)} entries, expected {int(max_depth)}")
-    split_policy = sbf.SplitPolicyDescriptor()
-    split_policy.strategy = sbf.SplitStrategy.AAFKVolumeMin
-    split_policy.min_width = 0.0
-    split_policy.midpoint = True
-    split_policy.deterministic_tie_break = True
-    split_policy.depth_dimensions = [int(dim) for dim in schedule]
-    split_policy.dimension_schedule_hash = str(sbf.stable_hash(serialize_depth_dimensions(schedule)))
-    return split_policy
-
-
-def make_aafk_split_policy_from_cache_prefix(
-    robot: Any,
-    max_depth: int,
-    cache_depth_dimensions: Iterable[int],
-    root_intervals: Iterable[Any] | None = None,
-) -> Any:
-    """Build an active split policy whose prefix exactly matches an external LECT cache.
-
-    Exact evidence reuse is interval-keyed, so changing the dimension schedule
-    by even one level makes every lookup miss.  When a warm cache is provided,
-    the active tree must therefore inherit the cache schedule prefix and only
-    generate a local tail beyond the cached depth.
-    """
-    schedule = [int(dim) for dim in cache_depth_dimensions]
-    max_depth = int(max_depth)
-    if len(schedule) < max_depth:
-        tail_depth = max_depth - len(schedule)
-        if root_intervals is None:
-            tail = list(sbf.aafk_volume_min_depth_schedule(robot, tail_depth, 8))
-        else:
-            tail = list(sbf.aafk_volume_min_depth_schedule(robot, list(root_intervals), tail_depth, 8))
-        schedule.extend(int(dim) for dim in tail)
-    schedule = schedule[:max_depth]
-    if len(schedule) < max_depth:
-        raise RuntimeError(f"cached AAFK schedule has {len(schedule)} entries, expected {max_depth}")
-    split_policy = sbf.SplitPolicyDescriptor()
-    split_policy.strategy = sbf.SplitStrategy.AAFKVolumeMin
-    split_policy.min_width = 0.0
-    split_policy.midpoint = True
-    split_policy.deterministic_tie_break = True
-    split_policy.depth_dimensions = [int(dim) for dim in schedule]
-    split_policy.dimension_schedule_hash = str(sbf.stable_hash(serialize_depth_dimensions(schedule)))
-    return split_policy
-
-
-def _root_tuple_list(robot: Any, options: RBFLeafRRTOptions) -> list[tuple[float, float]]:
-    if options.coverage_override_tuples is not None:
-        return [(float(lo), float(hi)) for lo, hi in options.coverage_override_tuples]
-    return robot_joint_limit_tuples(robot)
-
-
-def _active_tree_root_tuple_list(robot: Any, options: RBFLeafRRTOptions) -> list[tuple[float, float]]:
-    if options.root_override_tuples is not None:
-        return [(float(lo), float(hi)) for lo, hi in options.root_override_tuples]
-    if bool(options.symmetry_aligned_native_root):
-        return robot_symmetry_aligned_root_tuples(robot)
-    return robot_joint_limit_tuples(robot)
-
-
-def _normalized_distance(a: list[float], b: list[float], root: list[tuple[float, float]]) -> float:
-    total = 0.0
-    for index, (x, y) in enumerate(zip(a, b)):
-        lo, hi = root[index]
-        width = max(float(hi) - float(lo), 1e-12)
-        total += ((float(x) - float(y)) / width) ** 2
-    return math.sqrt(total)
-
-
-def _joint_margin_score(q: list[float], root: list[tuple[float, float]]) -> float:
-    score = 0.0
-    for value, (lo, hi) in zip(q, root):
-        width = max(float(hi) - float(lo), 1e-12)
-        margin = max(min(float(value) - float(lo), float(hi) - float(value)) / width, 1e-9)
-        score += math.log(margin)
-    return score / max(1, len(root))
-
-
-def _lca_depth_for_points(
-    a: list[float],
-    b: list[float],
-    root: list[tuple[float, float]],
-    schedule: list[int],
-) -> int:
-    intervals = [[float(lo), float(hi)] for lo, hi in root]
-    for depth, dim in enumerate(schedule):
-        if dim < 0 or dim >= len(intervals):
-            return depth
-        lo, hi = intervals[dim]
-        mid = 0.5 * (lo + hi)
-        a_hi = float(a[dim]) >= mid
-        b_hi = float(b[dim]) >= mid
-        if a_hi != b_hi:
-            return depth
-        if a_hi:
-            intervals[dim][0] = mid
-        else:
-            intervals[dim][1] = mid
-    return len(schedule)
-
-
-def _halton_value(index: int, base: int) -> float:
-    value = 0.0
-    factor = 1.0 / float(base)
-    current = int(index)
-    while current > 0:
-        value += factor * float(current % base)
-        current //= base
-        factor /= float(base)
-    return value
-
-
-def _halton_point(index: int, dim: int) -> list[float]:
-    primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47]
-    if dim > len(primes):
-        raise ValueError(f"Halton sampler supports at most {len(primes)} dimensions, got {dim}")
-    return [_halton_value(index, primes[i]) for i in range(dim)]
-
-
-def empty_offline_anchor_metrics(reason: str) -> dict[str, Any]:
-    return {
-        "offline_anchor_candidates": 0,
-        "offline_anchor_candidates_free": 0,
-        "offline_anchor_roots_requested": 0,
-        "offline_anchor_lca_depth_mean": math.nan,
-        "offline_anchor_lca_depth_max": math.nan,
-        "offline_anchor_min_distance_mean": math.nan,
-        "offline_anchor_skip_reason": str(reason),
-        "offline_anchor_skip_p_main_accessible": math.nan,
-    }
-
-
-def generate_offline_anchor_points(
-    robot: Any,
-    obstacles: list[Any],
-    options: RBFLeafRRTOptions,
-) -> tuple[list[list[float]], dict[str, Any]]:
-    count = max(0, int(options.offline_anchor_count))
-    candidate_count = max(0, int(options.offline_anchor_candidate_count))
-    if not bool(options.offline_random_anchors) or count <= 0 or candidate_count <= 0:
-        return [], empty_offline_anchor_metrics("disabled")
-    coverage_root = _root_tuple_list(robot, options)
-    tree_root = _active_tree_root_tuple_list(robot, options)
-    cache_schedule = (
-        read_lect_cache_depth_dimensions(options.external_evidence_path)
-        if (bool(options.use_external_evidence) or bool(options.symmetry_aligned_cache_schedule))
-        and options.external_evidence_path is not None
-        else []
-    )
-    split_schedule_kind = _normalized_split_schedule_kind(getattr(options, "split_schedule_kind", "aafk_volume_min"))
-    if cache_schedule and split_schedule_kind == "aafk_volume_min":
-        split_policy = make_aafk_split_policy_from_cache_prefix(
-            robot,
-            int(options.rbf_max_depth),
-            cache_schedule,
-            [sbf.Interval(float(lo), float(hi)) for lo, hi in tree_root],
-        )
-    else:
-        forced_tail_schedule = (
-            read_lect_cache_depth_dimensions(options.external_evidence_path)
-            if bool(options.symmetry_aligned_cache_schedule)
-            else []
-        )
-        if (
-            bool(options.symmetry_aligned_cache_schedule)
-            and len(forced_tail_schedule) >= 2
-            and int(forced_tail_schedule[0]) == 0
-            and int(forced_tail_schedule[1]) == 0
-        ):
-            forced_tail_schedule = forced_tail_schedule[2:]
-        split_policy = make_aafk_split_policy(
-            robot,
-            int(options.rbf_max_depth),
-            [sbf.Interval(float(lo), float(hi)) for lo, hi in tree_root],
-            force_dim0_first_two=bool(options.symmetry_aligned_cache_schedule),
-            forced_tail_schedule=forced_tail_schedule,
-            split_schedule_kind=split_schedule_kind,
-        )
-    schedule = [int(dim) for dim in list(split_policy.depth_dimensions)]
-    rng = random.Random((int(options.seed) + 1) * 1000003)
-    sampling = str(getattr(options, "offline_anchor_sampling", "random")).strip().lower()
-    candidates: list[list[float]] = []
-    halton_index = 1 + int(options.seed) * 1009
-    attempts = 0
-    while attempts < candidate_count:
-        attempts += 1
-        if sampling in {"halton", "low_discrepancy", "low-discrepancy"}:
-            unit = _halton_point(halton_index, len(coverage_root))
-            halton_index += 1
-            q = [
-                float(lo) + unit[index] * (float(hi) - float(lo))
-                for index, (lo, hi) in enumerate(coverage_root)
-            ]
-        elif sampling == "mixed" and attempts % 2 == 0:
-            unit = _halton_point(halton_index, len(coverage_root))
-            halton_index += 1
-            q = [
-                float(lo) + unit[index] * (float(hi) - float(lo))
-                for index, (lo, hi) in enumerate(coverage_root)
-            ]
-        else:
-            q = [rng.uniform(float(lo), float(hi)) for lo, hi in coverage_root]
-        if any(float(q[index]) < float(tree_root[index][0]) or float(q[index]) > float(tree_root[index][1])
-               for index in range(min(len(q), len(tree_root)))):
-            continue
-        if sbf.check_config_collision(robot, obstacles, q, float(options.audit_collision_tolerance)):
-            continue
-        candidates.append(q)
-    selected: list[list[float]] = []
-    lca_depths: list[int] = []
-    min_distances: list[float] = []
-    remaining = candidates[:]
-    while remaining and len(selected) < count:
-        best_index = 0
-        best_score = -math.inf
-        for index, q in enumerate(remaining):
-            if not selected:
-                lca_separation = float(len(schedule))
-                min_distance = math.sqrt(len(q))
-            else:
-                lcas = [_lca_depth_for_points(q, other, tree_root, schedule) for other in selected]
-                max_lca_depth = max(lcas) if lcas else 0
-                lca_separation = float(len(schedule) - max_lca_depth)
-                min_distance = min(_normalized_distance(q, other, coverage_root) for other in selected)
-            score = (
-                _joint_margin_score(q, coverage_root)
-                + float(options.offline_anchor_lca_lambda) * lca_separation
-                + float(options.offline_anchor_distance_mu) * min_distance
-            )
-            if score > best_score:
-                best_score = score
-                best_index = index
-        chosen = remaining.pop(best_index)
-        if selected:
-            lcas = [_lca_depth_for_points(chosen, other, tree_root, schedule) for other in selected]
-            lca_depths.append(max(lcas) if lcas else 0)
-            min_distances.append(min(_normalized_distance(chosen, other, coverage_root) for other in selected))
-        selected.append(chosen)
-    metrics = {
-        "offline_anchor_candidates": int(candidate_count),
-        "offline_anchor_candidates_free": int(len(candidates)),
-        "offline_anchor_roots_requested": int(len(selected)),
-        "offline_anchor_lca_depth_mean": mean(lca_depths) if lca_depths else math.nan,
-        "offline_anchor_lca_depth_max": max(lca_depths) if lca_depths else math.nan,
-        "offline_anchor_min_distance_mean": mean(min_distances) if min_distances else math.nan,
-        "offline_anchor_skip_reason": "",
-        "offline_anchor_skip_p_main_accessible": math.nan,
-    }
-    return selected, metrics
 
 
 def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptions) -> Any:
