@@ -85,6 +85,10 @@ include/rbf/lect_database/         core database API
 include/LECTDatabase/              compatibility and package-facing headers
 include/LECTDatabase/sbf/          planner adapter API
 src/lect_database/                 core persistence implementation
+  database.cpp                     database state machine, manifests, node
+                                   pages, evidence index, journal, checkpoint
+  database_evidence_codec.h        evidence binary/text codec, sidecar layout,
+                                   payload checksum, and half-float quantizer
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
 tools/                             database CLI and benchmark
