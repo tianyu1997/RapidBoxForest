@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from experiments.common.experiment_io import thread_environment_overrides
 from experiments.common.metrics import mean, median
 
 
@@ -54,8 +55,7 @@ def iris_env() -> dict[str, str]:
     if existing:
         entries.append(existing)
     env["PYTHONPATH"] = os.pathsep.join(entries)
-    for name in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
-        env[name] = env.get(name, "8")
+    env.update(thread_environment_overrides(base_env=env))
     return env
 
 

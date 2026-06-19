@@ -16,20 +16,29 @@ from typing import Any, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUTPUT_ROOT = REPO_ROOT / "outputs" / "new_experiments"
+THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
+
+
+def thread_environment_overrides(threads: int | None = None, base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return consistent numeric-library thread settings for a process env."""
+
+    if threads is not None:
+        value = str(max(1, int(threads)))
+        return {key: value for key in THREAD_ENV_KEYS}
+    env = os.environ if base_env is None else base_env
+    return {key: env.get(key, "8") for key in THREAD_ENV_KEYS}
 
 
 def configure_thread_environment(threads: int) -> None:
     """Apply one thread-count setting consistently across numeric libraries."""
 
-    value = str(max(1, int(threads)))
-    for key in (
-        "OMP_NUM_THREADS",
-        "OPENBLAS_NUM_THREADS",
-        "MKL_NUM_THREADS",
-        "NUMEXPR_NUM_THREADS",
-        "VECLIB_MAXIMUM_THREADS",
-    ):
-        os.environ[key] = value
+    os.environ.update(thread_environment_overrides(threads))
 
 
 def csv_list(raw: str) -> list[str]:
@@ -110,7 +119,7 @@ def repo_relative_string(path: Path) -> str:
 def environment_metadata() -> dict[str, Any]:
     thread_env = {
         key: os.environ.get(key)
-        for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+        for key in THREAD_ENV_KEYS
         if os.environ.get(key) is not None
     }
     return {
