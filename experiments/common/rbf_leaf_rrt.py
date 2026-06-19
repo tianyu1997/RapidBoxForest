@@ -578,14 +578,6 @@ class RBFLeafRRTOptions:
     final_rrt_simplify_timeout_ms: float = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS
     final_rrt_simplify_max_iters: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS
     final_rrt_simplify_attempts: int = DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS
-    corridor_refine: bool = False
-    corridor_refine_budget_ms: float = 0.0
-    corridor_refine_max_boxes: int = 0
-    corridor_refine_boxes_per_query: int = 12
-    corridor_refine_passes: int = 1
-    corridor_refine_start_margin_ms: float = 0.0
-    corridor_refine_long_path_ratio: float = 1.25
-    corridor_refine_min_delta: float = 0.25
     query_bridge_all: bool = DEFAULT_RBF_QUERY_BRIDGE_ALL
     query_bridge_adaptive_all: bool = True
     query_bridge_adaptive_max_path_length: float = 4.5
@@ -1618,51 +1610,6 @@ def query_rows(
     return rows
 
 
-def refine_corridors(
-    forest: Any,
-    robot: Any,
-    queries: Iterable[Any],
-    options: RBFLeafRRTOptions,
-) -> tuple[float, int, int]:
-    if not bool(options.corridor_refine):
-        return 0.0, 0, 0
-    budget_s = max(0.0, float(options.corridor_refine_budget_ms)) / 1000.0
-    max_total = max(0, int(options.corridor_refine_max_boxes))
-    per_query = max(1, int(options.corridor_refine_boxes_per_query))
-    if budget_s <= 0.0 or max_total <= 0:
-        return 0.0, 0, 0
-    query_list = [query_spec(query) for query in queries]
-    t0 = time.perf_counter()
-    added_total = 0
-    attempts = 0
-    start_margin_s = max(0.0, float(options.corridor_refine_start_margin_ms)) / 1000.0
-    for _pass in range(max(1, int(options.corridor_refine_passes))):
-        pass_added = 0
-        for query in query_list:
-            elapsed_s = time.perf_counter() - t0
-            if added_total >= max_total or elapsed_s >= budget_s:
-                break
-            if attempts > 0 and budget_s - elapsed_s < start_margin_s:
-                break
-            start = query_point(robot, query.start, bool(options.canonicalize_queries))
-            goal = query_point(robot, query.goal, bool(options.canonicalize_queries))
-            quota = min(per_query, max_total - added_total)
-            added = int(forest.refine_query_corridor(
-                start,
-                goal,
-                quota,
-                "box_only_long_path",
-                float(options.corridor_refine_long_path_ratio),
-                float(options.corridor_refine_min_delta),
-            ))
-            attempts += 1
-            added_total += added
-            pass_added += added
-        if pass_added == 0 or added_total >= max_total or time.perf_counter() - t0 >= budget_s:
-            break
-    return time.perf_counter() - t0, added_total, attempts
-
-
 def bridge_all_queries(
     forest: Any,
     robot: Any,
@@ -2174,14 +2121,8 @@ def run_leaf_rrt(
         str(getattr(options, "adaptive_planning_backend", "")).lower() == "partition_native"
     )
     try:
-        corridor_refine_s, corridor_refine_added, corridor_refine_attempts = refine_corridors(
-            forest,
-            robot,
-            query_list,
-            options,
-        )
-        after_corridor_boxes = len(list(forest.boxes()))
-        after_corridor_segment_edges = len(list(forest.segment_edges()))
+        after_corridor_boxes = build_final_boxes
+        after_corridor_segment_edges = build_segment_edges
         if bool(options.query_bridge_sequential_reuse):
             query_bridge_s = 0.0
             query_bridge_added = 0
@@ -2433,7 +2374,7 @@ def run_leaf_rrt(
         )
     offline_build_profile_s = float(build.total_ms) / 1000.0
     offline_build_s = float(offline_build_wall_s)
-    online_adaptation_s = float(corridor_refine_s) + float(query_bridge_s)
+    online_adaptation_s = float(query_bridge_s)
     graph_solve_s = sum(float(row.get("solve_ms", row["query_ms"])) for row in qrows) / 1000.0
     graph_simplify_s = sum(float(row.get("simplify_ms", row.get("final_simplify_ms", 0.0))) for row in qrows) / 1000.0
     graph_query_s = graph_solve_s
@@ -2733,9 +2674,6 @@ def run_leaf_rrt(
         "adaptive_depth_snapshots_json": str(getattr(build, "adaptive_depth_snapshots_json", "")),
         "rrt_grower_s": float(getattr(build, "rrt_grower_ms", 0.0)) / 1000.0,
         "connector_s": float(getattr(build, "connector_ms", 0.0)) / 1000.0,
-        "corridor_refine_s": float(corridor_refine_s),
-        "corridor_refine_added": int(corridor_refine_added),
-        "corridor_refine_attempts": int(corridor_refine_attempts),
         "endpoint_main_s": float(diagnostics.get("endpoint_main.ms", 0.0)) / 1000.0,
         "endpoint_main_per_query_s": (float(diagnostics.get("endpoint_main.ms", 0.0)) / 1000.0) / query_count,
         "endpoint_main_success_count": int(diagnostics.get("endpoint_main.main_contact_success", 0.0)),

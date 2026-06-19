@@ -453,14 +453,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         final_rrt_simplify_timeout_ms=float(args.final_rrt_simplify_timeout_ms),
         final_rrt_simplify_max_iters=int(args.final_rrt_simplify_max_iters),
         final_rrt_simplify_attempts=int(args.final_rrt_simplify_attempts),
-        corridor_refine=bool(args.corridor_refine),
-        corridor_refine_budget_ms=float(args.corridor_refine_budget_ms),
-        corridor_refine_max_boxes=int(args.corridor_refine_max_boxes),
-        corridor_refine_boxes_per_query=int(args.corridor_refine_boxes_per_query),
-        corridor_refine_passes=int(args.corridor_refine_passes),
-        corridor_refine_start_margin_ms=float(args.corridor_refine_start_margin_ms),
-        corridor_refine_long_path_ratio=float(args.corridor_refine_long_path_ratio),
-        corridor_refine_min_delta=float(args.corridor_refine_min_delta),
         query_bridge_all=bool(args.query_bridge_all),
         query_bridge_adaptive_all=bool(args.query_bridge_adaptive_all),
         query_bridge_adaptive_max_path_length=float(args.query_bridge_adaptive_max_path_length),
@@ -929,8 +921,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "coverage_anchor_success_probability_median": median(row.get("coverage_anchor_success_probability", math.nan) for row in items),
             "coverage_main_accessible_probability_median": median(row.get("coverage_main_accessible_probability", math.nan) for row in items),
             "connector_s_median": median(row["connector_s"] for row in items),
-            "corridor_refine_s_median": median(row.get("corridor_refine_s", 0.0) for row in items),
-            "corridor_refine_added_median": median(row.get("corridor_refine_added", 0) for row in items),
             "audit_s_median": median(row["audit_s"] for row in items),
             "path_length_mean": mean(row["path_length_mean"] for row in items),
             "raw_segment_fraction_median": median(row["raw_segment_fraction"] for row in items),
@@ -1202,8 +1192,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "coverage_anchor_success_probability_median",
         "coverage_main_accessible_probability_median",
         "connector_s_median",
-        "corridor_refine_s_median",
-        "corridor_refine_added_median",
         "audit_s_median",
         "path_length_mean",
         "raw_segment_fraction_median",
@@ -1473,14 +1461,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-rrt-simplify-timeout-ms", type=float, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_TIMEOUT_MS)
     parser.add_argument("--final-rrt-simplify-max-iters", type=int, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_MAX_ITERS)
     parser.add_argument("--final-rrt-simplify-attempts", type=int, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS)
-    parser.add_argument("--corridor-refine", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--corridor-refine-budget-ms", type=float, default=0.0)
-    parser.add_argument("--corridor-refine-max-boxes", type=int, default=0)
-    parser.add_argument("--corridor-refine-boxes-per-query", type=int, default=12)
-    parser.add_argument("--corridor-refine-passes", type=int, default=1)
-    parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=0.0)
-    parser.add_argument("--corridor-refine-long-path-ratio", type=float, default=1.25)
-    parser.add_argument("--corridor-refine-min-delta", type=float, default=0.25)
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ALL)
     parser.add_argument("--query-bridge-adaptive-all", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-adaptive-max-path-length", type=float, default=4.5)
@@ -1780,13 +1760,6 @@ def main() -> int:
             "final_rrt_simplify_timeout_ms": float(args.final_rrt_simplify_timeout_ms),
             "final_rrt_simplify_max_iters": int(args.final_rrt_simplify_max_iters),
             "final_rrt_simplify_attempts": int(args.final_rrt_simplify_attempts),
-            "corridor_refine": bool(args.corridor_refine),
-            "corridor_refine_budget_ms": float(args.corridor_refine_budget_ms),
-            "corridor_refine_max_boxes": int(args.corridor_refine_max_boxes),
-            "corridor_refine_boxes_per_query": int(args.corridor_refine_boxes_per_query),
-            "corridor_refine_passes": int(args.corridor_refine_passes),
-            "corridor_refine_long_path_ratio": float(args.corridor_refine_long_path_ratio),
-            "corridor_refine_min_delta": float(args.corridor_refine_min_delta),
             "query_bridge_all": bool(args.query_bridge_all),
             "query_bridge_adaptive_all": bool(args.query_bridge_adaptive_all),
             "query_bridge_adaptive_max_path_length": float(args.query_bridge_adaptive_max_path_length),
