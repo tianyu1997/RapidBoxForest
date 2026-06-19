@@ -283,8 +283,8 @@ src/planning_forest_query_bridge_acceptance_options.cpp
                                    query bridge acceptance-threshold option
                                    parsing, diagnostics, and acceptance checks
 src/planning_forest_query_bridge_attempt_paths.cpp
-                                   RRT attempt path selection, hybridization,
-                                   and waypoint quality retry orchestration
+                                   RRT attempt path selection and
+                                   hybridization
 src/planning_forest_query_bridge_batch_policy.cpp
                                    query bridge batch task policy, edge
                                    ownership, and attempt-plan helpers
@@ -295,9 +295,6 @@ src/planning_forest_query_bridge_batch_diagnostics.cpp
 src/planning_forest_query_bridge_batch_options.cpp
                                    environment/config parsing for batch bridge
                                    hybridization and batch execution controls
-src/planning_forest_query_bridge_waypoint_quality.cpp
-                                   waypoint-quality retry option parsing,
-                                   diagnostics, and retry execution
 src/planning_forest_query_bridge_index_options.cpp
                                    query-index override option parsing for
                                    force/global/segment-only bridge selection
