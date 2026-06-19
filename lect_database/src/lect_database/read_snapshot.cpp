@@ -1,6 +1,7 @@
 #include <rbf/lect_database/read_snapshot.h>
 
 #include "read_snapshot_format.h"
+#include "read_snapshot_legacy.h"
 #include "read_snapshot_manifest.h"
 #include "read_snapshot_mapped_file.h"
 #include "read_snapshot_payload.h"
@@ -17,7 +18,6 @@
 #include <memory>
 #include <mutex>
 #include <span>
-#include <sstream>
 #include <system_error>
 #include <unordered_map>
 #include <vector>
@@ -50,20 +50,6 @@ std::uint64_t hash_evidence_key(NodeId node_id,
     return hash;
 }
 
-std::vector<std::string> split_text(const std::string& line, char delimiter) {
-    std::vector<std::string> parts;
-    std::stringstream stream(line);
-    std::string item;
-    while (std::getline(stream, item, delimiter)) {
-        parts.push_back(item);
-    }
-    return parts;
-}
-
-std::size_t path_code_storage_bytes(std::uint32_t word_count) {
-    return static_cast<std::size_t>(word_count) * sizeof(std::uint64_t);
-}
-
 struct SnapshotBoxIndexKey {
     std::uint64_t primary = 0;
     std::uint64_t secondary = 0;
@@ -89,26 +75,6 @@ SnapshotBoxIndexKey make_snapshot_box_index_key(const std::vector<Interval>& int
     }
     key.secondary = secondary;
     return key;
-}
-
-std::optional<LegacyNodeIndexSidecarEntry> parse_legacy_node_pages_record(const std::string& line) {
-    const auto parts = split_text(line, '|');
-    if (parts.size() < 7) {
-        return std::nullopt;
-    }
-    LegacyNodeIndexSidecarEntry entry;
-    try {
-        entry.node_id = static_cast<std::uint64_t>(std::stoull(parts[0]));
-        entry.parent = static_cast<std::uint64_t>(std::stoull(parts[1]));
-        entry.left = static_cast<std::uint64_t>(std::stoull(parts[2]));
-        entry.right = static_cast<std::uint64_t>(std::stoull(parts[3]));
-        entry.depth = static_cast<std::int32_t>(std::stoi(parts[4]));
-        entry.split_dim = static_cast<std::int32_t>(std::stoi(parts[5]));
-        entry.split_value = std::stod(parts[6]);
-    } catch (const std::exception&) {
-        return std::nullopt;
-    }
-    return entry;
 }
 
 bool intervals_equal(const std::vector<Interval>& lhs,
@@ -531,7 +497,7 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
             }
             constexpr std::uint64_t legacy_record_header_size = 60u;
             const auto relative_payload_offset = legacy_record_header_size +
-                path_code_storage_bytes(raw.path_word_count);
+                legacy_path_code_storage_bytes(raw.path_word_count);
             if (relative_payload_offset > raw.size || raw.offset + raw.size > evidence_file_size ||
                 (raw.size - relative_payload_offset) % sizeof(std::uint16_t) != 0) {
                 if (reason) *reason = "legacy evidence.index contains an invalid payload range";

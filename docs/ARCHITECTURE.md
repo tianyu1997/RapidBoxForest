@@ -101,6 +101,8 @@ src/lect_database/                 core persistence implementation
                                    snapshot open/load paths
   read_snapshot_format.h           read-snapshot and legacy sidecar binary
                                    layout constants/records
+  read_snapshot_legacy.cpp         legacy node-page text parsing and sidecar
+                                   payload layout helpers
   read_snapshot_manifest.cpp       legacy manifest key-value parsing and root
                                    interval extraction for snapshot builds
   read_snapshot_payload.cpp        half-float payload decode helper for
