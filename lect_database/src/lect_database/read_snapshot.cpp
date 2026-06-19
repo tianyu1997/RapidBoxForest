@@ -1,5 +1,7 @@
 #include <rbf/lect_database/read_snapshot.h>
 
+#include "read_snapshot_mapped_file.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -18,18 +20,6 @@
 #include <system_error>
 #include <unordered_map>
 #include <vector>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
 
 namespace rbf::lect_database {
 namespace {
@@ -418,109 +408,6 @@ struct SnapshotEvidenceSlot {
     std::uint64_t checksum = 0;
 };
 
-struct MappedFile {
-    ~MappedFile() { close(); }
-
-    bool open_read_only(const std::filesystem::path& path) {
-        close();
-#ifdef _WIN32
-        file_ = ::CreateFileW(path.wstring().c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
-                              OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file_ == INVALID_HANDLE_VALUE) {
-            return false;
-        }
-        LARGE_INTEGER file_size;
-        if (!::GetFileSizeEx(file_, &file_size) || file_size.QuadPart < 0) {
-            close();
-            return false;
-        }
-        size_ = static_cast<std::size_t>(file_size.QuadPart);
-        if (size_ == 0) {
-            return true;
-        }
-        mapping_ = ::CreateFileMappingW(file_, nullptr, PAGE_READONLY, 0, 0, nullptr);
-        if (mapping_ == nullptr) {
-            close();
-            return false;
-        }
-        view_ = ::MapViewOfFile(mapping_, FILE_MAP_READ, 0, 0, 0);
-        if (view_ == nullptr) {
-            close();
-            return false;
-        }
-        data_ = static_cast<const std::byte*>(view_);
-        return true;
-#else
-        fd_ = ::open(path.c_str(), O_RDONLY);
-        if (fd_ < 0) {
-            return false;
-        }
-        struct stat statbuf;
-        if (::fstat(fd_, &statbuf) != 0 || statbuf.st_size < 0) {
-            close();
-            return false;
-        }
-        size_ = static_cast<std::size_t>(statbuf.st_size);
-        if (size_ == 0) {
-            return true;
-        }
-        void* mapped = ::mmap(nullptr, size_, PROT_READ, MAP_PRIVATE, fd_, 0);
-        if (mapped == MAP_FAILED) {
-            close();
-            return false;
-        }
-#ifdef MADV_RANDOM
-        ::madvise(mapped, size_, MADV_RANDOM);
-#endif
-        data_ = static_cast<const std::byte*>(mapped);
-        return true;
-#endif
-    }
-
-    void close() {
-#ifdef _WIN32
-        if (view_ != nullptr) {
-            ::UnmapViewOfFile(view_);
-            view_ = nullptr;
-        }
-        if (mapping_ != nullptr) {
-            ::CloseHandle(mapping_);
-            mapping_ = nullptr;
-        }
-        if (file_ != INVALID_HANDLE_VALUE) {
-            ::CloseHandle(file_);
-            file_ = INVALID_HANDLE_VALUE;
-        }
-#else
-        if (data_ != nullptr && size_ != 0) {
-            ::munmap(const_cast<std::byte*>(data_), size_);
-        }
-        if (fd_ >= 0) {
-            ::close(fd_);
-            fd_ = -1;
-        }
-#endif
-        data_ = nullptr;
-        size_ = 0;
-    }
-
-    std::span<const std::byte> bytes() const noexcept {
-        return data_ == nullptr ? std::span<const std::byte>{} : std::span<const std::byte>(data_, size_);
-    }
-
-    std::size_t size() const noexcept { return size_; }
-
-#ifdef _WIN32
-    HANDLE file_ = INVALID_HANDLE_VALUE;
-    HANDLE mapping_ = nullptr;
-    void* view_ = nullptr;
-#else
-    int fd_ = -1;
-#endif
-    const std::byte* data_ = nullptr;
-    std::size_t size_ = 0;
-};
-
 bool intervals_equal(const std::vector<Interval>& lhs,
                      const std::vector<Interval>& rhs,
                      double tolerance) {
@@ -589,11 +476,11 @@ struct LectReadSnapshot::Impl {
     std::filesystem::path path;
     SnapshotManifestHeader manifest;
     std::vector<Interval> root;
-    std::shared_ptr<MappedFile> manifest_file;
-    std::shared_ptr<MappedFile> nodes_file;
-    std::shared_ptr<MappedFile> direct_evidence_file;
-    std::shared_ptr<MappedFile> evidence_table_file;
-    std::shared_ptr<MappedFile> payload_file;
+    std::shared_ptr<ReadSnapshotMappedFile> manifest_file;
+    std::shared_ptr<ReadSnapshotMappedFile> nodes_file;
+    std::shared_ptr<ReadSnapshotMappedFile> direct_evidence_file;
+    std::shared_ptr<ReadSnapshotMappedFile> evidence_table_file;
+    std::shared_ptr<ReadSnapshotMappedFile> payload_file;
     std::span<const SnapshotNodeRow> nodes;
     std::span<const SnapshotDirectEvidenceEntry> direct_evidence;
     std::span<const SnapshotEvidenceSlot> evidence_slots;
@@ -669,7 +556,7 @@ struct LectReadSnapshot::Impl {
 
 std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
                                                        const EvidenceKey& key,
-                                                       const std::shared_ptr<MappedFile>& payload_file) {
+                                                       const std::shared_ptr<ReadSnapshotMappedFile>& payload_file) {
     const auto direct_index = static_cast<std::size_t>(key.node_id);
     if (direct_index >= direct_evidence.size()) {
         return std::nullopt;
@@ -705,7 +592,7 @@ std::optional<EvidenceRecordView> direct_evidence_view(std::span<const SnapshotD
 
 std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot& slot,
                                                      const EvidenceKey& key,
-                                                     const std::shared_ptr<MappedFile>& payload_file) {
+                                                     const std::shared_ptr<ReadSnapshotMappedFile>& payload_file) {
     const auto payload_bytes = static_cast<std::uint64_t>(slot.payload_count) * sizeof(std::uint16_t);
     if (slot.payload_offset > payload_file->size() || payload_bytes > payload_file->size() - slot.payload_offset) {
         return std::nullopt;
@@ -729,7 +616,7 @@ std::optional<EvidenceRecordView> evidence_slot_view(const SnapshotEvidenceSlot&
 
 std::optional<EvidenceRecordView> lookup_evidence_slot(std::span<const SnapshotEvidenceSlot> evidence_slots,
                                                        const EvidenceKey& key,
-                                                       const std::shared_ptr<MappedFile>& payload_file) {
+                                                       const std::shared_ptr<ReadSnapshotMappedFile>& payload_file) {
     if (evidence_slots.empty()) {
         return std::nullopt;
     }
@@ -754,7 +641,7 @@ std::optional<EvidenceRecordView> lookup_evidence_slot(std::span<const SnapshotE
 std::optional<EvidenceRecordView> lookup_evidence_uncached(std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
                                                            std::span<const SnapshotEvidenceSlot> evidence_slots,
                                                            const EvidenceKey& key,
-                                                           const std::shared_ptr<MappedFile>& payload_file) {
+                                                           const std::shared_ptr<ReadSnapshotMappedFile>& payload_file) {
     if (auto view = direct_evidence_view(direct_evidence, key, payload_file)) {
         return view;
     }
@@ -765,7 +652,7 @@ std::optional<EvidenceRecordView> lookup_endpoint_exact_uncached(std::span<const
                                                                  const std::vector<Interval>& root,
                                                                  std::span<const SnapshotDirectEvidenceEntry> direct_evidence,
                                                                  std::span<const SnapshotEvidenceSlot> evidence_slots,
-                                                                 const std::shared_ptr<MappedFile>& payload_file,
+                                                                 const std::shared_ptr<ReadSnapshotMappedFile>& payload_file,
                                                                  const std::vector<Interval>& box_intervals,
                                                                  double tolerance,
                                                                  EvidenceKey key_template) {
@@ -1100,11 +987,11 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
 bool LectReadSnapshot::open(const std::filesystem::path& snapshot_path, std::string* reason) {
     close();
     impl_->path = snapshot_path;
-    impl_->manifest_file = std::make_shared<MappedFile>();
-    impl_->nodes_file = std::make_shared<MappedFile>();
-    impl_->direct_evidence_file = std::make_shared<MappedFile>();
-    impl_->evidence_table_file = std::make_shared<MappedFile>();
-    impl_->payload_file = std::make_shared<MappedFile>();
+    impl_->manifest_file = std::make_shared<ReadSnapshotMappedFile>();
+    impl_->nodes_file = std::make_shared<ReadSnapshotMappedFile>();
+    impl_->direct_evidence_file = std::make_shared<ReadSnapshotMappedFile>();
+    impl_->evidence_table_file = std::make_shared<ReadSnapshotMappedFile>();
+    impl_->payload_file = std::make_shared<ReadSnapshotMappedFile>();
 
     if (!impl_->manifest_file->open_read_only(snapshot_manifest_path(snapshot_path))) {
         if (reason) *reason = "failed to mmap snapshot manifest";

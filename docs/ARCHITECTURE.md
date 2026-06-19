@@ -97,6 +97,8 @@ src/lect_database/                 core persistence implementation
                                    and prefetch RAII wrapper
   database_node_pages.cpp          LECT node page cache, resident-page
                                    accounting, and node-row flush/read/write
+  read_snapshot_mapped_file.cpp    read-snapshot mmap RAII wrapper shared by
+                                   snapshot open/load paths
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, canonical/native
