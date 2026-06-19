@@ -44,7 +44,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
@@ -52,7 +51,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
-    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES,
@@ -551,10 +549,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["sequential_reuse"] = bool(args.query_bridge_sequential_reuse)
     profile["query_bridge"]["scene_reusable_edges"] = bool(args.query_bridge_scene_reusable_edges)
     profile["query_bridge"]["reuse_scope"] = "scene_seed_local"
-    profile["query_bridge"]["partition_neighbor_candidates"] = bool(args.query_bridge_partition_neighbor_candidates)
-    profile["query_bridge"]["direct_append_partition_immediate"] = bool(
-        args.query_bridge_direct_append_partition_immediate
-    )
     profile["query_bridge"]["direct_partition_append_batch_size"] = int(
         args.query_bridge_direct_partition_append_batch_size
     )
@@ -761,16 +755,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
-    parser.add_argument(
-        "--query-bridge-partition-neighbor-candidates",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
-    )
-    parser.add_argument(
-        "--query-bridge-direct-append-partition-immediate",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
-    )
     parser.add_argument(
         "--query-bridge-direct-partition-append-batch-size",
         type=int,
@@ -1458,10 +1442,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
             query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
-            query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
-            query_bridge_direct_append_partition_immediate=bool(
-                args.query_bridge_direct_append_partition_immediate
-            ),
             query_bridge_direct_partition_append_batch_size=int(
                 args.query_bridge_direct_partition_append_batch_size
             ),
@@ -1626,10 +1606,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 args.query_bridge_full_residual_overlay_when_connected
             ),
             "query_endpoint_anchor_before_bridge": bool(args.query_endpoint_anchor_before_bridge),
-            "query_bridge_partition_neighbor_candidates": bool(args.query_bridge_partition_neighbor_candidates),
-            "query_bridge_direct_append_partition_immediate": bool(
-                args.query_bridge_direct_append_partition_immediate
-            ),
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
             "connector_rrt_step_size": float(args.connector_rrt_step_size),
             "connector_rrt_goal_bias": float(args.connector_rrt_goal_bias),

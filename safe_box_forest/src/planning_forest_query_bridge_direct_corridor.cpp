@@ -63,20 +63,11 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         adaptive_partition_query_enabled_ &&
         adaptive_partition_;
     const bool use_partition_neighbor_candidates =
-        use_partition_cover_index &&
-        direct_corridor_options.partition_neighbor_candidates;
+        use_partition_cover_index;
     const bool immediate_partition_append =
-        use_partition_cover_index &&
-        direct_corridor_options.immediate_partition_append;
-    const int partition_append_batch_size = immediate_partition_append
-        ? direct_corridor_options.partition_append_batch_size
-        : 0;
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_partition_neighbor_candidates_enabled",
-        use_partition_neighbor_candidates ? 1.0 : 0.0);
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_immediate_partition_append_enabled",
-        immediate_partition_append ? 1.0 : 0.0);
+        use_partition_cover_index;
+    const int partition_append_batch_size =
+        std::max(1, direct_corridor_options.partition_append_batch_size);
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_partition_append_batch_size",
         static_cast<double>(partition_append_batch_size));

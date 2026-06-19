@@ -52,7 +52,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
@@ -65,7 +64,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
-    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
@@ -446,10 +444,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_adaptive_ffb_depths=str(args.query_bridge_adaptive_ffb_depths),
         query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
         query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
-        query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
-        query_bridge_direct_append_partition_immediate=bool(
-            args.query_bridge_direct_append_partition_immediate
-        ),
         query_bridge_force_indices=str(args.query_bridge_force_indices),
         query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
         query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
@@ -1567,16 +1561,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS)
-    parser.add_argument(
-        "--query-bridge-partition-neighbor-candidates",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
-    )
-    parser.add_argument(
-        "--query-bridge-direct-append-partition-immediate",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
-    )
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument("--query-bridge-to-main-island", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--query-bridge-to-main-direct-segment-max-length", type=float, default=0.0)

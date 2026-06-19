@@ -33,10 +33,8 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
-    DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
@@ -673,8 +671,6 @@ class RBFLeafRRTOptions:
     query_bridge_full_residual_overlay_when_connected: bool = (
         DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
     )
-    query_bridge_partition_neighbor_candidates: bool = DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES
-    query_bridge_direct_append_partition_immediate: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE
     query_bridge_direct_partition_append_batch_size: int = (
         DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE
     )
@@ -2074,12 +2070,6 @@ def bridge_all_queries(
             "1"
             if bool(getattr(options, "segment_edge_obb_metadata_require_cover", False))
             else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES"] = (
-            "1" if bool(getattr(options, "query_bridge_partition_neighbor_candidates", False)) else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE"] = (
-            "1" if bool(getattr(options, "query_bridge_direct_append_partition_immediate", False)) else "0"
         )
         env_updates["RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE"] = str(
             int(getattr(options, "query_bridge_direct_partition_append_batch_size", 32))
