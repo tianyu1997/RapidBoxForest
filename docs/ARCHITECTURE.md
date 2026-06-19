@@ -153,6 +153,15 @@ python/sbf/                        Python facade and scene helpers
 tests/                             C++ and Python coverage
 ```
 
+Python binding ownership:
+
+```text
+python/bindings.cpp                pybind11 module registration only
+python/binding_utils.h             Python/Eigen/interval/oracle conversion helpers
+python/ompl_binding_utils.h        OMPL baseline sampler, seeding, C-space,
+                                   planner, and path extraction helpers
+```
+
 Current source-file boundaries:
 
 ```text
