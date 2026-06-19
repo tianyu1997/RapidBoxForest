@@ -1,54 +1,12 @@
 #include <SBF/leaf_sweep_grower.h>
 
+#include "leaf_sweep_grower_internal.h"
+
 #include <chrono>
 #include <string>
 #include <utility>
 
 namespace rbf {
-namespace {
-
-using Clock = std::chrono::steady_clock;
-
-bool valid_oracle_node(OracleNodeId node) {
-	return node >= 0;
-}
-
-void add_counter(LeafSweepResult& result,
-				 StageContext& context,
-				 const std::string& key,
-				 double value = 1.0) {
-	context.diagnostics().add_counter(key, value);
-	result.diagnostics[key] += value;
-}
-
-void record_timing(LeafSweepResult& result,
-				   StageContext& context,
-				   const std::string& key,
-				   double milliseconds) {
-	context.diagnostics().record_timing(key, milliseconds);
-	result.diagnostics[key + ".total_ms"] += milliseconds;
-	result.diagnostics[key + ".count"] += 1.0;
-}
-
-bool intervals_overlap_domain(const std::vector<Interval>& intervals,
-							  const std::vector<Interval>& domain,
-							  double tolerance = 0.0) {
-	if (domain.empty()) {
-		return true;
-	}
-	if (intervals.size() != domain.size()) {
-		return false;
-	}
-	for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
-		if (intervals[dim].hi < domain[dim].lo - tolerance ||
-			intervals[dim].lo > domain[dim].hi + tolerance) {
-			return false;
-		}
-	}
-	return true;
-}
-
-}  // namespace
 
 std::vector<LeafSweepGrower::PendingNode> LeafSweepGrower::materialize_start_frontier(
 	int start_depth,

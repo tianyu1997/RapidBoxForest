@@ -1,5 +1,7 @@
 #include <SBF/leaf_sweep_grower.h>
 
+#include "leaf_sweep_grower_internal.h"
+
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
@@ -8,13 +10,6 @@
 namespace rbf {
 namespace {
 
-void set_value(LeafSweepResult& result,
-			   StageContext& context,
-			   const std::string& key,
-			   double value) {
-	context.diagnostics().set_value(key, value);
-	result.diagnostics[key] = value;
-}
 
 Obstacle aggregate_obstacles(const std::vector<Obstacle>& obstacles) {
 	if (obstacles.empty()) {

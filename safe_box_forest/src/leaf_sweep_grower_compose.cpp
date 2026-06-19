@@ -1,5 +1,7 @@
 #include <SBF/leaf_sweep_grower.h>
 
+#include "leaf_sweep_grower_internal.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -9,65 +11,6 @@
 #include <unordered_set>
 
 namespace rbf {
-namespace {
-
-bool valid_oracle_node(OracleNodeId node) {
-	return node >= 0;
-}
-
-void add_counter(LeafSweepResult& result,
-				 StageContext& context,
-				 const std::string& key,
-				 double value = 1.0) {
-	context.diagnostics().add_counter(key, value);
-	result.diagnostics[key] += value;
-}
-
-Eigen::VectorXd center_of_intervals(const std::vector<Interval>& intervals) {
-	Eigen::VectorXd center(static_cast<int>(intervals.size()));
-	for (int dim = 0; dim < static_cast<int>(intervals.size()); ++dim) {
-		center[dim] = intervals[static_cast<std::size_t>(dim)].center();
-	}
-	return center;
-}
-
-BoxNode make_box_from_intervals(const std::vector<Interval>& intervals,
-								OracleNodeId node,
-								int id,
-								BoxSafetyStatus status,
-								bool strict_audit_required = false) {
-	BoxNode box;
-	box.id = id;
-	box.joint_intervals = intervals;
-	box.seed_config = center_of_intervals(box.joint_intervals);
-	box.tree_id = node;
-	box.parent_box_id = -1;
-	box.root_id = id;
-	box.safety_status = status;
-	box.strict_audit_required = strict_audit_required;
-	box.compute_volume();
-	return box;
-}
-
-bool clip_intervals_to_domain(std::vector<Interval>& intervals,
-							  const std::vector<Interval>& domain) {
-	if (domain.empty()) {
-		return !intervals.empty();
-	}
-	if (intervals.size() != domain.size()) {
-		return false;
-	}
-	for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
-		intervals[dim].lo = std::max(intervals[dim].lo, domain[dim].lo);
-		intervals[dim].hi = std::min(intervals[dim].hi, domain[dim].hi);
-		if (intervals[dim].lo > intervals[dim].hi) {
-			return false;
-		}
-	}
-	return true;
-}
-
-}  // namespace
 
 void LeafSweepGrower::compose_final_sets(const std::vector<GroupWork>& groups,
 										 int start_depth,

@@ -143,6 +143,8 @@ src/leaf_sweep_grower_compose.cpp  final leaf-sweep free/collision set
                                    composition across obstacle groups
 src/leaf_sweep_grower_frontier.cpp start-frontier materialization for leaf
                                    sweep, including virtual topology splitting
+src/leaf_sweep_grower_internal.h   leaf-sweep internal diagnostics, interval,
+                                   box creation, and scoped oracle helpers
 src/adaptive_grid_partition.cpp    partition-native coverage/query data structure
 src/adaptive_grid_partition_geometry.cpp
                                    pure geometry, distance, interval, and grid
