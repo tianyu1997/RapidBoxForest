@@ -46,12 +46,42 @@ def csv_list(raw: str) -> list[str]:
     return [item.strip() for item in str(raw).split(",") if item.strip()]
 
 
+def csv_strings(raw: str) -> list[str]:
+    return csv_list(raw)
+
+
 def csv_ints(raw: str) -> list[int]:
     return [int(item) for item in csv_list(raw)]
 
 
+def csv_numeric_ints(raw: str) -> list[int]:
+    return [int(float(item)) for item in csv_list(raw)]
+
+
 def csv_floats(raw: str) -> list[float]:
     return [float(item) for item in csv_list(raw)]
+
+
+def csv_bools(raw: str) -> list[bool]:
+    values: list[bool] = []
+    for item in csv_list(raw):
+        lowered = item.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            values.append(True)
+        elif lowered in {"0", "false", "no", "off"}:
+            values.append(False)
+        else:
+            raise ValueError(f"invalid boolean grid value: {item!r}")
+    return values
+
+
+def read_csv_rows(path: Path) -> list[dict[str, Any]]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return list(csv.DictReader(handle))
+
+
+def load_json_file(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def as_jsonable(value: Any) -> Any:

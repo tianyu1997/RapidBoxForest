@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
 import math
 import multiprocessing as mp
 import os
@@ -20,7 +18,14 @@ if str(REPO_ROOT) not in sys.path:
 from experiments.common.experiment_io import (
     DEFAULT_OUTPUT_ROOT,
     configure_thread_environment,
+    csv_bools,
+    csv_floats,
+    csv_list as csv_items,
+    csv_numeric_ints as csv_ints,
+    csv_strings,
     environment_metadata,
+    load_json_file,
+    read_csv_rows,
     run_id,
     write_csv as write_csv_rows,
     write_json,
@@ -74,44 +79,6 @@ METHOD_LABELS = {
     "rrtconnect": "RRTConnect",
     "bitstar": "BIT*",
 }
-
-
-def csv_items(raw: str) -> list[str]:
-    return [item.strip() for item in str(raw).split(",") if item.strip()]
-
-
-def csv_floats(raw: str) -> list[float]:
-    return [float(item) for item in csv_items(raw)]
-
-
-def csv_ints(raw: str) -> list[int]:
-    return [int(float(item)) for item in csv_items(raw)]
-
-
-def csv_strings(raw: str) -> list[str]:
-    return [item.strip() for item in str(raw).split(",") if item.strip()]
-
-
-def csv_bools(raw: str) -> list[bool]:
-    values = []
-    for item in csv_items(raw):
-        lowered = item.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            values.append(True)
-        elif lowered in {"0", "false", "no", "off"}:
-            values.append(False)
-        else:
-            raise ValueError(f"invalid boolean grid value: {item!r}")
-    return values
-
-
-def read_csv_rows(path: Path) -> list[dict[str, Any]]:
-    with path.open(newline="", encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
-
-
-def load_json_file(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def exp04_registered_dir(args: argparse.Namespace) -> Path:
