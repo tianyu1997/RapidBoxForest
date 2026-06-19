@@ -8,7 +8,6 @@ struct QueryBridgeEdgeRuntimeOptions {
     bool scene_reusable_edges = false;
     bool direct_segment_after_rrt = false;
     bool fast_direct_segment_after_rrt = false;
-    bool fast_direct_shortcut = true;
     int fast_direct_random_shortcut_iters = 0;
     double direct_segment_after_rrt_min_length = 0.0;
 };

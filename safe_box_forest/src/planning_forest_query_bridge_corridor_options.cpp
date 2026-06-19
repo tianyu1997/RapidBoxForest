@@ -15,8 +15,6 @@ QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options() {
         detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT", 0) != 0;
     options.fast_direct_segment_after_rrt =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT", 0) != 0;
-    options.fast_direct_shortcut =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_FAST_DIRECT_SHORTCUT", 1) != 0;
     options.fast_direct_random_shortcut_iters =
         std::max(0,
                  detail::env_int_or_default(

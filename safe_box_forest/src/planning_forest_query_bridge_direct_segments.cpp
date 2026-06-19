@@ -213,7 +213,6 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
     const RRTConnectConfig& bridge_rrt,
     StageContext& context,
     bool enabled,
-    bool shortcut_enabled,
     int random_shortcut_iters,
     double min_length,
     int shortcut_query_index,
@@ -232,7 +231,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
 
     std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
     candidate_paths.push_back(waypoint_path);
-    if (shortcut_enabled && waypoint_path.size() > 2U) {
+    if (waypoint_path.size() > 2U) {
         const double before_length = path_length(waypoint_path);
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
         std::vector<Eigen::VectorXd> shortened =

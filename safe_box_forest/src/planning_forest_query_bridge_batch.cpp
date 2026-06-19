@@ -474,7 +474,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 retry_options,
                 bridge_acceptance,
                 fast_direct_segment_after_rrt,
-                edge_options.fast_direct_shortcut,
                 edge_options.fast_direct_random_shortcut_iters,
                 fast_direct_segment_after_rrt_min_length,
                 [&]() {
@@ -613,7 +612,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             retry_options,
             bridge_acceptance,
             fast_direct_segment_after_rrt,
-            edge_options.fast_direct_shortcut,
             edge_options.fast_direct_random_shortcut_iters,
             fast_direct_segment_after_rrt_min_length,
             [&]() { return query_bridge_elapsed_ms_since(task_t0); });

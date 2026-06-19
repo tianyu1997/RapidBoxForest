@@ -643,7 +643,6 @@ private:
 		const RRTConnectConfig& bridge_rrt,
 		StageContext& context,
 		bool enabled,
-		bool shortcut_enabled,
 		int random_shortcut_iters,
 		double min_length,
 		int shortcut_query_index,
@@ -785,7 +784,6 @@ private:
 		const QueryBridgeRetryOptions& retry_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		bool fast_direct_segment_after_rrt,
-		bool fast_direct_shortcut,
 		int fast_direct_random_shortcut_iters,
 		double fast_direct_segment_after_rrt_min_length,
 		const std::function<double()>& task_elapsed_ms);
