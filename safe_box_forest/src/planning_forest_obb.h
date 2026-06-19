@@ -83,6 +83,8 @@ struct ObbValidationOptions {
     double clearance_retry_timeout_ms = -1.0;
 };
 
+ObbValidationOptions obb_validation_options_from_config(const AdaptiveLeafSweepConfig& config);
+
 bool validate_obb_zonotope_portal(const Robot& robot,
                                   const Scene& scene,
                                   const std::vector<Interval>& domain,
