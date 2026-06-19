@@ -19,9 +19,6 @@ struct QueryBridgeDirectFfbTask {
 
 struct QueryBridgeDirectFfbTaskBuildOptions {
     int max_transition_hint = 0;
-    int max_group_seeds = 3;
-    bool grouped_direct_seeds = false;
-    bool center_out_direct_tasks = false;
 };
 
 struct QueryBridgeDirectFfbTaskBuildResult {
@@ -29,14 +26,8 @@ struct QueryBridgeDirectFfbTaskBuildResult {
     int uncovered_gap_groups = 0;
 };
 
-struct QueryBridgeDirectFfbTaskRuntimeOptions {
-    QueryBridgeDirectFfbTaskBuildOptions build;
-    bool coverage_order_direct_tasks = true;
-};
-
 struct QueryBridgeDirectFfbTaskPlan {
     std::vector<QueryBridgeDirectFfbTask> tasks;
-    QueryBridgeDirectFfbTaskRuntimeOptions runtime;
     int uncovered_gap_groups = 0;
 };
 
@@ -55,9 +46,6 @@ QueryBridgeDirectFfbTaskBuildResult query_bridge_build_direct_ffb_tasks(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<bool>& covered,
     const QueryBridgeDirectFfbTaskBuildOptions& options);
-
-QueryBridgeDirectFfbTaskRuntimeOptions query_bridge_direct_ffb_task_runtime_options(
-    std::size_t sample_count);
 
 QueryBridgeDirectFfbTaskPlan query_bridge_prepare_direct_ffb_task_plan(
     StageContext& context,

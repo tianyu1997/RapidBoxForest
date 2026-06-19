@@ -1,7 +1,6 @@
 #include "planning_forest_query_bridge_corridor_options.h"
 
 #include "env_config.h"
-#include "planning_forest_query_bridge_corridor_tasks.h"
 
 #include <algorithm>
 
@@ -72,25 +71,6 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
         detail::env_int_or_default("RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
                                    0) != 0;
     return options;
-}
-
-QueryBridgeDirectFfbTaskRuntimeOptions query_bridge_direct_ffb_task_runtime_options(
-    std::size_t sample_count) {
-    const int max_transition_hint = std::max(0, static_cast<int>(sample_count) - 2);
-    const bool grouped_direct_seeds =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_GROUPED_SEEDS", 0) != 0;
-    const int max_group_seeds =
-        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_MAX_SEEDS_PER_GAP", 3));
-    const bool coverage_order_direct_tasks =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_COVERAGE_ORDER_DIRECT_TASKS", 1) != 0;
-    const bool center_out_direct_tasks =
-        !coverage_order_direct_tasks &&
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_CENTER_OUT_DIRECT_TASKS", 1) != 0;
-    return {{max_transition_hint,
-             max_group_seeds,
-             grouped_direct_seeds,
-             center_out_direct_tasks},
-            coverage_order_direct_tasks};
 }
 
 }  // namespace rbf
