@@ -174,16 +174,14 @@ void query_bridge_run_residual_segment_gap_pass(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<std::vector<int>>& sample_layers,
     const std::vector<int>& final_bad,
-    bool group_residual_gaps,
     const std::function<bool(int,
                              int,
                              const Eigen::VectorXd&,
                              const Eigen::VectorXd&,
                              int)>& insert_segment) {
     const std::vector<std::pair<int, int>> gap_groups =
-        query_bridge_group_residual_gap_transitions(final_bad,
-                                                    sample_layers.size(),
-                                                    group_residual_gaps);
+        query_bridge_residual_gap_transitions(final_bad,
+                                              sample_layers.size());
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_segment_gap_groups",
         static_cast<double>(gap_groups.size()));
@@ -212,21 +210,11 @@ void query_bridge_run_residual_segment_gap_pass(
         const int rhs_index = rhs_layer.front();
         const Eigen::VectorXd& lhs_point = samples[static_cast<std::size_t>(lhs_sample)];
         const Eigen::VectorXd& rhs_point = samples[static_cast<std::size_t>(rhs_sample)];
-        const bool inserted = insert_segment(lhs_index,
-                                             rhs_index,
-                                             lhs_point,
-                                             rhs_point,
-                                             rhs_sample - lhs_sample);
-        if (!inserted) {
-            if (group_residual_gaps && gap_group.first < gap_group.second) {
-                const int mid = (gap_group.first + gap_group.second) / 2;
-                pending_gap_groups.emplace_back(mid + 1, gap_group.second);
-                pending_gap_groups.emplace_back(gap_group.first, mid);
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_segment_group_splits");
-            }
-            continue;
-        }
+        (void)insert_segment(lhs_index,
+                             rhs_index,
+                             lhs_point,
+                             rhs_point,
+                             rhs_sample - lhs_sample);
     }
 }
 
@@ -245,23 +233,16 @@ std::vector<double> query_bridge_center_ordered_fractions(int subdivisions) {
     return fractions;
 }
 
-std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
+std::vector<std::pair<int, int>> query_bridge_residual_gap_transitions(
     const std::vector<int>& final_bad,
-    std::size_t layer_count,
-    bool group_residual_gaps) {
+    std::size_t layer_count) {
     std::vector<std::pair<int, int>> gap_groups;
     gap_groups.reserve(final_bad.size());
     for (int transition : final_bad) {
         if (transition < 0 || transition + 1 >= static_cast<int>(layer_count)) {
             continue;
         }
-        if (!group_residual_gaps ||
-            gap_groups.empty() ||
-            transition > gap_groups.back().second + 1) {
-            gap_groups.emplace_back(transition, transition);
-        } else {
-            gap_groups.back().second = transition;
-        }
+        gap_groups.emplace_back(transition, transition);
     }
     return gap_groups;
 }

@@ -50,7 +50,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
-    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS,
     DEFAULT_RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS,
@@ -620,7 +619,6 @@ def effective_rbf_profile(args: argparse.Namespace,
         args.query_bridge_to_main_direct_segment_max_length
     )
     profile["query_bridge"]["failure_fallback_to_main"] = bool(args.query_bridge_failure_fallback_to_main)
-    profile["query_bridge"]["group_residual_gaps"] = bool(args.query_bridge_group_residual_gaps)
     profile["query_bridge"]["endpoint_anchor_before_bridge"] = bool(args.query_endpoint_anchor_before_bridge)
     profile["hipac"] = {
         "improved_leaf_sweep": bool(args.hipac_improved_leaf_sweep),
@@ -772,7 +770,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
-    parser.add_argument("--query-bridge-group-residual-gaps", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS)
     parser.add_argument(
         "--query-bridge-partition-neighbor-candidates",
         action=argparse.BooleanOptionalAction,
@@ -1479,7 +1476,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_accept_path_ratio=float(args.query_bridge_accept_path_ratio),
             query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
-            query_bridge_group_residual_gaps=bool(args.query_bridge_group_residual_gaps),
             query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
             query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
             query_bridge_direct_append_partition_immediate=bool(
@@ -1650,7 +1646,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_reuse_scope": "scene_seed_local",
             "query_bridge_segment_only_indices": str(args.query_bridge_segment_only_indices),
             "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
-            "query_bridge_group_residual_gaps": bool(args.query_bridge_group_residual_gaps),
             "query_bridge_full_residual_overlay_when_connected": bool(
                 args.query_bridge_full_residual_overlay_when_connected
             ),

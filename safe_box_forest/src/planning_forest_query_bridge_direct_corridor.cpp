@@ -749,7 +749,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             samples,
             sample_layers,
             final_bad,
-            direct_corridor_options.group_residual_gaps,
             insert_residual_segment);
     }
     const double direct_corridor_elapsed_ms =

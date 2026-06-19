@@ -36,7 +36,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_APPEND_PARTITION_IMMEDIATE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
-    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION,
     DEFAULT_RBF_QUERY_BRIDGE_PARTITION_NEIGHBOR_CANDIDATES,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
@@ -675,7 +674,6 @@ class RBFLeafRRTOptions:
     query_bridge_adaptive_repair_target_segment_fraction: float = (
         DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_TARGET_SEGMENT_FRACTION
     )
-    query_bridge_group_residual_gaps: bool = DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS
     query_bridge_full_residual_overlay_when_connected: bool = (
         DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
     )
@@ -2069,9 +2067,6 @@ def bridge_all_queries(
             "1"
             if bool(getattr(options, "query_bridge_scene_reusable_edges", False))
             else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS"] = (
-            "1" if bool(getattr(options, "query_bridge_group_residual_gaps", False)) else "0"
         )
         env_updates["RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED"] = (
             "1"

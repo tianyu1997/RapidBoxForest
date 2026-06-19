@@ -59,7 +59,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
     DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS,
-    DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
@@ -447,7 +446,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_adaptive_ffb_depths=str(args.query_bridge_adaptive_ffb_depths),
         query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
         query_bridge_repair_subdivisions=int(args.query_bridge_repair_subdivisions),
-        query_bridge_group_residual_gaps=bool(args.query_bridge_group_residual_gaps),
         query_bridge_partition_neighbor_candidates=bool(args.query_bridge_partition_neighbor_candidates),
         query_bridge_direct_append_partition_immediate=bool(
             args.query_bridge_direct_append_partition_immediate
@@ -1569,11 +1567,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-adaptive-ffb-depths", default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FFB_DEPTHS)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_REPAIR_SUBDIVISIONS)
-    parser.add_argument(
-        "--query-bridge-group-residual-gaps",
-        action=argparse.BooleanOptionalAction,
-        default=DEFAULT_RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS,
-    )
     parser.add_argument(
         "--query-bridge-partition-neighbor-candidates",
         action=argparse.BooleanOptionalAction,

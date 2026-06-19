@@ -66,7 +66,6 @@ void query_bridge_run_residual_segment_gap_pass(
     const std::vector<Eigen::VectorXd>& samples,
     const std::vector<std::vector<int>>& sample_layers,
     const std::vector<int>& final_bad,
-    bool group_residual_gaps,
     const std::function<bool(int,
                              int,
                              const Eigen::VectorXd&,
@@ -97,9 +96,8 @@ QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_
                                                                       double audit_step,
                                                                       double sample_step);
 
-std::vector<std::pair<int, int>> query_bridge_group_residual_gap_transitions(
+std::vector<std::pair<int, int>> query_bridge_residual_gap_transitions(
     const std::vector<int>& final_bad,
-    std::size_t layer_count,
-    bool group_residual_gaps);
+    std::size_t layer_count);
 
 }  // namespace rbf
