@@ -73,7 +73,6 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const QueryBridgeEdgeRuntimeOptions edge_options = query_bridge_edge_runtime_options();
     const bool direct_start_goal_segment =
         edge_options.direct_segment_after_rrt &&
-        edge_options.direct_start_goal_segment &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
     context.diagnostics().set_value("query_bridge.direct_start_goal_segment",

@@ -95,11 +95,7 @@ void RBFPlanningForest::run_query_bridge_direct_start_goal_segments(
     std::vector<QueryBridgeSearchTask>& tasks,
     std::vector<int>& added_by_query,
     StageContext& context,
-    bool scene_reusable_edges,
-    bool enabled) {
-    if (!enabled) {
-        return;
-    }
+    bool scene_reusable_edges) {
     for (auto& task : tasks) {
         if (task.direct_start_goal_satisfied) {
             continue;
