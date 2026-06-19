@@ -175,7 +175,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     const QueryBridgeAcceptanceThresholds& bridge_acceptance,
     bool fast_direct_segment_after_rrt,
     int fast_direct_random_shortcut_iters,
-    double fast_direct_segment_after_rrt_min_length,
     const std::function<double()>& task_elapsed_ms) {
     context.diagnostics().set_value(
         query_bridge_task_key(task.index, "waypoint_length"),
@@ -228,7 +227,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
             context,
             fast_direct_segment_after_rrt,
             fast_direct_random_shortcut_iters,
-            fast_direct_segment_after_rrt_min_length,
             task.query_index,
             query_bridge_edge_query_index(scene_reusable_edges, task),
             static_cast<int>(task.index));

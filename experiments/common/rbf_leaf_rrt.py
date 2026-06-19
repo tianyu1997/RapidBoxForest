@@ -46,7 +46,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
@@ -300,7 +299,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.oracle_envelope_collision_queries",
         "query_bridge.oracle_envelope_gjk_tests",
         "query_bridge.direct_segment_after_rrt",
-        "query_bridge.direct_segment_after_rrt_min_length",
         "query_bridge.direct_segment_after_rrt_edges",
         "query_bridge.direct_segment_after_rrt_audit_rejects",
         "query_bridge.direct_segment_after_rrt_add_fail",
@@ -650,9 +648,6 @@ class RBFLeafRRTOptions:
         DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE
     )
     query_bridge_direct_segment_after_rrt: bool = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT
-    query_bridge_direct_segment_after_rrt_min_length: float = (
-        DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH
-    )
     query_bridge_fast_direct_segment_after_rrt: bool = False
     query_bridge_fast_direct_random_shortcut_iters: int = 0
     query_endpoint_point_anchor: bool = False
@@ -2001,9 +1996,6 @@ def bridge_all_queries(
             if bool(getattr(options, "query_bridge_direct_segment_after_rrt", False))
             else "0"
         )
-        env_updates["RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH"] = str(
-            float(getattr(options, "query_bridge_direct_segment_after_rrt_min_length", 0.0))
-        )
         env_updates["RBF_QUERY_BRIDGE_FAST_DIRECT_SEGMENT_AFTER_RRT"] = (
             "1"
             if bool(getattr(options, "query_bridge_fast_direct_segment_after_rrt", False))
@@ -2611,9 +2603,6 @@ def run_leaf_rrt(
             options.query_bridge_full_residual_overlay_when_connected
         ),
         "query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
-        "query_bridge_direct_segment_after_rrt_min_length": float(
-            options.query_bridge_direct_segment_after_rrt_min_length
-        ),
         "query_bridge_fast_direct_segment_after_rrt": bool(
             getattr(options, "query_bridge_fast_direct_segment_after_rrt", False)
         ),

@@ -629,7 +629,6 @@ private:
 		const std::vector<std::vector<Eigen::VectorXd>>& candidate_paths,
 		const RRTConnectConfig& bridge_rrt,
 		StageContext& context,
-		double min_length,
 		int query_index,
 		int batch_task_index = -1);
 	int try_add_query_fast_direct_segment_after_rrt_path(
@@ -640,7 +639,6 @@ private:
 		StageContext& context,
 		bool enabled,
 		int random_shortcut_iters,
-		double min_length,
 		int shortcut_query_index,
 		int edge_query_index,
 		int batch_task_index = -1);
@@ -777,7 +775,6 @@ private:
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		bool fast_direct_segment_after_rrt,
 		int fast_direct_random_shortcut_iters,
-		double fast_direct_segment_after_rrt_min_length,
 		const std::function<double()>& task_elapsed_ms);
 	int try_promote_query_repair_to_hipac(
 		const Eigen::Ref<const Eigen::VectorXd>& start,

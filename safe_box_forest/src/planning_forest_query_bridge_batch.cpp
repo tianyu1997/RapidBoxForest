@@ -223,14 +223,9 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         edge_options.fast_direct_segment_after_rrt &&
         config_.connector.segment_edges_enabled &&
         config_.connector.rrt_segment_edges;
-    const double fast_direct_segment_after_rrt_min_length =
-        edge_options.direct_segment_after_rrt_min_length;
     batch_context.diagnostics().set_value(
         "query_bridge.direct_segment_after_rrt",
         edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.direct_segment_after_rrt_min_length",
-        edge_options.direct_segment_after_rrt_min_length);
     batch_context.diagnostics().set_value(
         "query_bridge.direct_start_goal_segment",
         direct_start_goal_segment ? 1.0 : 0.0);
@@ -412,7 +407,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 bridge_acceptance,
                 fast_direct_segment_after_rrt,
                 edge_options.fast_direct_random_shortcut_iters,
-                fast_direct_segment_after_rrt_min_length,
                 [&]() {
                     return query_bridge_elapsed_ms_since(batch_t0) -
                            prepared[task_offset].task_start_ms;
@@ -535,7 +529,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             bridge_acceptance,
             fast_direct_segment_after_rrt,
             edge_options.fast_direct_random_shortcut_iters,
-            fast_direct_segment_after_rrt_min_length,
             [&]() { return query_bridge_elapsed_ms_since(task_t0); });
     }
 

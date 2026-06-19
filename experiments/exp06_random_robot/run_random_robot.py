@@ -56,7 +56,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
@@ -336,7 +335,6 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "connector_rrt_local_sampling_radius": "--connector-rrt-local-sampling-radius",
         "query_bridge_direct_sample_step": "--query-bridge-direct-sample-step",
         "query_bridge_direct_segment_after_rrt": "--query-bridge-direct-segment-after-rrt",
-        "query_bridge_direct_segment_after_rrt_min_length": "--query-bridge-direct-segment-after-rrt-min-length",
         "query_bridge_fast_direct_segment_after_rrt": "--query-bridge-fast-direct-segment-after-rrt",
         "query_bridge_fast_direct_random_shortcut_iters": "--query-bridge-fast-direct-random-shortcut-iters",
         "query_bridge_force_selected": "--query-bridge-force-selected",
@@ -579,9 +577,6 @@ def effective_rbf_profile(args: argparse.Namespace,
         args.query_bridge_parallel_rrt_early_stop_additive
     )
     profile["query_bridge"]["direct_segment_after_rrt"] = bool(args.query_bridge_direct_segment_after_rrt)
-    profile["query_bridge"]["direct_segment_after_rrt_min_length"] = float(
-        args.query_bridge_direct_segment_after_rrt_min_length
-    )
     profile["query_bridge"]["fast_direct_segment_after_rrt"] = bool(
         args.query_bridge_fast_direct_segment_after_rrt
     )
@@ -814,11 +809,6 @@ def parse_args() -> argparse.Namespace:
         "--query-bridge-direct-segment-after-rrt",
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
-    )
-    parser.add_argument(
-        "--query-bridge-direct-segment-after-rrt-min-length",
-        type=float,
-        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     )
     parser.add_argument(
         "--query-bridge-fast-direct-segment-after-rrt",
@@ -1473,9 +1463,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 args.query_bridge_parallel_rrt_early_stop_additive
             ),
             query_bridge_direct_segment_after_rrt=bool(args.query_bridge_direct_segment_after_rrt),
-            query_bridge_direct_segment_after_rrt_min_length=float(
-                args.query_bridge_direct_segment_after_rrt_min_length
-            ),
             query_bridge_fast_direct_segment_after_rrt=bool(
                 args.query_bridge_fast_direct_segment_after_rrt
             ),
@@ -1626,9 +1613,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
                 args.query_bridge_parallel_rrt_early_stop_additive
             ),
             "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
-            "query_bridge_direct_segment_after_rrt_min_length": float(
-                args.query_bridge_direct_segment_after_rrt_min_length
-            ),
             "query_bridge_fast_direct_segment_after_rrt": bool(
                 args.query_bridge_fast_direct_segment_after_rrt
             ),
@@ -2450,10 +2434,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     1.0 if bool(row.get("query_bridge_direct_segment_after_rrt", False)) else 0.0
                     for row in items
                 ),
-                "query_bridge_direct_segment_after_rrt_min_length": median(
-                    row.get("query_bridge_direct_segment_after_rrt_min_length", math.nan)
-                    for row in items
-                ),
                 "query_bridge_fast_direct_segment_after_rrt": median(
                     1.0 if bool(row.get("query_bridge_fast_direct_segment_after_rrt", False)) else 0.0
                     for row in items
@@ -2560,7 +2540,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_batch_tasks_attempted_median": median(row.get("diag_query_bridge_batch_tasks_attempted", 0.0) for row in items),
                 "diag_query_bridge_batch_tasks_no_path_median": median(row.get("diag_query_bridge_batch_tasks_no_path", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_median": median(row.get("diag_query_bridge_direct_segment_after_rrt", 0.0) for row in items),
-                "diag_query_bridge_direct_segment_after_rrt_min_length_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_min_length", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_edges_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_edges", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_audit_rejects_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_audit_rejects", 0.0) for row in items),
                 "diag_query_bridge_direct_segment_after_rrt_add_fail_median": median(row.get("diag_query_bridge_direct_segment_after_rrt_add_fail", 0.0) for row in items),
@@ -2691,7 +2670,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_parallel_rrt_early_stop_ratio",
         "query_bridge_parallel_rrt_early_stop_additive",
         "query_bridge_direct_segment_after_rrt",
-        "query_bridge_direct_segment_after_rrt_min_length",
         "query_bridge_fast_direct_segment_after_rrt",
         "query_bridge_fast_direct_random_shortcut_iters",
         "query_bridge_hybridize_attempt_paths",
@@ -2747,7 +2725,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_batch_tasks_attempted_median",
         "diag_query_bridge_batch_tasks_no_path_median",
         "diag_query_bridge_direct_segment_after_rrt_median",
-        "diag_query_bridge_direct_segment_after_rrt_min_length_median",
         "diag_query_bridge_direct_segment_after_rrt_edges_median",
         "diag_query_bridge_direct_segment_after_rrt_audit_rejects_median",
         "diag_query_bridge_direct_segment_after_rrt_add_fail_median",

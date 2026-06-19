@@ -74,7 +74,6 @@ DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES = 1
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO = 1.75
 DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_ADDITIVE = 0.75
 DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT = False
-DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH = 0.0
 DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS = 0
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR = True
 DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP = 0.08
@@ -239,7 +238,6 @@ _EXP06_REGISTERED_RBF_BASE_SETTINGS: dict[str, Any] = {
     "query_bridge_no_path_retry_attempts": 32,
     "query_bridge_no_path_retry_stop_on_first_success": True,
     "query_bridge_direct_segment_after_rrt": True,
-    "query_bridge_direct_segment_after_rrt_min_length": 0.0,
     "query_bridge_fast_direct_segment_after_rrt": True,
     "query_bridge_fast_direct_random_shortcut_iters": 0,
     "query_bridge_direct_max_length": 15.0,
@@ -370,7 +368,6 @@ EXP06_REGISTERED_RBF_SETTINGS: dict[tuple[str, str], dict[str, Any]] = {
         "query_bridge_edge_cost_penalty": 5.0,
         "query_bridge_direct_sample_step": 0.08,
         "query_bridge_direct_segment_after_rrt": True,
-        "query_bridge_direct_segment_after_rrt_min_length": 0.0,
         "query_bridge_fast_direct_segment_after_rrt": True,
         "query_bridge_fast_direct_random_shortcut_iters": 128,
         "query_bridge_to_main_island": False,

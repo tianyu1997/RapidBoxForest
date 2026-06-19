@@ -19,10 +19,6 @@ QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options() {
                  detail::env_int_or_default(
                      "RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS",
                      0));
-    options.direct_segment_after_rrt_min_length = std::max(
-        0.0,
-        detail::env_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH",
-                                      0.0));
     return options;
 }
 

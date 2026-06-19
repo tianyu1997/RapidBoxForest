@@ -52,7 +52,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED,
@@ -451,7 +450,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
         query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
         query_bridge_direct_segment_after_rrt=bool(args.query_bridge_direct_segment_after_rrt),
-        query_bridge_direct_segment_after_rrt_min_length=float(args.query_bridge_direct_segment_after_rrt_min_length),
         query_bridge_fast_direct_segment_after_rrt=bool(args.query_bridge_fast_direct_segment_after_rrt),
         query_bridge_fast_direct_random_shortcut_iters=int(args.query_bridge_fast_direct_random_shortcut_iters),
         query_bridge_hybridize_attempt_paths=bool(args.query_bridge_hybridize_attempt_paths),
@@ -672,9 +670,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_rrt_fixed_timeout_ms": float(options.query_bridge_rrt_fixed_timeout_ms),
         "option.query_bridge_direct_max_length": float(options.query_bridge_direct_max_length),
         "option.query_bridge_direct_segment_after_rrt": bool(options.query_bridge_direct_segment_after_rrt),
-        "option.query_bridge_direct_segment_after_rrt_min_length": float(
-            options.query_bridge_direct_segment_after_rrt_min_length
-        ),
         "option.query_bridge_fast_direct_segment_after_rrt": bool(
             getattr(options, "query_bridge_fast_direct_segment_after_rrt", False)
         ),
@@ -1634,11 +1629,6 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
     )
     parser.add_argument(
-        "--query-bridge-direct-segment-after-rrt-min-length",
-        type=float,
-        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
-    )
-    parser.add_argument(
         "--query-bridge-fast-direct-segment-after-rrt",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -1897,9 +1887,6 @@ def main() -> int:
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
-            "query_bridge_direct_segment_after_rrt_min_length": float(
-                args.query_bridge_direct_segment_after_rrt_min_length
-            ),
             "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
             "query_bridge_fast_direct_random_shortcut_iters": int(args.query_bridge_fast_direct_random_shortcut_iters),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
@@ -1946,9 +1933,6 @@ def main() -> int:
             "query_bridge_hybrid_max_cross_checks": int(args.query_bridge_hybrid_max_cross_checks),
             "query_bridge_direct_max_length": float(args.query_bridge_direct_max_length),
             "query_bridge_direct_segment_after_rrt": bool(args.query_bridge_direct_segment_after_rrt),
-            "query_bridge_direct_segment_after_rrt_min_length": float(
-                args.query_bridge_direct_segment_after_rrt_min_length
-            ),
             "query_bridge_fast_direct_segment_after_rrt": bool(args.query_bridge_fast_direct_segment_after_rrt),
             "query_bridge_fast_direct_random_shortcut_iters": int(args.query_bridge_fast_direct_random_shortcut_iters),
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),

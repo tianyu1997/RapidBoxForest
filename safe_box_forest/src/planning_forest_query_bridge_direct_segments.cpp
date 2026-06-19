@@ -119,7 +119,6 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     const std::vector<std::vector<Eigen::VectorXd>>& candidate_paths,
     const RRTConnectConfig& bridge_rrt,
     StageContext& context,
-    double min_length,
     int query_index,
     int batch_task_index) {
     const auto add_task_counter = [&](const std::string& suffix, double value = 1.0) {
@@ -136,11 +135,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
                 value);
         }
     };
-    if (candidate_paths.empty() ||
-        !(path_length(candidate_paths.front()) >= min_length)) {
-        context.diagnostics().add_counter(
-            "query_bridge.fast_direct_segment_after_rrt_length_rejects");
-        add_task_counter("fast_direct_segment_after_rrt_length_rejects");
+    if (candidate_paths.empty()) {
         return 0;
     }
     if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
@@ -156,9 +151,6 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
          candidate_index < candidate_paths.size();
          ++candidate_index) {
         const auto& candidate_path = candidate_paths[candidate_index];
-        if (path_length(candidate_path) + 1e-12 < min_length) {
-            continue;
-        }
         context.diagnostics().add_counter(
             "query_bridge.fast_direct_segment_after_rrt_add_candidates");
         const PathAuditCheck candidate_audit =
@@ -214,7 +206,6 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
     StageContext& context,
     bool enabled,
     int random_shortcut_iters,
-    double min_length,
     int shortcut_query_index,
     int edge_query_index,
     int batch_task_index) {
@@ -316,7 +307,6 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
                                                            candidate_paths,
                                                            bridge_rrt,
                                                            context,
-                                                           min_length,
                                                            edge_query_index,
                                                            batch_task_index);
 }
