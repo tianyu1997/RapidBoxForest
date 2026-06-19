@@ -19,6 +19,22 @@ def configure_sbf_python_path() -> None:
         REPO_ROOT.parent,
         REPO_ROOT,
     ]
+    candidate_resolved = {candidate.resolve() for candidate in candidates}
+    for entry in list(sys.path):
+        if not entry:
+            continue
+        candidate = Path(entry)
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved not in candidate_resolved:
+            continue
+        if not (candidate / "sbf" / "__init__.py").exists():
+            continue
+        sys.path.remove(entry)
+        sys.path.insert(0, entry)
+        return
     for candidate in reversed(candidates):
         if not candidate.exists():
             continue
