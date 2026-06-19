@@ -233,12 +233,6 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 }
                 std::vector<double> clearances = obb_clearance_retry_values_from_env();
                 if (clearances.empty()) {
-                    const double fallback_clearance = query_bridge_rrt_clearance_from_env();
-                    if (fallback_clearance > 0.0) {
-                        clearances.push_back(fallback_clearance);
-                    }
-                }
-                if (clearances.empty()) {
                     return -1;
                 }
                 CollisionChecker final_checker = make_audit_checker(audit_robot_, scene_, config_.query);

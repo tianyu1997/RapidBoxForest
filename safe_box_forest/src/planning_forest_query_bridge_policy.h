@@ -19,7 +19,6 @@ bool query_bridge_has_segment_only_task(
     const QueryBridgeIndexOptions& index_options);
 
 bool query_bridge_parallel_task_rrt_enabled(
-    const QueryBridgeBatchExecutionOptions& batch_options,
     bool has_segment_only_task,
     const QueryBridgeRetryOptions& retry_options);
 

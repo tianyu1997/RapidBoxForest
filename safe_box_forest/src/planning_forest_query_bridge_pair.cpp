@@ -111,17 +111,10 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     const int bridge_seed_base = derived_planner_seed(run_seed, kSeedQueryBridgeOffset);
     context.diagnostics().set_value("query_bridge.run_seed", static_cast<double>(run_seed));
     context.diagnostics().set_value("query_bridge.seed_base", static_cast<double>(bridge_seed_base));
-    const double bridge_rrt_clearance = query_bridge_rrt_clearance_from_env();
-    Robot bridge_rrt_robot = make_sbf_clearance_robot(audit_robot_, bridge_rrt_clearance);
-    CollisionChecker bridge_rrt_checker =
-        bridge_rrt_clearance > 0.0
-            ? CollisionChecker(bridge_rrt_robot, scene_)
-            : checker;
-    context.diagnostics().set_value("query_bridge.rrt_clearance", bridge_rrt_clearance);
     auto waypoint_path = best_audited_rrt_bridge_path(start,
                                                       goal,
-                                                      bridge_rrt_checker,
-                                                      bridge_rrt_robot,
+                                                      checker,
+                                                      audit_robot_,
                                                       context,
                                                       bridge_rrt,
                                                       bridge_attempts,

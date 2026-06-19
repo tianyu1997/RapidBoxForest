@@ -33,10 +33,6 @@ struct QueryBridgeHybridizeAttemptOptions {
     int max_cross_checks = 4096;
 };
 
-struct QueryBridgeBatchExecutionOptions {
-    bool parallel_task_rrt = true;
-};
-
 struct QueryBridgeIndexOptions {
     std::string force_indices_csv;
     std::string global_indices_csv;
@@ -62,8 +58,6 @@ bool query_bridge_waypoint_quality_retry_needed(
     const QueryBridgeWaypointQualityRetryOptions& options);
 
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env();
-
-QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env();
 
 QueryBridgeIndexOptions query_bridge_index_options_from_env();
 

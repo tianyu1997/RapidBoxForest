@@ -277,7 +277,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.batch_tasks_skipped_after_rrt",
         "query_bridge.batch_tasks_no_path",
         "query_bridge.batch_tasks_segment_only",
-        "query_bridge.parallel_task_rrt",
         "query_bridge.parallel_task_rrt_jobs",
         "query_bridge.rrt_fixed_iters",
         "query_bridge.rrt_fixed_timeout_ms",

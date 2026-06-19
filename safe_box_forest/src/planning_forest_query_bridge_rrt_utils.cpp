@@ -94,12 +94,7 @@ std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
     StageContext& context,
     std::shared_ptr<std::atomic<bool>> cancel_override) {
     const int scheduled_attempt = attempt + retry_options.attempt_offset;
-    Robot bridge_robot = make_sbf_clearance_robot(audit_robot,
-                                                  retry_options.rrt_clearance);
-    CollisionChecker checker =
-        retry_options.rrt_clearance > 0.0
-            ? CollisionChecker(bridge_robot, scene)
-            : make_audit_checker(audit_robot, scene, config.query);
+    CollisionChecker checker = make_audit_checker(audit_robot, scene, config.query);
     RRTConnectConfig rrt_config =
         query_bridge_rrt_config_for_attempt(task,
                                             attempt,
@@ -111,7 +106,7 @@ std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
         task.start,
         task.goal,
         checker,
-        bridge_robot,
+        audit_robot,
         rrt_config,
         query_bridge_rrt_seed_for_attempt(task,
                                           config.grower.rng_seed,
@@ -188,15 +183,9 @@ void run_query_bridge_task_attempts(
     }
 }
 
-double query_bridge_rrt_clearance_from_env() {
-    return std::max(0.0,
-                    detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_CLEARANCE", 0.0));
-}
-
 QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     QueryBridgeRetryOptions options;
-    options.segment_only_retry_attempts =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_SEGMENT_ONLY_RETRY_ATTEMPTS", 1));
+    options.segment_only_retry_attempts = 1;
     options.no_path_retry_attempts =
         std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS", 1));
     options.no_path_retry_stop_on_first_success =
@@ -210,12 +199,8 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
     options.rrt_fixed_timeout_ms = std::max(
         0.0,
         detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
-    options.rrt_clearance = query_bridge_rrt_clearance_from_env();
     options.local_radius_schedule =
         detail::env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
-    options.local_radius_append_unrestricted_attempt =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_RADIUS_APPEND_UNRESTRICTED_ATTEMPT",
-                                   1) != 0;
     options.rrt_optimize_after_first_iters = std::max(
         0,
         detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
@@ -243,12 +228,8 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
                                     static_cast<double>(options.rrt_fixed_iters));
     context.diagnostics().set_value("query_bridge.rrt_fixed_timeout_ms",
                                     options.rrt_fixed_timeout_ms);
-    context.diagnostics().set_value("query_bridge.rrt_clearance",
-                                    options.rrt_clearance);
     context.diagnostics().set_value("query_bridge.local_radius_schedule_size",
                                     static_cast<double>(options.local_radius_schedule.size()));
-    context.diagnostics().set_value("query_bridge.local_radius_append_unrestricted_attempt",
-                                    options.local_radius_append_unrestricted_attempt ? 1.0 : 0.0);
     context.diagnostics().set_value("query_bridge.rrt_optimize_after_first_iters",
                                     static_cast<double>(options.rrt_optimize_after_first_iters));
     context.diagnostics().set_value("query_bridge.attempt_fallback_paths",
@@ -503,8 +484,7 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
                : std::max(1, task.attempts);
     plan.effective_attempts = plan.base_attempts;
     if (plan.effective_attempts > 0 &&
-        !options.local_radius_schedule.empty() &&
-        options.local_radius_append_unrestricted_attempt) {
+        !options.local_radius_schedule.empty()) {
         plan.effective_attempts =
             std::max(plan.effective_attempts,
                      static_cast<int>(options.local_radius_schedule.size()) + 1);

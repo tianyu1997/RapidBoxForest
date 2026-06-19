@@ -22,9 +22,7 @@ struct QueryBridgeRetryOptions {
     int attempt_offset = 0;
     int rrt_fixed_iters = 0;
     double rrt_fixed_timeout_ms = 0.0;
-    double rrt_clearance = 0.0;
     std::vector<double> local_radius_schedule;
-    bool local_radius_append_unrestricted_attempt = true;
     int rrt_optimize_after_first_iters = 0;
     int attempt_fallback_paths = 0;
     std::vector<int> no_path_retry_budget_iters;
@@ -87,8 +85,6 @@ void run_query_bridge_task_attempts(
     StageContext& context);
 
 QueryBridgeRetryOptions query_bridge_retry_options_from_env();
-
-double query_bridge_rrt_clearance_from_env();
 
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options);

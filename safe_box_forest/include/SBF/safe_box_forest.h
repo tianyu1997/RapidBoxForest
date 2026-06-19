@@ -26,7 +26,6 @@
 namespace rbf {
 
 struct QueryBridgeAcceptanceThresholds;
-struct QueryBridgeBatchExecutionOptions;
 struct QueryBridgeIndexOptions;
 struct QueryBridgeRetryOptions;
 struct QueryBridgeSearchTask;

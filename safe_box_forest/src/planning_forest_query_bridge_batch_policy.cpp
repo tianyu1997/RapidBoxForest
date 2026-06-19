@@ -26,11 +26,9 @@ bool query_bridge_has_segment_only_task(
 }
 
 bool query_bridge_parallel_task_rrt_enabled(
-    const QueryBridgeBatchExecutionOptions& batch_options,
     bool has_segment_only_task,
     const QueryBridgeRetryOptions& retry_options) {
-    return batch_options.parallel_task_rrt &&
-           !has_segment_only_task &&
+    return !has_segment_only_task &&
            retry_options.no_path_retry_attempts == 0 &&
            retry_options.no_path_retry_budget_stages == 0;
 }

@@ -247,8 +247,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     }
     const QueryBridgeRetryOptions retry_options = query_bridge_retry_options_from_env();
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
-    const QueryBridgeBatchExecutionOptions batch_execution_options =
-        query_bridge_batch_execution_options_from_env();
     const QueryBridgeParallelRrtOptions parallel_rrt_options =
         query_bridge_parallel_rrt_options_from_env();
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
@@ -274,8 +272,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                           static_cast<double>(retry_options.attempt_offset));
     const bool has_segment_only_task =
         query_bridge_has_segment_only_task(tasks, index_options);
-    if (query_bridge_parallel_task_rrt_enabled(batch_execution_options,
-                                               has_segment_only_task,
+    if (query_bridge_parallel_task_rrt_enabled(has_segment_only_task,
                                                retry_options)) {
         struct PreparedTask {
             bool skipped = false;
@@ -376,8 +373,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const double rrt_ms = query_bridge_elapsed_ms_since(rrt_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
                                                   rrt_ms);
-        batch_context.diagnostics().set_value("query_bridge.parallel_task_rrt",
-                                              1.0);
         batch_context.diagnostics().set_value("query_bridge.parallel_task_rrt_jobs",
                                               static_cast<double>(jobs.size()));
 

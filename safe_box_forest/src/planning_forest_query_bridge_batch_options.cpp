@@ -20,11 +20,4 @@ QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_e
     return options;
 }
 
-QueryBridgeBatchExecutionOptions query_bridge_batch_execution_options_from_env() {
-    QueryBridgeBatchExecutionOptions options;
-    options.parallel_task_rrt =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_PARALLEL_TASK_RRT", 1) != 0;
-    return options;
-}
-
 }  // namespace rbf
