@@ -29,8 +29,10 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import DEFAULT_QUERIES_PER_SCENE, generate_catalog, make_robot, queries_for_key, scene_for_key
 from experiments.common.rbf_defaults import (
+    DEFAULT_OMPL_SIMPLIFY_TIME_S,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+    DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
     DEFAULT_RBF_CONNECTOR_MAX_PAIRS_PER_GAP,
     DEFAULT_RBF_CONNECTOR_PAIR_TIMEOUT_MS,
     DEFAULT_RBF_CONNECTOR_PAVE_DEPTH,
@@ -47,6 +49,11 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_MAX_DEPTH,
+    DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU,
+    DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA,
+    DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
@@ -60,6 +67,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_MIN_SUCCESSES,
     DEFAULT_RBF_QUERY_BRIDGE_PARALLEL_RRT_EARLY_STOP_RATIO,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
+    DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
@@ -67,6 +75,7 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS,
     DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS,
+    DEFAULT_RBF_THREADS,
     ROBOT_LECTDB_CACHE_ROOT,
     EXP06_REGISTERED_RBF_PROFILE_NAME,
     EXP06_REGISTERED_RBF_SETTINGS,
@@ -757,8 +766,16 @@ def parse_args() -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     )
-    parser.add_argument("--box-transition-line-deviation-penalty", type=float, default=2.0)
-    parser.add_argument("--query-foreign-edge-cost-penalty", type=float, default=2.0)
+    parser.add_argument(
+        "--box-transition-line-deviation-penalty",
+        type=float,
+        default=DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
+    )
+    parser.add_argument(
+        "--query-foreign-edge-cost-penalty",
+        type=float,
+        default=DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY,
+    )
     parser.add_argument("--query-bridge-edge-cost-penalty", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY)
     parser.add_argument("--connector-rrt-step-size", type=float, default=DEFAULT_RBF_CONNECTOR_RRT_STEP_SIZE)
     parser.add_argument("--connector-rrt-goal-bias", type=float, default=DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS)
@@ -803,7 +820,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--query-bridge-fast-direct-random-shortcut-iters",
         type=int,
-        default=0,
+        default=DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
     )
     parser.add_argument(
         "--query-bridge-hybridize-attempt-paths",
@@ -850,12 +867,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--endpoint-main-lateral-offset", type=float, default=0.03)
     parser.add_argument("--endpoint-main-lateral-rounds", type=int, default=2)
     parser.add_argument("--endpoint-main-face-epsilon", type=float, default=1e-6)
-    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--offline-anchor-count", type=int, default=16)
-    parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
-    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
-    parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-anchor-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_COUNT)
+    parser.add_argument("--offline-anchor-candidate-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT)
+    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA)
+    parser.add_argument("--offline-anchor-distance-mu", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU)
     parser.add_argument("--offline-anchor-skip-if-main-accessible", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--offline-anchor-skip-difficulties", default="")
     parser.add_argument("--offline-anchor-main-accessible-threshold", type=float, default=0.95)
@@ -913,7 +930,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
     parser.add_argument("--rrt-timeout-s", type=float, default=1.0)
     parser.add_argument("--rrt-range", type=float, default=0.35)
-    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
+    parser.add_argument("--ompl-simplify-time-s", type=float, default=DEFAULT_OMPL_SIMPLIFY_TIME_S)
     parser.add_argument("--prm-build-s", type=float, default=20.0)
     parser.add_argument(
         "--prm-build-grid-s",
