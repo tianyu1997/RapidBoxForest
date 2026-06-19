@@ -151,6 +151,12 @@ src/adaptive_grid_partition_indices.cpp
 src/adaptive_grid_partition_overlay.cpp
                                    overlay segment edges and overlay-aware
                                    component queries for the partition
+src/adaptive_grid_partition_path_query.cpp
+                                   partition-native path search, box sequence
+                                   shortcutting, and overlay-edge expansion
+src/adaptive_grid_partition_query.cpp
+                                   partition point, nearest-box, landmark, and
+                                   local interval query helpers
 src/adaptive_grid_partition_keys.h
                                    internal grid hash keys for partition merge,
                                    broadphase, and adjacency indices
