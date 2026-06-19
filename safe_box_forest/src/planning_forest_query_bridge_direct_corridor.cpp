@@ -681,12 +681,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     direct_options.reject_seed_collision = false;
     direct_options.skip_existing_cover_check = true;
     direct_options.materialize_result_node = false;
-    direct_options.record_diagnostics = direct_corridor_options.ffb_diagnostics;
+    direct_options.record_diagnostics = false;
     const std::vector<Interval> direct_planning_domain =
         oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_ffb_diagnostics_enabled",
-        direct_options.record_diagnostics ? 1.0 : 0.0);
     int direct_calls = 0;
     int direct_added = 0;
     double direct_ffb_ms = 0.0;

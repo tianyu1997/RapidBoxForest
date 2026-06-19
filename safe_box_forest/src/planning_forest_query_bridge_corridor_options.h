@@ -26,7 +26,6 @@ struct QueryBridgeDirectCorridorRuntimeOptions {
     int partition_append_batch_size = 0;
     bool detailed_timing = false;
     bool local_sample_assimilation = true;
-    bool ffb_diagnostics = false;
     bool group_residual_gaps = false;
     bool full_residual_overlay_when_connected = false;
 };

@@ -68,8 +68,6 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
         detail::env_int_or_default("RBF_QUERY_BRIDGE_DETAILED_TIMING", 0) != 0;
     options.local_sample_assimilation =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_LOCAL_SAMPLE_ASSIMILATION", 1) != 0;
-    options.ffb_diagnostics =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_FFB_DIAGNOSTICS", 0) != 0;
     options.group_residual_gaps =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_GROUP_RESIDUAL_GAPS", 0) != 0;
     options.full_residual_overlay_when_connected =
