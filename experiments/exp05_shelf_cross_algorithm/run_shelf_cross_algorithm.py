@@ -47,7 +47,12 @@ from experiments.common.metrics import mean, median, tex_num
 from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
 from experiments.common.query_timing import online_timing_from_query_rows
-from experiments.common.summary_selection import finite_float, path_length_stat
+from experiments.common.summary_selection import (
+    amortized_query_time,
+    count_ratio_text,
+    finite_float,
+    path_length_stat,
+)
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
@@ -1169,8 +1174,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                 rbf_rows,
                 key=lambda row: (
                     finite_float(row.get("online_per_query_s_median")),
-                    finite_float(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
-                    + finite_float(row.get("online_per_query_s_median")),
+                    amortized_query_time(row, 5),
                     int(float(row.get("deep_max_boxes", 0) or 0)),
                 ),
             )[0]
@@ -1199,8 +1203,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
                     candidates,
                     key=lambda row: (
                         finite_float(row.get("online_per_query_s_median")),
-                        finite_float(row.get("offline_build_s_median", row.get("build_s"))) / 5.0
-                        + finite_float(row.get("online_per_query_s_median")),
+                        amortized_query_time(row, 5),
                         finite_float(row.get("budget_s")),
                     ),
                 )[0]
@@ -1225,7 +1228,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\midrule",
     ]
     for row in selected_rows():
-        sr = f"{int(row.get('success_queries', row.get('success_runs', 0)) or 0)}/{int(row.get('total_queries', row.get('runs', 0)) or 0)}"
+        sr = count_ratio_text(row, ("success_queries", "success_runs"), ("total_queries", "runs"))
         method = str(row.get("method_label", row.get("method", ""))).replace("_", r"\_")
         if str(row.get("method")) == "sbf_leaf_rrt":
             method = rf"{method} (b{int(float(row.get('deep_max_boxes', 0) or 0))})"
@@ -1233,7 +1236,7 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
             f"{method} & {tex_num(row.get('offline_build_s_median', row.get('build_s')))} & "
             f"{tex_num(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median')))} & "
             f"{tex_num(row.get('online_simplify_per_query_s_median'))} & "
-            f"{tex_num(finite_float(row.get('offline_build_s_median', row.get('build_s'))) / 5.0 + finite_float(row.get('online_per_query_s_median', row.get('online_solve_per_query_s_median'))))} & "
+            f"{tex_num(amortized_query_time(row, 5, online_keys=('online_per_query_s_median', 'online_solve_per_query_s_median')))} & "
             f"{tex_num(path_length_stat(row))} & {sr} \\\\"
         )
     lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table*}", ""])
