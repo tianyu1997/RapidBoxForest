@@ -767,6 +767,14 @@ def read_lect_cache_depth_dimensions(cache_path: Path | None) -> list[int]:
     return []
 
 
+def parse_int_csv(raw: Any) -> list[int]:
+    return [int(item.strip()) for item in str(raw).split(",") if item.strip()]
+
+
+def parse_float_csv(raw: Any) -> list[float]:
+    return [float(item.strip()) for item in str(raw).split(",") if item.strip()]
+
+
 def make_aafk_split_policy(
     robot: Any,
     max_depth: int,
@@ -1217,6 +1225,30 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_accept_path_additive = float(options.query_bridge_accept_path_additive)
     if hasattr(cfg, "query_bridge_accept_max_path_length"):
         cfg.query_bridge_accept_max_path_length = float(options.query_bridge_adaptive_max_path_length)
+    if hasattr(cfg, "query_bridge_no_path_retry_attempts"):
+        cfg.query_bridge_no_path_retry_attempts = int(options.query_bridge_no_path_retry_attempts)
+    if hasattr(cfg, "query_bridge_no_path_retry_stop_on_first_success"):
+        cfg.query_bridge_no_path_retry_stop_on_first_success = bool(
+            options.query_bridge_no_path_retry_stop_on_first_success
+        )
+    if hasattr(cfg, "query_bridge_forced_attempts"):
+        cfg.query_bridge_forced_attempts = int(options.query_bridge_forced_attempts)
+    if hasattr(cfg, "query_bridge_attempt_offset"):
+        cfg.query_bridge_attempt_offset = int(options.query_bridge_attempt_offset)
+    if hasattr(cfg, "query_bridge_rrt_fixed_iters"):
+        cfg.query_bridge_rrt_fixed_iters = int(options.query_bridge_rrt_fixed_iters)
+    if hasattr(cfg, "query_bridge_local_radius_schedule"):
+        cfg.query_bridge_local_radius_schedule = parse_float_csv(
+            options.query_bridge_local_radius_schedule
+        )
+    if hasattr(cfg, "query_bridge_no_path_retry_budget_iters"):
+        cfg.query_bridge_no_path_retry_budget_iters = parse_int_csv(
+            options.query_bridge_no_path_retry_budget_iters
+        )
+    if hasattr(cfg, "query_bridge_no_path_retry_budget_attempts"):
+        cfg.query_bridge_no_path_retry_budget_attempts = parse_int_csv(
+            options.query_bridge_no_path_retry_budget_attempts
+        )
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1807,31 +1839,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {}
-        if int(options.query_bridge_forced_attempts) > 1:
-            env_updates["RBF_QUERY_BRIDGE_FORCED_ATTEMPTS"] = str(int(options.query_bridge_forced_attempts))
-        env_updates["RBF_QUERY_BRIDGE_ATTEMPT_OFFSET"] = str(
-            int(getattr(options, "query_bridge_attempt_offset", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS"] = str(
-            int(getattr(options, "query_bridge_no_path_retry_attempts", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS"] = (
-            "1"
-            if bool(getattr(options, "query_bridge_no_path_retry_stop_on_first_success", False))
-            else "0"
-        )
-        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS"] = (
-            str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip() or None
-        )
-        env_updates["RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS"] = (
-            str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip() or None
-        )
-        env_updates["RBF_QUERY_BRIDGE_RRT_FIXED_ITERS"] = str(
-            int(getattr(options, "query_bridge_rrt_fixed_iters", 0))
-        )
-        env_updates["RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE"] = (
-            str(getattr(options, "query_bridge_local_radius_schedule", "") or "")
-        )
         env_updates["RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS"] = (
             "1"
             if bool(getattr(options, "query_bridge_hybridize_attempt_paths", False))

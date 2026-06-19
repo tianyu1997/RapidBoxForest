@@ -79,7 +79,8 @@ void run_query_bridge_task_attempts(
     const RBFPlanningConfig& config,
     StageContext& context);
 
-QueryBridgeRetryOptions query_bridge_retry_options_from_env();
+QueryBridgeRetryOptions query_bridge_retry_options_from_config(
+    const RBFPlanningConfig& config);
 
 void record_query_bridge_retry_diagnostics(StageContext& context,
                                            const QueryBridgeRetryOptions& options);

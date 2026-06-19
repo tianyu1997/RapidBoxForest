@@ -267,7 +267,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                     batch_context,
                                                     scene_reusable_edges);
     }
-    const QueryBridgeRetryOptions retry_options = query_bridge_retry_options_from_env();
+    const QueryBridgeRetryOptions retry_options =
+        query_bridge_retry_options_from_config(config_);
     record_query_bridge_retry_diagnostics(batch_context, retry_options);
     const QueryBridgeParallelRrtOptions parallel_rrt_options =
         query_bridge_parallel_rrt_options_from_env();

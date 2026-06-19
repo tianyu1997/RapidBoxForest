@@ -138,6 +138,16 @@ struct RBFPlanningConfig {
 	double query_bridge_accept_path_ratio = 1.50;
 	double query_bridge_accept_path_additive = 0.75;
 	double query_bridge_accept_max_path_length = 4.5;
+	/// Query-bridge RRT retry policy. The defaults preserve the historical C++
+	/// fallback behavior; experiment runners set these explicitly.
+	int query_bridge_no_path_retry_attempts = 1;
+	bool query_bridge_no_path_retry_stop_on_first_success = false;
+	int query_bridge_forced_attempts = 1;
+	int query_bridge_attempt_offset = 0;
+	int query_bridge_rrt_fixed_iters = 0;
+	std::vector<double> query_bridge_local_radius_schedule;
+	std::vector<int> query_bridge_no_path_retry_budget_iters;
+	std::vector<int> query_bridge_no_path_retry_budget_attempts;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

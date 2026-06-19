@@ -182,24 +182,25 @@ void run_query_bridge_task_attempts(
     }
 }
 
-QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
+QueryBridgeRetryOptions query_bridge_retry_options_from_config(
+    const RBFPlanningConfig& config) {
     QueryBridgeRetryOptions options;
     options.no_path_retry_attempts =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_ATTEMPTS", 1));
+        std::max(0, config.query_bridge_no_path_retry_attempts);
     options.no_path_retry_stop_on_first_success =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_NO_PATH_RETRY_STOP_ON_FIRST_SUCCESS", 0) != 0;
+        config.query_bridge_no_path_retry_stop_on_first_success;
     options.forced_attempts =
-        std::max(1, detail::env_int_or_default("RBF_QUERY_BRIDGE_FORCED_ATTEMPTS", 1));
+        std::max(1, config.query_bridge_forced_attempts);
     options.attempt_offset =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_ATTEMPT_OFFSET", 0));
+        std::max(0, config.query_bridge_attempt_offset);
     options.rrt_fixed_iters =
-        std::max(0, detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_ITERS", 0));
+        std::max(0, config.query_bridge_rrt_fixed_iters);
     options.local_radius_schedule =
-        detail::env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
+        config.query_bridge_local_radius_schedule;
     options.no_path_retry_budget_iters =
-        detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
+        config.query_bridge_no_path_retry_budget_iters;
     options.no_path_retry_budget_attempts =
-        detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ATTEMPTS");
+        config.query_bridge_no_path_retry_budget_attempts;
     options.no_path_retry_budget_stages =
         std::min(options.no_path_retry_budget_iters.size(),
                  options.no_path_retry_budget_attempts.size());

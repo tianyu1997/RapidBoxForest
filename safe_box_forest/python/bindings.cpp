@@ -1622,6 +1622,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_accept_path_ratio", &rbf::RBFPlanningConfig::query_bridge_accept_path_ratio)
         .def_readwrite("query_bridge_accept_path_additive", &rbf::RBFPlanningConfig::query_bridge_accept_path_additive)
         .def_readwrite("query_bridge_accept_max_path_length", &rbf::RBFPlanningConfig::query_bridge_accept_max_path_length)
+        .def_readwrite("query_bridge_no_path_retry_attempts", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_attempts)
+        .def_readwrite("query_bridge_no_path_retry_stop_on_first_success", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_stop_on_first_success)
+        .def_readwrite("query_bridge_forced_attempts", &rbf::RBFPlanningConfig::query_bridge_forced_attempts)
+        .def_readwrite("query_bridge_attempt_offset", &rbf::RBFPlanningConfig::query_bridge_attempt_offset)
+        .def_readwrite("query_bridge_rrt_fixed_iters", &rbf::RBFPlanningConfig::query_bridge_rrt_fixed_iters)
+        .def_readwrite("query_bridge_local_radius_schedule", &rbf::RBFPlanningConfig::query_bridge_local_radius_schedule)
+        .def_readwrite("query_bridge_no_path_retry_budget_iters", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_budget_iters)
+        .def_readwrite("query_bridge_no_path_retry_budget_attempts", &rbf::RBFPlanningConfig::query_bridge_no_path_retry_budget_attempts)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
