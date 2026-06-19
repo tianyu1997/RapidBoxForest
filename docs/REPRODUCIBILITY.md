@@ -427,7 +427,6 @@ checkout and are not included in the public source export:
 9. `paper/generated/fig_tro_random_tradeoff.pdf`
 10. `paper/generated/tro_table_generation_manifest.json`
 
-The private development checkout may contain archived experiment scripts for
-historical reference. The clean public export excludes those archives by
-default. Paper-facing runs should use current runners under `experiments/` and
-should not call historical `safe_box_forest/experiments/sbf_old` workflows.
+Paper-facing runs should use current runners under `experiments/`. Historical
+module-local SBF experiment workflows have been removed from the active source
+tree; archived scripts are not required by current tables or figures.

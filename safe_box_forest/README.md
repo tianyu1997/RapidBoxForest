@@ -62,7 +62,6 @@ Useful knobs:
 
 ```bash
 BUILD_DIR=build_release CMAKE_BUILD_TYPE=Release bash tests/run_all.sh
-SBF_BUILD_EXPERIMENTS=ON bash tests/run_all.sh
 ```
 
 The test script configures the workspace root, builds C++, builds the Python

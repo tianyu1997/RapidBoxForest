@@ -139,11 +139,11 @@ Primary target: `SBF::core`.
 Responsibilities:
 
 - `RBFPlanningForest` facade for build, query, coverage build, dynamic update,
-  and debug/benchmark entry points;
+  and debug entry points;
 - grower stage, free-box search, graph construction, merger, connector, and
   corridor query;
 - runtime configuration and stage execution helpers;
-- Python package `sbf` and paper/experiment-facing helper scripts.
+- Python package `sbf` and scene helper APIs.
 
 Important directories:
 
@@ -151,7 +151,6 @@ Important directories:
 include/SBF/                       planner public API
 src/                               planner implementation
 python/sbf/                        Python facade and scene helpers
-experiments/                       package-local legacy/current scripts
 tests/                             C++ and Python coverage
 ```
 
