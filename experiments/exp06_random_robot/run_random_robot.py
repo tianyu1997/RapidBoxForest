@@ -25,6 +25,12 @@ from experiments.common.experiment_io import (
     write_csv as write_csv_rows,
     write_json,
 )
+from experiments.common.checkpoints import (
+    bitstar_checkpoint_grid_from_args,
+    bitstar_trace_interval_for_grid,
+    checkpoint_at_or_after,
+    progressive_checkpoint_grid,
+)
 from experiments.common.metrics import mean, median, tex_num
 from experiments.common.progress import progress
 from experiments.common.random_scene_catalog import DEFAULT_QUERIES_PER_SCENE, generate_catalog, make_robot, queries_for_key, scene_for_key
@@ -580,42 +586,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def progressive_checkpoint_grid(timeout_s: float, *, max_step_s: float = 0.1) -> list[float]:
-    timeout = max(0.0, float(timeout_s))
-    if timeout <= 0.0:
-        return []
-    # Dense first-solution region, then relaxed checkpoints. The final segment
-    # is capped by max_step_s so per-query trade-off selection is never forced
-    # to wait for a coarse one-second checkpoint.
-    segments = [
-        (0.10, 0.005),
-        (0.50, 0.010),
-        (1.00, 0.020),
-        (2.00, 0.050),
-        (timeout, max(1e-9, min(float(max_step_s), 0.100))),
-    ]
-    values: list[float] = []
-    current = 0.0
-    for end_s, step_s in segments:
-        end = min(timeout, float(end_s))
-        step = max(1e-9, float(step_s))
-        while current + step < end - 1e-9:
-            current += step
-            values.append(round(current, 9))
-        if end > current + 1e-9:
-            current = end
-            values.append(round(current, 9))
-        if current >= timeout - 1e-9:
-            break
-    if not values or abs(values[-1] - timeout) > 1e-9:
-        values.append(round(timeout, 9))
-    return sorted({float(value) for value in values if value > 0.0 and value <= timeout + 1e-9})
-
-
-def progressive_bitstar_checkpoint_grid(timeout_s: float, *, max_step_s: float = 0.1) -> list[float]:
-    return progressive_checkpoint_grid(timeout_s, max_step_s=max_step_s)
-
-
 def prm_build_grid_from_args(args: argparse.Namespace) -> list[float]:
     build_s = max(0.0, float(getattr(args, "prm_build_s", 0.0)))
     raw_grid = str(getattr(args, "prm_build_grid_s", "")).strip()
@@ -643,52 +613,6 @@ def prm_build_grid_from_args(args: argparse.Namespace) -> list[float]:
         target_s += interval_s
     values.append(build_s)
     return values
-
-
-def bitstar_checkpoint_grid_from_args(args: argparse.Namespace, timeout_s: float) -> list[float]:
-    raw_grid = str(getattr(args, "bitstar_checkpoint_grid_s", "")).strip()
-    schedule = str(getattr(args, "bitstar_checkpoint_schedule", "progressive"))
-    if not raw_grid and schedule == "explicit":
-        raise ValueError("--bitstar-checkpoint-schedule=explicit requires --bitstar-checkpoint-grid-s")
-    if raw_grid:
-        values = sorted({float(value) for value in csv_list(raw_grid) if float(value) > 0.0})
-        values = [min(float(timeout_s), value) for value in values if value <= float(timeout_s) + 1e-9]
-        if not values or abs(values[-1] - float(timeout_s)) > 1e-9:
-            values.append(float(timeout_s))
-        return values
-    if schedule == "progressive":
-        return progressive_bitstar_checkpoint_grid(
-            float(timeout_s),
-            max_step_s=float(getattr(args, "bitstar_checkpoint_max_step_s", 0.1)),
-        )
-    interval_s = max(float(args.bitstar_checkpoint_interval_s), 1e-9)
-    values: list[float] = []
-    target_s = interval_s
-    while target_s < float(timeout_s) - 1e-9:
-        values.append(float(target_s))
-        target_s += interval_s
-    values.append(float(timeout_s))
-    return values
-
-
-def bitstar_trace_interval_for_grid(args: argparse.Namespace, checkpoint_grid_s: list[float], timeout_s: float) -> float:
-    deltas = [
-        float(b) - float(a)
-        for a, b in zip([0.0] + checkpoint_grid_s[:-1], checkpoint_grid_s)
-        if float(b) - float(a) > 1e-9
-    ]
-    if deltas:
-        return max(1e-9, min(deltas))
-    return max(1e-9, min(float(args.bitstar_checkpoint_interval_s), float(timeout_s)))
-
-
-def checkpoint_at_or_after(checkpoints: list[dict[str, Any]], target_s: float) -> dict[str, Any]:
-    if not checkpoints:
-        return {}
-    for checkpoint in checkpoints:
-        if float(checkpoint.get("checkpoint_s", 0.0) or 0.0) >= float(target_s) - 1e-9:
-            return checkpoint
-    return checkpoints[-1]
 
 
 def fmt_float(value: float) -> str:

@@ -25,6 +25,11 @@ from experiments.common.experiment_io import (
     write_csv as write_csv_rows,
     write_json,
 )
+from experiments.common.checkpoints import (
+    bitstar_checkpoint_grid_from_args,
+    bitstar_trace_interval_for_grid,
+    checkpoint_at_or_after,
+)
 from experiments.common.iris_gcs_dispatch import (
     default_gcs_repo,
     default_iris_python,
@@ -191,46 +196,6 @@ def exp04_registered_rbf_rows(
         "imported_runs": len(imported_rows),
         "imported_summary_rows": len(imported_summary),
     }
-
-
-def bitstar_checkpoint_grid_from_args(args: argparse.Namespace, timeout_s: float) -> list[float]:
-    raw_grid = str(getattr(args, "bitstar_checkpoint_grid_s", "")).strip()
-    if not raw_grid and str(getattr(args, "bitstar_timeout_grid_s", "")).strip():
-        raw_grid = str(args.bitstar_timeout_grid_s)
-    if raw_grid:
-        values = sorted({float(value) for value in csv_floats(raw_grid) if float(value) > 0.0})
-        values = [min(float(timeout_s), value) for value in values if value <= float(timeout_s) + 1e-9]
-        if not values or abs(values[-1] - float(timeout_s)) > 1e-9:
-            values.append(float(timeout_s))
-        return values
-    interval_s = max(float(args.bitstar_checkpoint_interval_s), 1e-9)
-    values: list[float] = []
-    target_s = interval_s
-    while target_s < float(timeout_s) - 1e-9:
-        values.append(float(target_s))
-        target_s += interval_s
-    values.append(float(timeout_s))
-    return values
-
-
-def bitstar_trace_interval_for_grid(args: argparse.Namespace, checkpoint_grid_s: list[float], timeout_s: float) -> float:
-    deltas = [
-        float(b) - float(a)
-        for a, b in zip([0.0] + checkpoint_grid_s[:-1], checkpoint_grid_s)
-        if float(b) - float(a) > 1e-9
-    ]
-    if deltas:
-        return max(1e-9, min(deltas))
-    return max(1e-9, min(float(args.bitstar_checkpoint_interval_s), float(timeout_s)))
-
-
-def checkpoint_at_or_after(checkpoints: list[dict[str, Any]], target_s: float) -> dict[str, Any]:
-    if not checkpoints:
-        return {}
-    for checkpoint in checkpoints:
-        if float(checkpoint.get("checkpoint_s", 0.0) or 0.0) >= float(target_s) - 1e-9:
-            return checkpoint
-    return checkpoints[-1]
 
 
 def fmt_float(value: float) -> str:
