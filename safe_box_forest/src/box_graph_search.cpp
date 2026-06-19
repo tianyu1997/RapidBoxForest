@@ -8,8 +8,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "query_graph_cost_options.h"
-
 namespace rbf {
 namespace {
 
@@ -112,6 +110,15 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
                                int goal_box_id,
                                const Eigen::VectorXd& start_point,
                                const Eigen::VectorXd& goal_point) {
+    return dijkstra_search(cache, start_box_id, goal_box_id, start_point, goal_point, {});
+}
+
+DijkstraResult dijkstra_search(const QueryGraphCache& cache,
+                               int start_box_id,
+                               int goal_box_id,
+                               const Eigen::VectorXd& start_point,
+                               const Eigen::VectorXd& goal_point,
+                               const QueryGraphCostOptions& cost_options) {
     DijkstraResult result;
     if (cache.boxes == nullptr || cache.graph == nullptr) {
         return result;
@@ -164,7 +171,6 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
     dist[start_box_id] = 0.0;
     representative[start_box_id] = box_ptr(start_box_id)->center();
     open.push({start_box_id, heuristic(start_box_id)});
-    const QueryGraphCostOptions cost_options = query_graph_cost_options_from_env();
     const bool line_deviation_enabled =
         cost_options.box_line_deviation_penalty > 0.0 &&
         start_point.size() == goal_point.size() &&

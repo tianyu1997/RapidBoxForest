@@ -178,6 +178,14 @@ struct RBFPlanningConfig {
 	double query_bridge_adaptive_fine_step = -1.0;
 	int query_bridge_adaptive_max_repair_calls = -1;
 	std::vector<int> query_bridge_adaptive_max_repair_calls_by_query;
+	/// Query graph search cost policy. Dynamic active-query ownership is passed
+	/// through RBFQueryRuntimeOptions, while these fields are stable planner
+	/// configuration.
+	double query_box_transition_edge_cost_penalty = 0.0;
+	double query_box_transition_nonprogress_penalty = 0.0;
+	double query_box_transition_line_deviation_penalty = 0.0;
+	double query_bridge_edge_cost_penalty = 0.0;
+	double query_foreign_edge_cost_penalty = 0.0;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.
@@ -193,6 +201,12 @@ struct RBFPlanningConfig {
 	std::filesystem::path database_evidence_spill_path;
 	/// Also checkpoint the database after an automatic online spill.
 	bool database_evidence_spill_checkpoint_after_spill = false;
+};
+
+struct RBFQueryRuntimeOptions {
+	/// Stable query id used to distinguish same-query and foreign query repair
+	/// edges during graph search. -1 disables query ownership penalties.
+	int active_query_index = -1;
 };
 
 struct QueryBridgeBatchOptions {
@@ -509,6 +523,9 @@ public:
 	}
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					  const Eigen::Ref<const Eigen::VectorXd>& goal) const;
+	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
+					  const Eigen::Ref<const Eigen::VectorXd>& goal,
+					  const RBFQueryRuntimeOptions& runtime_options) const;
 	int anchor_query_endpoint(const Eigen::Ref<const Eigen::VectorXd>& point);
 	int connect_query_endpoint_to_main_island(const Eigen::Ref<const Eigen::VectorXd>& point,
 											  double max_segment_length);
@@ -583,7 +600,8 @@ private:
 											  const FindFreeBoxOptions& options);
 	QueryResult run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
 								   const Eigen::Ref<const Eigen::VectorXd>& goal,
-								   bool allow_collision_shortcut) const;
+								   bool allow_collision_shortcut,
+								   const RBFQueryRuntimeOptions& runtime_options = {}) const;
 	int anchor_query_endpoint_box(const Eigen::Ref<const Eigen::VectorXd>& point,
 								  StageContext& context);
 	int anchor_query_endpoint_box_with_diagnostics(const Eigen::Ref<const Eigen::VectorXd>& point);

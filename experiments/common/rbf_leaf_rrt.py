@@ -1303,6 +1303,14 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_adaptive_max_repair_calls = int(
             options.query_bridge_adaptive_max_repair_calls
         )
+    if hasattr(cfg, "query_box_transition_line_deviation_penalty"):
+        cfg.query_box_transition_line_deviation_penalty = float(
+            options.query_box_transition_line_deviation_penalty
+        )
+    if hasattr(cfg, "query_foreign_edge_cost_penalty"):
+        cfg.query_foreign_edge_cost_penalty = float(options.query_foreign_edge_cost_penalty)
+    if hasattr(cfg, "query_bridge_edge_cost_penalty"):
+        cfg.query_bridge_edge_cost_penalty = float(options.query_bridge_edge_cost_penalty)
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1602,15 +1610,12 @@ def query_rows(
         active_query_index = stable_query_index(query.label, query_index)
         start = query_point(robot, query.start, canonicalize_queries)
         goal = query_point(robot, query.goal, canonicalize_queries)
-        previous_active_query = os.environ.get("RBF_ACTIVE_QUERY_INDEX")
-        os.environ["RBF_ACTIVE_QUERY_INDEX"] = str(active_query_index)
-        try:
+        if hasattr(sbf, "RBFQueryRuntimeOptions"):
+            runtime_options = sbf.RBFQueryRuntimeOptions()
+            runtime_options.active_query_index = int(active_query_index)
+            result = forest.query(start, goal, runtime_options)
+        else:
             result = forest.query(start, goal)
-        finally:
-            if previous_active_query is None:
-                os.environ.pop("RBF_ACTIVE_QUERY_INDEX", None)
-            else:
-                os.environ["RBF_ACTIVE_QUERY_INDEX"] = previous_active_query
         canonical_path = result.path_as_lists()
         actual_path, reflected_ok, reflection_status = reflect_path_to_actual(query, canonical_path, start, goal)
         actual_audit_passed = bool(result.audit_passed)
@@ -1868,11 +1873,11 @@ def bridge_all_queries(
             probe = forest.query(start, goal)
             if query_good_enough(probe, start, goal):
                 continue
-            if (
-                bool(getattr(options, "query_bridge_to_main_island", False)) and
-                query_good_enough(probe, start, goal)
-            ):
-                continue
+        if (
+            bool(getattr(options, "query_bridge_to_main_island", False)) and
+            query_good_enough(probe, start, goal)
+        ):
+            continue
         selected_index = len(selected)
         selected.append((label, start, goal, global_query_index))
         if force_selected:
@@ -2095,50 +2100,76 @@ def run_leaf_rrt(
     offline_build_wall_s = time.perf_counter() - offline_t0
     build_final_boxes = len(list(forest.boxes()))
     build_segment_edges = len(list(forest.segment_edges()))
-    query_cost_env = {
-        "RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY":
-            str(float(options.query_box_transition_line_deviation_penalty)),
-        "RBF_QUERY_FOREIGN_EDGE_COST_PENALTY":
-            str(float(options.query_foreign_edge_cost_penalty)),
-        "RBF_QUERY_BRIDGE_EDGE_COST_PENALTY":
-            str(float(options.query_bridge_edge_cost_penalty)),
-    }
-    previous_query_cost_env = {name: os.environ.get(name) for name in query_cost_env}
-    for name, value in query_cost_env.items():
-        os.environ[name] = value
     partition_native_requested = (
         str(getattr(options, "adaptive_planning_backend", "")).lower() == "partition_native"
     )
-    try:
-        after_corridor_boxes = build_final_boxes
-        after_corridor_segment_edges = build_segment_edges
-        if bool(options.query_bridge_sequential_reuse):
-            query_bridge_s = 0.0
-            query_bridge_added = 0
-            query_bridge_attempts = 0
-            query_bridge_by_label_s: dict[str, float] = {}
-            query_bridge_added_by_label: dict[str, int] = {}
-            qrows = []
-            for raw_query in query_list:
+    after_corridor_boxes = build_final_boxes
+    after_corridor_segment_edges = build_segment_edges
+    if bool(options.query_bridge_sequential_reuse):
+        query_bridge_s = 0.0
+        query_bridge_added = 0
+        query_bridge_attempts = 0
+        query_bridge_by_label_s: dict[str, float] = {}
+        query_bridge_added_by_label: dict[str, int] = {}
+        qrows = []
+        for raw_query in query_list:
+            (
+                step_bridge_s,
+                step_bridge_added,
+                step_bridge_attempts,
+                step_bridge_by_label_s,
+                step_bridge_added_by_label,
+            ) = bridge_all_queries(
+                forest,
+                robot,
+                [raw_query],
+                options,
+            )
+            query_bridge_s += float(step_bridge_s)
+            query_bridge_added += int(step_bridge_added)
+            query_bridge_attempts += int(step_bridge_attempts)
+            for key, value in step_bridge_by_label_s.items():
+                query_bridge_by_label_s[key] = query_bridge_by_label_s.get(key, 0.0) + float(value)
+            for key, value in step_bridge_added_by_label.items():
+                query_bridge_added_by_label[key] = query_bridge_added_by_label.get(key, 0) + int(value)
+            step_qrows = query_rows(
+                forest,
+                robot,
+                [raw_query],
+                obstacles=list(obstacles),
+                audit_step=float(options.audit_segment_step),
+                audit_collision_tolerance=float(options.audit_collision_tolerance),
+                canonicalize_queries=bool(options.canonicalize_queries),
+            )
+            if (
+                bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False)) and
+                not all(bool(row.get("audit_passed", False)) for row in step_qrows)
+            ):
+                retry_options = copy.copy(options)
+                retry_options.query_bridge_parallel_rrt_early_stop = False
                 (
-                    step_bridge_s,
-                    step_bridge_added,
-                    step_bridge_attempts,
-                    step_bridge_by_label_s,
-                    step_bridge_added_by_label,
+                    retry_bridge_s,
+                    retry_added,
+                    retry_attempts,
+                    retry_by_label_s,
+                    retry_added_by_label,
                 ) = bridge_all_queries(
                     forest,
                     robot,
                     [raw_query],
-                    options,
+                    retry_options,
                 )
-                query_bridge_s += float(step_bridge_s)
-                query_bridge_added += int(step_bridge_added)
-                query_bridge_attempts += int(step_bridge_attempts)
-                for key, value in step_bridge_by_label_s.items():
-                    query_bridge_by_label_s[key] = query_bridge_by_label_s.get(key, 0.0) + float(value)
-                for key, value in step_bridge_added_by_label.items():
-                    query_bridge_added_by_label[key] = query_bridge_added_by_label.get(key, 0) + int(value)
+                query_bridge_s += float(retry_bridge_s)
+                query_bridge_added += int(retry_added)
+                query_bridge_attempts += int(retry_attempts)
+                for key, value in retry_by_label_s.items():
+                    query_bridge_by_label_s[f"serial_retry:{key}"] = (
+                        query_bridge_by_label_s.get(f"serial_retry:{key}", 0.0) + float(value)
+                    )
+                for key, value in retry_added_by_label.items():
+                    query_bridge_added_by_label[f"serial_retry:{key}"] = (
+                        query_bridge_added_by_label.get(f"serial_retry:{key}", 0) + int(value)
+                    )
                 step_qrows = query_rows(
                     forest,
                     robot,
@@ -2148,191 +2179,147 @@ def run_leaf_rrt(
                     audit_collision_tolerance=float(options.audit_collision_tolerance),
                     canonicalize_queries=bool(options.canonicalize_queries),
                 )
-                if (
-                    bool(getattr(options, "query_bridge_parallel_rrt_early_stop", False)) and
-                    not all(bool(row.get("audit_passed", False)) for row in step_qrows)
-                ):
-                    retry_options = copy.copy(options)
-                    retry_options.query_bridge_parallel_rrt_early_stop = False
-                    (
-                        retry_bridge_s,
-                        retry_added,
-                        retry_attempts,
-                        retry_by_label_s,
-                        retry_added_by_label,
-                    ) = bridge_all_queries(
-                        forest,
-                        robot,
-                        [raw_query],
-                        retry_options,
-                    )
-                    query_bridge_s += float(retry_bridge_s)
-                    query_bridge_added += int(retry_added)
-                    query_bridge_attempts += int(retry_attempts)
-                    for key, value in retry_by_label_s.items():
-                        query_bridge_by_label_s[f"serial_retry:{key}"] = (
-                            query_bridge_by_label_s.get(f"serial_retry:{key}", 0.0) + float(value)
-                        )
-                    for key, value in retry_added_by_label.items():
-                        query_bridge_added_by_label[f"serial_retry:{key}"] = (
-                            query_bridge_added_by_label.get(f"serial_retry:{key}", 0) + int(value)
-                        )
-                    step_qrows = query_rows(
-                        forest,
-                        robot,
-                        [raw_query],
-                        obstacles=list(obstacles),
-                        audit_step=float(options.audit_segment_step),
-                        audit_collision_tolerance=float(options.audit_collision_tolerance),
-                        canonicalize_queries=bool(options.canonicalize_queries),
-                    )
-                if (
-                    bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
-                    not all(bool(row.get("audit_passed", False)) for row in step_qrows)
-                ):
-                    fallback_options = copy.copy(options)
-                    fallback_options.query_bridge_sequential_reuse = True
-                    fallback_options.query_bridge_to_main_island = True
-                    fallback_options.query_bridge_force_selected = True
-                    fallback_options.query_bridge_direct_segment_after_rrt = True
-                    fallback_options.query_bridge_fast_direct_segment_after_rrt = True
-                    fallback_options.segment_edge_obb_cover = True
-                    fallback_options.rrt_bridge_obb_cover = True
-                    fallback_options.strict_obb_bridge_cover = True
-                    fallback_options.query_bridge_no_path_retry_attempts = max(
-                        int(getattr(options, "query_bridge_no_path_retry_attempts", 0)),
-                        2,
-                    )
-                    if not str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip():
-                        fallback_options.query_bridge_no_path_retry_budget_iters = "40000"
-                    if not str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip():
-                        fallback_options.query_bridge_no_path_retry_budget_attempts = "4"
-                    fallback_options.query_bridge_forced_attempts = max(
-                        int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
-                        int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
-                    )
-                    (
-                        fallback_bridge_s,
-                        fallback_added,
-                        fallback_attempts,
-                        fallback_by_label_s,
-                        fallback_added_by_label,
-                    ) = bridge_all_queries(
-                        forest,
-                        robot,
-                        [raw_query],
-                        fallback_options,
-                    )
-                    query_bridge_s += float(fallback_bridge_s)
-                    query_bridge_added += int(fallback_added)
-                    query_bridge_attempts += int(fallback_attempts)
-                    for key, value in fallback_by_label_s.items():
-                        query_bridge_by_label_s[f"fallback:{key}"] = (
-                            query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
-                        )
-                    for key, value in fallback_added_by_label.items():
-                        query_bridge_added_by_label[f"fallback:{key}"] = (
-                            query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
-                        )
-                    step_qrows = query_rows(
-                        forest,
-                        robot,
-                        [raw_query],
-                        obstacles=list(obstacles),
-                        audit_step=float(options.audit_segment_step),
-                        audit_collision_tolerance=float(options.audit_collision_tolerance),
-                        canonicalize_queries=bool(options.canonicalize_queries),
-                    )
-                qrows.extend(step_qrows)
-        else:
-            (
-                query_bridge_s,
-                query_bridge_added,
-                query_bridge_attempts,
-                query_bridge_by_label_s,
-                query_bridge_added_by_label,
-            ) = bridge_all_queries(
-                forest,
-                robot,
-                query_list,
-                options,
-            )
-            qrows = query_rows(
-                forest,
-                robot,
-                query_list,
-                obstacles=list(obstacles),
-                audit_step=float(options.audit_segment_step),
-                audit_collision_tolerance=float(options.audit_collision_tolerance),
-                canonicalize_queries=bool(options.canonicalize_queries),
-            )
             if (
                 bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
-                (
-                    not qrows or
-                    not all(bool(row.get("audit_passed", False)) for row in qrows)
-                )
+                not all(bool(row.get("audit_passed", False)) for row in step_qrows)
             ):
-                if len(qrows) == len(query_list):
-                    failed_queries = [
-                        raw_query
-                        for raw_query, row in zip(query_list, qrows, strict=True)
-                        if not bool(row.get("audit_passed", False))
-                    ]
-                else:
-                    # Some hard failures can produce no per-query result rows.
-                    # Fall back conservatively rather than silently accepting
-                    # an incomplete batch.
-                    failed_queries = list(query_list)
-                if failed_queries:
-                    fallback_options = copy.copy(options)
-                    fallback_options.query_bridge_to_main_island = True
-                    fallback_options.query_bridge_force_selected = True
-                    fallback_options.query_bridge_forced_attempts = max(
-                        int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
-                        int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+                fallback_options = copy.copy(options)
+                fallback_options.query_bridge_sequential_reuse = True
+                fallback_options.query_bridge_to_main_island = True
+                fallback_options.query_bridge_force_selected = True
+                fallback_options.query_bridge_direct_segment_after_rrt = True
+                fallback_options.query_bridge_fast_direct_segment_after_rrt = True
+                fallback_options.segment_edge_obb_cover = True
+                fallback_options.rrt_bridge_obb_cover = True
+                fallback_options.strict_obb_bridge_cover = True
+                fallback_options.query_bridge_no_path_retry_attempts = max(
+                    int(getattr(options, "query_bridge_no_path_retry_attempts", 0)),
+                    2,
+                )
+                if not str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip():
+                    fallback_options.query_bridge_no_path_retry_budget_iters = "40000"
+                if not str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip():
+                    fallback_options.query_bridge_no_path_retry_budget_attempts = "4"
+                fallback_options.query_bridge_forced_attempts = max(
+                    int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
+                    int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+                )
+                (
+                    fallback_bridge_s,
+                    fallback_added,
+                    fallback_attempts,
+                    fallback_by_label_s,
+                    fallback_added_by_label,
+                ) = bridge_all_queries(
+                    forest,
+                    robot,
+                    [raw_query],
+                    fallback_options,
+                )
+                query_bridge_s += float(fallback_bridge_s)
+                query_bridge_added += int(fallback_added)
+                query_bridge_attempts += int(fallback_attempts)
+                for key, value in fallback_by_label_s.items():
+                    query_bridge_by_label_s[f"fallback:{key}"] = (
+                        query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
                     )
-                    (
-                        fallback_bridge_s,
-                        fallback_added,
-                        fallback_attempts,
-                        fallback_by_label_s,
-                        fallback_added_by_label,
-                    ) = bridge_all_queries(
-                        forest,
-                        robot,
-                        failed_queries,
-                        fallback_options,
+                for key, value in fallback_added_by_label.items():
+                    query_bridge_added_by_label[f"fallback:{key}"] = (
+                        query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
                     )
-                    query_bridge_s += float(fallback_bridge_s)
-                    query_bridge_added += int(fallback_added)
-                    query_bridge_attempts += int(fallback_attempts)
-                    for key, value in fallback_by_label_s.items():
-                        query_bridge_by_label_s[f"fallback:{key}"] = (
-                            query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
-                        )
-                    for key, value in fallback_added_by_label.items():
-                        query_bridge_added_by_label[f"fallback:{key}"] = (
-                            query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
-                        )
-                    qrows = query_rows(
-                        forest,
-                        robot,
-                        query_list,
-                        obstacles=list(obstacles),
-                        audit_step=float(options.audit_segment_step),
-                        audit_collision_tolerance=float(options.audit_collision_tolerance),
-                        canonicalize_queries=bool(options.canonicalize_queries),
-                    )
-        final_boxes = len(list(forest.boxes()))
-        final_segment_edges = len(list(forest.segment_edges()))
-        final_adjacency_islands = -1 if partition_native_requested else forest_adjacency_island_count(forest)
-    finally:
-        for name, previous_value in previous_query_cost_env.items():
-            if previous_value is None:
-                os.environ.pop(name, None)
+                step_qrows = query_rows(
+                    forest,
+                    robot,
+                    [raw_query],
+                    obstacles=list(obstacles),
+                    audit_step=float(options.audit_segment_step),
+                    audit_collision_tolerance=float(options.audit_collision_tolerance),
+                    canonicalize_queries=bool(options.canonicalize_queries),
+                )
+            qrows.extend(step_qrows)
+    else:
+        (
+            query_bridge_s,
+            query_bridge_added,
+            query_bridge_attempts,
+            query_bridge_by_label_s,
+            query_bridge_added_by_label,
+        ) = bridge_all_queries(
+            forest,
+            robot,
+            query_list,
+            options,
+        )
+        qrows = query_rows(
+            forest,
+            robot,
+            query_list,
+            obstacles=list(obstacles),
+            audit_step=float(options.audit_segment_step),
+            audit_collision_tolerance=float(options.audit_collision_tolerance),
+            canonicalize_queries=bool(options.canonicalize_queries),
+        )
+        if (
+            bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
+            (
+                not qrows or
+                not all(bool(row.get("audit_passed", False)) for row in qrows)
+            )
+        ):
+            if len(qrows) == len(query_list):
+                failed_queries = [
+                    raw_query
+                    for raw_query, row in zip(query_list, qrows, strict=True)
+                    if not bool(row.get("audit_passed", False))
+                ]
             else:
-                os.environ[name] = previous_value
+                # Some hard failures can produce no per-query result rows.
+                # Fall back conservatively rather than silently accepting
+                # an incomplete batch.
+                failed_queries = list(query_list)
+            if failed_queries:
+                fallback_options = copy.copy(options)
+                fallback_options.query_bridge_to_main_island = True
+                fallback_options.query_bridge_force_selected = True
+                fallback_options.query_bridge_forced_attempts = max(
+                    int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
+                    int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+                )
+                (
+                    fallback_bridge_s,
+                    fallback_added,
+                    fallback_attempts,
+                    fallback_by_label_s,
+                    fallback_added_by_label,
+                ) = bridge_all_queries(
+                    forest,
+                    robot,
+                    failed_queries,
+                    fallback_options,
+                )
+                query_bridge_s += float(fallback_bridge_s)
+                query_bridge_added += int(fallback_added)
+                query_bridge_attempts += int(fallback_attempts)
+                for key, value in fallback_by_label_s.items():
+                    query_bridge_by_label_s[f"fallback:{key}"] = (
+                        query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
+                    )
+                for key, value in fallback_added_by_label.items():
+                    query_bridge_added_by_label[f"fallback:{key}"] = (
+                        query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
+                    )
+                qrows = query_rows(
+                    forest,
+                    robot,
+                    query_list,
+                    obstacles=list(obstacles),
+                    audit_step=float(options.audit_segment_step),
+                    audit_collision_tolerance=float(options.audit_collision_tolerance),
+                    canonicalize_queries=bool(options.canonicalize_queries),
+                )
+    final_boxes = len(list(forest.boxes()))
+    final_segment_edges = len(list(forest.segment_edges()))
+    final_adjacency_islands = -1 if partition_native_requested else forest_adjacency_island_count(forest)
     build_for_diagnostics = forest.last_build_profile() if hasattr(forest, "last_build_profile") else build
     successes = [row for row in qrows if bool(row["audit_passed"])]
     total_len = sum(float(row["raw_path_length"]) for row in successes if math.isfinite(float(row["raw_path_length"])))

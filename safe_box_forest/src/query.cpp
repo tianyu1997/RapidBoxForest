@@ -7,23 +7,26 @@ namespace rbf {
 QueryResult CorridorQuery::run(const std::vector<BoxNode>& boxes,
                                const AdjacencyGraph& graph,
                                const Eigen::Ref<const Eigen::VectorXd>& start,
-                               const Eigen::Ref<const Eigen::VectorXd>& goal) const {
+                               const Eigen::Ref<const Eigen::VectorXd>& goal,
+                               const QueryGraphCostOptions& graph_cost) const {
     static const SegmentEdgeList no_segment_edges;
-    return run(boxes, graph, no_segment_edges, start, goal);
+    return run(boxes, graph, no_segment_edges, start, goal, graph_cost);
 }
 
 QueryResult CorridorQuery::run(const std::vector<BoxNode>& boxes,
                                const AdjacencyGraph& graph,
                                const SegmentEdgeList& segment_edges,
                                const Eigen::Ref<const Eigen::VectorXd>& start,
-                               const Eigen::Ref<const Eigen::VectorXd>& goal) const {
+                               const Eigen::Ref<const Eigen::VectorXd>& goal,
+                               const QueryGraphCostOptions& graph_cost) const {
     const QueryGraphCache cache = build_query_graph_cache(boxes, graph, segment_edges);
-    return run(cache, start, goal);
+    return run(cache, start, goal, graph_cost);
 }
 
 QueryResult CorridorQuery::run(const QueryGraphCache& cache,
                                const Eigen::Ref<const Eigen::VectorXd>& start,
-                               const Eigen::Ref<const Eigen::VectorXd>& goal) const {
+                               const Eigen::Ref<const Eigen::VectorXd>& goal,
+                               const QueryGraphCostOptions& graph_cost) const {
     using Clock = std::chrono::steady_clock;
     const auto t0 = Clock::now();
     QueryResult result;
@@ -33,7 +36,12 @@ QueryResult CorridorQuery::run(const QueryGraphCache& cache,
         result.query_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return result;
     }
-    auto dijkstra = dijkstra_search(cache, result.start_box_id, result.goal_box_id, start, goal);
+    auto dijkstra = dijkstra_search(cache,
+                                    result.start_box_id,
+                                    result.goal_box_id,
+                                    start,
+                                    goal,
+                                    graph_cost);
     if (!dijkstra.found) {
         result.query_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
         return result;

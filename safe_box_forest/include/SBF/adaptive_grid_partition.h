@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SBF/api.h>
+#include <SBF/box_graph.h>
 
 #include <rbf/lect_database/split_policy.h>
 
@@ -135,6 +136,7 @@ struct AdaptiveGridPartitionQueryOptions {
 	bool shortcut_boxes = true;
 	int max_expansions = 0;
 	double adjacency_tolerance = 1e-9;
+	QueryGraphCostOptions graph_cost;
 };
 
 struct AdaptiveGridPartitionQueryResult {

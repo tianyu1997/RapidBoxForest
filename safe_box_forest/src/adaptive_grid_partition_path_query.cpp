@@ -180,7 +180,7 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 	representative[static_cast<std::size_t>(start_cell)] = start;
 	open.push({start_cell, heuristic(start_cell)});
 	const int max_expansions = std::max(0, options.max_expansions);
-	const QueryGraphCostOptions cost_options = query_graph_cost_options_from_env();
+	const QueryGraphCostOptions cost_options = options.graph_cost;
 	const bool line_deviation_enabled =
 		cost_options.box_line_deviation_penalty > 0.0 &&
 		start.size() == goal.size() &&

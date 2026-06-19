@@ -1653,7 +1653,16 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_adaptive_fine_step", &rbf::RBFPlanningConfig::query_bridge_adaptive_fine_step)
         .def_readwrite("query_bridge_adaptive_max_repair_calls", &rbf::RBFPlanningConfig::query_bridge_adaptive_max_repair_calls)
         .def_readwrite("query_bridge_adaptive_max_repair_calls_by_query", &rbf::RBFPlanningConfig::query_bridge_adaptive_max_repair_calls_by_query)
+        .def_readwrite("query_box_transition_edge_cost_penalty", &rbf::RBFPlanningConfig::query_box_transition_edge_cost_penalty)
+        .def_readwrite("query_box_transition_nonprogress_penalty", &rbf::RBFPlanningConfig::query_box_transition_nonprogress_penalty)
+        .def_readwrite("query_box_transition_line_deviation_penalty", &rbf::RBFPlanningConfig::query_box_transition_line_deviation_penalty)
+        .def_readwrite("query_bridge_edge_cost_penalty", &rbf::RBFPlanningConfig::query_bridge_edge_cost_penalty)
+        .def_readwrite("query_foreign_edge_cost_penalty", &rbf::RBFPlanningConfig::query_foreign_edge_cost_penalty)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
+
+    py::class_<rbf::RBFQueryRuntimeOptions>(module, "RBFQueryRuntimeOptions")
+        .def(py::init<>())
+        .def_readwrite("active_query_index", &rbf::RBFQueryRuntimeOptions::active_query_index);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
         .def_readonly("total_ms", &rbf::BuildProfile::total_ms)
@@ -1822,10 +1831,14 @@ PYBIND11_MODULE(_sbf_cpp, module) {
            .def("query",
                [](const rbf::RBFPlanningForest& forest,
                  const std::vector<double>& start,
-                 const std::vector<double>& goal) {
-                  return forest.query(eigen_vector_from_list(start), eigen_vector_from_list(goal));
+                 const std::vector<double>& goal,
+                 const rbf::RBFQueryRuntimeOptions& options) {
+                  return forest.query(eigen_vector_from_list(start),
+                                      eigen_vector_from_list(goal),
+                                      options);
                },
-               py::arg("start"), py::arg("goal"))
+               py::arg("start"), py::arg("goal"),
+               py::arg("options") = rbf::RBFQueryRuntimeOptions{})
                                 .def("refine_query_corridor",
                                                  [](rbf::RBFPlanningForest& forest,
                                                                 const std::vector<double>& start,

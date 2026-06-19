@@ -12,7 +12,6 @@
 #include "adaptive_grid_partition_options.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_utils.h"
-#include "query_graph_cost_options.h"
 
 namespace rbf {
 
@@ -207,16 +206,49 @@ bool try_local_birrt_repair(QueryResult& result,
 
 }  // namespace
 
+namespace {
+
+QueryGraphCostOptions query_graph_cost_options_from_runtime(
+    const RBFPlanningConfig& config,
+    const RBFQueryRuntimeOptions& runtime_options) {
+    QueryGraphCostOptions options;
+    options.box_transition_penalty =
+        std::max(0.0, config.query_box_transition_edge_cost_penalty);
+    options.box_nonprogress_penalty =
+        std::max(0.0, config.query_box_transition_nonprogress_penalty);
+    options.box_line_deviation_penalty =
+        std::max(0.0, config.query_box_transition_line_deviation_penalty);
+    options.query_bridge_penalty =
+        std::max(0.0, config.query_bridge_edge_cost_penalty);
+    options.active_query_index = runtime_options.active_query_index;
+    options.foreign_query_edge_penalty = options.active_query_index >= 0
+        ? std::max(0.0, config.query_foreign_edge_cost_penalty)
+        : 0.0;
+    return options;
+}
+
+}  // namespace
+
 QueryResult RBFPlanningForest::query(const Eigen::Ref<const Eigen::VectorXd>& start,
                                  const Eigen::Ref<const Eigen::VectorXd>& goal) const {
-    return run_query_internal(start, goal, true);
+    return run_query_internal(start, goal, true, {});
+}
+
+QueryResult RBFPlanningForest::query(
+    const Eigen::Ref<const Eigen::VectorXd>& start,
+    const Eigen::Ref<const Eigen::VectorXd>& goal,
+    const RBFQueryRuntimeOptions& runtime_options) const {
+    return run_query_internal(start, goal, true, runtime_options);
 }
 
 QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
                                               const Eigen::Ref<const Eigen::VectorXd>& goal,
-                                              bool allow_collision_shortcut) const {
+                                              bool allow_collision_shortcut,
+                                              const RBFQueryRuntimeOptions& runtime_options) const {
     using Clock = std::chrono::steady_clock;
     QueryConfig query_config = config_.query;
+    const QueryGraphCostOptions graph_cost =
+        query_graph_cost_options_from_runtime(config_, runtime_options);
     if (!allow_collision_shortcut) {
         query_config.collision_shortcut = false;
     }
@@ -233,6 +265,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
             ? static_cast<int>(last_build_.diagnostics.at("adaptive.grid_planning_max_expansions"))
             : 0;
         partition_options.adjacency_tolerance = query_config.adjacency_tolerance;
+        partition_options.graph_cost = graph_cost;
         const auto partition_result = adaptive_partition_->query(start, goal, partition_options);
         result.start_box_id = partition_result.start_box_id;
         result.goal_box_id = partition_result.goal_box_id;
@@ -270,7 +303,7 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
     }
     if (!result.success && !partition_native_mode()) {
         CorridorQuery query_engine(query_config);
-        QueryResult graph_result = query_engine.run(query_cache(), start, goal);
+        QueryResult graph_result = query_engine.run(query_cache(), start, goal, graph_cost);
         graph_result.partition_search_ms = partition_attempt.partition_search_ms;
         graph_result.partition_repair_ms = partition_attempt.partition_repair_ms;
         graph_result.partition_cells_used = partition_attempt.partition_cells_used;

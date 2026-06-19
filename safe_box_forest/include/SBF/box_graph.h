@@ -44,6 +44,15 @@ struct DijkstraResult {
 	double total_cost = 0.0;
 };
 
+struct QueryGraphCostOptions {
+	double box_transition_penalty = 0.0;
+	double box_nonprogress_penalty = 0.0;
+	double box_line_deviation_penalty = 0.0;
+	double query_bridge_penalty = 0.0;
+	int active_query_index = -1;
+	double foreign_query_edge_penalty = 0.0;
+};
+
 bool boxes_connected(const BoxNode& lhs, const BoxNode& rhs, double tolerance = 1e-9);
 AdjacencyGraph compute_adjacency_reference(const std::vector<BoxNode>& boxes,
 										   double tolerance = 1e-9,
@@ -134,6 +143,12 @@ DijkstraResult dijkstra_search(const QueryGraphCache& cache,
 							   int goal_box_id,
 							   const Eigen::VectorXd& start_point,
 							   const Eigen::VectorXd& goal_point);
+DijkstraResult dijkstra_search(const QueryGraphCache& cache,
+							   int start_box_id,
+							   int goal_box_id,
+							   const Eigen::VectorXd& start_point,
+							   const Eigen::VectorXd& goal_point,
+							   const QueryGraphCostOptions& cost_options);
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const AdjacencyGraph& graph);
 std::vector<int> shortcut_box_sequence(const std::vector<int>& sequence, const QueryGraphCache& cache);
 std::vector<Eigen::VectorXd> extract_waypoints(const std::vector<int>& box_sequence,

@@ -37,15 +37,18 @@ public:
 	QueryResult run(const std::vector<BoxNode>& boxes,
 					const AdjacencyGraph& graph,
 					const Eigen::Ref<const Eigen::VectorXd>& start,
-					const Eigen::Ref<const Eigen::VectorXd>& goal) const;
+					const Eigen::Ref<const Eigen::VectorXd>& goal,
+					const QueryGraphCostOptions& graph_cost = {}) const;
 	QueryResult run(const std::vector<BoxNode>& boxes,
 					const AdjacencyGraph& graph,
 					const SegmentEdgeList& segment_edges,
 					const Eigen::Ref<const Eigen::VectorXd>& start,
-					const Eigen::Ref<const Eigen::VectorXd>& goal) const;
+					const Eigen::Ref<const Eigen::VectorXd>& goal,
+					const QueryGraphCostOptions& graph_cost = {}) const;
 	QueryResult run(const QueryGraphCache& cache,
 					const Eigen::Ref<const Eigen::VectorXd>& start,
-					const Eigen::Ref<const Eigen::VectorXd>& goal) const;
+					const Eigen::Ref<const Eigen::VectorXd>& goal,
+					const QueryGraphCostOptions& graph_cost = {}) const;
 
 private:
 	QueryConfig config_;
