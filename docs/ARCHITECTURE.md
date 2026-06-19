@@ -99,6 +99,8 @@ src/lect_database/                 core persistence implementation
                                    accounting, and node-row flush/read/write
   read_snapshot_mapped_file.cpp    read-snapshot mmap RAII wrapper shared by
                                    snapshot open/load paths
+  read_snapshot_format.h           read-snapshot and legacy sidecar binary
+                                   layout constants/records
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, canonical/native
