@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import sys
@@ -19,6 +18,7 @@ from experiments.common.experiment_io import (
     configure_thread_environment,
     environment_metadata,
     run_id,
+    write_csv as write_csv_rows,
     write_json,
 )
 from experiments.common.metrics import mean, median, tex_num
@@ -1292,11 +1292,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "interval_replay_key_only_blocked_median",
         "unsafe_sampling_validation",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field) for field in fields})
+    write_csv_rows(path, rows, fields)
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:

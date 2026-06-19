@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import json
 import math
@@ -16,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, environment_metadata, write_csv as write_csv_rows, write_json
 from experiments.common.metrics import median
 
 
@@ -235,12 +234,8 @@ def aggregate_method(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     fields = sorted({key for row in rows for key in row.keys()})
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_csv_rows(path, rows, fields)
 
 
 def write_markdown(path: Path, payload: dict[str, Any], summary_rows: list[dict[str, Any]]) -> None:

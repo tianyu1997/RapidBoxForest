@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import multiprocessing as mp
@@ -16,7 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_csv as write_csv_rows, write_json
 from experiments.common.rbf_defaults import (
     DEFAULT_OMPL_SIMPLIFY_TIME_S,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
@@ -321,10 +320,7 @@ def parent(args: argparse.Namespace) -> int:
     summary = summarize(rows)
     out_dir.mkdir(parents=True, exist_ok=True)
     write_json(out_dir / "bitstar_per_query_manifest.json", {"rows": rows, "summary": summary})
-    with (out_dir / "bitstar_per_query_summary.csv").open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=sorted(summary))
-        writer.writeheader()
-        writer.writerow(summary)
+    write_csv_rows(out_dir / "bitstar_per_query_summary.csv", [summary], sorted(summary))
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
 

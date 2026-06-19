@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import math
 import sys
@@ -13,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_floats, write_json
+from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, csv_floats, write_csv as write_csv_rows, write_json
 from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
     DEFAULT_OMPL_SIMPLIFY_TIME_S,
@@ -134,23 +133,19 @@ def main() -> int:
         all_rows.extend(rows)
 
     write_json(args.out_dir / "bitstar_tradeoff_manifest.json", {"summaries": summaries, "rows": all_rows})
-    with (args.out_dir / "bitstar_tradeoff_summary.csv").open("w", newline="", encoding="utf-8") as handle:
-        fieldnames = [
-            "method",
-            "stage_id",
-            "runs",
-            "success_runs",
-            "query_rows",
-            "success_queries",
-            "planning_s_mean_per_run",
-            "planning_s_median_per_run",
-            "path_length_mean",
-            "failure_statuses",
-        ]
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in summaries:
-            writer.writerow(row)
+    fieldnames = [
+        "method",
+        "stage_id",
+        "runs",
+        "success_runs",
+        "query_rows",
+        "success_queries",
+        "planning_s_mean_per_run",
+        "planning_s_median_per_run",
+        "path_length_mean",
+        "failure_statuses",
+    ]
+    write_csv_rows(args.out_dir / "bitstar_tradeoff_summary.csv", summaries, fieldnames)
     print(json.dumps(summaries, indent=2, sort_keys=True))
     return 0
 

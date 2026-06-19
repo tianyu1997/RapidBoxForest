@@ -22,6 +22,7 @@ from experiments.common.experiment_io import (
     configure_thread_environment,
     environment_metadata,
     run_id,
+    write_csv as write_csv_rows,
     write_json,
 )
 from experiments.common.iris_gcs_dispatch import (
@@ -1286,11 +1287,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_s_median", "measured_time_s_median", "planning_s_median", "audit_s_median",
         "path_length_mean", "raw_segment_fraction_median", "status",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({field: row.get(field) for field in fields})
+    write_csv_rows(path, rows, fields)
 
 
 def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -1311,27 +1308,26 @@ def write_per_query_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "waypoint_count",
         "planner_status",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            for query in row.get("queries", []):
-                writer.writerow({
-                    "method": row.get("method"),
-                    "stage_id": row.get("stage_id"),
-                    "seed": row.get("seed"),
-                    "label": query.get("label"),
-                    "success": query.get("success"),
-                    "audit_passed": query.get("audit_passed"),
-                    "audit_status": query.get("audit_status"),
-                    "path_length": query.get("path_length"),
-                    "query_ms": query.get("query_ms"),
-                    "solve_ms": query.get("solve_ms"),
-                    "simplify_ms": query.get("simplify_ms"),
-                    "audit_ms": query.get("audit_ms"),
-                    "waypoint_count": query.get("waypoint_count"),
-                    "planner_status": query.get("planner_status"),
-                })
+    flat_rows = []
+    for row in rows:
+        for query in row.get("queries", []):
+            flat_rows.append({
+                "method": row.get("method"),
+                "stage_id": row.get("stage_id"),
+                "seed": row.get("seed"),
+                "label": query.get("label"),
+                "success": query.get("success"),
+                "audit_passed": query.get("audit_passed"),
+                "audit_status": query.get("audit_status"),
+                "path_length": query.get("path_length"),
+                "query_ms": query.get("query_ms"),
+                "solve_ms": query.get("solve_ms"),
+                "simplify_ms": query.get("simplify_ms"),
+                "audit_ms": query.get("audit_ms"),
+                "waypoint_count": query.get("waypoint_count"),
+                "planner_status": query.get("planner_status"),
+            })
+    write_csv_rows(path, flat_rows, fields)
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import hashlib
 import math
 import random
@@ -21,6 +20,7 @@ from experiments.common.experiment_io import (
     environment_metadata,
     namespace_dict,
     run_id,
+    write_csv as write_csv_rows,
     write_json,
 )
 from experiments.common.metrics import percentile, tex_num
@@ -576,17 +576,12 @@ def summarize(events: list[dict[str, Any]], builds: list[dict[str, Any]]) -> lis
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames: list[str] = []
     for row in rows:
         for key in row.keys():
             if key not in fieldnames and key != "diagnostics":
                 fieldnames.append(key)
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        for row in rows:
-            writer.writerow({key: row.get(key) for key in fieldnames})
+    write_csv_rows(path, rows, fieldnames)
 
 
 def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:

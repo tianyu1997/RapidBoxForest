@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import csv
 import hashlib
 import json
 import math
@@ -23,6 +22,7 @@ from experiments.common.experiment_io import (
     csv_list,
     environment_metadata,
     run_id,
+    write_csv as write_csv_rows,
     write_json,
 )
 from experiments.common.metrics import mean, median, tex_num
@@ -2778,10 +2778,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "final_boxes_median",
         "status",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in rows)
+    write_csv_rows(path, rows, fields)
 
 
 def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
