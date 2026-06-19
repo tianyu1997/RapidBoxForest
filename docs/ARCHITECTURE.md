@@ -117,6 +117,9 @@ src/sbf/                           planner adapter implementation
                                    worker sessions, and box validation
   oracle_canonical.cpp             canonical-sector and native/canonical
                                    interval mapping helpers for the oracle
+  oracle_endpoint_materialization.cpp
+                                   endpoint materialization config helpers for
+                                   database-backed oracle validation
   oracle_material_point.cpp        material-point occupied-certificate helper
                                    for oracle validation
   oracle_options.h                 oracle-local environment/debug option
