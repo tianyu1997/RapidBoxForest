@@ -105,6 +105,8 @@ src/lect_database/                 core persistence implementation
                                    interval extraction for snapshot builds
   read_snapshot_payload.cpp        half-float payload decode helper for
                                    read-only snapshots
+  read_snapshot_paths.cpp          legacy/snapshot file path helpers and
+                                   atomic staging directory publish
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, canonical/native
