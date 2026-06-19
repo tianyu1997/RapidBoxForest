@@ -1217,6 +1217,8 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_ffb_start_depth = int(getattr(options, "query_bridge_ffb_start_depth", -1))
     if hasattr(cfg, "query_endpoint_anchor_ffb_depth"):
         cfg.query_endpoint_anchor_ffb_depth = int(options.query_endpoint_anchor_ffb_depth)
+    if hasattr(cfg, "query_endpoint_point_anchor"):
+        cfg.query_endpoint_point_anchor = bool(options.query_endpoint_point_anchor)
     if hasattr(cfg, "query_bridge_accept_segment_fraction"):
         cfg.query_bridge_accept_segment_fraction = float(options.query_bridge_accept_segment_fraction)
     if hasattr(cfg, "query_bridge_accept_path_ratio"):
@@ -1891,9 +1893,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
         env_updates: dict[str, str | None] = {}
-        env_updates["RBF_QUERY_ENDPOINT_POINT_ANCHOR"] = (
-            "1" if bool(getattr(options, "query_endpoint_point_anchor", False)) else "0"
-        )
         env_updates["RBF_OBB_FAST_PRIMARY_ORIENTATION"] = (
             "1" if bool(getattr(options, "obb_fast_primary_orientation", True)) else "0"
         )

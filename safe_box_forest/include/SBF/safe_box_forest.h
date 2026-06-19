@@ -131,6 +131,11 @@ struct RBFPlanningConfig {
 	/// Optional endpoint-anchor FFB depth for online queries. <=0 reuses
 	/// query_bridge_pave_depth, then connector.pave.
 	int query_endpoint_anchor_ffb_depth = 0;
+	/// Optional ordered endpoint-anchor depth schedule. Empty means use the
+	/// single endpoint-anchor depth above.
+	std::vector<int> query_endpoint_anchor_ffb_depths;
+	bool query_endpoint_point_anchor = false;
+	double endpoint_shortlink_max_length = 0.25;
 	/// Query-bridge acceptance thresholds used before spending online repair
 	/// budget. These are explicit configuration fields rather than process
 	/// environment overrides so batch planning remains reproducible.
