@@ -120,6 +120,8 @@ from experiments.common.robot_lectdb_cache import (
 from experiments.common.run_summary import (
     diagnostics_timeout_s,
     external_pending_run_row,
+    median_bool_field,
+    median_field,
     run_success_summary,
     summarize_query_batch_run,
 )
@@ -1675,87 +1677,34 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "difficulty": difficulty,
                 "offline_grower": offline_grower,
                 "stage_id": stage_id,
-                "leaf_start_depth": median(row.get("leaf_start_depth", math.nan) for row in items),
-                "leaf_max_depth": median(row.get("leaf_max_depth", math.nan) for row in items),
-                "deep_ffb_depth": median(row.get("deep_ffb_depth", math.nan) for row in items),
-                "connector_pave_depth": median(row.get("connector_pave_depth", math.nan) for row in items),
-                "query_bridge_pave_depth": median(row.get("query_bridge_pave_depth", math.nan) for row in items),
-                "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
-                "ffb_binary_probe_depth": median(
-                    row.get("ffb_binary_probe_depth", math.nan) for row in items
-                ),
-                "query_bridge_ffb_start_depth": median(
-                    row.get("query_bridge_ffb_start_depth", math.nan) for row in items
-                ),
-                "query_endpoint_anchor_ffb_depth": median(
-                    row.get("query_endpoint_anchor_ffb_depth", math.nan) for row in items
-                ),
-                "query_bridge_sequential_reuse": median(
-                    1.0 if bool(row.get("query_bridge_sequential_reuse", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_scene_reusable_edges": median(
-                    1.0 if bool(row.get("query_bridge_scene_reusable_edges", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_edge_cost_penalty": median(
-                    row.get("query_bridge_edge_cost_penalty", math.nan) for row in items
-                ),
-                "query_bridge_forced_attempts": median(
-                    row.get("query_bridge_forced_attempts", math.nan) for row in items
-                ),
-                "query_bridge_parallel_rrt_early_stop": median(
-                    1.0 if bool(row.get("query_bridge_parallel_rrt_early_stop", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_parallel_rrt_early_stop_min_successes": median(
-                    row.get("query_bridge_parallel_rrt_early_stop_min_successes", math.nan)
-                    for row in items
-                ),
-                "query_bridge_parallel_rrt_early_stop_ratio": median(
-                    row.get("query_bridge_parallel_rrt_early_stop_ratio", math.nan)
-                    for row in items
-                ),
-                "query_bridge_parallel_rrt_early_stop_additive": median(
-                    row.get("query_bridge_parallel_rrt_early_stop_additive", math.nan)
-                    for row in items
-                ),
-                "query_bridge_direct_segment_after_rrt": median(
-                    1.0 if bool(row.get("query_bridge_direct_segment_after_rrt", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_fast_direct_segment_after_rrt": median(
-                    1.0 if bool(row.get("query_bridge_fast_direct_segment_after_rrt", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_fast_direct_random_shortcut_iters": median(
-                    row.get("query_bridge_fast_direct_random_shortcut_iters", 0.0)
-                    for row in items
-                ),
-                "query_bridge_hybridize_attempt_paths": median(
-                    1.0 if bool(row.get("query_bridge_hybridize_attempt_paths", False)) else 0.0
-                    for row in items
-                ),
-                "query_bridge_hybrid_max_paths": median(
-                    row.get("query_bridge_hybrid_max_paths", math.nan) for row in items
-                ),
-                "query_bridge_hybrid_max_vertices": median(
-                    row.get("query_bridge_hybrid_max_vertices", math.nan) for row in items
-                ),
-                "query_bridge_hybrid_max_cross_checks": median(
-                    row.get("query_bridge_hybrid_max_cross_checks", math.nan) for row in items
-                ),
-                "query_endpoint_point_anchor": median(
-                    1.0 if bool(row.get("query_endpoint_point_anchor", False)) else 0.0
-                    for row in items
-                ),
-                "rbf_robot_tuned_profile": median(
-                    1.0 if bool(row.get("rbf_robot_tuned_profile", False)) else 0.0
-                    for row in items
-                ),
-                "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
-                "rbf_max_depth": median(row.get("rbf_max_depth", math.nan) for row in items),
-                "budget_s": median(row.get("budget_s", math.nan) for row in items),
+                "leaf_start_depth": median_field(items, "leaf_start_depth"),
+                "leaf_max_depth": median_field(items, "leaf_max_depth"),
+                "deep_ffb_depth": median_field(items, "deep_ffb_depth"),
+                "connector_pave_depth": median_field(items, "connector_pave_depth"),
+                "query_bridge_pave_depth": median_field(items, "query_bridge_pave_depth"),
+                "ffb_start_depth": median_field(items, "ffb_start_depth"),
+                "ffb_binary_probe_depth": median_field(items, "ffb_binary_probe_depth"),
+                "query_bridge_ffb_start_depth": median_field(items, "query_bridge_ffb_start_depth"),
+                "query_endpoint_anchor_ffb_depth": median_field(items, "query_endpoint_anchor_ffb_depth"),
+                "query_bridge_sequential_reuse": median_bool_field(items, "query_bridge_sequential_reuse"),
+                "query_bridge_scene_reusable_edges": median_bool_field(items, "query_bridge_scene_reusable_edges"),
+                "query_bridge_edge_cost_penalty": median_field(items, "query_bridge_edge_cost_penalty"),
+                "query_bridge_forced_attempts": median_field(items, "query_bridge_forced_attempts"),
+                "query_bridge_parallel_rrt_early_stop": median_bool_field(items, "query_bridge_parallel_rrt_early_stop"),
+                "query_bridge_parallel_rrt_early_stop_min_successes": median_field(items, "query_bridge_parallel_rrt_early_stop_min_successes"),
+                "query_bridge_parallel_rrt_early_stop_ratio": median_field(items, "query_bridge_parallel_rrt_early_stop_ratio"),
+                "query_bridge_parallel_rrt_early_stop_additive": median_field(items, "query_bridge_parallel_rrt_early_stop_additive"),
+                "query_bridge_direct_segment_after_rrt": median_bool_field(items, "query_bridge_direct_segment_after_rrt"),
+                "query_bridge_fast_direct_segment_after_rrt": median_bool_field(items, "query_bridge_fast_direct_segment_after_rrt"),
+                "query_bridge_fast_direct_random_shortcut_iters": median_field(items, "query_bridge_fast_direct_random_shortcut_iters", 0.0),
+                "query_bridge_hybridize_attempt_paths": median_bool_field(items, "query_bridge_hybridize_attempt_paths"),
+                "query_bridge_hybrid_max_paths": median_field(items, "query_bridge_hybrid_max_paths"),
+                "query_bridge_hybrid_max_vertices": median_field(items, "query_bridge_hybrid_max_vertices"),
+                "query_bridge_hybrid_max_cross_checks": median_field(items, "query_bridge_hybrid_max_cross_checks"),
+                "query_endpoint_point_anchor": median_bool_field(items, "query_endpoint_point_anchor"),
+                "rbf_robot_tuned_profile": median_bool_field(items, "rbf_robot_tuned_profile"),
+                "rbf_max_depth": median_field(items, "rbf_max_depth"),
+                "budget_s": median_field(items, "budget_s"),
                 "timeout_cap_s": median(diagnostics_timeout_s(row) for row in items) if method == "bitstar" else math.nan,
                 "deep_max_boxes": budget,
                 "scenes": success["runs"],

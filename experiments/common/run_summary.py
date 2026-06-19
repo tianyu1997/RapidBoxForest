@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from experiments.common.metrics import median
 from experiments.common.query_summary import query_success_summary
 from experiments.common.query_timing import online_timing_from_query_rows
 
@@ -41,6 +42,18 @@ def diagnostics_timeout_s(row: dict[str, Any]) -> float:
         if math.isfinite(value):
             return value
     return math.nan
+
+
+def median_field(rows: list[dict[str, Any]], key: str, default: Any = math.nan) -> float | None:
+    """Return the median of a numeric field across run rows."""
+
+    return median(row.get(key, default) for row in rows)
+
+
+def median_bool_field(rows: list[dict[str, Any]], key: str, default: bool = False) -> float | None:
+    """Return the median of a boolean field encoded as 0/1."""
+
+    return median(1.0 if bool(row.get(key, default)) else 0.0 for row in rows)
 
 
 def summarize_query_batch_run(
