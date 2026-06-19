@@ -3109,7 +3109,7 @@ def run_leaf_rrt(
         "final_boxes": int(final_boxes),
         "final_segment_edges": int(final_segment_edges),
         "final_adjacency_islands": int(reported_final_islands),
-        "legacy_graph_final_adjacency_islands": int(final_adjacency_islands),
+        "explicit_graph_final_adjacency_islands": int(final_adjacency_islands),
         "segment_edges": int(final_segment_edges),
         "adjacency_islands": int(build.profile.adjacency_islands),
         **external_evidence_fields,
