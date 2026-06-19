@@ -17,6 +17,40 @@ def path_length(path: Iterable[Iterable[float]]) -> float:
     return sum(point_distance(a, b) for a, b in zip(pts, pts[1:]))
 
 
+def simplify_path_if_requested(
+    sbf_module: Any,
+    robot: Any,
+    obstacles: list[Any],
+    path: list[list[float]],
+    segment_step: float,
+    simplify_time_s: float,
+    *,
+    skip_status: str = "skipped",
+    distinguish_skip_reason: bool = False,
+    require_two_point_result: bool = False,
+) -> tuple[list[list[float]], float, str]:
+    """Run OMPL path simplification while preserving experiment timing semantics."""
+
+    if len(path) < 2 or float(simplify_time_s) <= 0.0:
+        if distinguish_skip_reason:
+            status = "not_requested" if float(simplify_time_s) <= 0.0 else "path_too_short"
+        else:
+            status = skip_status
+        return path, 0.0, status
+    result = sbf_module.ompl_simplify_path(
+        robot,
+        obstacles,
+        path,
+        float(segment_step),
+        float(simplify_time_s),
+    )
+    simplified = [[float(value) for value in point] for point in result.get("path", [])]
+    ok = bool(result.get("ok")) and (not require_two_point_result or len(simplified) >= 2)
+    if ok:
+        return simplified, float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
+    return path, float(result.get("t_s", 0.0) or 0.0), str(result.get("reason", "simplify_failed"))
+
+
 def interpolate(a: Iterable[float], b: Iterable[float], alpha: float) -> list[float]:
     return [(1.0 - float(alpha)) * float(x) + float(alpha) * float(y) for x, y in zip(a, b)]
 

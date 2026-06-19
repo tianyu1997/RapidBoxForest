@@ -31,7 +31,7 @@ from experiments.common.checkpoints import (
     progressive_checkpoint_grid,
 )
 from experiments.common.metrics import mean, median, tex_num
-from experiments.common.path_tools import audit_path, path_length
+from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
 from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import finite_float, path_length_stat
@@ -553,27 +553,6 @@ def prm_build_grid_from_args(args: argparse.Namespace) -> list[float]:
         target_s += interval_s
     values.append(build_s)
     return values
-
-
-def simplify_path_if_requested(
-    robot: Any,
-    obstacles: list[Any],
-    path: list[list[float]],
-    segment_step: float,
-    simplify_time_s: float,
-) -> tuple[list[list[float]], float, str]:
-    if len(path) < 2 or simplify_time_s <= 0.0:
-        return path, 0.0, "skipped"
-    result = sbf.ompl_simplify_path(
-        robot,
-        obstacles,
-        path,
-        float(segment_step),
-        float(simplify_time_s),
-    )
-    if bool(result.get("ok")):
-        return [[float(value) for value in point] for point in result.get("path", [])], float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
-    return path, float(result.get("t_s", 0.0) or 0.0), str(result.get("reason", "simplify_failed"))
 
 
 def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name: str, difficulty: str, scene_seed: int) -> dict[str, Any]:
@@ -1559,6 +1538,7 @@ def run_bitstar_scene_trace(args: argparse.Namespace,
             solve_s = float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0)
             path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
             path, simplify_s, simplify_status = simplify_path_if_requested(
+                sbf,
                 robot,
                 list(scene.obstacles),
                 path,

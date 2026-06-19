@@ -44,7 +44,7 @@ from experiments.common.iris_gcs_dispatch import (
     shelf_iris_summary_rows,
 )
 from experiments.common.metrics import mean, median, tex_num
-from experiments.common.path_tools import audit_path, path_length
+from experiments.common.path_tools import audit_path, path_length, simplify_path_if_requested
 from experiments.common.progress import progress
 from experiments.common.query_timing import online_timing_from_query_rows
 from experiments.common.summary_selection import finite_float, path_length_stat
@@ -167,28 +167,6 @@ def exp04_registered_rbf_rows(
         "imported_runs": len(imported_rows),
         "imported_summary_rows": len(imported_summary),
     }
-
-
-def simplify_path_if_requested(
-    robot: Any,
-    obstacles: list[Any],
-    path: list[list[float]],
-    segment_step: float,
-    simplify_time_s: float,
-) -> tuple[list[list[float]], float, str]:
-    if len(path) < 2 or float(simplify_time_s) <= 0.0:
-        return path, 0.0, "not_requested" if float(simplify_time_s) <= 0.0 else "path_too_short"
-    result = sbf.ompl_simplify_path(
-        robot,
-        obstacles,
-        path,
-        float(segment_step),
-        float(simplify_time_s),
-    )
-    simplified = [[float(value) for value in point] for point in result.get("path", [])]
-    if bool(result.get("ok")) and len(simplified) >= 2:
-        return simplified, float(result.get("t_s", 0.0)), str(result.get("reason", "simplified"))
-    return path, float(result.get("t_s", 0.0)), str(result.get("reason", "simplify_failed"))
 
 
 def shelf_queries(robot: Any) -> list[dict[str, Any]]:
@@ -530,11 +508,14 @@ def run_bitstar_trace(
             solve_s = float(checkpoint.get("solve_s", checkpoint.get("elapsed_s", checkpoint.get("t_s", 0.0))) or 0.0)
             path = [[float(value) for value in point] for point in checkpoint.get("path", [])]
             path, simplify_s, simplify_status = simplify_path_if_requested(
+                sbf,
                 robot,
                 obstacles,
                 path,
                 float(args.audit_segment_step),
                 float(args.ompl_simplify_time_s),
+                distinguish_skip_reason=True,
+                require_two_point_result=True,
             )
             audit_passed, audit_time_s, audit_status = audit_path(
                 sbf,
