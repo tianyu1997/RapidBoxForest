@@ -36,20 +36,6 @@ void record_query_bridge_partition_path_first_diagnostics(
         options.max_segment_fraction);
 }
 
-QueryBridgeDirectLineFallbackOptions query_bridge_direct_line_fallback_options_from_env() {
-    QueryBridgeDirectLineFallbackOptions options;
-    options.enabled =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_DIRECT_LINE_ON_NO_PATH", 0) != 0;
-    return options;
-}
-
-void record_query_bridge_direct_line_fallback_diagnostics(
-    StageContext& context,
-    const QueryBridgeDirectLineFallbackOptions& options) {
-    context.diagnostics().set_value("query_bridge.direct_line_on_no_path",
-                                    options.enabled ? 1.0 : 0.0);
-}
-
 QueryBridgeHybridizeAttemptOptions query_bridge_hybridize_attempt_options_from_env() {
     QueryBridgeHybridizeAttemptOptions options;
     options.enabled =
