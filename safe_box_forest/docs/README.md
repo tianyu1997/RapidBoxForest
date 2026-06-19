@@ -8,6 +8,6 @@ Start here if you are using the SafeBoxForest module inside RapidBoxForest:
 - `../../docs/REPRODUCIBILITY.md` - workspace-level paper and experiment
   reproduction workflow.
 
-Package-local planning notes and historical paper-artifact maps are excluded
-from the clean public export. Use the top-level experiment runners under
+Package-local planning notes and historical paper-artifact maps are not part of
+the active source tree. Use the top-level experiment runners under
 `../../experiments/` for paper-facing reproduction.
