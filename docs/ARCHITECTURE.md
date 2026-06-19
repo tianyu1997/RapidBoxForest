@@ -102,6 +102,8 @@ src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, canonical/native
                                    frame handling, evidence lookup, and box
                                    validation
+  oracle_material_point.cpp        material-point occupied-certificate helper
+                                   for oracle validation
   oracle_support.cpp               oracle-local hashing, timing, blocker,
                                    cache-key, and counter helpers
 tools/                             database CLI and benchmark

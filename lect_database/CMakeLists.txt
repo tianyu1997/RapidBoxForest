@@ -68,6 +68,7 @@ add_library(LECTDatabase::core ALIAS lect_database_core)
 
 add_library(lect_database_sbf_adapter STATIC
     src/sbf/oracle.cpp
+    src/sbf/oracle_material_point.cpp
     src/sbf/oracle_support.cpp
     src/sbf/scene.cpp
 )
