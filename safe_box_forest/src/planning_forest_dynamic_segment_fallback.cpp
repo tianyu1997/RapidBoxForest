@@ -323,7 +323,7 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
         int attempted_pairs = 0;
         int audit_fail = 0;
         int added = 0;
-        const int pair_candidate_cap = partition_segment_fallback_pair_candidate_cap_from_env();
+        const int pair_candidate_cap = partition_segment_fallback_pair_candidate_cap();
         const auto candidate_pairs =
             adaptive_partition_->nearest_component_pairs_to_largest(1, pair_candidate_cap);
         for (const auto& pair : candidate_pairs) {

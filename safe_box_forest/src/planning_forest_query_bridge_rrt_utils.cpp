@@ -1,6 +1,5 @@
 #include "planning_forest_query_bridge_rrt_utils.h"
 
-#include "env_config.h"
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_task.h"

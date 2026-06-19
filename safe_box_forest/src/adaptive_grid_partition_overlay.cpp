@@ -17,7 +17,7 @@ void AdaptiveGridPartition::clear_overlay_edges() {
 }
 
 void AdaptiveGridPartition::reset_overlay_components() {
-	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells_from_env()) {
+	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells()) {
 		overlay_parent_.clear();
 		return;
 	}
@@ -38,7 +38,7 @@ void AdaptiveGridPartition::reset_overlay_components() {
 }
 
 void AdaptiveGridPartition::ensure_overlay_parent_size() {
-	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells_from_env()) {
+	if (static_cast<int>(cells_.size()) < partition_overlay_dsu_min_cells()) {
 		overlay_parent_.clear();
 		return;
 	}

@@ -60,9 +60,9 @@ AdaptiveGridPartitionMergeResult AdaptiveGridPartition::merge_boxes(
 		if (selected_dims.empty()) {
 			result.containment_skipped = static_cast<int>(cells_.size());
 		} else {
-			const int bucket_bits = partition_containment_bucket_bits_from_env();
+			const int bucket_bits = partition_containment_bucket_bits();
 			const std::uint64_t max_bins_per_cell =
-				partition_containment_max_bins_per_cell_from_env();
+				partition_containment_max_bins_per_cell();
 			auto coarse_coord = [&](const GridRange& range, int dim, bool upper) {
 				const int split_count = split_counts_[static_cast<std::size_t>(dim)];
 				const int shift = std::max(0, split_count - bucket_bits);

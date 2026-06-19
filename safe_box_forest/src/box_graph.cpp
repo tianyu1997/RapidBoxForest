@@ -255,7 +255,7 @@ AdjacencyGraph compute_adjacency(const std::vector<BoxNode>& boxes,
         return graph;
     }
     const detail::AdjacencyIndexOptions adjacency_options =
-        detail::adjacency_index_options_from_env(n);
+        detail::adjacency_index_options(n);
     const std::vector<IntervalBinIndex> indices =
         select_adjacency_indices(boxes, effective_tol, adjacency_options);
     if (indices.empty() || indices.front().dim < 0) {

@@ -197,15 +197,12 @@ def query_rows(forest: Any, robot: Any, queries: list[Any]) -> list[dict[str, An
     for query_index, query in enumerate(queries):
         start = [float(value) for value in query.start]
         goal = [float(value) for value in query.goal]
-        previous_active_query = os.environ.get("RBF_ACTIVE_QUERY_INDEX")
-        os.environ["RBF_ACTIVE_QUERY_INDEX"] = str(query_index)
-        try:
+        if hasattr(sbf, "RBFQueryRuntimeOptions"):
+            runtime_options = sbf.RBFQueryRuntimeOptions()
+            runtime_options.active_query_index = int(query_index)
+            result = forest.query(start, goal, runtime_options)
+        else:
             result = forest.query(start, goal)
-        finally:
-            if previous_active_query is None:
-                os.environ.pop("RBF_ACTIVE_QUERY_INDEX", None)
-            else:
-                os.environ["RBF_ACTIVE_QUERY_INDEX"] = previous_active_query
         path_length = float(result.path_length) if bool(result.success) else math.nan
         raw_path_length = float(getattr(result, "raw_path_length", result.path_length)) if bool(result.success) else math.nan
         segment_length = float(result.segment_edge_length) if bool(result.success) else 0.0

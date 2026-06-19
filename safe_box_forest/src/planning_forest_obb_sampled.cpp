@@ -2,8 +2,6 @@
 
 #include <sbf/envelope/envelope_collision.h>
 
-#include "planning_forest_obb_options.h"
-
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -407,16 +405,13 @@ double obb_segment_aabb_distance_sq(const detail::Vec3& origin,
     return best;
 }
 
-bool obb_clearance_sampled_enabled() {
-    return obb_clearance_sampled_enabled_from_env();
-}
-
 bool validate_obb_clearance_sampled_candidate(const Robot& robot,
                                               const Scene& scene,
                                               const ObbPortalCandidate& candidate,
                                               double safety_epsilon,
-                                              ObbPortalValidationStats& stats) {
-    if (!obb_clearance_sampled_enabled()) {
+                                              ObbPortalValidationStats& stats,
+                                              const ObbValidationOptions& options) {
+    if (!options.clearance_sampled_support_enabled) {
         return false;
     }
     ++stats.clearance_support_attempts;
@@ -452,22 +447,22 @@ bool validate_obb_clearance_sampled_candidate(const Robot& robot,
     }
     // The pointwise clearance proof is designed for thin bridge tubes. Large
     // transverse OBBs should use the affine support-hull validator instead.
-    if (lateral_l1 > obb_clearance_lateral_l1_max_from_env()) {
+    if (lateral_l1 > options.clearance_lateral_l1_max) {
         ++stats.clearance_support_fail;
         return false;
     }
 
     const double line_l1 = candidate.generators_q.col(line_col).lpNorm<1>();
-    int samples = obb_clearance_samples_from_env();
-    const double dense_line_l1_threshold = obb_clearance_dense_line_l1_threshold_from_env();
-    const int dense_samples = obb_clearance_dense_samples_from_env();
+    int samples = options.clearance_samples;
+    const double dense_line_l1_threshold = options.clearance_dense_line_l1_threshold;
+    const int dense_samples = options.clearance_dense_samples;
     if (dense_line_l1_threshold > 0.0 &&
         line_l1 > dense_line_l1_threshold) {
         samples = std::max(samples, dense_samples);
     }
     samples = std::clamp(samples, 9, 257);
     const int fast_samples = std::clamp(
-        obb_clearance_fast_samples_from_env(),
+        options.clearance_fast_samples,
         0,
         257);
     std::vector<int> sample_schedule;

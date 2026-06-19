@@ -514,6 +514,18 @@ class RBFLeafRRTOptions:
     obb_max_validations_per_window: int = 16
     obb_fast_primary_orientation: bool = True
     obb_fallback_orientations_on_primary_fail: bool = False
+    obb_sampled_support_enabled: bool = False
+    obb_clearance_sampled_support_enabled: bool = True
+    obb_clearance_lateral_l1_max: float = 5e-3
+    obb_clearance_samples: int = 17
+    obb_clearance_dense_line_l1_threshold: float = 0.03
+    obb_clearance_dense_samples: int = 17
+    obb_clearance_fast_samples: int = 0
+    obb_clearance_first: bool = False
+    obb_clearance_retry_attempts: int = 0
+    obb_clearance_retry_values: tuple[float, ...] = ()
+    obb_clearance_retry_iters: int = -1
+    obb_clearance_retry_timeout_ms: float = -1.0
     hipac_promote_transition_slices: bool = False
     hipac_promote_transition_target_query_indices: str = "2,3"
     hipac_promote_transition_min_boxes: int = 8
@@ -1532,6 +1544,34 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.obb_fallback_orientations_on_primary_fail = bool(
             options.obb_fallback_orientations_on_primary_fail
         )
+    if hasattr(cfg, "obb_sampled_support_enabled"):
+        cfg.obb_sampled_support_enabled = bool(options.obb_sampled_support_enabled)
+    if hasattr(cfg, "obb_clearance_sampled_support_enabled"):
+        cfg.obb_clearance_sampled_support_enabled = bool(
+            options.obb_clearance_sampled_support_enabled
+        )
+    if hasattr(cfg, "obb_clearance_lateral_l1_max"):
+        cfg.obb_clearance_lateral_l1_max = float(options.obb_clearance_lateral_l1_max)
+    if hasattr(cfg, "obb_clearance_samples"):
+        cfg.obb_clearance_samples = int(options.obb_clearance_samples)
+    if hasattr(cfg, "obb_clearance_dense_line_l1_threshold"):
+        cfg.obb_clearance_dense_line_l1_threshold = float(
+            options.obb_clearance_dense_line_l1_threshold
+        )
+    if hasattr(cfg, "obb_clearance_dense_samples"):
+        cfg.obb_clearance_dense_samples = int(options.obb_clearance_dense_samples)
+    if hasattr(cfg, "obb_clearance_fast_samples"):
+        cfg.obb_clearance_fast_samples = int(options.obb_clearance_fast_samples)
+    if hasattr(cfg, "obb_clearance_first"):
+        cfg.obb_clearance_first = bool(options.obb_clearance_first)
+    if hasattr(cfg, "obb_clearance_retry_attempts"):
+        cfg.obb_clearance_retry_attempts = int(options.obb_clearance_retry_attempts)
+    if hasattr(cfg, "obb_clearance_retry_values"):
+        cfg.obb_clearance_retry_values = list(options.obb_clearance_retry_values)
+    if hasattr(cfg, "obb_clearance_retry_iters"):
+        cfg.obb_clearance_retry_iters = int(options.obb_clearance_retry_iters)
+    if hasattr(cfg, "obb_clearance_retry_timeout_ms"):
+        cfg.obb_clearance_retry_timeout_ms = float(options.obb_clearance_retry_timeout_ms)
     if hasattr(cfg, "segment_edge_obb_metadata_only"):
         cfg.segment_edge_obb_metadata_only = bool(options.segment_edge_obb_metadata_only)
     if hasattr(cfg, "segment_edge_obb_metadata_require_cover"):
@@ -2457,6 +2497,30 @@ def run_leaf_rrt(
         "obb_fast_primary_orientation": bool(getattr(options, "obb_fast_primary_orientation", True)),
         "obb_fallback_orientations_on_primary_fail": bool(
             getattr(options, "obb_fallback_orientations_on_primary_fail", False)
+        ),
+        "obb_sampled_support_enabled": bool(getattr(options, "obb_sampled_support_enabled", False)),
+        "obb_clearance_sampled_support_enabled": bool(
+            getattr(options, "obb_clearance_sampled_support_enabled", True)
+        ),
+        "obb_clearance_lateral_l1_max": float(
+            getattr(options, "obb_clearance_lateral_l1_max", 5e-3)
+        ),
+        "obb_clearance_samples": int(getattr(options, "obb_clearance_samples", 17)),
+        "obb_clearance_dense_line_l1_threshold": float(
+            getattr(options, "obb_clearance_dense_line_l1_threshold", 0.03)
+        ),
+        "obb_clearance_dense_samples": int(
+            getattr(options, "obb_clearance_dense_samples", 17)
+        ),
+        "obb_clearance_fast_samples": int(getattr(options, "obb_clearance_fast_samples", 0)),
+        "obb_clearance_first": bool(getattr(options, "obb_clearance_first", False)),
+        "obb_clearance_retry_attempts": int(
+            getattr(options, "obb_clearance_retry_attempts", 0)
+        ),
+        "obb_clearance_retry_values": list(getattr(options, "obb_clearance_retry_values", ())),
+        "obb_clearance_retry_iters": int(getattr(options, "obb_clearance_retry_iters", -1)),
+        "obb_clearance_retry_timeout_ms": float(
+            getattr(options, "obb_clearance_retry_timeout_ms", -1.0)
         ),
         "planning_s": offline_build_s + query_s,
         "planning_total_s": offline_build_s + query_total_s,

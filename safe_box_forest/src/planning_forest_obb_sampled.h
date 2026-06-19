@@ -15,6 +15,7 @@ bool validate_obb_clearance_sampled_candidate(const Robot& robot,
                                               const Scene& scene,
                                               const ObbPortalCandidate& candidate,
                                               double safety_epsilon,
-                                              ObbPortalValidationStats& stats);
+                                              ObbPortalValidationStats& stats,
+                                              const ObbValidationOptions& options);
 
 }  // namespace rbf

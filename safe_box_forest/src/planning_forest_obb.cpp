@@ -1,7 +1,6 @@
 #include "planning_forest_obb.h"
 
 #include "planning_forest_obb_candidate.h"
-#include "planning_forest_obb_options.h"
 #include "planning_forest_obb_sampled.h"
 #include "planning_forest_obb_zonotope.h"
 
@@ -14,10 +13,6 @@
 #include <vector>
 
 namespace rbf {
-
-bool obb_sampled_support_enabled() {
-    return obb_sampled_support_enabled_from_env();
-}
 
 bool obb_generators_within_domain(const Eigen::VectorXd& center,
                                   const Eigen::MatrixXd& generators,
@@ -298,9 +293,10 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
                                      const Scene& scene,
                                      const ObbPortalCandidate& candidate,
                                      double safety_epsilon,
-                                     ObbPortalValidationStats& stats) {
+                                     ObbPortalValidationStats& stats,
+                                     const ObbValidationOptions& options) {
     ++stats.validations;
-    const bool clearance_first = obb_clearance_first_from_env();
+    const bool clearance_first = options.clearance_first;
     bool clearance_attempted = false;
     if (clearance_first) {
         clearance_attempted = true;
@@ -308,7 +304,8 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
                                                      scene,
                                                      candidate,
                                                      safety_epsilon,
-                                                     stats)) {
+                                                     stats,
+                                                     options)) {
             return true;
         }
     }
@@ -347,10 +344,11 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
                                                  scene,
                                                  candidate,
                                                  safety_epsilon,
-                                                 stats)) {
+                                                 stats,
+                                                 options)) {
         return true;
     }
-    if (!obb_sampled_support_enabled()) {
+    if (!options.sampled_support_enabled) {
         return false;
     }
     return validate_obb_sampled_support_candidate(robot,
@@ -367,7 +365,8 @@ bool obb_try_candidate_with_radii(const Robot& robot,
                                   const Eigen::VectorXd& radii_y,
                                   double safety_epsilon,
                                   ObbPortalCandidate& out,
-                                  ObbPortalValidationStats& stats) {
+                                  ObbPortalValidationStats& stats,
+                                  const ObbValidationOptions& options) {
     ObbPortalCandidate candidate;
     if (!obb_make_candidate_from_scaled(base.center_y,
                                         base.basis_y,
@@ -377,7 +376,7 @@ bool obb_try_candidate_with_radii(const Robot& robot,
         ++stats.joint_limit_rejects;
         return false;
     }
-    if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats)) {
+    if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats, options)) {
         return false;
     }
     out = std::move(candidate);
@@ -393,7 +392,8 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                       int grow_iterations,
                                       int binary_iterations,
                                       int max_validations,
-                                      ObbPortalValidationStats& stats) {
+                                      ObbPortalValidationStats& stats,
+                                      const ObbValidationOptions& options) {
     ObbPortalCandidate good = seed;
     const int dims = static_cast<int>(seed.radii_y.size());
     const int grow_cap = std::max(0, grow_iterations);
@@ -432,7 +432,8 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                             mid,
                                             safety_epsilon,
                                             mid_candidate,
-                                            stats)) {
+                                            stats,
+                                            options)) {
                 good = std::move(mid_candidate);
                 good_r = mid;
             } else {
@@ -456,7 +457,8 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                         next,
                                         safety_epsilon,
                                         next_candidate,
-                                        stats)) {
+                                        stats,
+                                        options)) {
             good = std::move(next_candidate);
             current = next;
         } else {
@@ -482,7 +484,8 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                             next,
                                             safety_epsilon,
                                             next_candidate,
-                                            stats)) {
+                                            stats,
+                                            options)) {
                 good = std::move(next_candidate);
                 current = next;
             } else {
@@ -553,7 +556,7 @@ bool validate_obb_zonotope_portal(const Robot& robot,
                                                 stats)) {
                 continue;
             }
-            if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats)) {
+            if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats, options)) {
                 continue;
             }
             ++stats.valid_candidates;
@@ -587,7 +590,8 @@ bool validate_obb_zonotope_portal(const Robot& robot,
                                   grow_iterations,
                                   binary_iterations,
                                   max_validations,
-                                  stats);
+                                  stats,
+                                  options);
     }
     if (out_center != nullptr) {
         *out_center = best.center_q;

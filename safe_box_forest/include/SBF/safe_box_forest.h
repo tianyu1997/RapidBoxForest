@@ -412,6 +412,18 @@ struct AdaptiveLeafSweepConfig {
 	int obb_max_validations_per_window = 16;
 	bool obb_fast_primary_orientation = true;
 	bool obb_fallback_orientations_on_primary_fail = false;
+	bool obb_sampled_support_enabled = false;
+	bool obb_clearance_sampled_support_enabled = true;
+	double obb_clearance_lateral_l1_max = 5e-3;
+	int obb_clearance_samples = 17;
+	double obb_clearance_dense_line_l1_threshold = 0.03;
+	int obb_clearance_dense_samples = 17;
+	int obb_clearance_fast_samples = 0;
+	bool obb_clearance_first = false;
+	int obb_clearance_retry_attempts = 0;
+	std::vector<double> obb_clearance_retry_values;
+	int obb_clearance_retry_iters = -1;
+	double obb_clearance_retry_timeout_ms = -1.0;
 	bool segment_edge_obb_metadata_only = false;
 	bool segment_edge_obb_metadata_require_cover = false;
 	bool hipac_promote_transition_slices = false;

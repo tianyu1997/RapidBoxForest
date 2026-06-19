@@ -615,6 +615,18 @@ def effective_rbf_profile(args: argparse.Namespace,
         "max_validations_per_window": int(args.obb_max_validations_per_window),
         "fast_primary_orientation": bool(args.obb_fast_primary_orientation),
         "fallback_orientations_on_primary_fail": bool(args.obb_fallback_orientations_on_primary_fail),
+        "sampled_support_enabled": False,
+        "clearance_sampled_support_enabled": True,
+        "clearance_lateral_l1_max": 5e-3,
+        "clearance_samples": 17,
+        "clearance_dense_line_l1_threshold": 0.03,
+        "clearance_dense_samples": 17,
+        "clearance_fast_samples": 0,
+        "clearance_first": False,
+        "clearance_retry_attempts": 0,
+        "clearance_retry_values": [],
+        "clearance_retry_iters": -1,
+        "clearance_retry_timeout_ms": -1.0,
     }
     profile["query"]["final_rrt_simplify_timeout_ms"] = 1000.0 * float(args.ompl_simplify_time_s)
     profile["query"]["final_rrt_simplify_time_s"] = float(args.ompl_simplify_time_s)

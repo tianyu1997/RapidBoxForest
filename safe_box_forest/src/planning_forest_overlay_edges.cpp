@@ -12,7 +12,6 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_obb.h"
-#include "planning_forest_obb_options.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_utils.h"
 
@@ -25,6 +24,20 @@ ObbValidationOptions obb_validation_options_from_config(const AdaptiveLeafSweepC
     options.fast_primary_orientation = config.obb_fast_primary_orientation;
     options.fallback_orientations_on_primary_fail =
         config.obb_fallback_orientations_on_primary_fail;
+    options.sampled_support_enabled = config.obb_sampled_support_enabled;
+    options.clearance_sampled_support_enabled =
+        config.obb_clearance_sampled_support_enabled;
+    options.clearance_lateral_l1_max = config.obb_clearance_lateral_l1_max;
+    options.clearance_samples = config.obb_clearance_samples;
+    options.clearance_dense_line_l1_threshold =
+        config.obb_clearance_dense_line_l1_threshold;
+    options.clearance_dense_samples = config.obb_clearance_dense_samples;
+    options.clearance_fast_samples = config.obb_clearance_fast_samples;
+    options.clearance_first = config.obb_clearance_first;
+    options.clearance_retry_attempts = config.obb_clearance_retry_attempts;
+    options.clearance_retry_values = config.obb_clearance_retry_values;
+    options.clearance_retry_iters = config.obb_clearance_retry_iters;
+    options.clearance_retry_timeout_ms = config.obb_clearance_retry_timeout_ms;
     return options;
 }
 
@@ -242,11 +255,11 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 if (!greedy_bridge_cover || !strict_obb_bridge_cover || waypoints.size() < 2U) {
                     return -1;
                 }
-                const int retry_attempts = obb_clearance_retry_attempts_from_env();
+                const int retry_attempts = std::max(0, obb_validation_options.clearance_retry_attempts);
                 if (retry_attempts <= 0) {
                     return -1;
                 }
-                std::vector<double> clearances = obb_clearance_retry_values_from_env();
+                std::vector<double> clearances = obb_validation_options.clearance_retry_values;
                 if (clearances.empty()) {
                     return -1;
                 }
@@ -257,10 +270,14 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 retry_config.segment_step = config_.query.audit_segment_step;
                 retry_config.max_iters = std::max(
                     1,
-                    obb_clearance_retry_iters_from_env(std::max(1, retry_config.max_iters)));
+                    obb_validation_options.clearance_retry_iters >= 0
+                        ? obb_validation_options.clearance_retry_iters
+                        : std::max(1, retry_config.max_iters));
                 retry_config.timeout_ms = std::max(
                     0.0,
-                    obb_clearance_retry_timeout_ms_from_env(retry_config.timeout_ms));
+                    obb_validation_options.clearance_retry_timeout_ms >= 0.0
+                        ? obb_validation_options.clearance_retry_timeout_ms
+                        : retry_config.timeout_ms);
                 diagnostics[prefix + "." + obb_diag + "_clearance_retry_attempt_budget"] +=
                     static_cast<double>(retry_attempts);
                 for (int attempt = 0; attempt < retry_attempts; ++attempt) {

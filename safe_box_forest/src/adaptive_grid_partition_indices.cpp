@@ -139,7 +139,7 @@ void AdaptiveGridPartition::append_cell_to_indices(int cell_index) {
 			}
 			entry_count *= static_cast<std::uint64_t>(hi_bins[item] - lo_bins[item] + 1);
 		}
-		const std::uint64_t max_entries = partition_point_index_max_cell_entries_from_env();
+		const std::uint64_t max_entries = partition_point_index_max_cell_entries();
 		if (!valid || entry_count > max_entries) {
 			point_overflow_cells_.push_back(cell.cell_id);
 		} else {

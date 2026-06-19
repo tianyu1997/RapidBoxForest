@@ -69,6 +69,18 @@ struct ObbPathCoverResult {
 struct ObbValidationOptions {
     bool fast_primary_orientation = true;
     bool fallback_orientations_on_primary_fail = false;
+    bool sampled_support_enabled = false;
+    bool clearance_sampled_support_enabled = true;
+    double clearance_lateral_l1_max = 5e-3;
+    int clearance_samples = 17;
+    double clearance_dense_line_l1_threshold = 0.03;
+    int clearance_dense_samples = 17;
+    int clearance_fast_samples = 0;
+    bool clearance_first = false;
+    int clearance_retry_attempts = 0;
+    std::vector<double> clearance_retry_values;
+    int clearance_retry_iters = -1;
+    double clearance_retry_timeout_ms = -1.0;
 };
 
 bool validate_obb_zonotope_portal(const Robot& robot,

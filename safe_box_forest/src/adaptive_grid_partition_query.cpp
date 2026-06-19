@@ -179,7 +179,7 @@ AdaptiveGridPartition::nearest_component_pairs_to_largest(int max_pairs_per_comp
 	}
 	const int per_component_limit = max_pairs_per_component > 0 ? max_pairs_per_component : 1;
 	const int cap = std::max(1, candidate_cap);
-	const std::uint64_t exact_pair_cap = partition_component_pair_exact_cap_from_env();
+	const std::uint64_t exact_pair_cap = partition_component_pair_exact_cap();
 	const auto& main = components.front();
 	const std::vector<Interval> main_hull = interval_hull_for_cells(cells_, main);
 	pairs.reserve((components.size() - 1) * static_cast<std::size_t>(per_component_limit));

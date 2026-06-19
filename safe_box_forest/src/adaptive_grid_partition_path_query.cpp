@@ -144,7 +144,7 @@ AdaptiveGridPartitionQueryResult AdaptiveGridPartition::query(
 		return result;
 	}
 	if (start_island != goal_island &&
-		partition_query_component_prune_enabled_from_env() &&
+		partition_query_component_prune_enabled() &&
 		!same_component_with_overlay(result.start_box_id, result.goal_box_id)) {
 		result.search_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
 		return result;

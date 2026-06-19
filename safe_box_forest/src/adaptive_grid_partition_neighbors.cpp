@@ -76,7 +76,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 	if (cells_.empty()) {
 		return;
 	}
-	const int indexed_threshold = partition_indexed_adjacency_threshold_from_env();
+	const int indexed_threshold = partition_indexed_adjacency_threshold();
 	if (static_cast<int>(cells_.size()) < indexed_threshold) {
 		for (int cell_index = 0; cell_index < static_cast<int>(cells_.size()); ++cell_index) {
 			neighbor_cache_[static_cast<std::size_t>(cell_index)] =
@@ -85,7 +85,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 		return;
 	}
 	const int dims = static_cast<int>(split_counts_.size());
-	const int max_adjacency_dims = partition_adjacency_dim_limit_from_env(dims);
+	const int max_adjacency_dims = partition_adjacency_dim_limit(dims);
 	std::vector<int> selected_dims;
 	selected_dims.reserve(static_cast<std::size_t>(max_adjacency_dims));
 	std::vector<int> order(static_cast<std::size_t>(dims));
@@ -114,9 +114,9 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 		return;
 	}
 
-	const bool enable_cross_root_adjacency = partition_cross_root_adjacency_enabled_from_env();
-	const std::uint64_t max_bins_per_cell = partition_broadphase_max_bins_per_cell_from_env();
-	const int adjacency_bucket_bits = partition_adjacency_bucket_bits_from_env();
+	const bool enable_cross_root_adjacency = partition_cross_root_adjacency_enabled();
+	const std::uint64_t max_bins_per_cell = partition_broadphase_max_bins_per_cell();
+	const int adjacency_bucket_bits = partition_adjacency_bucket_bits();
 	auto coarse_adjacency_coord = [&](const GridRange& range, int dim, bool upper) {
 		const int split_count = split_counts_[static_cast<std::size_t>(dim)];
 		const int shift = std::max(0, split_count - adjacency_bucket_bits);
@@ -191,7 +191,7 @@ void AdaptiveGridPartition::rebuild_neighbor_cache() {
 
 	std::unordered_set<std::uint64_t> tested_pairs;
 	tested_pairs.reserve(cells_.size() * 8);
-	const int max_neighbors_per_cell = partition_max_neighbors_per_cell_from_env(cells_.size());
+	const int max_neighbors_per_cell = partition_max_neighbors_per_cell(cells_.size());
 	auto add_edge_if_adjacent = [&](int lhs, int rhs) {
 		if (lhs == rhs ||
 			lhs < 0 || rhs < 0 ||
