@@ -18,21 +18,6 @@ struct QueryBridgeAcceptanceThresholds {
     double max_path_length = 4.5;
 };
 
-struct QueryBridgePartitionPathFirstOptions {
-    bool enabled = false;
-    bool allow_long = false;
-    double max_segment_fraction = 0.95;
-};
-
-struct QueryBridgePartitionInitialPathDecision {
-    bool segment_reasonable = false;
-    bool length_reasonable = false;
-    bool accepted = false;
-    double direct_distance = 0.0;
-    double raw_length = 0.0;
-    double segment_fraction = 0.0;
-};
-
 struct QueryBridgeWaypointQualityRetryOptions {
     bool enabled = false;
     int attempts = 4;
@@ -63,20 +48,6 @@ QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
 void record_query_bridge_acceptance_diagnostics(
     StageContext& context,
     const QueryBridgeAcceptanceThresholds& thresholds);
-
-QueryBridgePartitionPathFirstOptions query_bridge_partition_path_first_options_from_env(
-    bool partition_native_mode);
-
-QueryBridgePartitionInitialPathDecision query_bridge_partition_initial_path_decision(
-    const QueryResult& initial_query,
-    const Eigen::VectorXd& start,
-    const Eigen::VectorXd& goal,
-    const QueryBridgeAcceptanceThresholds& thresholds,
-    const QueryBridgePartitionPathFirstOptions& options);
-
-void record_query_bridge_partition_path_first_diagnostics(
-    StageContext& context,
-    const QueryBridgePartitionPathFirstOptions& options);
 
 QueryBridgeWaypointQualityRetryOptions query_bridge_waypoint_quality_retry_options_from_env();
 

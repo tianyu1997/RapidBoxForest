@@ -20,7 +20,6 @@ struct QueryBridgeSearchTask {
     int attempts = 1;
     std::vector<Eigen::VectorXd> waypoint_path;
     std::vector<std::vector<Eigen::VectorXd>> waypoint_fallback_paths;
-    bool waypoint_path_from_partition_query = false;
     std::vector<Eigen::VectorXd> hipac_candidate_path;
     bool hipac_online_satisfied = false;
     bool direct_start_goal_satisfied = false;

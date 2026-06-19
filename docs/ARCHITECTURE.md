@@ -284,8 +284,7 @@ src/planning_forest_query_bridge_acceptance_options.cpp
                                    parsing, diagnostics, and acceptance checks
 src/planning_forest_query_bridge_attempt_paths.cpp
                                    RRT attempt path selection, hybridization,
-                                   direct-line/detour fallback, and waypoint
-                                   quality retry orchestration
+                                   and waypoint quality retry orchestration
 src/planning_forest_query_bridge_batch_policy.cpp
                                    query bridge batch task policy, edge
                                    ownership, and attempt-plan helpers
@@ -302,10 +301,6 @@ src/planning_forest_query_bridge_waypoint_quality.cpp
 src/planning_forest_query_bridge_index_options.cpp
                                    query-index override option parsing for
                                    force/global/segment-only bridge selection
-src/planning_forest_query_bridge_partition_path_first.cpp
-                                   partition-first query acceptance option
-                                   parsing, diagnostics, and initial path
-                                   decision
 src/planning_forest_query_bridge_task_key.cpp
                                    query bridge per-task diagnostics key helper
 src/planning_forest_query_bridge_path_utils.cpp

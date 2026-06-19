@@ -56,9 +56,6 @@ QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
         query_bridge_attempt_plan(task,
                                   query_bridge_index_forced(index_options, task.index),
                                   retry_options);
-    if (plan.partition_path_first) {
-        record_query_bridge_partition_path_first_task(context, task.index);
-    }
     record_query_bridge_forced_attempts(context,
                                         task.index,
                                         plan.forced,

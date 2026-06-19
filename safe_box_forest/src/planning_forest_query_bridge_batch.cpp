@@ -105,8 +105,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeAcceptanceThresholds bridge_acceptance =
         query_bridge_acceptance_thresholds_from_env();
     const QueryBridgeIndexOptions index_options = query_bridge_index_options_from_env();
-    const QueryBridgePartitionPathFirstOptions partition_path_first_options =
-        query_bridge_partition_path_first_options_from_env(partition_native_mode());
 
     std::vector<QueryBridgeSearchTask> tasks;
     tasks.reserve(starts.size());
@@ -117,11 +115,10 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const bool forced_task = query_bridge_index_forced(index_options, index);
         QueryResult initial_query;
         bool has_initial_query = false;
-        if (!forced_task || partition_path_first_options.enabled) {
+        if (!forced_task) {
             initial_query = query(starts[index], goals[index]);
             has_initial_query = true;
-            if (!forced_task &&
-                query_bridge_result_acceptable(initial_query,
+            if (query_bridge_result_acceptable(initial_query,
                                                starts[index],
                                                goals[index],
                                                bridge_acceptance)) {
@@ -184,33 +181,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                                       task.goal);
         task.bridge_rrt.segment_resolution =
             std::max(task.bridge_rrt.segment_resolution, config_.query.audit_resolution);
-        if (partition_path_first_options.enabled &&
-            has_initial_query &&
-            initial_query.success &&
-            initial_query.audit_passed &&
-            !initial_query.path.empty()) {
-            last_build_.diagnostics["query_bridge.partition_path_first_initial_success"] += 1.0;
-            const QueryBridgePartitionInitialPathDecision partition_path_decision =
-                query_bridge_partition_initial_path_decision(initial_query,
-                                                             task.start,
-                                                             task.goal,
-                                                             bridge_acceptance,
-                                                             partition_path_first_options);
-            if (!partition_path_decision.segment_reasonable) {
-                last_build_.diagnostics["query_bridge.partition_path_first_reject_segment"] += 1.0;
-            }
-            if (!partition_path_decision.length_reasonable) {
-                last_build_.diagnostics["query_bridge.partition_path_first_reject_length"] += 1.0;
-            }
-            if (partition_path_decision.accepted) {
-                task.waypoint_path = initial_query.path;
-                task.waypoint_path_from_partition_query = true;
-                if (task.hipac_candidate_path.empty()) {
-                    task.hipac_candidate_path = initial_query.path;
-                }
-                last_build_.diagnostics["query_bridge.partition_path_first_accepted"] += 1.0;
-            }
-        }
         const double bridge_distance = (task.goal - task.start).norm();
         task.short_local_bridge = query_bridge_short_local_distance(bridge_distance);
         if (task.short_local_bridge) {
@@ -285,8 +255,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         query_bridge_parallel_rrt_options_from_env();
     record_query_bridge_parallel_rrt_diagnostics(batch_context, parallel_rrt_options);
     record_query_bridge_acceptance_diagnostics(batch_context, bridge_acceptance);
-    record_query_bridge_partition_path_first_diagnostics(batch_context,
-                                                        partition_path_first_options);
     const QueryBridgeWaypointQualityRetryOptions quality_retry_options =
         query_bridge_waypoint_quality_retry_options_from_env();
     record_query_bridge_waypoint_quality_retry_diagnostics(batch_context,
@@ -428,11 +396,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "rrt_ms"),
                                                   rrt_ms);
             double best_length = std::numeric_limits<double>::infinity();
-            if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
-                best_length = path_length(task.waypoint_path);
-                record_query_bridge_partition_path_first_rrt_skipped(batch_context,
-                                                                     task.index);
-            }
             adopt_query_bridge_waypoint_after_rrt(task,
                                                   attempt_paths[task_offset],
                                                   prepared[task_offset].attempts,
@@ -508,10 +471,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               index_options,
                                               retry_options,
                                               batch_context);
-        if (attempt_plan.partition_path_first) {
-            record_query_bridge_partition_path_first_rrt_skipped(batch_context,
-                                                                 task.index);
-        }
         std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
             static_cast<std::size_t>(attempt_plan.effective_attempts));
         const auto rrt_t0 = QueryBridgeClock::now();
@@ -530,9 +489,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "rrt_ms"),
                                               rrt_ms);
         double best_length = std::numeric_limits<double>::infinity();
-        if (task.waypoint_path_from_partition_query && !task.waypoint_path.empty()) {
-            best_length = path_length(task.waypoint_path);
-        }
         adopt_query_bridge_waypoint_after_rrt(task,
                                               attempt_paths,
                                               attempt_plan.base_attempts,

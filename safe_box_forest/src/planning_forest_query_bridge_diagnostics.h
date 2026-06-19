@@ -21,12 +21,6 @@ void query_bridge_mark_task_skip(BuildProfile& profile,
                                  double code,
                                  const char* reason);
 
-void record_query_bridge_partition_path_first_task(StageContext& context,
-                                                   std::size_t index);
-
-void record_query_bridge_partition_path_first_rrt_skipped(StageContext& context,
-                                                          std::size_t index);
-
 void record_query_bridge_batch_task_no_path(StageContext& context,
                                             std::size_t index,
                                             double total_ms);

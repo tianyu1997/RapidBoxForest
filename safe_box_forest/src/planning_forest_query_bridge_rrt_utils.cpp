@@ -509,10 +509,7 @@ QueryBridgeAttemptPlan query_bridge_attempt_plan(
     plan.base_attempts =
         forced ? std::max(std::max(1, task.attempts), options.forced_attempts)
                : std::max(1, task.attempts);
-    plan.partition_path_first =
-        task.waypoint_path_from_partition_query && !task.waypoint_path.empty();
-    plan.effective_attempts =
-        plan.partition_path_first ? 0 : plan.base_attempts;
+    plan.effective_attempts = plan.base_attempts;
     if (plan.effective_attempts > 0 &&
         !options.local_radius_schedule.empty() &&
         options.local_radius_append_unrestricted_attempt) {

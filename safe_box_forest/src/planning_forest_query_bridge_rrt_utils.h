@@ -36,7 +36,6 @@ struct QueryBridgeRetryOptions {
 
 struct QueryBridgeAttemptPlan {
     bool forced = false;
-    bool partition_path_first = false;
     int base_attempts = 1;
     int effective_attempts = 1;
 };
