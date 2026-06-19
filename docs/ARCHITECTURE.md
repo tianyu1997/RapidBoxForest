@@ -99,6 +99,8 @@ src/lect_database/                 core persistence implementation
                                    accounting, and node-row flush/read/write
   read_snapshot_mapped_file.cpp    read-snapshot mmap RAII wrapper shared by
                                    snapshot open/load paths
+  read_snapshot_builder.cpp        legacy LECT database to read-snapshot
+                                   conversion
   read_snapshot_format.h           read-snapshot and legacy sidecar binary
                                    layout constants/records
   read_snapshot_legacy.cpp         legacy node-page text parsing and sidecar
