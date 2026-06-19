@@ -31,7 +31,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -649,9 +648,6 @@ class RBFLeafRRTOptions:
     query_bridge_adaptive_repair_priority: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY
     query_bridge_full_residual_overlay_when_connected: bool = (
         DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
-    )
-    query_bridge_direct_partition_append_batch_size: int = (
-        DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE
     )
     query_box_transition_line_deviation_penalty: float = DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY
     query_foreign_edge_cost_penalty: float = DEFAULT_RBF_QUERY_FOREIGN_EDGE_COST_PENALTY
@@ -2031,9 +2027,6 @@ def bridge_all_queries(
             if bool(getattr(options, "segment_edge_obb_metadata_require_cover", False))
             else "0"
         )
-        env_updates["RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE"] = str(
-            int(getattr(options, "query_bridge_direct_partition_append_batch_size", 32))
-        )
         if float(options.query_bridge_direct_max_length) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_MAX_LENGTH"] = str(float(options.query_bridge_direct_max_length))
         previous_env = {name: os.environ.get(name) for name in env_updates}
@@ -2607,9 +2600,6 @@ def run_leaf_rrt(
         "obb_fast_primary_orientation": bool(getattr(options, "obb_fast_primary_orientation", True)),
         "obb_fallback_orientations_on_primary_fail": bool(
             getattr(options, "obb_fallback_orientations_on_primary_fail", False)
-        ),
-        "query_bridge_direct_partition_append_batch_size": int(
-            options.query_bridge_direct_partition_append_batch_size
         ),
         "planning_s": offline_build_s + query_s,
         "planning_total_s": offline_build_s + query_total_s,

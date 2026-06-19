@@ -43,7 +43,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
-    DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -542,9 +541,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["sequential_reuse"] = bool(args.query_bridge_sequential_reuse)
     profile["query_bridge"]["scene_reusable_edges"] = bool(args.query_bridge_scene_reusable_edges)
     profile["query_bridge"]["reuse_scope"] = "scene_seed_local"
-    profile["query_bridge"]["direct_partition_append_batch_size"] = int(
-        args.query_bridge_direct_partition_append_batch_size
-    )
     profile["query_bridge"]["box_transition_line_deviation_penalty"] = float(args.box_transition_line_deviation_penalty)
     profile["query_bridge"]["foreign_edge_cost_penalty"] = float(args.query_foreign_edge_cost_penalty)
     profile["query_bridge"]["query_bridge_edge_cost_penalty"] = float(args.query_bridge_edge_cost_penalty)
@@ -744,11 +740,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-path-ratio", type=float, default=1.50)
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
-    parser.add_argument(
-        "--query-bridge-direct-partition-append-batch-size",
-        type=int,
-        default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE,
-    )
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
     parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
@@ -1418,9 +1409,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
             query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
-            query_bridge_direct_partition_append_batch_size=int(
-                args.query_bridge_direct_partition_append_batch_size
-            ),
             query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
             query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
             query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
@@ -1528,9 +1516,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "obb_fast_primary_orientation": bool(args.obb_fast_primary_orientation),
             "obb_fallback_orientations_on_primary_fail": bool(args.obb_fallback_orientations_on_primary_fail),
             "query_endpoint_anchor_ffb_depth": int(args.query_endpoint_anchor_ffb_depth),
-            "query_bridge_direct_partition_append_batch_size": int(
-                args.query_bridge_direct_partition_append_batch_size
-            ),
             "lect_split_schedule": str(effective_split_schedule_kind),
             "lect_split_schedule_explicit": _flag_was_supplied(
                 getattr(args, "_argv", []),

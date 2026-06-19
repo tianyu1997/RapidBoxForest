@@ -49,11 +49,7 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
         detail::env_indexed_double_or_default("RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP",
                                               query_index,
                                               base_sample_step));
-    options.partition_append_batch_size =
-        std::max(1,
-                 detail::env_int_or_default(
-                     "RBF_QUERY_BRIDGE_DIRECT_PARTITION_APPEND_BATCH_SIZE",
-                     32));
+    options.partition_append_batch_size = 32;
     options.full_residual_overlay_when_connected =
         detail::env_int_or_default("RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED",
                                    0) != 0;
