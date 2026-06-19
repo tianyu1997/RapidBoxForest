@@ -89,7 +89,7 @@ src/lect_database/                 core persistence implementation
                                    pages, evidence index, journal, checkpoint
   database_evidence_index.cpp      in-memory open-addressed evidence index
                                    reserve/find/upsert operations
-  database_evidence_codec.h        evidence binary/text codec, sidecar layout,
+  database_evidence_codec.cpp      evidence binary/text codec, sidecar layout,
                                    payload checksum, and half-float quantizer
   database_file_layout.cpp         manifest, node-page, journal, and evidence
                                    file-path helpers plus node-row text codec
