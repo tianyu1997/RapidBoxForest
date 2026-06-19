@@ -22,13 +22,12 @@ usage and API details live beside each module.
    bindings.
 10. `../experiments/README.md` - current experiment runners and output layout.
 
-## Private Development Notes
+## Development Notes
 
-The private development checkout may contain `internal/` with engineering
-plans, dated status snapshots, exploratory algorithm notes, and paper-drafting
-notes. Those files are implementation context only; they are not canonical API,
-build, or reproduction documentation, and the clean public export excludes
-`docs/internal/` by default.
+The tracked documentation tree contains only public API, architecture, release,
+and reproduction material. Development plans, dated status snapshots,
+exploratory algorithm notes, and paper-drafting notes are not canonical
+documentation and should not be committed under `docs/`.
 
 Prototype source trees must be upstreamed into the main modules instead of kept
 as parallel workspaces. In particular, `improve_workspace/` is treated as a
@@ -38,8 +37,6 @@ committed.
 
 ## Archive Policy
 
-- `internal/archive/` keeps superseded planning notes that may still explain
-  historical decisions in the private development checkout.
 - Clean public exports exclude historical archives and the private `paper/`
   directory by default; paper-facing reproduction should use the current
   top-level `experiments/` runners from the development checkout.
