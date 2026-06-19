@@ -592,7 +592,6 @@ class RBFLeafRRTOptions:
     corridor_refine_boxes_per_query: int = 12
     corridor_refine_passes: int = 1
     corridor_refine_start_margin_ms: float = 0.0
-    corridor_refine_mode: str = "box_only_long_path"
     corridor_refine_long_path_ratio: float = 1.25
     corridor_refine_min_delta: float = 0.25
     query_bridge_all: bool = DEFAULT_RBF_QUERY_BRIDGE_ALL
@@ -1656,9 +1655,6 @@ def refine_corridors(
     per_query = max(1, int(options.corridor_refine_boxes_per_query))
     if budget_s <= 0.0 or max_total <= 0:
         return 0.0, 0, 0
-    mode = str(options.corridor_refine_mode)
-    if mode not in {"box_only_long_path", "legacy_bridge"}:
-        raise ValueError(f"unsupported corridor_refine_mode: {mode}")
     query_list = [query_spec(query) for query in queries]
     t0 = time.perf_counter()
     added_total = 0
@@ -1679,7 +1675,7 @@ def refine_corridors(
                 start,
                 goal,
                 quota,
-                mode,
+                "box_only_long_path",
                 float(options.corridor_refine_long_path_ratio),
                 float(options.corridor_refine_min_delta),
             ))

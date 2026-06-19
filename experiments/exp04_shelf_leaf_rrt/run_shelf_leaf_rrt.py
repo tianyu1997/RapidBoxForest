@@ -473,7 +473,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         corridor_refine_boxes_per_query=int(args.corridor_refine_boxes_per_query),
         corridor_refine_passes=int(args.corridor_refine_passes),
         corridor_refine_start_margin_ms=float(args.corridor_refine_start_margin_ms),
-        corridor_refine_mode=str(args.corridor_refine_mode),
         corridor_refine_long_path_ratio=float(args.corridor_refine_long_path_ratio),
         corridor_refine_min_delta=float(args.corridor_refine_min_delta),
         query_bridge_all=bool(args.query_bridge_all),
@@ -1544,7 +1543,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--corridor-refine-boxes-per-query", type=int, default=12)
     parser.add_argument("--corridor-refine-passes", type=int, default=1)
     parser.add_argument("--corridor-refine-start-margin-ms", type=float, default=0.0)
-    parser.add_argument("--corridor-refine-mode", choices=["box_only_long_path", "legacy_bridge"], default="box_only_long_path")
     parser.add_argument("--corridor-refine-long-path-ratio", type=float, default=1.25)
     parser.add_argument("--corridor-refine-min-delta", type=float, default=0.25)
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ALL)
@@ -1859,7 +1857,6 @@ def main() -> int:
             "corridor_refine_max_boxes": int(args.corridor_refine_max_boxes),
             "corridor_refine_boxes_per_query": int(args.corridor_refine_boxes_per_query),
             "corridor_refine_passes": int(args.corridor_refine_passes),
-            "corridor_refine_mode": str(args.corridor_refine_mode),
             "corridor_refine_long_path_ratio": float(args.corridor_refine_long_path_ratio),
             "corridor_refine_min_delta": float(args.corridor_refine_min_delta),
             "query_bridge_all": bool(args.query_bridge_all),

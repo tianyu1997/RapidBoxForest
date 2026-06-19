@@ -132,7 +132,6 @@ def make_args(base: argparse.Namespace, out_dir: Path, ffb_depth: int, leaf_max_
         corridor_refine_boxes_per_query=12,
         corridor_refine_passes=1,
         corridor_refine_start_margin_ms=0.0,
-        corridor_refine_mode="box_only_long_path",
         corridor_refine_long_path_ratio=1.25,
         corridor_refine_min_delta=0.25,
         query_bridge_all=bool(base.query_bridge_all),
