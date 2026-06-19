@@ -47,7 +47,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
@@ -493,7 +492,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
         query_bridge_adaptive_max_repair_subdivisions=int(args.query_bridge_adaptive_max_repair_subdivisions),
         query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
-        query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
         query_box_transition_line_deviation_penalty=float(args.query_box_transition_line_deviation_penalty),
         query_foreign_edge_cost_penalty=float(args.query_foreign_edge_cost_penalty),
         query_bridge_edge_cost_penalty=float(args.query_bridge_edge_cost_penalty),
@@ -640,7 +638,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.query_bridge_adaptive_fine_step": float(options.query_bridge_adaptive_fine_step),
         "option.query_bridge_adaptive_max_repair_subdivisions": int(options.query_bridge_adaptive_max_repair_subdivisions),
         "option.query_bridge_adaptive_max_repair_calls": int(options.query_bridge_adaptive_max_repair_calls),
-        "option.query_bridge_adaptive_repair_priority": int(options.query_bridge_adaptive_repair_priority),
         "option.query_box_transition_line_deviation_penalty": float(options.query_box_transition_line_deviation_penalty),
         "option.query_foreign_edge_cost_penalty": float(options.query_foreign_edge_cost_penalty),
         "option.query_bridge_edge_cost_penalty": float(options.query_bridge_edge_cost_penalty),
@@ -851,7 +848,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "diag_query_bridge_direct_corridor_direct_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_direct_ffb_ms", 0.0) for row in items),
             "diag_query_bridge_direct_corridor_repair_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_repair_ffb_ms", 0.0) for row in items),
             "diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms", 0.0) for row in items),
-            "diag_query_bridge_direct_corridor_adaptive_repair_priority_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_priority", 0.0) for row in items),
             "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction", 0.0) for row in items),
             "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_final_bad_fraction", 0.0) for row in items),
             "diag_query_bridge_direct_corridor_mark_initial_ms_median": median(row.get("diag_query_bridge_direct_corridor_mark_initial_ms", 0.0) for row in items),
@@ -1156,7 +1152,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_direct_corridor_direct_ffb_ms_median",
         "diag_query_bridge_direct_corridor_repair_ffb_ms_median",
         "diag_query_bridge_direct_corridor_adaptive_repair_ffb_ms_median",
-        "diag_query_bridge_direct_corridor_adaptive_repair_priority_median",
         "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median",
         "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median",
         "diag_query_bridge_direct_corridor_mark_initial_ms_median",
@@ -1589,7 +1584,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP)
     parser.add_argument("--query-bridge-adaptive-max-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
-    parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
     parser.add_argument(
         "--query-bridge-direct-segment-after-rrt",
         action=argparse.BooleanOptionalAction,
@@ -1844,7 +1838,6 @@ def main() -> int:
             "query_bridge_adaptive_fine_step": float(args.query_bridge_adaptive_fine_step),
             "query_bridge_adaptive_max_repair_subdivisions": int(args.query_bridge_adaptive_max_repair_subdivisions),
             "query_bridge_adaptive_max_repair_calls": int(args.query_bridge_adaptive_max_repair_calls),
-            "query_bridge_adaptive_repair_priority": int(args.query_bridge_adaptive_repair_priority),
             "query_box_transition_line_deviation_penalty": float(args.query_box_transition_line_deviation_penalty),
             "query_foreign_edge_cost_penalty": float(args.query_foreign_edge_cost_penalty),
             "query_bridge_edge_cost_penalty": float(args.query_bridge_edge_cost_penalty),

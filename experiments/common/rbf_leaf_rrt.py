@@ -29,7 +29,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
@@ -307,7 +306,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.direct_corridor_direct_ffb_ms",
         "query_bridge.direct_corridor_repair_ffb_ms",
         "query_bridge.direct_corridor_adaptive_repair_ffb_ms",
-        "query_bridge.direct_corridor_adaptive_repair_priority",
         "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
         "query_bridge.direct_corridor_adaptive_final_bad_fraction",
         "query_bridge.direct_corridor_segment_audit_ms",
@@ -645,7 +643,6 @@ class RBFLeafRRTOptions:
     query_bridge_adaptive_fine_step: float = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP
     query_bridge_adaptive_max_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS
     query_bridge_adaptive_max_repair_calls: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS
-    query_bridge_adaptive_repair_priority: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY
     query_bridge_full_residual_overlay_when_connected: bool = (
         DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED
     )
@@ -2003,9 +2000,6 @@ def bridge_all_queries(
         )
         env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS"] = str(
             int(getattr(options, "query_bridge_adaptive_max_repair_calls", 5))
-        )
-        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY"] = str(
-            int(getattr(options, "query_bridge_adaptive_repair_priority", 1))
         )
         env_updates["RBF_QUERY_BRIDGE_SCENE_REUSABLE_EDGES"] = (
             "1"

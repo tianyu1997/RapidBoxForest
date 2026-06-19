@@ -42,7 +42,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_MAX_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_EDGE_COST_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -741,7 +740,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-accept-path-additive", type=float, default=0.75)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
-    parser.add_argument("--query-bridge-adaptive-repair-priority", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_REPAIR_PRIORITY)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
     parser.add_argument(
@@ -1410,7 +1408,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
             query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
             query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
-            query_bridge_adaptive_repair_priority=int(args.query_bridge_adaptive_repair_priority),
             query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
             query_bridge_direct_max_length=float(args.query_bridge_direct_max_length),
             query_bridge_sequential_reuse=bool(args.query_bridge_sequential_reuse),
@@ -2517,7 +2514,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "diag_query_bridge_direct_corridor_all_ffb_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_all_ffb_calls_total", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_added_median": median(row.get("diag_query_bridge_direct_corridor_added", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_added_total_median": median(row.get("diag_query_bridge_direct_corridor_added_total", 0.0) for row in items),
-                "diag_query_bridge_direct_corridor_adaptive_repair_priority_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_priority", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_final_bad_fraction", 0.0) for row in items),
                 "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median": median(row.get("diag_query_bridge_direct_corridor_adaptive_repair_calls_total", 0.0) for row in items),
@@ -2699,7 +2695,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "diag_query_bridge_direct_corridor_all_ffb_calls_total_median",
         "diag_query_bridge_direct_corridor_added_median",
         "diag_query_bridge_direct_corridor_added_total_median",
-        "diag_query_bridge_direct_corridor_adaptive_repair_priority_median",
         "diag_query_bridge_direct_corridor_adaptive_initial_bad_fraction_median",
         "diag_query_bridge_direct_corridor_adaptive_final_bad_fraction_median",
         "diag_query_bridge_direct_corridor_adaptive_repair_calls_total_median",

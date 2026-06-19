@@ -82,17 +82,14 @@ QueryBridgeAdaptiveRepairStats query_bridge_run_adaptive_repair_pass(
     stats.initial_bad_fraction = bad_fraction(stats.final_bad);
 
     context.diagnostics().set_value(
-        "query_bridge.direct_corridor_adaptive_repair_priority",
-        static_cast<double>(options.priority_mode));
-    context.diagnostics().set_value(
         "query_bridge.direct_corridor_adaptive_initial_bad_fraction",
         stats.initial_bad_fraction);
 
     if (options.enabled && !stats.final_bad.empty()) {
         std::vector<int> ordered_final_bad =
             query_bridge_order_transitions_by_gap_length(samples,
-                                                        stats.final_bad,
-                                                        options.priority_mode);
+                                                         stats.final_bad,
+                                                         1);
         for (int transition : ordered_final_bad) {
             if (stats.calls >= options.max_calls) {
                 break;
