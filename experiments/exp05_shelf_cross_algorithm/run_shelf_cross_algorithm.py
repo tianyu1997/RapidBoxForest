@@ -77,7 +77,7 @@ from experiments.common.rbf_defaults import (
     shelf_d23_rbf_profile,
 )
 from experiments.common.rbf_leaf_rrt import RBFLeafRRTOptions, canonical_q, run_leaf_rrt
-from experiments.common.run_summary import run_success_summary
+from experiments.common.run_summary import diagnostics_timeout_s, run_success_summary
 from experiments.common.sbf_import import import_sbf
 from experiments.exp05_shelf_cross_algorithm.import_old_shelf_baselines import import_old_baselines
 from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query as bitstar_per_query
@@ -981,17 +981,6 @@ def run_method(method: str, seed: int, args: argparse.Namespace, robot: Any, obs
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    def timeout_cap(row: dict[str, Any]) -> float:
-        diagnostics = row.get("diagnostics", {})
-        if isinstance(diagnostics, dict):
-            try:
-                value = float(diagnostics.get("timeout_s", math.nan))
-            except (TypeError, ValueError):
-                value = math.nan
-            if math.isfinite(value):
-                return value
-        return math.nan
-
     out = []
     keys = sorted({
         (str(row["method"]), str(row.get("stage_id", row["method"])), str(row.get("deep_max_boxes", "")))
@@ -1050,7 +1039,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "method_label": METHOD_LABELS.get(method, method),
             "stage_id": stage_id,
             "budget_s": median(row.get("budget_s", math.nan) for row in items),
-            "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
+            "timeout_cap_s": median(diagnostics_timeout_s(row) for row in items) if method == "bitstar" else math.nan,
             "deep_max_boxes": budget if method == "sbf_leaf_rrt" else 0,
             "runs": success["runs"],
             "success_runs": success["success_runs"],

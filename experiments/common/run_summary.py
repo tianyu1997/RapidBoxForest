@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -23,3 +24,17 @@ def run_success_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total_queries": sum(int(row.get("query_count", 0)) for row in rows),
         "success_rows": success_rows,
     }
+
+
+def diagnostics_timeout_s(row: dict[str, Any]) -> float:
+    """Read a planner timeout cap from a row diagnostics payload."""
+
+    diagnostics = row.get("diagnostics", {})
+    if isinstance(diagnostics, dict):
+        try:
+            value = float(diagnostics.get("timeout_s", math.nan))
+        except (TypeError, ValueError):
+            value = math.nan
+        if math.isfinite(value):
+            return value
+    return math.nan

@@ -118,7 +118,7 @@ from experiments.common.robot_lectdb_cache import (
     ensure_robot_lectdb_cache,
     robot_external_evidence_path,
 )
-from experiments.common.run_summary import run_success_summary
+from experiments.common.run_summary import diagnostics_timeout_s, run_success_summary
 from experiments.common.sbf_import import import_sbf
 
 
@@ -1659,17 +1659,6 @@ def run_baseline_scene(args: argparse.Namespace, catalog: dict[str, Any], method
 
 
 def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    def timeout_cap(row: dict[str, Any]) -> float:
-        diagnostics = row.get("diagnostics", {})
-        if isinstance(diagnostics, dict):
-            try:
-                value = float(diagnostics.get("timeout_s", math.nan))
-            except (TypeError, ValueError):
-                value = math.nan
-            if math.isfinite(value):
-                return value
-        return math.nan
-
     out: list[dict[str, Any]] = []
     keys = sorted({
         (
@@ -1781,7 +1770,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "ffb_start_depth": median(row.get("ffb_start_depth", math.nan) for row in items),
                 "rbf_max_depth": median(row.get("rbf_max_depth", math.nan) for row in items),
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
-                "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
+                "timeout_cap_s": median(diagnostics_timeout_s(row) for row in items) if method == "bitstar" else math.nan,
                 "deep_max_boxes": budget,
                 "scenes": success["runs"],
                 "success_scenes": success["success_runs"],
