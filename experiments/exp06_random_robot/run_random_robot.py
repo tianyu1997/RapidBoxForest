@@ -118,6 +118,7 @@ from experiments.common.robot_lectdb_cache import (
     ensure_robot_lectdb_cache,
     robot_external_evidence_path,
 )
+from experiments.common.run_summary import run_success_summary
 from experiments.common.sbf_import import import_sbf
 
 
@@ -1691,9 +1692,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and str(row.get("stage_id", "")) == stage_id
             and int(row.get("deep_max_boxes", 0) or 0) == budget
         ]
-        success_items = [row for row in items if int(row.get("success_count", 0)) == int(row.get("query_count", 1))]
-        success_queries = sum(int(row.get("success_count", 0)) for row in items)
-        total_queries = sum(int(row.get("query_count", 0)) for row in items)
+        success = run_success_summary(items)
         out.append(
             {
                 "method": method,
@@ -1784,11 +1783,11 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "budget_s": median(row.get("budget_s", math.nan) for row in items),
                 "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
                 "deep_max_boxes": budget,
-                "scenes": len(items),
-                "success_scenes": len(success_items),
+                "scenes": success["runs"],
+                "success_scenes": success["success_runs"],
                 "queries_per_scene": median(row.get("query_count", 0) for row in items),
-                "success_queries": success_queries,
-                "total_queries": total_queries,
+                "success_queries": success["success_queries"],
+                "total_queries": success["total_queries"],
                 "obstacles_median": median(row.get("obstacle_count", math.nan) for row in items),
                 "measured_time_s_median": median(row.get("planning_s", math.nan) for row in items),
                 "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
@@ -1892,8 +1891,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "amortized_s_k20": median(row.get("amortized_s_k20", row.get("planning_s", math.nan) / 20.0) for row in items),
                 "amortized_s_k50": median(row.get("amortized_s_k50", row.get("planning_s", math.nan) / 50.0) for row in items),
                 "audit_s_median": median(row.get("audit_s", math.nan) for row in items),
-                "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success_items),
-                "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success_items),
+                "path_length_mean": mean(row.get("path_length_mean", math.nan) for row in success["success_rows"]),
+                "raw_segment_fraction_median": median(row.get("raw_segment_fraction", math.nan) for row in success["success_rows"]),
                 "adaptive_deep_leaf_s_median": median(row.get("adaptive_deep_leaf_s", math.nan) for row in items),
                 "adaptive_target_depth_median": median(row.get("adaptive_target_depth", math.nan) for row in items),
                 "selected_leaf_depth_median": median(row.get("selected_leaf_depth", math.nan) for row in items),

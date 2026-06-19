@@ -77,6 +77,7 @@ from experiments.common.rbf_defaults import (
     shelf_d23_rbf_profile,
 )
 from experiments.common.rbf_leaf_rrt import RBFLeafRRTOptions, canonical_q, run_leaf_rrt
+from experiments.common.run_summary import run_success_summary
 from experiments.common.sbf_import import import_sbf
 from experiments.exp05_shelf_cross_algorithm.import_old_shelf_baselines import import_old_baselines
 from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query as bitstar_per_query
@@ -1043,8 +1044,7 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             })
             continue
         planning_s_median = median(row["planning_s"] for row in items)
-        success_queries = sum(int(row.get("success_count", 0)) for row in items)
-        total_queries = sum(int(row.get("query_count", 0)) for row in items)
+        success = run_success_summary(items)
         out.append({
             "method": method,
             "method_label": METHOD_LABELS.get(method, method),
@@ -1052,10 +1052,10 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "budget_s": median(row.get("budget_s", math.nan) for row in items),
             "timeout_cap_s": median(timeout_cap(row) for row in items) if method == "bitstar" else math.nan,
             "deep_max_boxes": budget if method == "sbf_leaf_rrt" else 0,
-            "runs": len(items),
-            "success_runs": sum(1 for row in items if int(row["success_count"]) == int(row["query_count"])),
-            "success_queries": success_queries,
-            "total_queries": total_queries,
+            "runs": success["runs"],
+            "success_runs": success["success_runs"],
+            "success_queries": success["success_queries"],
+            "total_queries": success["total_queries"],
             "source": "current_execution",
             "build_s": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
             "offline_build_s_median": median(row.get("offline_build_s", row.get("build_s", 0.0)) for row in items),
@@ -1100,8 +1100,8 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "measured_time_s_median": planning_s_median,
             "planning_s_median": planning_s_median,
             "audit_s_median": median(row["audit_s"] for row in items),
-            "path_length_mean": mean(row["path_length_mean"] for row in items if int(row["success_count"]) == int(row["query_count"])),
-            "raw_segment_fraction_median": median(row["raw_segment_fraction"] for row in items if int(row["success_count"]) == int(row["query_count"])),
+            "path_length_mean": mean(row["path_length_mean"] for row in success["success_rows"]),
+            "raw_segment_fraction_median": median(row["raw_segment_fraction"] for row in success["success_rows"]),
             "status": "executed",
         })
     return out
