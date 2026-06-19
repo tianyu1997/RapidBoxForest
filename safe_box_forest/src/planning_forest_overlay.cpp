@@ -650,8 +650,7 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
     }
 
     const bool allow_ffb_resolver =
-        !last_adaptive_partition_config_.hipac_portal_cell_native_validate ||
-        (online_portal && last_adaptive_partition_config_.hipac_online_ffb_portal_fallback);
+        !last_adaptive_partition_config_.hipac_portal_cell_native_validate;
     if (!allow_ffb_resolver) {
         return anchors_added;
     }

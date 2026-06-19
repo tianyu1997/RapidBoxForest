@@ -864,7 +864,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-online-connectivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-online-before-query-bridge", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--hipac-promote-query-repairs", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--hipac-online-ffb-portal-fallback", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-online-candidate-max-length", type=float, default=3.0)
     parser.add_argument("--hipac-online-max-resolves-per-query", type=int, default=1)
     parser.add_argument("--hipac-online-max-hidden-boxes-per-portal", type=int, default=32)
@@ -1352,7 +1351,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             hipac_online_connectivity=hipac_online_connectivity,
             hipac_online_before_query_bridge=bool(args.hipac_online_before_query_bridge),
             hipac_promote_query_repairs=bool(args.hipac_promote_query_repairs),
-            hipac_online_ffb_portal_fallback=bool(args.hipac_online_ffb_portal_fallback),
             hipac_online_candidate_max_length=float(args.hipac_online_candidate_max_length),
             hipac_online_max_resolves_per_query=int(args.hipac_online_max_resolves_per_query),
             hipac_online_max_hidden_boxes_per_portal=int(args.hipac_online_max_hidden_boxes_per_portal),

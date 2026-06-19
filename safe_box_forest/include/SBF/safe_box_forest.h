@@ -323,7 +323,6 @@ struct AdaptiveLeafSweepConfig {
 	bool hipac_online_connectivity = false;
 	bool hipac_online_before_query_bridge = true;
 	bool hipac_promote_query_repairs = false;
-	bool hipac_online_ffb_portal_fallback = false;
 	double hipac_online_candidate_max_length = 3.0;
 	int hipac_online_max_resolves_per_query = 1;
 	int hipac_online_max_hidden_boxes_per_portal = 32;

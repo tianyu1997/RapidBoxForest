@@ -338,7 +338,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         hipac_online_connectivity=hipac_online_connectivity,
         hipac_online_before_query_bridge=bool(args.hipac_online_before_query_bridge),
         hipac_promote_query_repairs=bool(args.hipac_promote_query_repairs),
-        hipac_online_ffb_portal_fallback=bool(args.hipac_online_ffb_portal_fallback),
         hipac_online_candidate_max_length=float(args.hipac_online_candidate_max_length),
         hipac_online_max_resolves_per_query=int(args.hipac_online_max_resolves_per_query),
         hipac_online_max_hidden_boxes_per_portal=int(args.hipac_online_max_hidden_boxes_per_portal),
@@ -590,7 +589,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_online_connectivity": bool(options.hipac_online_connectivity),
         "option.hipac_online_before_query_bridge": bool(options.hipac_online_before_query_bridge),
         "option.hipac_promote_query_repairs": bool(options.hipac_promote_query_repairs),
-        "option.hipac_online_ffb_portal_fallback": bool(options.hipac_online_ffb_portal_fallback),
         "option.hipac_online_candidate_max_length": float(options.hipac_online_candidate_max_length),
         "option.hipac_online_max_resolves_per_query": int(options.hipac_online_max_resolves_per_query),
         "option.hipac_online_max_hidden_boxes_per_portal": int(options.hipac_online_max_hidden_boxes_per_portal),
@@ -1614,7 +1612,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-online-connectivity", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-online-before-query-bridge", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--hipac-promote-query-repairs", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--hipac-online-ffb-portal-fallback", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-online-candidate-max-length", type=float, default=3.0)
     parser.add_argument("--hipac-online-max-resolves-per-query", type=int, default=1)
     parser.add_argument("--hipac-online-max-hidden-boxes-per-portal", type=int, default=32)

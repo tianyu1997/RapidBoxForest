@@ -490,7 +490,6 @@ class RBFLeafRRTOptions:
     hipac_online_connectivity: bool = False
     hipac_online_before_query_bridge: bool = True
     hipac_promote_query_repairs: bool = False
-    hipac_online_ffb_portal_fallback: bool = False
     hipac_online_candidate_max_length: float = 3.0
     hipac_online_max_resolves_per_query: int = 1
     hipac_online_max_hidden_boxes_per_portal: int = 32
@@ -1396,8 +1395,6 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.hipac_online_before_query_bridge = bool(options.hipac_online_before_query_bridge)
     if hasattr(cfg, "hipac_promote_query_repairs"):
         cfg.hipac_promote_query_repairs = bool(options.hipac_promote_query_repairs)
-    if hasattr(cfg, "hipac_online_ffb_portal_fallback"):
-        cfg.hipac_online_ffb_portal_fallback = bool(options.hipac_online_ffb_portal_fallback)
     if hasattr(cfg, "hipac_online_candidate_max_length"):
         cfg.hipac_online_candidate_max_length = float(options.hipac_online_candidate_max_length)
     if hasattr(cfg, "hipac_online_max_resolves_per_query"):

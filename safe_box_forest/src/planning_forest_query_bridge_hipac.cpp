@@ -108,16 +108,6 @@ int RBFPlanningForest::try_hipac_online_bridge_task(
                                                    false,
                                                    query_index,
                                                    &last_build_);
-    if (added <= 0 && last_adaptive_partition_config_.hipac_online_ffb_portal_fallback) {
-        added = add_partition_portal_corridor_overlay(task.start,
-                                                      task.goal,
-                                                      hipac_path,
-                                                      "query_bridge.hipac_online",
-                                                      true,
-                                                      false,
-                                                      query_index,
-                                                      &last_build_);
-    }
     const double hipac_ms = query_bridge_hipac_elapsed_ms_since(hipac_t0);
     context.diagnostics().record_timing("query_bridge.hipac_online_ms_total",
                                         hipac_ms);
