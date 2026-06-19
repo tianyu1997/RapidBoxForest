@@ -134,6 +134,8 @@ src/grower_task_builder.cpp        RRT grower batched target sampling, task
                                    generation, frontier seed selection, and
                                    worker-domain filtering
 src/grower_trace.cpp               optional RRT grower JSON trace output
+src/grower_workers.cpp             worker-local FFB sessions, parallel task
+                                   execution, and master-node remapping
 src/leaf_sweep_grower.cpp          leaf-sweep coverage grower orchestration,
                                    group sweep, and common validation helpers
 src/leaf_sweep_grower_cluster.cpp  obstacle AABB clustering for leaf sweep
