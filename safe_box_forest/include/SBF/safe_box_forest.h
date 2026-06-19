@@ -870,15 +870,6 @@ private:
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;
 	mutable bool query_cache_dirty_ = true;
-	struct PartitionLastQueryCache {
-		bool valid = false;
-		bool allow_collision_shortcut = true;
-		int active_query_index = -1;
-		Eigen::VectorXd start;
-		Eigen::VectorXd goal;
-		QueryResult result;
-	};
-	mutable PartitionLastQueryCache partition_last_query_cache_;
 };
 
 }  // namespace rbf

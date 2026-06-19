@@ -64,16 +64,13 @@ void RBFPlanningForest::rebuild_adjacency() {
 
 void RBFPlanningForest::invalidate_query_cache() const {
     query_cache_dirty_ = true;
-    partition_last_query_cache_.valid = false;
 }
 
 const QueryGraphCache& RBFPlanningForest::query_cache() const {
-    if (partition_native_mode() &&
-        !partition_native_graph_query_cache_allowed_from_env()) {
+    if (partition_native_mode()) {
         throw std::logic_error(
             "partition_native mode forbids QueryGraphCache fallback; "
-            "use AdaptiveGridPartition query/locate/connect APIs instead "
-            "or set RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE=1 for legacy debugging");
+            "use AdaptiveGridPartition query/locate/connect APIs instead");
     }
     if (query_cache_dirty_) {
         query_cache_ = build_query_graph_cache(boxes_, adjacency_, segment_edges_);

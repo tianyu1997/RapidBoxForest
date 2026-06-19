@@ -92,14 +92,6 @@ inline std::uint64_t partition_containment_max_bins_per_cell_from_env() {
 		detail::env_int_or_default("RBF_PARTITION_CONTAINMENT_MAX_BINS_PER_CELL", 256)));
 }
 
-inline bool partition_native_graph_query_cache_allowed_from_env() {
-	return detail::env_int_or_default("RBF_PARTITION_NATIVE_ALLOW_GRAPH_QUERY_CACHE", 0) != 0;
-}
-
-inline bool partition_last_query_cache_enabled_from_env() {
-	return detail::env_int_or_default("RBF_PARTITION_LAST_QUERY_CACHE", 0) != 0;
-}
-
 inline int partition_segment_fallback_pair_candidate_cap_from_env() {
 	return std::max(
 		8,

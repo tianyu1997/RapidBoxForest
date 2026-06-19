@@ -221,30 +221,6 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         query_config.collision_shortcut = false;
     }
     const bool do_collision_shortcut = query_config.collision_shortcut;
-    const int active_query_index = active_query_index_from_env();
-    const bool partition_last_query_cache_enabled =
-        partition_native_mode() &&
-        adaptive_partition_query_enabled_ &&
-        adaptive_partition_ &&
-        partition_last_query_cache_enabled_from_env();
-    auto same_vector = [](const Eigen::VectorXd& lhs,
-                          const Eigen::Ref<const Eigen::VectorXd>& rhs) {
-        return lhs.size() == rhs.size() &&
-               (lhs.size() == 0 || (lhs - rhs).cwiseAbs().maxCoeff() <= 0.0);
-    };
-    if (partition_last_query_cache_enabled &&
-        partition_last_query_cache_.valid &&
-        partition_last_query_cache_.allow_collision_shortcut == allow_collision_shortcut &&
-        partition_last_query_cache_.active_query_index == active_query_index &&
-        same_vector(partition_last_query_cache_.start, start) &&
-        same_vector(partition_last_query_cache_.goal, goal)) {
-        QueryResult cached = partition_last_query_cache_.result;
-        cached.query_time_ms = 0.0;
-        cached.partition_search_ms = 0.0;
-        cached.audit_time_ms = 0.0;
-        cached.final_simplify_time_ms = 0.0;
-        return cached;
-    }
     QueryResult result;
     QueryResult partition_attempt;
     if (adaptive_partition_query_enabled_ &&
@@ -498,14 +474,6 @@ QueryResult RBFPlanningForest::run_query_internal(const Eigen::Ref<const Eigen::
         if (result.audit_passed) {
             result.remaining_unsafe_assumptions = 0;
         }
-    }
-    if (partition_last_query_cache_enabled) {
-        partition_last_query_cache_.valid = true;
-        partition_last_query_cache_.allow_collision_shortcut = allow_collision_shortcut;
-        partition_last_query_cache_.active_query_index = active_query_index;
-        partition_last_query_cache_.start = start;
-        partition_last_query_cache_.goal = goal;
-        partition_last_query_cache_.result = result;
     }
     return result;
 }
