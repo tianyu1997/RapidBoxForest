@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
 #include <SBF/connector.h>
 #include <SBF/debug.h>
 #include <SBF/grower.h>
@@ -17,11 +18,7 @@
 #include <rbf/lect_database.h>
 
 #include <chrono>
-#include <cstdint>
-#include <filesystem>
-#include <functional>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>

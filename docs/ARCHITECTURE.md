@@ -366,6 +366,14 @@ above. Large experimental branches should be isolated behind typed
 configuration and placed in the matching module instead of reintroducing a
 monolithic facade implementation file.
 
+Public planner header ownership follows the same rule. `SBF/safe_box_forest.h`
+is the facade for `RBFPlanningForest` and should not accumulate unrelated data
+models. Planner options live in `SBF/planning_config.h`; build, update, and
+coverage result payloads live in `SBF/planning_result.h`; isolated diagnostic
+types live in `SBF/debug.h`. If a new option or result is specific to adaptive
+coverage, query bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the
+matching typed header rather than extending the facade header directly.
+
 The former sidecar prototype tree has been retired. Its useful mechanisms are
 now production code in `lect_database` and `safe_box_forest`; new experiments
 and implementations should not depend on a parallel workspace.
