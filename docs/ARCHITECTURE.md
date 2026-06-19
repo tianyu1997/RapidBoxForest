@@ -283,7 +283,10 @@ src/planning_forest_query_bridge_batch_diagnostics.cpp
 src/planning_forest_query_bridge_batch_options.cpp
                                    environment/config parsing for batch bridge
                                    retries, parallel RRT, detours, path-quality
-                                   retry, and index-selection controls
+                                   retry, and batch execution controls
+src/planning_forest_query_bridge_index_options.cpp
+                                   query-index override option parsing for
+                                   force/global/segment-only bridge selection
 src/planning_forest_query_bridge_path_utils.cpp
                                    waypoint path length, shortcut, and internal
                                    simplification helpers shared by bridge
