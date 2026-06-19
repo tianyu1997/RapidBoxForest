@@ -1,16 +1,15 @@
 #include <rbf/lect_database/read_snapshot.h>
 
 #include "read_snapshot_format.h"
+#include "read_snapshot_manifest.h"
 #include "read_snapshot_mapped_file.h"
 #include "read_snapshot_payload.h"
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
 #include <cstddef>
 #include <cstring>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -18,7 +17,6 @@
 #include <mutex>
 #include <span>
 #include <sstream>
-#include <string_view>
 #include <system_error>
 #include <unordered_map>
 #include <vector>
@@ -99,52 +97,6 @@ bool replace_directory(const std::filesystem::path& staging, const std::filesyst
     return !error;
 }
 
-std::unordered_map<std::string, std::string> read_manifest_values(const std::filesystem::path& path) {
-    std::unordered_map<std::string, std::string> values;
-    std::ifstream input(path);
-    std::string line;
-    while (std::getline(input, line)) {
-        const auto pos = line.find('=');
-        if (pos == std::string::npos) {
-            continue;
-        }
-        values.emplace(line.substr(0, pos), line.substr(pos + 1));
-    }
-    return values;
-}
-
-std::uint64_t get_u64(const std::unordered_map<std::string, std::string>& values,
-                      std::string_view key,
-                      std::uint64_t fallback = 0) {
-    const auto it = values.find(std::string(key));
-    if (it == values.end()) {
-        return fallback;
-    }
-    std::uint64_t out = fallback;
-    auto first = it->second.data();
-    auto last = first + it->second.size();
-    std::from_chars(first, last, out);
-    return out;
-}
-
-int get_int(const std::unordered_map<std::string, std::string>& values,
-            std::string_view key,
-            int fallback = 0) {
-    return static_cast<int>(get_u64(values, key, static_cast<std::uint64_t>(fallback)));
-}
-
-double get_double(const std::unordered_map<std::string, std::string>& values,
-                  std::string_view key,
-                  double fallback = 0.0) {
-    const auto it = values.find(std::string(key));
-    if (it == values.end()) {
-        return fallback;
-    }
-    char* end = nullptr;
-    const double value = std::strtod(it->second.c_str(), &end);
-    return end == it->second.c_str() ? fallback : value;
-}
-
 std::vector<std::string> split_text(const std::string& line, char delimiter) {
     std::vector<std::string> parts;
     std::stringstream stream(line);
@@ -153,17 +105,6 @@ std::vector<std::string> split_text(const std::string& line, char delimiter) {
         parts.push_back(item);
     }
     return parts;
-}
-
-std::vector<Interval> parse_root_intervals(const std::unordered_map<std::string, std::string>& values) {
-    const int dims = std::max(0, get_int(values, "root_dims"));
-    std::vector<Interval> root;
-    root.reserve(static_cast<std::size_t>(dims));
-    for (int dim = 0; dim < dims; ++dim) {
-        root.push_back({get_double(values, "root_" + std::to_string(dim) + "_lo"),
-                        get_double(values, "root_" + std::to_string(dim) + "_hi")});
-    }
-    return root;
 }
 
 std::size_t path_code_storage_bytes(std::uint32_t word_count) {
@@ -514,20 +455,20 @@ std::filesystem::path LectReadSnapshot::default_snapshot_path(const std::filesys
 bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_root,
                                            const std::filesystem::path& snapshot_path,
                                            std::string* reason) {
-    const auto values = read_manifest_values(legacy_manifest_path(legacy_root));
+    const auto values = read_snapshot_manifest_values(legacy_manifest_path(legacy_root));
     if (values.empty()) {
         if (reason) *reason = "legacy manifest is missing or empty";
         return false;
     }
-    const auto root = parse_root_intervals(values);
+    const auto root = parse_snapshot_root_intervals(values);
     if (root.empty()) {
         if (reason) *reason = "legacy manifest has no root intervals";
         return false;
     }
 
-    const auto generation = get_u64(values, "generation");
-    const auto node_count = get_u64(values, "node_count");
-    const auto max_node_id = get_u64(values, "max_node_id");
+    const auto generation = snapshot_manifest_u64(values, "generation");
+    const auto node_count = snapshot_manifest_u64(values, "node_count");
+    const auto max_node_id = snapshot_manifest_u64(values, "max_node_id");
     if (node_count == 0 || max_node_id == kInvalidNodeId || max_node_id + 1 < node_count) {
         if (reason) *reason = "legacy manifest node counts are invalid";
         return false;
@@ -766,14 +707,14 @@ bool LectReadSnapshot::build_from_legacy(const std::filesystem::path& legacy_roo
                                       node_count,
                                       max_node_id,
                                       evidence_count,
-                                      get_u64(values, "root_domain_fingerprint", fingerprint_intervals(root)),
-                                      get_u64(values, "split_policy_hash"),
+                                      snapshot_manifest_u64(values, "root_domain_fingerprint", fingerprint_intervals(root)),
+                                      snapshot_manifest_u64(values, "split_policy_hash"),
                                       evidence_file_size,
                                       static_cast<std::uint32_t>(root.size()),
-                                      static_cast<std::uint32_t>(get_int(values, "split_strategy")),
-                                      get_double(values, "split_min_width"),
-                                      static_cast<std::uint32_t>(get_int(values, "split_midpoint", 1)),
-                                      static_cast<std::uint32_t>(get_int(values, "split_deterministic_tie_break", 1))};
+                                      static_cast<std::uint32_t>(snapshot_manifest_int(values, "split_strategy")),
+                                      snapshot_manifest_double(values, "split_min_width"),
+                                      static_cast<std::uint32_t>(snapshot_manifest_int(values, "split_midpoint", 1)),
+                                      static_cast<std::uint32_t>(snapshot_manifest_int(values, "split_deterministic_tie_break", 1))};
         std::ofstream out(snapshot_manifest_path(staging), std::ios::binary | std::ios::trunc);
         if (!write_object(out, header)) {
             if (reason) *reason = "failed to write snapshot manifest header";
