@@ -266,4 +266,43 @@ bool intervals_straddle_sector_boundary(
     return !interval_sector_for_interval(symmetry, intervals[joint_index]).has_value();
 }
 
+IntervalEvidenceCompatibility interval_evidence_compatibility(
+    const lect_database::LectDatabase& active_database,
+    const lect_database::LectDatabase* external_database,
+    const CanonicalEvidenceFrame& evidence_frame) {
+    IntervalEvidenceCompatibility compatibility;
+    compatibility.canonical_frame_valid = evidence_frame.valid;
+    compatibility.direct_database = external_database != nullptr;
+    compatibility.lookup_interval_fingerprint =
+        lect_database::fingerprint_intervals(evidence_frame.lookup_intervals);
+    compatibility.exact_interval_lookup_required = true;
+    if (!evidence_frame.valid) {
+        compatibility.reason = "canonical evidence frame invalid";
+        return compatibility;
+    }
+    if (external_database == nullptr) {
+        compatibility.reason = "no direct external database";
+        return compatibility;
+    }
+    const auto& active = active_database.identity();
+    const auto& external = external_database->identity();
+    compatibility.semantic_identity_match =
+        active.robot_fingerprint == external.robot_fingerprint &&
+        active.root_domain_fingerprint == external.root_domain_fingerprint &&
+        active.split_policy_hash == external.split_policy_hash &&
+        active.canonical_mode == external.canonical_mode &&
+        active.symmetry_hash == external.symmetry_hash &&
+        active.symmetry_descriptor == external.symmetry_descriptor &&
+        active.endpoint_descriptor == external.endpoint_descriptor &&
+        active.envelope_descriptor == external.envelope_descriptor &&
+        active.payload_layout == external.payload_layout;
+    if (!compatibility.semantic_identity_match) {
+        compatibility.reason = "database evidence identity mismatch";
+        return compatibility;
+    }
+    compatibility.compatible = true;
+    compatibility.reason = "compatible";
+    return compatibility;
+}
+
 }  // namespace rbf

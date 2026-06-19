@@ -63,4 +63,9 @@ bool intervals_straddle_sector_boundary(
     const JointSymmetry& symmetry,
     const std::vector<Interval>& intervals);
 
+IntervalEvidenceCompatibility interval_evidence_compatibility(
+    const lect_database::LectDatabase& active_database,
+    const lect_database::LectDatabase* external_database,
+    const CanonicalEvidenceFrame& evidence_frame);
+
 }  // namespace rbf
