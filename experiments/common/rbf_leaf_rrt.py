@@ -29,7 +29,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_FULL_RESIDUAL_OVERLAY_WHEN_CONNECTED,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
@@ -639,7 +638,6 @@ class RBFLeafRRTOptions:
     query_bridge_fast_direct_random_shortcut_iters: int = 0
     query_endpoint_point_anchor: bool = False
     query_bridge_direct_sample_step: float = DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP
-    query_bridge_adaptive_step_repair: bool = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR
     query_bridge_adaptive_fine_step: float = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP
     query_bridge_adaptive_max_repair_subdivisions: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS
     query_bridge_adaptive_max_repair_calls: int = DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS
@@ -1989,9 +1987,6 @@ def bridge_all_queries(
         )
         if float(options.query_bridge_direct_sample_step) > 0.0:
             env_updates["RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP"] = str(float(options.query_bridge_direct_sample_step))
-        env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR"] = (
-            "1" if bool(getattr(options, "query_bridge_adaptive_step_repair", True)) else "0"
-        )
         env_updates["RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP"] = str(
             float(getattr(options, "query_bridge_adaptive_fine_step", 0.08))
         )

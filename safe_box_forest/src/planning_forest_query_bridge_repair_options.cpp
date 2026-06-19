@@ -20,8 +20,7 @@ QueryBridgeAdaptiveRepairOptions query_bridge_adaptive_repair_options(int query_
                                                                       double audit_step,
                                                                       double sample_step) {
     QueryBridgeAdaptiveRepairOptions options;
-    options.enabled =
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR", 1) != 0;
+    options.enabled = true;
     options.max_subdivisions = std::max(
         subdivisions + 1,
         detail::env_int_or_default("RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS",

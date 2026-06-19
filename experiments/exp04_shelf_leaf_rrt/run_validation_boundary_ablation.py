@@ -99,7 +99,6 @@ NO_QUERY_BRIDGE_ARGS = [
     "0",
     "--query-bridge-adaptive-max-repair-calls",
     "0",
-    "--no-query-bridge-adaptive-step-repair",
 ]
 
 NO_FINAL_SMOOTHING_ARGS = [

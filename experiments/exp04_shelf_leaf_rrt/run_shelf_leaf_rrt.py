@@ -47,7 +47,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
-    DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR,
     DEFAULT_RBF_QUERY_BRIDGE_ATTEMPT_OFFSET,
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT,
     DEFAULT_RBF_QUERY_BRIDGE_FAST_DIRECT_RANDOM_SHORTCUT_ITERS,
@@ -488,7 +487,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
         query_bridge_labels=str(args.query_bridge_labels),
         query_bridge_force_selected=bool(args.query_bridge_force_selected),
-        query_bridge_adaptive_step_repair=bool(args.query_bridge_adaptive_step_repair),
         query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
         query_bridge_adaptive_max_repair_subdivisions=int(args.query_bridge_adaptive_max_repair_subdivisions),
         query_bridge_adaptive_max_repair_calls=int(args.query_bridge_adaptive_max_repair_calls),
@@ -634,7 +632,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.offline_anchor_sampling": str(options.offline_anchor_sampling),
         "option.query_bridge_labels": str(options.query_bridge_labels),
         "option.query_bridge_force_selected": bool(options.query_bridge_force_selected),
-        "option.query_bridge_adaptive_step_repair": bool(options.query_bridge_adaptive_step_repair),
         "option.query_bridge_adaptive_fine_step": float(options.query_bridge_adaptive_fine_step),
         "option.query_bridge_adaptive_max_repair_subdivisions": int(options.query_bridge_adaptive_max_repair_subdivisions),
         "option.query_bridge_adaptive_max_repair_calls": int(options.query_bridge_adaptive_max_repair_calls),
@@ -1580,7 +1577,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-hybrid-max-paths", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS)
     parser.add_argument("--query-bridge-hybrid-max-vertices", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES)
     parser.add_argument("--query-bridge-hybrid-max-cross-checks", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_CROSS_CHECKS)
-    parser.add_argument("--query-bridge-adaptive-step-repair", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_STEP_REPAIR)
     parser.add_argument("--query-bridge-adaptive-fine-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP)
     parser.add_argument("--query-bridge-adaptive-max-repair-subdivisions", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS)
     parser.add_argument("--query-bridge-adaptive-max-repair-calls", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS)
@@ -1834,7 +1830,6 @@ def main() -> int:
             "query_bridge_hybrid_max_paths": int(args.query_bridge_hybrid_max_paths),
             "query_bridge_hybrid_max_vertices": int(args.query_bridge_hybrid_max_vertices),
             "query_bridge_hybrid_max_cross_checks": int(args.query_bridge_hybrid_max_cross_checks),
-            "query_bridge_adaptive_step_repair": bool(args.query_bridge_adaptive_step_repair),
             "query_bridge_adaptive_fine_step": float(args.query_bridge_adaptive_fine_step),
             "query_bridge_adaptive_max_repair_subdivisions": int(args.query_bridge_adaptive_max_repair_subdivisions),
             "query_bridge_adaptive_max_repair_calls": int(args.query_bridge_adaptive_max_repair_calls),
