@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from typing import Any, Sequence
 
 
@@ -75,6 +76,28 @@ def amortized_query_time(
     build_s = finite_float(first_row_value(row, build_keys, 0.0), fallback=0.0)
     online_s = finite_float(first_row_value(row, online_keys, None))
     return build_s / queries + online_s
+
+
+def select_low_latency_tradeoff_row(
+    rows: Sequence[dict[str, Any]],
+    queries_per_build: int | float,
+    *,
+    tie_breaker: Callable[[dict[str, Any]], Any] | None = None,
+) -> dict[str, Any] | None:
+    """Select the fastest online row, then amortized row, then caller tie-breaker."""
+
+    candidates = list(rows)
+    if not candidates:
+        return None
+    tie_key = tie_breaker or (lambda _row: 0)
+    return sorted(
+        candidates,
+        key=lambda row: (
+            finite_float(row.get("online_per_query_s_median")),
+            amortized_query_time(row, queries_per_build),
+            tie_key(row),
+        ),
+    )[0]
 
 
 def path_length_stat(

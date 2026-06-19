@@ -56,6 +56,7 @@ from experiments.common.summary_selection import (
     full_success_rows,
     path_length_stat,
     prefer_full_success_rows,
+    select_low_latency_tradeoff_row,
 )
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
@@ -1171,28 +1172,24 @@ def write_tex(path: Path, rows: list[dict[str, Any]]) -> None:
         rbf_rows = full_success_rows(rbf_rows, ("success_runs",), ("runs",))
         selected_rbf = None
         if rbf_rows:
-            selected_rbf = sorted(
+            selected_rbf = select_low_latency_tradeoff_row(
                 rbf_rows,
-                key=lambda row: (
-                    finite_float(row.get("online_per_query_s_median")),
-                    amortized_query_time(row, 5),
-                    int(float(row.get("deep_max_boxes", 0) or 0)),
-                ),
-            )[0]
+                5,
+                tie_breaker=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
+            )
         row_by_method: dict[str, dict[str, Any]] = {}
         for method in ["iris_np_gcs", "prm", "rrtconnect", "bitstar"]:
             items = [row for row in rows if str(row.get("method")) == method]
             candidates = prefer_full_success_rows(items, ("success_runs",), ("runs",))
             candidates = filter_within_best_path_factor(candidates, 1.08)
             if candidates:
-                row_by_method[method] = sorted(
+                selected = select_low_latency_tradeoff_row(
                     candidates,
-                    key=lambda row: (
-                        finite_float(row.get("online_per_query_s_median")),
-                        amortized_query_time(row, 5),
-                        finite_float(row.get("budget_s")),
-                    ),
-                )[0]
+                    5,
+                    tie_breaker=lambda row: finite_float(row.get("budget_s")),
+                )
+                if selected is not None:
+                    row_by_method[method] = selected
         if selected_rbf is not None:
             row_by_method["sbf_leaf_rrt"] = selected_rbf
         return [

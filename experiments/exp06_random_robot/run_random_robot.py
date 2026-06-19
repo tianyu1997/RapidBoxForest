@@ -39,9 +39,8 @@ from experiments.common.summary_selection import (
     amortized_query_time,
     count_ratio_text,
     filter_within_best_path_factor,
-    finite_float,
-    path_length_stat,
     prefer_full_success_rows,
+    select_low_latency_tradeoff_row,
 )
 from experiments.common.result_parts import (
     load_result_part,
@@ -2154,14 +2153,13 @@ def select_best_tradeoff_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]
         if not candidates:
             continue
         candidates = filter_within_best_path_factor(candidates, 1.08)
-        out.append(sorted(
+        selected = select_low_latency_tradeoff_row(
             candidates,
-            key=lambda row: (
-                finite_float(row.get("online_per_query_s_median")),
-                amortized_query_time(row, 10),
-                int(float(row.get("deep_max_boxes", 0) or 0)),
-            ),
-        )[0])
+            10,
+            tie_breaker=lambda row: int(float(row.get("deep_max_boxes", 0) or 0)),
+        )
+        if selected is not None:
+            out.append(selected)
     return out
 
 
