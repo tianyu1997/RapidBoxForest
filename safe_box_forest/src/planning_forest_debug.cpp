@@ -380,7 +380,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     return refine_query_corridor(start,
                                  goal,
                                  max_boxes_to_add,
-                                 CorridorRefineMode::LegacyBridge,
+                                 CorridorRefineMode::SegmentBridge,
                                  std::numeric_limits<double>::infinity(),
                                  std::numeric_limits<double>::infinity());
 }

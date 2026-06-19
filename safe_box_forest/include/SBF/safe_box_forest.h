@@ -469,7 +469,7 @@ struct AdaptiveLeafSweepResult {
 };
 
 enum class CorridorRefineMode : std::uint8_t {
-	LegacyBridge = 0,
+	SegmentBridge = 0,
 	BoxOnlyLongPath = 1,
 };
 

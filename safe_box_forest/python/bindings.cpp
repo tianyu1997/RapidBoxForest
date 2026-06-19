@@ -1864,10 +1864,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                                                 const std::string& mode,
                                                                 double long_path_ratio,
                                                                 double long_path_min_delta) {
-                                                                        rbf::CorridorRefineMode refine_mode = rbf::CorridorRefineMode::LegacyBridge;
+                                                                        rbf::CorridorRefineMode refine_mode = rbf::CorridorRefineMode::SegmentBridge;
                                                                         if (mode == "box_only_long_path") {
                                                                             refine_mode = rbf::CorridorRefineMode::BoxOnlyLongPath;
-                                                                        } else if (mode != "legacy_bridge") {
+                                                                        } else if (mode != "segment_bridge") {
                                                                             throw std::invalid_argument("unsupported corridor refine mode: " + mode);
                                                                         }
                                                                         return forest.refine_query_corridor(eigen_vector_from_list(start),
@@ -1880,7 +1880,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                                  py::arg("start"),
                                                  py::arg("goal"),
                                                  py::arg("max_boxes_to_add"),
-                                                 py::arg("mode") = "legacy_bridge",
+                                                 py::arg("mode") = "segment_bridge",
                                                  py::arg("long_path_ratio") = std::numeric_limits<double>::infinity(),
                                                  py::arg("long_path_min_delta") = std::numeric_limits<double>::infinity())
                 .def("bridge_query",

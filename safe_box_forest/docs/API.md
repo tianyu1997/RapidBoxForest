@@ -112,6 +112,7 @@ Public build and query methods:
 - `build_coverage(obstacles, seeds, context)`
 - `query(start, goal)`
 - `refine_query_corridor(start, goal, max_boxes_to_add)`
+  - Python binding accepts `mode="segment_bridge"` or `mode="box_only_long_path"`.
 - `bridge_query(start, goal)`
 - `bridge_query_known_needed(start, goal)`
 
