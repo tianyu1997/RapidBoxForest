@@ -88,8 +88,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
-    DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
-    DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
     RBF_OFFLINE_COVERAGE_PROFILE_NAME,
@@ -483,9 +481,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         offline_shortcut_candidate_limit=int(args.offline_shortcut_candidate_limit),
         offline_shortcut_min_gain_ratio=float(args.offline_shortcut_min_gain_ratio),
         offline_shortcut_max_segment_length=float(args.offline_shortcut_max_segment_length),
-        run_rrt_grower=bool(args.run_rrt_grower),
-        rrt_grower_extra_boxes=int(args.rrt_grower_extra_boxes),
-        rrt_grower_timeout_ms=float(args.rrt_grower_timeout_ms),
         priority_prune_radius=float(args.priority_prune_radius),
         collision_overlap_prune_min_depth=int(args.collision_overlap_prune_min_depth),
         collision_overlap_prune_threshold=float(args.collision_overlap_prune_threshold),
@@ -719,9 +714,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "ref.domain_success_cap": int(refine.domain_success_cap),
         "ref.domain_attempt_cap": int(refine.domain_attempt_cap),
         "ref.refine_timeout_ms": float(refine.refine_timeout_ms),
-        "ref.run_rrt_grower": bool(refine.run_rrt_grower),
-        "ref.rrt_grower_extra_boxes": int(refine.rrt_grower_extra_boxes),
-        "ref.rrt_grower_timeout_ms": float(refine.rrt_grower_timeout_ms),
         "ref.collision_overlap_prune_min_depth": int(getattr(refine, "collision_overlap_prune_min_depth", -1)),
         "ref.collision_overlap_prune_threshold": float(getattr(refine, "collision_overlap_prune_threshold", 0.0)),
     }
@@ -1555,9 +1547,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-promote-transition-min-boxes", type=int, default=8)
     parser.add_argument("--hipac-promote-transition-max-boxes", type=int, default=64)
     parser.add_argument("--hipac-promote-transition-max-attempts-per-query", type=int, default=1)
-    parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
-    parser.add_argument("--rrt-grower-timeout-ms", type=float, default=DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS)
     parser.add_argument("--priority-prune-radius", type=float, default=0.0)
     parser.add_argument("--collision-overlap-prune-min-depth", type=int, default=DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH)
     parser.add_argument("--collision-overlap-prune-threshold", type=float, default=DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD)
@@ -1792,9 +1781,6 @@ def main() -> int:
             "endpoint_main_lateral_offset": float(args.endpoint_main_lateral_offset),
             "endpoint_main_lateral_rounds": int(args.endpoint_main_lateral_rounds),
             "endpoint_main_face_epsilon": float(args.endpoint_main_face_epsilon),
-            "run_rrt_grower": bool(args.run_rrt_grower),
-            "rrt_grower_extra_boxes": int(args.rrt_grower_extra_boxes),
-            "rrt_grower_timeout_ms": float(args.rrt_grower_timeout_ms),
             "priority_prune_radius": float(args.priority_prune_radius),
             "collision_overlap_prune_min_depth": int(args.collision_overlap_prune_min_depth),
             "collision_overlap_prune_threshold": float(args.collision_overlap_prune_threshold),

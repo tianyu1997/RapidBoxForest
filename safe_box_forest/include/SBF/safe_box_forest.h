@@ -75,9 +75,6 @@ struct LeafSweepRefineConfig {
 	int domain_attempt_cap = 24;
 	bool allow_anchor_roots = true;
 	double refine_timeout_ms = 800.0;
-	bool run_rrt_grower = false;
-	int rrt_grower_extra_boxes = 0;
-	double rrt_grower_timeout_ms = 0.0;
 	double priority_prune_radius = 0.0;
 	int collision_overlap_prune_min_depth = -1;
 	double collision_overlap_prune_threshold = 0.0;
@@ -257,12 +254,8 @@ struct LeafSweepRefineResult {
 	int deep_contained_rejects = 0;
 	int deep_adjacency_rejects = 0;
 	int deep_anchor_roots_added = 0;
-	int rrt_grower_boxes_added = 0;
-	int rrt_grower_ffb_success = 0;
-	int rrt_grower_ffb_fail = 0;
 	double leaf_sweep_ms = 0.0;
 	double deep_refine_ms = 0.0;
-	double rrt_grower_ms = 0.0;
 	double connector_ms = 0.0;
 	double total_ms = 0.0;
 	std::unordered_map<std::string, double> diagnostics;

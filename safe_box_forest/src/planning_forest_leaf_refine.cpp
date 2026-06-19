@@ -119,13 +119,9 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.deep_commit_rejects = qroot.commit_rejects;
     out.deep_domain_rejects = qroot.domain_rejects;
     out.deep_contained_rejects = qroot.contained_rejects;
-    out.deep_adjacency_rejects = qroot.adjacency_rejects;
-    out.deep_anchor_roots_added = qroot.endpoint_anchors_added;
-    out.deep_refine_ms = std::chrono::duration<double, std::milli>(Clock::now() - refine_start).count();
-    out.rrt_grower_ms = 0.0;
-    out.rrt_grower_boxes_added = 0;
-    out.rrt_grower_ffb_success = 0;
-    out.rrt_grower_ffb_fail = 0;
+	out.deep_adjacency_rejects = qroot.adjacency_rejects;
+	out.deep_anchor_roots_added = qroot.endpoint_anchors_added;
+	out.deep_refine_ms = std::chrono::duration<double, std::milli>(Clock::now() - refine_start).count();
 
     const auto connector_start = Clock::now();
     bool connector_ran = false;
@@ -186,7 +182,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adjacency_start).count();
     out.profile.raw_boxes = static_cast<int>(raw_boxes_.size());
     out.profile.final_boxes = static_cast<int>(boxes_.size());
-    out.profile.grow_ms = out.leaf_sweep_ms + out.deep_refine_ms + out.rrt_grower_ms;
+	out.profile.grow_ms = out.leaf_sweep_ms + out.deep_refine_ms;
     out.profile.grow_adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     out.profile.grow_largest_island = 0;
     for (const auto& island : find_islands(adjacency_)) {
@@ -304,13 +300,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.diagnostics["leaf_refine.qroot_index_query_ms"] = qroot.index_query_ms;
     out.profile.diagnostics["leaf_refine.qroot_islands_before"] = static_cast<double>(qroot.islands_before);
     out.profile.diagnostics["leaf_refine.qroot_islands_after"] = static_cast<double>(qroot.islands_after);
-    out.profile.diagnostics["leaf_refine.rrt_grower_ms"] = out.rrt_grower_ms;
-    out.profile.diagnostics["leaf_refine.rrt_grower_initial_boxes"] = 0.0;
-    out.profile.diagnostics["leaf_refine.rrt_grower_boxes_added"] = static_cast<double>(out.rrt_grower_boxes_added);
-    out.profile.diagnostics["leaf_refine.rrt_grower_ffb_success"] = static_cast<double>(out.rrt_grower_ffb_success);
-    out.profile.diagnostics["leaf_refine.rrt_grower_ffb_fail"] = static_cast<double>(out.rrt_grower_ffb_fail);
-    out.profile.diagnostics["leaf_refine.rrt_grower_deadline_reached"] = 0.0;
-    out.profile.diagnostics["leaf_refine.connector_ms"] = out.connector_ms;
+	out.profile.diagnostics["leaf_refine.connector_ms"] = out.connector_ms;
     for (const auto& [key, value] : connector_diagnostics) {
         out.profile.diagnostics[std::string("leaf_refine.") + key] = value;
     }

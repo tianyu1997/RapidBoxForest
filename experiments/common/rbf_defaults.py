@@ -32,8 +32,6 @@ DEFAULT_RBF_DEEP_MAX_BOXES = 400
 DEFAULT_RBF_SHELF_BOX_BUDGET = 100
 DEFAULT_RBF_DEEP_FFB_DEPTH = 62
 DEFAULT_RBF_REFINE_TIMEOUT_MS = 800.0
-DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES = 1
-DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS = 1.0
 DEFAULT_RBF_DOMAIN_SEED_CAP = 3
 DEFAULT_RBF_DOMAIN_SUCCESS_CAP = 2
 DEFAULT_RBF_DOMAIN_ATTEMPT_CAP = 3
@@ -478,9 +476,6 @@ def default_rbf_profile() -> dict[str, Any]:
             "domain_success_cap": DEFAULT_RBF_DOMAIN_SUCCESS_CAP,
             "domain_attempt_cap": DEFAULT_RBF_DOMAIN_ATTEMPT_CAP,
             "refine_timeout_ms": DEFAULT_RBF_REFINE_TIMEOUT_MS,
-            "run_rrt_grower": True,
-            "rrt_grower_extra_boxes": DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
-            "rrt_grower_timeout_ms": DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
         },
         "connector": {
             "depth_semantics": "lect_active_tree",

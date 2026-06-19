@@ -73,8 +73,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_FFB_START_DEPTH,
     DEFAULT_RBF_FFB_SEARCH_MODE,
-    DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
-    DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_LEAF_MAX_DEPTH,
     DEFAULT_RBF_LEAF_START_DEPTH,
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
@@ -437,9 +435,6 @@ class RBFLeafRRTOptions:
     domain_seed_cap: int = DEFAULT_RBF_DOMAIN_SEED_CAP
     domain_success_cap: int = DEFAULT_RBF_DOMAIN_SUCCESS_CAP
     domain_attempt_cap: int = DEFAULT_RBF_DOMAIN_ATTEMPT_CAP
-    run_rrt_grower: bool = True
-    rrt_grower_extra_boxes: int = DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES
-    rrt_grower_timeout_ms: float = DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS
     priority_prune_radius: float = 0.0
     collision_overlap_prune_min_depth: int = -1
     collision_overlap_prune_threshold: float = 0.0
@@ -1273,9 +1268,6 @@ def make_refine_config(options: RBFLeafRRTOptions) -> Any:
     cfg.domain_attempt_cap = int(options.domain_attempt_cap)
     cfg.allow_anchor_roots = bool(options.allow_anchor_roots)
     cfg.refine_timeout_ms = float(options.refine_timeout_ms)
-    cfg.run_rrt_grower = bool(options.run_rrt_grower)
-    cfg.rrt_grower_extra_boxes = int(options.rrt_grower_extra_boxes)
-    cfg.rrt_grower_timeout_ms = float(options.rrt_grower_timeout_ms)
     if hasattr(cfg, "priority_prune_radius"):
         cfg.priority_prune_radius = float(options.priority_prune_radius)
     if hasattr(cfg, "collision_overlap_prune_min_depth"):
@@ -2672,7 +2664,6 @@ def run_leaf_rrt(
         ),
         "adaptive_depth_stop_reason": str(getattr(build, "adaptive_depth_stop_reason", "")),
         "adaptive_depth_snapshots_json": str(getattr(build, "adaptive_depth_snapshots_json", "")),
-        "rrt_grower_s": float(getattr(build, "rrt_grower_ms", 0.0)) / 1000.0,
         "connector_s": float(getattr(build, "connector_ms", 0.0)) / 1000.0,
         "endpoint_main_s": float(diagnostics.get("endpoint_main.ms", 0.0)) / 1000.0,
         "endpoint_main_per_query_s": (float(diagnostics.get("endpoint_main.ms", 0.0)) / 1000.0) / query_count,
@@ -3083,7 +3074,6 @@ def run_leaf_rrt(
         "leaf_free_count": int(getattr(build, "leaf_free_count", getattr(build, "shallow_free_count", 0))),
         "leaf_collision_count": int(getattr(build, "leaf_collision_count", getattr(build, "shallow_collision_count", 0))),
         "deep_boxes_added": int(getattr(build, "deep_boxes_added", getattr(build, "adaptive_free_added", 0))),
-        "rrt_grower_boxes_added": int(getattr(build, "rrt_grower_boxes_added", 0)),
         "build_final_boxes": build_final_boxes,
         "build_segment_edges": build_segment_edges,
         "after_corridor_boxes": int(after_corridor_boxes),

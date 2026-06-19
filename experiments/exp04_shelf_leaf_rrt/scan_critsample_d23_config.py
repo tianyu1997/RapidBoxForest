@@ -56,8 +56,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_LABELS,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_REFINE_TIMEOUT_MS,
-    DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES,
-    DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS,
     DEFAULT_RBF_THREADS,
     DEFAULT_RBF_VALIDATION_BATCH_SIZE,
     D23_CACHE_ROOT,
@@ -132,9 +130,6 @@ def make_args(base: argparse.Namespace, out_dir: Path, ffb_depth: int, leaf_max_
         query_bridge_forced_attempts=int(base.query_bridge_forced_attempts),
         query_bridge_direct_sample_step=float(base.query_bridge_direct_sample_step),
         query_bridge_direct_max_length=float(base.query_bridge_direct_max_length),
-        run_rrt_grower=bool(base.run_rrt_grower),
-        rrt_grower_extra_boxes=int(base.rrt_grower_extra_boxes),
-        rrt_grower_timeout_ms=float(base.rrt_grower_timeout_ms),
         priority_prune_radius=0.0,
         collision_overlap_prune_min_depth=int(base.collision_overlap_prune_min_depth),
         collision_overlap_prune_threshold=float(base.collision_overlap_prune_threshold),
@@ -297,9 +292,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=1)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.0)
     parser.add_argument("--query-bridge-direct-max-length", type=float, default=6.5)
-    parser.add_argument("--run-rrt-grower", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--rrt-grower-extra-boxes", type=int, default=DEFAULT_RBF_RRT_GROWER_EXTRA_BOXES)
-    parser.add_argument("--rrt-grower-timeout-ms", type=float, default=DEFAULT_RBF_RRT_GROWER_TIMEOUT_MS)
     parser.add_argument("--collision-overlap-prune-min-depth", type=int, default=DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_MIN_DEPTH)
     parser.add_argument("--collision-overlap-prune-threshold", type=float, default=DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_THRESHOLD)
     parser.add_argument("--collision-overlap-prune-ratio-threshold", type=float, default=DEFAULT_RBF_COLLISION_OVERLAP_PRUNE_RATIO_THRESHOLD)
