@@ -24,7 +24,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
-    DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
     DEFAULT_RBF_BOX_TRANSITION_LINE_DEVIATION_PENALTY,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
@@ -577,7 +576,6 @@ class RBFLeafRRTOptions:
     connector_pave_max_chain: int = DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN
     connector_pave_steps: int = DEFAULT_RBF_CONNECTOR_PAVE_STEPS
     connector_pave_depth: int = DEFAULT_RBF_CONNECTOR_PAVE_DEPTH
-    connector_adaptive_min_segment_fraction: float = DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION
     query_bridge_pave_depth: int = DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH
     query_endpoint_anchor_ffb_depth: int = 0
     connector_pave_fill_gaps: bool = DEFAULT_RBF_CONNECTOR_PAVE_FILL_GAPS
@@ -1224,8 +1222,6 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
     cfg.connector.pave.max_chain = int(options.connector_pave_max_chain)
     cfg.connector.pave.max_steps_per_waypoint = int(options.connector_pave_steps)
     cfg.connector.pave.find_free_box.max_depth = int(options.connector_pave_depth)
-    if hasattr(cfg.connector.pave, "adaptive_min_segment_fraction"):
-        cfg.connector.pave.adaptive_min_segment_fraction = float(options.connector_adaptive_min_segment_fraction)
     cfg.query_bridge_pave_depth = int(options.query_bridge_pave_depth)
     if hasattr(cfg, "query_bridge_ffb_start_depth"):
         cfg.query_bridge_ffb_start_depth = int(getattr(options, "query_bridge_ffb_start_depth", -1))

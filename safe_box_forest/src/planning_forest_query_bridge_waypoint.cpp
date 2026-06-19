@@ -35,7 +35,6 @@ ChainPaveConfig make_dense_query_bridge_pave_config(const ChainPaveConfig& base,
     config.gap_fill_sample_step = 0.0025;
     config.gap_fill_time_budget_ms = 0.0;
     config.gap_fill_max_ffb_calls = -1;
-    config.gap_fill_min_arc_gain = 0.0;
     config.require_connected_chain = true;
     return config;
 }
@@ -53,7 +52,6 @@ ChainPaveConfig make_deferred_query_bridge_pave_config(const ChainPaveConfig& ba
         std::max(config.gap_fill_time_budget_ms, short_local_bridge ? 350.0 : 200.0);
     config.gap_fill_max_ffb_calls =
         std::max(config.gap_fill_max_ffb_calls, short_local_bridge ? 768 : 512);
-    config.gap_fill_min_arc_gain = 0.0;
     config.require_connected_chain = true;
     return config;
 }

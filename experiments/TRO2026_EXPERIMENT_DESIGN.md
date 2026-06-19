@@ -93,9 +93,9 @@ paper-facing rows.
   - `connector_pair_timeout_ms`, `connector_max_pairs_per_gap`
   - `connector_rrt_iters`, `connector_rrt_timeout_ms`,
     `connector_rrt_step_size`, `connector_rrt_goal_bias`
-  - `connector_segment_resolution`, `connector_adaptive_min_segment_fraction`
+  - `connector_segment_resolution`
   - `connector_pave_depth`, `connector_pave_max_chain`, `connector_pave_steps`
-  - `connector_pave_fill_gaps`
+  - `connector_pave_fill_gaps`, `connector_pave_require_connected_chain`
   - `query_bridge_pave_depth`, `query_bridge_direct_sample_step`,
     `query_bridge_adaptive_step_repair`,
     `query_bridge_adaptive_fine_step`,
@@ -116,11 +116,11 @@ paper-facing rows.
 Exp.4--Exp.6 的配置扫描、表格说明或 profile 名称中使用：
 
 - `run_rrt_grower`, `rrt_grower_extra_boxes`, `rrt_grower_timeout_ms`
-- `connector_pave_require_connected_chain`, `gap_fill_min_arc_gain`
+- `gap_fill_min_arc_gain`, `connector_adaptive_min_segment_fraction`
 - `pre_split_to_max_depth`
 
-`connector_pave_require_connected_chain` 与 `gap_fill_min_arc_gain` 保留只为读取
-旧脚本/诊断入口；论文主流程的铺箱语义固定为 connected boundary propagation。
+论文主流程的铺箱语义固定为 boundary/front propagation；旧的全局 gap
+candidate arc-gain 排序和 connector adaptive-depth segment-fraction 门控已经删除。
 partition 邻接使用当前默认实现；已删除的实验性环境分支不再作为文档化参数、
 扫描变量、profile 名称或 appendix 对照组的一部分。
 

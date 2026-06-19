@@ -43,7 +43,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_REQUIRE_CONNECTED_CHAIN,
     DEFAULT_RBF_CONNECTOR_PAVE_STEPS,
-    DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_FINE_STEP,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_CALLS,
     DEFAULT_RBF_QUERY_BRIDGE_ADAPTIVE_MAX_REPAIR_SUBDIVISIONS,
@@ -412,7 +411,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         connector_pave_max_chain=int(args.connector_pave_max_chain),
         connector_pave_steps=int(args.connector_pave_steps),
         connector_pave_depth=int(args.connector_pave_depth),
-        connector_adaptive_min_segment_fraction=float(args.connector_adaptive_min_segment_fraction),
         query_bridge_pave_depth=int(args.query_bridge_pave_depth),
         query_bridge_ffb_start_depth=int(args.query_bridge_ffb_start_depth),
         query_bridge_direct_sample_step=float(args.query_bridge_direct_sample_step),
@@ -685,9 +683,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "cfg.connector.pave.max_chain": int(cfg.connector.pave.max_chain),
         "cfg.connector.pave.max_steps_per_waypoint": int(cfg.connector.pave.max_steps_per_waypoint),
         "cfg.connector.pave.find_free_box.max_depth": int(cfg.connector.pave.find_free_box.max_depth),
-        "cfg.connector.pave.adaptive_min_segment_fraction": float(
-            getattr(cfg.connector.pave, "adaptive_min_segment_fraction", 0.0)
-        ),
         "cfg.query_bridge_pave_depth": int(cfg.query_bridge_pave_depth),
         "cfg.query_bridge_ffb_start_depth": int(
             getattr(cfg, "query_bridge_ffb_start_depth", -1)
@@ -1428,7 +1423,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-pave-max-chain", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_MAX_CHAIN)
     parser.add_argument("--connector-pave-steps", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_STEPS)
     parser.add_argument("--connector-pave-depth", type=int, default=DEFAULT_RBF_CONNECTOR_PAVE_DEPTH)
-    parser.add_argument("--connector-adaptive-min-segment-fraction", type=float, default=DEFAULT_RBF_CONNECTOR_ADAPTIVE_MIN_SEGMENT_FRACTION)
     parser.add_argument("--query-bridge-pave-depth", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH)
     parser.add_argument("--query-bridge-ffb-start-depth", type=int, default=-1)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SAMPLE_STEP)
@@ -1689,7 +1683,6 @@ def main() -> int:
             "lect_ffb_binary_probe_depth": int(args.ffb_binary_probe_depth),
             "lect_ffb_search_mode": str(args.ffb_search_mode),
             "lect_connector_pave_depth": int(args.connector_pave_depth),
-            "lect_connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),
             "lect_query_bridge_pave_depth": int(args.query_bridge_pave_depth),
             "lect_query_bridge_ffb_start_depth": int(args.query_bridge_ffb_start_depth),
             "lect_rbf_max_depth": int(args.rbf_max_depth),
@@ -1707,7 +1700,6 @@ def main() -> int:
             "connector_pave_max_chain": int(args.connector_pave_max_chain),
             "connector_pave_fill_gaps": bool(args.connector_pave_fill_gaps),
             "connector_pave_require_connected_chain": bool(args.connector_pave_require_connected_chain),
-            "connector_adaptive_min_segment_fraction": float(args.connector_adaptive_min_segment_fraction),
             "query_bridge_pave_depth": int(args.query_bridge_pave_depth),
             "query_bridge_accept_segment_fraction": float(args.query_bridge_accept_segment_fraction),
             "query_bridge_accept_path_ratio": float(args.query_bridge_accept_path_ratio),

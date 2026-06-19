@@ -199,8 +199,6 @@ struct RBFPlanningConfig {
 	std::uint64_t database_evidence_spill_check_interval_updates = 4096;
 	/// Optional payload path for mmap-backed evidence spill. Empty = cache path + ".flat_payload".
 	std::filesystem::path database_evidence_spill_path;
-	/// Also checkpoint the database after an automatic online spill.
-	bool database_evidence_spill_checkpoint_after_spill = false;
 };
 
 struct RBFQueryRuntimeOptions {

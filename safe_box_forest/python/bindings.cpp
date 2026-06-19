@@ -1506,7 +1506,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("gap_fill_sample_step", &rbf::ChainPaveConfig::gap_fill_sample_step)
         .def_readwrite("gap_fill_time_budget_ms", &rbf::ChainPaveConfig::gap_fill_time_budget_ms)
         .def_readwrite("gap_fill_max_ffb_calls", &rbf::ChainPaveConfig::gap_fill_max_ffb_calls)
-        .def_readwrite("gap_fill_min_arc_gain", &rbf::ChainPaveConfig::gap_fill_min_arc_gain)
         .def_readwrite("require_connected_chain", &rbf::ChainPaveConfig::require_connected_chain)
         .def_readwrite("find_free_box", &rbf::ChainPaveConfig::find_free_box)
         .def_readwrite("commit_policy", &rbf::ChainPaveConfig::commit_policy);
@@ -1986,8 +1985,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                 double adjacency_tolerance,
                                 double gap_fill_sample_step,
                                 double gap_fill_time_budget_ms,
-                                int gap_fill_max_ffb_calls,
-                                double gap_fill_min_arc_gain) {
+                                int gap_fill_max_ffb_calls) {
                                     rbf::ChainPaveConfig pave;
                                     pave.commit_policy = rbf::BoxCommitPolicy::CommitProvisionalAllowed;
                                     pave.max_chain = max_chain;
@@ -2000,7 +1998,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                     pave.gap_fill_sample_step = gap_fill_sample_step;
                                     pave.gap_fill_time_budget_ms = gap_fill_time_budget_ms;
                                     pave.gap_fill_max_ffb_calls = gap_fill_max_ffb_calls;
-                                    pave.gap_fill_min_arc_gain = gap_fill_min_arc_gain;
                                     pave.find_free_box.max_depth = max_depth;
                                     pave.find_free_box.reject_seed_collision = false;
                                     (void)edge_seed_step;
@@ -2084,8 +2081,7 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          py::arg("adjacency_tolerance") = 1e-9,
                          py::arg("gap_fill_sample_step") = 0.05,
                          py::arg("gap_fill_time_budget_ms") = 10.0,
-                         py::arg("gap_fill_max_ffb_calls") = 32,
-                         py::arg("gap_fill_min_arc_gain") = 0.01)
+                         py::arg("gap_fill_max_ffb_calls") = 32)
                 .def("debug_chain_pave_waypoints",
                          [](rbf::RBFPlanningForest& forest,
                                 const std::vector<std::vector<double>>& waypoints,
@@ -2098,7 +2094,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                 double gap_fill_sample_step,
                                 double gap_fill_time_budget_ms,
                                 int gap_fill_max_ffb_calls,
-                                double gap_fill_min_arc_gain,
                                 bool require_connected_chain,
                                 bool commit_certified_only) {
                                     rbf::ChainPaveConfig pave;
@@ -2114,7 +2109,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                                     pave.gap_fill_sample_step = gap_fill_sample_step;
                                     pave.gap_fill_time_budget_ms = gap_fill_time_budget_ms;
                                     pave.gap_fill_max_ffb_calls = gap_fill_max_ffb_calls;
-                                    pave.gap_fill_min_arc_gain = gap_fill_min_arc_gain;
                                     pave.require_connected_chain = require_connected_chain;
                                     pave.find_free_box.max_depth = max_depth;
                                     pave.find_free_box.reject_seed_collision = false;
@@ -2192,7 +2186,6 @@ PYBIND11_MODULE(_sbf_cpp, module) {
                          py::arg("gap_fill_sample_step") = 0.05,
                          py::arg("gap_fill_time_budget_ms") = 10.0,
                          py::arg("gap_fill_max_ffb_calls") = 32,
-                         py::arg("gap_fill_min_arc_gain") = 0.01,
                          py::arg("require_connected_chain") = false,
                          py::arg("commit_certified_only") = true)
         .def("add_obstacle_and_rebuild", &rbf::RBFPlanningForest::add_obstacle_and_rebuild, py::arg("obstacle"))

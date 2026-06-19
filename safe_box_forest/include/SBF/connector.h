@@ -82,18 +82,13 @@ struct ChainPaveConfig {
 	// Maximum fresh FFB calls in fast gap-fill. <0 means unlimited (subject to
 	// max_chain/time); 0 means reuse-only coverage.
 	int gap_fill_max_ffb_calls = 32;
-	// Deprecated: boundary-only chain paving no longer ranks global uncovered
-	// samples by arc gain. Kept for API/config compatibility.
-	double gap_fill_min_arc_gain = 0.01;
-	// Deprecated: chain_pave_along_path now treats this as always true. Connector
-	// box commits must be graph-adjacent to the current parent/front box.
+	// When true, the RRT shortcut polyline is densified and chain-paved with
+	// graph-adjacent boxes instead of being used as a loose witness only.
 	bool require_connected_chain = false;
-	// Deprecated: FFB semantics are now always "find the shallowest certified-free
-	// cell along the seed path" according to find_free_box.search_mode. Connector
-	// paving ignores this legacy schedule and uses find_free_box.max_depth.
+	// Deprecated: connector paving now uses find_free_box.max_depth/search_mode.
+	// Kept only so older serialized Python configs can be loaded without
+	// silently changing their object shape.
 	std::vector<int> adaptive_ffb_depths;
-	// Deprecated with adaptive_ffb_depths; kept for API compatibility.
-	double adaptive_min_segment_fraction = 0.75;
 	FindFreeBoxOptions find_free_box;
 	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;
 };

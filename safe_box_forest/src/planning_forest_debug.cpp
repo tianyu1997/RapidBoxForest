@@ -527,7 +527,6 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         pave_config.gap_fill_sample_step = std::min(pave_config.gap_fill_sample_step, 0.02);
         pave_config.gap_fill_time_budget_ms = std::max(pave_config.gap_fill_time_budget_ms, 200.0);
         pave_config.gap_fill_max_ffb_calls = std::max(pave_config.gap_fill_max_ffb_calls, 512);
-        pave_config.gap_fill_min_arc_gain = 0.0;
         pave_config.require_connected_chain = true;
     }
     StageContext context = StageContext::serial();
