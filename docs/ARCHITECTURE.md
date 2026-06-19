@@ -189,6 +189,9 @@ src/query.cpp                      query result/path utility helpers
 src/planning_forest_adaptive_build.cpp
                                    adaptive deep leaf sweep orchestration and
                                    query-root refinement backend
+src/planning_forest_adaptive_fast_checkpoint.cpp
+                                   fast virtual checkpoint materialization,
+                                   coverage probe, and profile selection
 src/planning_forest_adaptive_fixed.cpp
                                    fixed virtual leaf-sweep materialization,
                                    merge, partition rebuild, coverage probe,
