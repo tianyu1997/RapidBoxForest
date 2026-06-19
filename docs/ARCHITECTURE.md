@@ -276,6 +276,10 @@ src/planning_forest_qroot_helpers.cpp
 src/planning_forest_query_bridge_acceptance_options.cpp
                                    query bridge acceptance-threshold option
                                    parsing, diagnostics, and acceptance checks
+src/planning_forest_query_bridge_attempt_paths.cpp
+                                   RRT attempt path selection, hybridization,
+                                   direct-line/detour fallback, and waypoint
+                                   quality retry orchestration
 src/planning_forest_query_bridge_batch_utils.cpp
                                    query bridge batch task records, acceptance,
                                    and route scoring helpers

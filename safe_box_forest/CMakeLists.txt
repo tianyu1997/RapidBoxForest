@@ -155,6 +155,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query.cpp
     src/planning_forest_query_bridge_acceptance_options.cpp
     src/planning_forest_query_bridge_anchor.cpp
+    src/planning_forest_query_bridge_attempt_paths.cpp
     src/planning_forest_query_bridge_batch.cpp
     src/planning_forest_query_bridge_batch_diagnostics.cpp
     src/planning_forest_query_bridge_batch_options.cpp
