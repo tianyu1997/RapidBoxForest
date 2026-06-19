@@ -158,6 +158,8 @@ src/box_graph.cpp                  explicit box adjacency, graph cache,
                                    Dijkstra/search, and waypoint extraction
 src/box_graph_edges.cpp            segment-edge, portal-corridor, and
                                    segment-edge adjacency helpers
+src/box_graph_sequence.cpp         box-sequence shortcut and bridge-node
+                                   compression helpers
 src/box_graph_topology.cpp         island and articulation-point graph
                                    topology helpers
 src/connector.cpp                  island connector orchestration, frontier
