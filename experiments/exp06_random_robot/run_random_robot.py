@@ -62,7 +62,6 @@ from experiments.common.rbf_defaults import (
     DEFAULT_RBF_QUERY_BRIDGE_DIRECT_SEGMENT_AFTER_RRT_MIN_LENGTH,
     DEFAULT_RBF_QUERY_BRIDGE_PAVE_DEPTH,
     DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE,
-    DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRIDIZE_ATTEMPT_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_PATHS,
     DEFAULT_RBF_QUERY_BRIDGE_HYBRID_MAX_VERTICES,
@@ -354,7 +353,6 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_attempt_offset": "--query-bridge-attempt-offset",
         "query_bridge_rrt_fixed_iters": "--query-bridge-rrt-fixed-iters",
         "query_bridge_local_radius_schedule": "--query-bridge-local-radius-schedule",
-        "query_bridge_rrt_optimize_after_first_iters": "--query-bridge-rrt-optimize-after-first-iters",
         "query_bridge_hybridize_attempt_paths": "--query-bridge-hybridize-attempt-paths",
         "query_bridge_hybrid_max_paths": "--query-bridge-hybrid-max-paths",
         "query_bridge_hybrid_max_vertices": "--query-bridge-hybrid-max-vertices",
@@ -576,9 +574,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["rrt_fixed_iters"] = int(args.query_bridge_rrt_fixed_iters)
     profile["query_bridge"]["rrt_fixed_timeout_ms"] = float(args.query_bridge_rrt_fixed_timeout_ms)
     profile["query_bridge"]["local_radius_schedule"] = str(args.query_bridge_local_radius_schedule)
-    profile["query_bridge"]["rrt_optimize_after_first_iters"] = int(
-        args.query_bridge_rrt_optimize_after_first_iters
-    )
     profile["query_bridge"]["hybridize_attempt_paths"] = bool(args.query_bridge_hybridize_attempt_paths)
     profile["query_bridge"]["hybrid_max_paths"] = int(args.query_bridge_hybrid_max_paths)
     profile["query_bridge"]["hybrid_max_vertices"] = int(args.query_bridge_hybrid_max_vertices)
@@ -820,11 +815,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-bridge-rrt-fixed-iters", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_ITERS)
     parser.add_argument("--query-bridge-rrt-fixed-timeout-ms", type=float, default=DEFAULT_RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS)
     parser.add_argument("--query-bridge-local-radius-schedule", default=DEFAULT_RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE)
-    parser.add_argument(
-        "--query-bridge-rrt-optimize-after-first-iters",
-        type=int,
-        default=DEFAULT_RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS,
-    )
     parser.add_argument(
         "--query-bridge-parallel-rrt-early-stop",
         action=argparse.BooleanOptionalAction,
@@ -1502,9 +1492,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
             query_bridge_rrt_fixed_timeout_ms=float(args.query_bridge_rrt_fixed_timeout_ms),
             query_bridge_local_radius_schedule=str(args.query_bridge_local_radius_schedule),
-            query_bridge_rrt_optimize_after_first_iters=int(
-                args.query_bridge_rrt_optimize_after_first_iters
-            ),
             query_bridge_parallel_rrt_early_stop=bool(args.query_bridge_parallel_rrt_early_stop),
             query_bridge_parallel_rrt_early_stop_min_successes=int(
                 args.query_bridge_parallel_rrt_early_stop_min_successes
@@ -1663,9 +1650,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_rrt_fixed_iters": int(args.query_bridge_rrt_fixed_iters),
             "query_bridge_rrt_fixed_timeout_ms": float(args.query_bridge_rrt_fixed_timeout_ms),
             "query_bridge_local_radius_schedule": str(args.query_bridge_local_radius_schedule),
-            "query_bridge_rrt_optimize_after_first_iters": int(
-                args.query_bridge_rrt_optimize_after_first_iters
-            ),
             "query_bridge_parallel_rrt_early_stop": bool(args.query_bridge_parallel_rrt_early_stop),
             "query_bridge_parallel_rrt_early_stop_min_successes": int(
                 args.query_bridge_parallel_rrt_early_stop_min_successes

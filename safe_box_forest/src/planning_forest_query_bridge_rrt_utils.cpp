@@ -61,7 +61,6 @@ RRTConnectConfig query_bridge_rrt_config_for_attempt(
             config.local_sampling_radius = scheduled_radius;
         }
     }
-    config.optimize_after_first_iters = options.rrt_optimize_after_first_iters;
     const int effective_fixed_iters =
         override_fixed_iters > 0 ? override_fixed_iters : options.rrt_fixed_iters;
     if (effective_fixed_iters > 0) {
@@ -201,9 +200,6 @@ QueryBridgeRetryOptions query_bridge_retry_options_from_env() {
         detail::env_double_or_default("RBF_QUERY_BRIDGE_RRT_FIXED_TIMEOUT_MS", 0.0));
     options.local_radius_schedule =
         detail::env_double_list_or_empty("RBF_QUERY_BRIDGE_LOCAL_RADIUS_SCHEDULE");
-    options.rrt_optimize_after_first_iters = std::max(
-        0,
-        detail::env_int_or_default("RBF_QUERY_BRIDGE_RRT_OPTIMIZE_AFTER_FIRST_ITERS", 0));
     options.no_path_retry_budget_iters =
         detail::env_int_list_or_empty("RBF_QUERY_BRIDGE_NO_PATH_RETRY_BUDGET_ITERS");
     options.no_path_retry_budget_attempts =
@@ -228,8 +224,6 @@ void record_query_bridge_retry_diagnostics(StageContext& context,
                                     options.rrt_fixed_timeout_ms);
     context.diagnostics().set_value("query_bridge.local_radius_schedule_size",
                                     static_cast<double>(options.local_radius_schedule.size()));
-    context.diagnostics().set_value("query_bridge.rrt_optimize_after_first_iters",
-                                    static_cast<double>(options.rrt_optimize_after_first_iters));
     context.diagnostics().set_value("query_bridge.no_path_retry_budget_stages",
                                     static_cast<double>(options.no_path_retry_budget_stages));
     for (std::size_t stage = 0; stage < options.no_path_retry_budget_stages; ++stage) {
