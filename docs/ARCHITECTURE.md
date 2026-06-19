@@ -115,6 +115,8 @@ src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, evidence lookup,
                                    worker sessions, and box validation
+  oracle_best_tighten.cpp          best-tighten split-dimension scoring and
+                                   schedule replay helpers
   oracle_canonical.cpp             canonical-sector and native/canonical
                                    interval mapping helpers for the oracle
   oracle_endpoint_materialization.cpp
