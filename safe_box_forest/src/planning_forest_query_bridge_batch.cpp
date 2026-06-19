@@ -127,7 +127,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     oracle_counters_before_valid = true;
 
     const QueryBridgeAcceptanceThresholds bridge_acceptance =
-        query_bridge_acceptance_thresholds_from_env();
+        query_bridge_acceptance_thresholds_from_config(config_);
     const std::unordered_set<int> forced_query_indices =
         make_forced_query_index_set(options.forced_query_indices, starts.size());
 

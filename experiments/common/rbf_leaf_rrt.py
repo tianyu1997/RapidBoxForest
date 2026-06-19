@@ -1209,6 +1209,14 @@ def configure_leaf_rrt(robot: Any, database_path: Path, options: RBFLeafRRTOptio
         cfg.query_bridge_ffb_start_depth = int(getattr(options, "query_bridge_ffb_start_depth", -1))
     if hasattr(cfg, "query_endpoint_anchor_ffb_depth"):
         cfg.query_endpoint_anchor_ffb_depth = int(options.query_endpoint_anchor_ffb_depth)
+    if hasattr(cfg, "query_bridge_accept_segment_fraction"):
+        cfg.query_bridge_accept_segment_fraction = float(options.query_bridge_accept_segment_fraction)
+    if hasattr(cfg, "query_bridge_accept_path_ratio"):
+        cfg.query_bridge_accept_path_ratio = float(options.query_bridge_accept_path_ratio)
+    if hasattr(cfg, "query_bridge_accept_path_additive"):
+        cfg.query_bridge_accept_path_additive = float(options.query_bridge_accept_path_additive)
+    if hasattr(cfg, "query_bridge_accept_max_path_length"):
+        cfg.query_bridge_accept_max_path_length = float(options.query_bridge_adaptive_max_path_length)
     mode_name = str(options.ffb_search_mode).strip().lower().replace("_", "-")
     ffb_search_mode = None
     if hasattr(sbf, "FindFreeBoxSearchMode"):
@@ -1798,16 +1806,7 @@ def bridge_all_queries(
         }
         force_indices.update(force_selected_indices)
         forced_indices = sorted(force_indices)
-        env_updates: dict[str, str | None] = {
-            "RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION":
-                str(float(options.query_bridge_accept_segment_fraction)),
-            "RBF_QUERY_BRIDGE_ACCEPT_PATH_RATIO":
-                str(float(options.query_bridge_accept_path_ratio)),
-            "RBF_QUERY_BRIDGE_ACCEPT_PATH_ADDITIVE":
-                str(float(options.query_bridge_accept_path_additive)),
-            "RBF_QUERY_BRIDGE_ADAPTIVE_MAX_PATH_LENGTH":
-                str(float(options.query_bridge_adaptive_max_path_length)),
-        }
+        env_updates: dict[str, str | None] = {}
         if int(options.query_bridge_forced_attempts) > 1:
             env_updates["RBF_QUERY_BRIDGE_FORCED_ATTEMPTS"] = str(int(options.query_bridge_forced_attempts))
         env_updates["RBF_QUERY_BRIDGE_ATTEMPT_OFFSET"] = str(

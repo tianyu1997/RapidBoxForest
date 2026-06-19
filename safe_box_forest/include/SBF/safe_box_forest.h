@@ -131,6 +131,13 @@ struct RBFPlanningConfig {
 	/// Optional endpoint-anchor FFB depth for online queries. <=0 reuses
 	/// query_bridge_pave_depth, then connector.pave.
 	int query_endpoint_anchor_ffb_depth = 0;
+	/// Query-bridge acceptance thresholds used before spending online repair
+	/// budget. These are explicit configuration fields rather than process
+	/// environment overrides so batch planning remains reproducible.
+	double query_bridge_accept_segment_fraction = 0.25;
+	double query_bridge_accept_path_ratio = 1.50;
+	double query_bridge_accept_path_additive = 0.75;
+	double query_bridge_accept_max_path_length = 4.5;
 	/// Endpoint membership policy for compressed corridor/portal internals.
 	/// The production default is low-risk GlobalForestOnly: start/goal lookup
 	/// ignores hidden portal/corridor internals and falls back to local repair.

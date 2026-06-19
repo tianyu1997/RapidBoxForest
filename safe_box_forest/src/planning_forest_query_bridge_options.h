@@ -24,7 +24,8 @@ struct QueryBridgeHybridizeAttemptOptions {
     int max_cross_checks = 4096;
 };
 
-QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
+QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_config(
+    const RBFPlanningConfig& config);
 
 void record_query_bridge_acceptance_diagnostics(
     StageContext& context,

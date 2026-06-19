@@ -1618,6 +1618,10 @@ PYBIND11_MODULE(_sbf_cpp, module) {
         .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth)
         .def_readwrite("query_bridge_ffb_start_depth", &rbf::RBFPlanningConfig::query_bridge_ffb_start_depth)
         .def_readwrite("query_endpoint_anchor_ffb_depth", &rbf::RBFPlanningConfig::query_endpoint_anchor_ffb_depth)
+        .def_readwrite("query_bridge_accept_segment_fraction", &rbf::RBFPlanningConfig::query_bridge_accept_segment_fraction)
+        .def_readwrite("query_bridge_accept_path_ratio", &rbf::RBFPlanningConfig::query_bridge_accept_path_ratio)
+        .def_readwrite("query_bridge_accept_path_additive", &rbf::RBFPlanningConfig::query_bridge_accept_path_additive)
+        .def_readwrite("query_bridge_accept_max_path_length", &rbf::RBFPlanningConfig::query_bridge_accept_max_path_length)
         .def_readwrite("portal_membership_policy", &rbf::RBFPlanningConfig::portal_membership_policy);
 
     py::class_<rbf::BuildProfile>(module, "BuildProfile")
