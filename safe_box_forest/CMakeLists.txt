@@ -171,7 +171,6 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_direct_segments.cpp
     src/planning_forest_query_bridge_path_utils.cpp
     src/planning_forest_query_bridge_repair_options.cpp
-    src/planning_forest_query_bridge_batch_utils.cpp
     src/planning_forest_query_bridge_edges.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_endpoint_direct.cpp
@@ -182,6 +181,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_pave.cpp
     src/planning_forest_query_bridge_partition_path_first.cpp
     src/planning_forest_query_bridge_rrt_utils.cpp
+    src/planning_forest_query_bridge_task_key.cpp
     src/planning_forest_query_bridge_waypoint_quality.cpp
     src/planning_forest_query_bridge_waypoint.cpp
     src/planning_forest_query_utils.cpp
