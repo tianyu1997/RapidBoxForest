@@ -15,7 +15,6 @@ struct QueryBridgeIndexOptions;
 struct QueryBridgeSearchTask;
 
 struct QueryBridgeRetryOptions {
-    int segment_only_retry_attempts = 0;
     int no_path_retry_attempts = 0;
     bool no_path_retry_stop_on_first_success = false;
     int forced_attempts = 1;
@@ -131,14 +130,6 @@ void query_bridge_adopt_retry_path_if_better(
 
 using QueryBridgeRetryPathRunner =
     std::function<std::vector<Eigen::VectorXd>(int attempt, int fixed_iters)>;
-
-void query_bridge_run_segment_only_retry(
-    QueryBridgeSearchTask& task,
-    int first_attempt,
-    double& best_length,
-    const QueryBridgeRetryOptions& retry_options,
-    const QueryBridgeRetryPathRunner& run_task_attempt,
-    StageContext& context);
 
 void query_bridge_run_no_path_retries(
     QueryBridgeSearchTask& task,

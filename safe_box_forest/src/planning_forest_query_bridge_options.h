@@ -28,7 +28,6 @@ struct QueryBridgeHybridizeAttemptOptions {
 struct QueryBridgeIndexOptions {
     std::string force_indices_csv;
     std::string global_indices_csv;
-    std::string segment_only_indices_csv;
 };
 
 QueryBridgeAcceptanceThresholds query_bridge_acceptance_thresholds_from_env();
@@ -43,9 +42,6 @@ QueryBridgeIndexOptions query_bridge_index_options_from_env();
 
 bool query_bridge_index_forced(const QueryBridgeIndexOptions& options,
                                std::size_t index);
-
-bool query_bridge_index_segment_only(const QueryBridgeIndexOptions& options,
-                                     std::size_t index);
 
 int query_bridge_index_global(const QueryBridgeIndexOptions& options,
                               std::size_t position,

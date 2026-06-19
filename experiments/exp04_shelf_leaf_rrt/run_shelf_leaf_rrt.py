@@ -492,7 +492,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         query_bridge_accept_path_additive=float(args.query_bridge_accept_path_additive),
         query_endpoint_anchor_before_bridge=bool(args.query_endpoint_anchor_before_bridge),
         query_bridge_labels=str(args.query_bridge_labels),
-        query_bridge_segment_only_indices=str(args.query_bridge_segment_only_indices),
         query_bridge_force_selected=bool(args.query_bridge_force_selected),
         query_bridge_adaptive_step_repair=bool(args.query_bridge_adaptive_step_repair),
         query_bridge_adaptive_fine_step=float(args.query_bridge_adaptive_fine_step),
@@ -640,7 +639,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_promote_transition_max_attempts_per_query": int(options.hipac_promote_transition_max_attempts_per_query),
         "option.offline_anchor_sampling": str(options.offline_anchor_sampling),
         "option.query_bridge_labels": str(options.query_bridge_labels),
-        "option.query_bridge_segment_only_indices": str(options.query_bridge_segment_only_indices),
         "option.query_bridge_force_selected": bool(options.query_bridge_force_selected),
         "option.query_bridge_adaptive_step_repair": bool(options.query_bridge_adaptive_step_repair),
         "option.query_bridge_adaptive_fine_step": float(options.query_bridge_adaptive_fine_step),
@@ -1578,11 +1576,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--query-endpoint-anchor-before-bridge", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE)
     parser.add_argument("--query-bridge-labels", default=DEFAULT_RBF_QUERY_BRIDGE_LABELS)
     parser.add_argument(
-        "--query-bridge-segment-only-indices",
-        default="",
-        help="Comma-separated zero-based shelf query indices to connect with audited QueryBridge segment edges instead of box paving.",
-    )
-    parser.add_argument(
         "--query-bridge-force-indices",
         default=DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES,
         help="Comma-separated zero-based shelf query indices that must run query bridge even if normally deferred.",
@@ -1904,7 +1897,6 @@ def main() -> int:
             "query_bridge_accept_path_additive": float(args.query_bridge_accept_path_additive),
             "query_endpoint_anchor_before_bridge": bool(args.query_endpoint_anchor_before_bridge),
             "query_bridge_labels": str(args.query_bridge_labels),
-            "query_bridge_segment_only_indices": str(args.query_bridge_segment_only_indices),
             "query_bridge_force_indices": str(args.query_bridge_force_indices),
             "query_bridge_forced_attempts": int(args.query_bridge_forced_attempts),
             "query_bridge_no_path_retry_attempts": int(args.query_bridge_no_path_retry_attempts),

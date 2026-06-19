@@ -137,7 +137,6 @@ def make_args(base: argparse.Namespace, out_dir: Path, ffb_depth: int, leaf_max_
         corridor_refine_min_delta=0.25,
         query_bridge_all=bool(base.query_bridge_all),
         query_bridge_labels=str(base.query_bridge_labels),
-        query_bridge_segment_only_indices=str(base.query_bridge_segment_only_indices),
         query_bridge_force_indices=str(base.query_bridge_force_indices),
         query_bridge_forced_attempts=int(base.query_bridge_forced_attempts),
         query_bridge_direct_sample_step=float(base.query_bridge_direct_sample_step),
@@ -304,7 +303,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--final-rrt-simplify-attempts", type=int, default=DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS)
     parser.add_argument("--query-bridge-all", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_QUERY_BRIDGE_ALL)
     parser.add_argument("--query-bridge-labels", default=DEFAULT_RBF_QUERY_BRIDGE_LABELS)
-    parser.add_argument("--query-bridge-segment-only-indices", default="")
     parser.add_argument("--query-bridge-force-indices", default="")
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=1)
     parser.add_argument("--query-bridge-direct-sample-step", type=float, default=0.0)

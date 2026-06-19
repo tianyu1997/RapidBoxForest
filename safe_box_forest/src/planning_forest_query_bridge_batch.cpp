@@ -261,10 +261,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
     batch_context.diagnostics().set_value("query_bridge.attempt_offset",
                                           static_cast<double>(retry_options.attempt_offset));
-    const bool has_segment_only_task =
-        query_bridge_has_segment_only_task(tasks, index_options);
-    if (query_bridge_parallel_task_rrt_enabled(has_segment_only_task,
-                                               retry_options)) {
+    if (query_bridge_parallel_task_rrt_enabled(retry_options)) {
         struct PreparedTask {
             bool skipped = false;
             bool forced = false;
@@ -399,7 +396,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 task,
                 added_by_query[task.index],
                 prepared[task_offset].forced,
-                false,
                 best_length,
                 batch_context,
                 scene_reusable_edges,
@@ -474,43 +470,22 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                                               scene_,
                                               config_,
                                               batch_context);
-        const bool segment_only_task =
-            query_bridge_index_segment_only(index_options, task.index);
-        if (segment_only_task) {
-            query_bridge_run_segment_only_retry(
-                task,
-                attempt_plan.base_attempts,
-                best_length,
-                retry_options,
-                [&](int attempt, int fixed_iters) {
-                    return run_query_bridge_task_rrt_attempt(task,
-                                                             attempt,
-                                                             fixed_iters,
-                                                             retry_options,
-                                                             audit_robot_,
-                                                             scene_,
-                                                             config_,
-                                                             batch_context);
-                },
-                batch_context);
-        } else {
-            query_bridge_run_no_path_retries(
-                task,
-                attempt_plan.base_attempts,
-                best_length,
-                retry_options,
-                [&](int attempt, int fixed_iters) {
-                    return run_query_bridge_task_rrt_attempt(task,
-                                                             attempt,
-                                                             fixed_iters,
-                                                             retry_options,
-                                                             audit_robot_,
-                                                             scene_,
-                                                             config_,
-                                                             batch_context);
-                },
-                batch_context);
-        }
+        query_bridge_run_no_path_retries(
+            task,
+            attempt_plan.base_attempts,
+            best_length,
+            retry_options,
+            [&](int attempt, int fixed_iters) {
+                return run_query_bridge_task_rrt_attempt(task,
+                                                         attempt,
+                                                         fixed_iters,
+                                                         retry_options,
+                                                         audit_robot_,
+                                                         scene_,
+                                                         config_,
+                                                         batch_context);
+            },
+            batch_context);
         if (task.waypoint_path.empty()) {
             record_query_bridge_batch_task_no_path(batch_context,
                                                    task.index,
@@ -521,7 +496,6 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             task,
             added_by_query[task.index],
             attempt_plan.forced,
-            segment_only_task,
             best_length,
             batch_context,
             scene_reusable_edges,

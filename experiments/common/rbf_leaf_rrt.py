@@ -257,7 +257,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.batch_rrt_ms_total",
         "query_bridge.batch_probe_ms_total",
         "query_bridge.batch_pave_ms_total",
-        "query_bridge.batch_segment_only_retry_ms_total",
         "query_bridge.batch_no_path_retry_ms_total",
         "query_bridge.batch_no_path_retry_adaptive_ms_total",
         "query_bridge.batch_no_path_retry_adaptive_attempts",
@@ -267,7 +266,6 @@ def _query_bridge_diagnostic_fields(
         "query_bridge.batch_tasks_skipped",
         "query_bridge.batch_tasks_skipped_after_rrt",
         "query_bridge.batch_tasks_no_path",
-        "query_bridge.batch_tasks_segment_only",
         "query_bridge.parallel_task_rrt_jobs",
         "query_bridge.rrt_fixed_iters",
         "query_bridge.rrt_fixed_timeout_ms",
@@ -616,7 +614,6 @@ class RBFLeafRRTOptions:
     query_bridge_scene_reusable_edges: bool = False
     query_endpoint_anchor_before_bridge: bool = DEFAULT_RBF_QUERY_ENDPOINT_ANCHOR_BEFORE_BRIDGE
     query_bridge_labels: str = DEFAULT_RBF_QUERY_BRIDGE_LABELS
-    query_bridge_segment_only_indices: str = ""
     query_bridge_force_indices: str = DEFAULT_RBF_QUERY_BRIDGE_FORCE_INDICES
     query_bridge_force_selected: bool = DEFAULT_RBF_QUERY_BRIDGE_FORCE_SELECTED
     query_bridge_forced_attempts: int = DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS
@@ -1914,8 +1911,6 @@ def bridge_all_queries(
         force_indices.update(force_selected_indices)
         force_indices_text = ",".join(str(item) for item in sorted(force_indices))
         env_updates: dict[str, str | None] = {
-            "RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES":
-                str(options.query_bridge_segment_only_indices).strip() or None,
             "RBF_QUERY_BRIDGE_FORCE_INDICES":
                 force_indices_text or None,
             "RBF_QUERY_BRIDGE_ACCEPT_SEGMENT_FRACTION":
@@ -2061,11 +2056,6 @@ def bridge_all_queries(
             if bool(getattr(options, "query_bridge_sequential_reuse", False)):
                 added_values: list[int] = []
                 reuse_skips = 0
-                segment_only_indices = {
-                    int(item.strip())
-                    for item in str(options.query_bridge_segment_only_indices).split(",")
-                    if item.strip()
-                }
                 for selected_index, (label, start, goal, global_query_index) in enumerate(selected):
                     q0 = time.perf_counter()
                     probe = forest.query(start, goal)
@@ -2081,10 +2071,6 @@ def bridge_all_queries(
                         os.environ["RBF_QUERY_BRIDGE_FORCE_INDICES"] = "0"
                     else:
                         os.environ.pop("RBF_QUERY_BRIDGE_FORCE_INDICES", None)
-                    if selected_index in segment_only_indices:
-                        os.environ["RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES"] = "0"
-                    else:
-                        os.environ.pop("RBF_QUERY_BRIDGE_SEGMENT_ONLY_INDICES", None)
                     added = int(forest.bridge_queries([start], [goal])[0])
                     added_values.append(added)
                     timing_by_label[label] = timing_by_label.get(label, 0.0) + (time.perf_counter() - q0)

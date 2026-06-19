@@ -1,35 +1,20 @@
 #include "planning_forest_query_bridge_policy.h"
 
-#include <algorithm>
-
 namespace rbf {
 
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
     const QueryBridgeIndexOptions& index_options) {
-    if (query_bridge_index_segment_only(index_options, task.index)) {
-        return false;
-    }
     if (respect_forced && query_bridge_index_forced(index_options, task.index)) {
         return false;
     }
     return true;
 }
 
-bool query_bridge_has_segment_only_task(
-    const std::vector<QueryBridgeSearchTask>& tasks,
-    const QueryBridgeIndexOptions& index_options) {
-    return std::any_of(tasks.begin(), tasks.end(), [&](const QueryBridgeSearchTask& task) {
-        return query_bridge_index_segment_only(index_options, task.index);
-    });
-}
-
 bool query_bridge_parallel_task_rrt_enabled(
-    bool has_segment_only_task,
     const QueryBridgeRetryOptions& retry_options) {
-    return !has_segment_only_task &&
-           retry_options.no_path_retry_attempts == 0 &&
+    return retry_options.no_path_retry_attempts == 0 &&
            retry_options.no_path_retry_budget_stages == 0;
 }
 

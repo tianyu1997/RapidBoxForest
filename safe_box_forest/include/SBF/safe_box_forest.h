@@ -642,17 +642,9 @@ private:
 		int shortcut_query_index,
 		int edge_query_index,
 		int batch_task_index = -1);
-	int try_commit_query_bridge_segment_only_edge(
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		int segment_resolution,
-		int query_index,
-		int batch_task_index,
-		StageContext& context);
-	int try_add_query_residual_segment_edge(int source_box_id,
-											int target_box_id,
-											const std::vector<Eigen::VectorXd>& waypoint_path,
+		int try_add_query_residual_segment_edge(int source_box_id,
+												int target_box_id,
+												const std::vector<Eigen::VectorXd>& waypoint_path,
 											const RRTConnectConfig& bridge_rrt,
 											const CollisionChecker& checker,
 											StageContext& context,
@@ -763,13 +755,12 @@ private:
 		int& added_for_task,
 		StageContext& context,
 		bool scene_reusable_edges);
-	void finish_query_bridge_ready_waypoint_task(
-		QueryBridgeSearchTask& task,
-		int& added_for_task,
-		bool forced_task,
-		bool segment_only_task,
-		double best_length,
-		StageContext& context,
+		void finish_query_bridge_ready_waypoint_task(
+			QueryBridgeSearchTask& task,
+			int& added_for_task,
+			bool forced_task,
+			double best_length,
+			StageContext& context,
 		bool scene_reusable_edges,
 		const QueryBridgeIndexOptions& index_options,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,

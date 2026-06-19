@@ -339,7 +339,6 @@ def apply_exp06_robot_tuned_rbf_profile(args: argparse.Namespace,
         "query_bridge_force_selected": "--query-bridge-force-selected",
         "query_endpoint_point_anchor": "--query-endpoint-point-anchor",
         "query_bridge_full_residual_overlay_when_connected": "--query-bridge-full-residual-overlay-when-connected",
-        "query_bridge_segment_only_indices": "--query-bridge-segment-only-indices",
         "query_bridge_accept_segment_fraction": "--query-bridge-accept-segment-fraction",
         "query_bridge_accept_path_ratio": "--query-bridge-accept-path-ratio",
         "query_bridge_accept_path_additive": "--query-bridge-accept-path-additive",
@@ -542,7 +541,6 @@ def effective_rbf_profile(args: argparse.Namespace,
     profile["query_bridge"]["full_residual_overlay_when_connected"] = bool(
         args.query_bridge_full_residual_overlay_when_connected
     )
-    profile["query_bridge"]["segment_only_indices"] = str(args.query_bridge_segment_only_indices)
     profile["query_bridge"]["sequential_reuse"] = bool(args.query_bridge_sequential_reuse)
     profile["query_bridge"]["scene_reusable_edges"] = bool(args.query_bridge_scene_reusable_edges)
     profile["query_bridge"]["reuse_scope"] = "scene_seed_local"
@@ -771,7 +769,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--connector-rrt-goal-bias", type=float, default=DEFAULT_RBF_CONNECTOR_RRT_GOAL_BIAS)
     parser.add_argument("--connector-rrt-local-sampling-radius", type=float, default=0.0)
     parser.add_argument("--query-bridge-force-selected", action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument("--query-bridge-segment-only-indices", default="")
     parser.add_argument("--query-bridge-sequential-reuse", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-scene-reusable-edges", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--query-bridge-forced-attempts", type=int, default=DEFAULT_RBF_QUERY_BRIDGE_FORCED_ATTEMPTS)
@@ -1437,7 +1434,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             query_bridge_sequential_reuse=bool(args.query_bridge_sequential_reuse),
             query_bridge_scene_reusable_edges=bool(args.query_bridge_scene_reusable_edges),
             query_bridge_force_selected=bool(args.query_bridge_force_selected),
-            query_bridge_segment_only_indices=str(args.query_bridge_segment_only_indices),
             query_bridge_forced_attempts=int(args.query_bridge_forced_attempts),
             query_bridge_attempt_offset=int(args.query_bridge_attempt_offset),
             query_bridge_rrt_fixed_iters=int(args.query_bridge_rrt_fixed_iters),
@@ -1578,7 +1574,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "query_bridge_sequential_reuse": bool(args.query_bridge_sequential_reuse),
             "query_bridge_scene_reusable_edges": bool(args.query_bridge_scene_reusable_edges),
             "query_bridge_reuse_scope": "scene_seed_local",
-            "query_bridge_segment_only_indices": str(args.query_bridge_segment_only_indices),
             "query_bridge_direct_sample_step": float(args.query_bridge_direct_sample_step),
             "query_bridge_full_residual_overlay_when_connected": bool(
                 args.query_bridge_full_residual_overlay_when_connected

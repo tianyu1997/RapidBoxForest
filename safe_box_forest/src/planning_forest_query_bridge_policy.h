@@ -5,8 +5,6 @@
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_bridge_task.h"
 
-#include <vector>
-
 namespace rbf {
 
 bool query_bridge_should_check_current_query(
@@ -14,12 +12,7 @@ bool query_bridge_should_check_current_query(
     bool respect_forced,
     const QueryBridgeIndexOptions& index_options);
 
-bool query_bridge_has_segment_only_task(
-    const std::vector<QueryBridgeSearchTask>& tasks,
-    const QueryBridgeIndexOptions& index_options);
-
 bool query_bridge_parallel_task_rrt_enabled(
-    bool has_segment_only_task,
     const QueryBridgeRetryOptions& retry_options);
 
 bool query_bridge_task_has_explicit_satisfaction(

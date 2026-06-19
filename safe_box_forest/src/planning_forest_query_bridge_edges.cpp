@@ -167,7 +167,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     QueryBridgeSearchTask& task,
     int& added_for_task,
     bool forced_task,
-    bool segment_only_task,
     double best_length,
     StageContext& context,
     bool scene_reusable_edges,
@@ -244,25 +243,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
         return;
     }
 
-    if (segment_only_task) {
-        const int segment_only_added =
-            try_commit_query_bridge_segment_only_edge(
-                task.start,
-                task.goal,
-                task.waypoint_path,
-                task.bridge_rrt.segment_resolution,
-                query_bridge_edge_query_index(scene_reusable_edges, task),
-                static_cast<int>(task.index),
-                context);
-        if (segment_only_added > 0) {
-            added_for_task += segment_only_added;
-        }
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "total_ms"),
-            task_elapsed_ms());
-        return;
-    }
-
     const auto pave_t0 = QueryBridgeEdgeClock::now();
     run_query_bridge_waypoint_path(task,
                                    added_for_task,
@@ -279,52 +259,6 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     context.diagnostics().set_value(
         query_bridge_task_key(task.index, "total_ms"),
         task_elapsed_ms());
-}
-
-int RBFPlanningForest::try_commit_query_bridge_segment_only_edge(
-    const Eigen::Ref<const Eigen::VectorXd>& start,
-    const Eigen::Ref<const Eigen::VectorXd>& goal,
-    const std::vector<Eigen::VectorXd>& waypoint_path,
-    int segment_resolution,
-    int query_index,
-    int batch_task_index,
-    StageContext& context) {
-    const auto task_key = [&](const std::string& suffix) {
-        return query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix);
-    };
-    const int source_box_id = locate_box_partition_first(
-        start,
-        config_.query.nearest_if_outside);
-    const int target_box_id = locate_box_partition_first(
-        goal,
-        config_.query.nearest_if_outside);
-    int edge_id = -1;
-    if (source_box_id >= 0 && target_box_id >= 0) {
-        edge_id = add_segment_edge_partition_first(source_box_id,
-                                                   target_box_id,
-                                                   waypoint_path,
-                                                   SegmentEdgeType::QueryBridge,
-                                                   segment_resolution,
-                                                   SegmentEdgeValidation::CollisionChecked,
-                                                   true,
-                                                   query_index);
-    }
-    if (edge_id >= 0) {
-        invalidate_query_cache();
-        context.diagnostics().add_counter(
-            "query_bridge.batch_tasks_segment_only");
-        if (batch_task_index >= 0) {
-            context.diagnostics().set_value(task_key("segment_only"), 1.0);
-            context.diagnostics().set_value(task_key("added"), 1.0);
-        }
-        return 1;
-    }
-    context.diagnostics().add_counter(
-        "query_bridge.batch_tasks_segment_only_failures");
-    if (batch_task_index >= 0) {
-        context.diagnostics().set_value(task_key("segment_only_failure"), 1.0);
-    }
-    return 0;
 }
 
 int RBFPlanningForest::try_add_query_residual_segment_edge(
