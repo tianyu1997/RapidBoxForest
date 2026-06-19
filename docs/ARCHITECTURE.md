@@ -316,6 +316,18 @@ src/planning_forest_query_bridge_corridor_options.cpp
                                    runtime option parsing for direct corridor,
                                    reusable edge, shortcut, residual, and
                                    detailed-timing controls
+src/planning_forest_query_bridge_corridor_diagnostics.cpp
+                                   direct-corridor summary and detailed timing
+                                   diagnostic emission
+src/planning_forest_query_bridge_corridor_graph.cpp
+                                   direct-corridor local DSU, transition
+                                   metrics, and internal local-graph helpers
+src/planning_forest_query_bridge_corridor_tasks.cpp
+                                   direct-corridor uncovered-sample FFB task
+                                   generation and task execution loop
+src/planning_forest_query_bridge_corridor_repair.cpp
+                                   subdivision, adaptive, lateral, and residual
+                                   segment repair passes for direct corridor
 src/planning_forest_query_bridge_repair_options.cpp
                                    subdivision, adaptive, and lateral repair
                                    option builders for direct corridor paving
@@ -340,11 +352,6 @@ src/planning_forest_query_bridge_pave.cpp
 src/planning_forest_query_bridge_waypoint.cpp
                                    waypoint-path corridor paving and local
                                    repair implementation
-src/planning_forest_query_bridge_corridor_utils.cpp
-                                   direct-corridor paving local data structures,
-                                   DSU, FFB task generation, transition
-                                   ordering, lateral repair candidate, and
-                                   residual-gap helper functions
 src/planning_forest_query_bridge_batch.cpp
                                    batched query bridge scheduling and per-query
                                    repair accounting

@@ -1,6 +1,7 @@
 #include "planning_forest_query_bridge_path_utils.h"
 
 #include "planning_forest_audit.h"
+#include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>

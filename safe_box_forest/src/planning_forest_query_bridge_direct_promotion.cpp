@@ -2,7 +2,7 @@
 
 #include <SBF/box_graph.h>
 
-#include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_query_bridge_path_utils.h"
 #include "planning_forest_query_utils.h"

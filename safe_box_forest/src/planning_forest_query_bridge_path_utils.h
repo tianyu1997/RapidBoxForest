@@ -3,7 +3,7 @@
 #include <SBF/connector.h>
 #include <SBF/safe_box_forest.h>
 
-#include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_corridor_options.h"
 
 #include <Eigen/Core>
 

@@ -1,6 +1,7 @@
-#include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_corridor_options.h"
 
 #include "env_config.h"
+#include "planning_forest_query_bridge_corridor_tasks.h"
 
 #include <algorithm>
 

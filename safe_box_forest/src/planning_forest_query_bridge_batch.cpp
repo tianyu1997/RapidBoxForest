@@ -6,7 +6,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_query_bridge_attempt_paths.h"
-#include "planning_forest_query_bridge_corridor_utils.h"
+#include "planning_forest_query_bridge_corridor_options.h"
 #include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_detour_utils.h"
 #include "planning_forest_query_bridge_options.h"
