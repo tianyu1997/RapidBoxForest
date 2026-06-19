@@ -36,11 +36,17 @@ from experiments.common.progress import progress
 from experiments.common.rbf_defaults import (
     D23_CACHE_LABEL,
     D23_CACHE_ROOT,
+    DEFAULT_OMPL_SIMPLIFY_TIME_S,
     DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
     DEFAULT_RBF_AUDIT_SEGMENT_STEP,
-    DEFAULT_RBF_SHELF_BOX_BUDGET,
     DEFAULT_RBF_FINAL_RRT_SIMPLIFY_ATTEMPTS,
+    DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_COUNT,
+    DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU,
+    DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA,
     DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS,
+    DEFAULT_RBF_SHELF_BOX_BUDGET,
+    DEFAULT_RBF_THREADS,
     robot_joint_limit_tuples,
     robot_symmetry_aligned_root_tuples,
     shelf_d23_rbf_profile,
@@ -1448,10 +1454,10 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=Path(os.environ.get("RBF_OLD_TRO_OUTPUT_ROOT", str(REPO_ROOT / "external" / "old_tro2026" / "outputs"))),
     )
-    parser.add_argument("--threads", type=int, default=8)
+    parser.add_argument("--threads", type=int, default=DEFAULT_RBF_THREADS)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--ompl-simplify-time-s", type=float, default=0.01)
+    parser.add_argument("--ompl-simplify-time-s", type=float, default=DEFAULT_OMPL_SIMPLIFY_TIME_S)
     parser.add_argument("--sbf-box-budget", type=int, default=DEFAULT_RBF_SHELF_BOX_BUDGET)
     parser.add_argument("--sbf-box-budgets", default=str(DEFAULT_RBF_SHELF_BOX_BUDGET))
     parser.add_argument(
@@ -1465,10 +1471,10 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument("--offline-random-anchors", action=argparse.BooleanOptionalAction, default=DEFAULT_RBF_OFFLINE_RANDOM_ANCHORS)
-    parser.add_argument("--offline-anchor-count", type=int, default=16)
-    parser.add_argument("--offline-anchor-candidate-count", type=int, default=512)
-    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=0.35)
-    parser.add_argument("--offline-anchor-distance-mu", type=float, default=0.10)
+    parser.add_argument("--offline-anchor-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_COUNT)
+    parser.add_argument("--offline-anchor-candidate-count", type=int, default=DEFAULT_RBF_OFFLINE_ANCHOR_CANDIDATE_COUNT)
+    parser.add_argument("--offline-anchor-lca-lambda", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_LCA_LAMBDA)
+    parser.add_argument("--offline-anchor-distance-mu", type=float, default=DEFAULT_RBF_OFFLINE_ANCHOR_DISTANCE_MU)
     parser.add_argument("--rbf-cache-root", type=Path, default=D23_CACHE_ROOT)
     parser.add_argument("--warm-cache-label", default=D23_CACHE_LABEL)
     parser.add_argument("--rrt-timeout-s", type=float, default=10.0)

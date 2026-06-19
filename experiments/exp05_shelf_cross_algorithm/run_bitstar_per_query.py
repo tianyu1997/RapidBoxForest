@@ -17,7 +17,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_json
-from experiments.common.rbf_defaults import DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE, DEFAULT_RBF_AUDIT_SEGMENT_STEP
+from experiments.common.rbf_defaults import (
+    DEFAULT_OMPL_SIMPLIFY_TIME_S,
+    DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
+    DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+)
 from experiments.common.sbf_import import import_sbf
 
 
@@ -349,7 +353,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wall-timeout-factor", type=float, default=1.8)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--simplify-time-s", type=float, default=0.01)
+    parser.add_argument("--simplify-time-s", type=float, default=DEFAULT_OMPL_SIMPLIFY_TIME_S)
     parser.add_argument("--stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--append", action="store_true")
     parser.add_argument("--worker", action="store_true")

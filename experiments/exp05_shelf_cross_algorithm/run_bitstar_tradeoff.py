@@ -15,7 +15,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from experiments.common.experiment_io import DEFAULT_OUTPUT_ROOT, write_json
 from experiments.common.progress import progress
-from experiments.common.rbf_defaults import DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE, DEFAULT_RBF_AUDIT_SEGMENT_STEP
+from experiments.common.rbf_defaults import (
+    DEFAULT_OMPL_SIMPLIFY_TIME_S,
+    DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE,
+    DEFAULT_RBF_AUDIT_SEGMENT_STEP,
+)
 from experiments.exp05_shelf_cross_algorithm import run_bitstar_per_query
 
 
@@ -104,7 +108,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--wall-timeout-factor", type=float, default=1.5)
     parser.add_argument("--audit-segment-step", type=float, default=DEFAULT_RBF_AUDIT_SEGMENT_STEP)
     parser.add_argument("--audit-collision-tolerance", type=float, default=DEFAULT_RBF_AUDIT_COLLISION_TOLERANCE)
-    parser.add_argument("--simplify-time-s", type=float, default=0.01)
+    parser.add_argument("--simplify-time-s", type=float, default=DEFAULT_OMPL_SIMPLIFY_TIME_S)
     parser.add_argument("--stop-on-solution-improvement", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--use-k-nearest", type=int, default=-1)
     parser.add_argument("--pruning", type=int, default=-1)
