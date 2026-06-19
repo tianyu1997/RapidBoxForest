@@ -281,12 +281,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
     query_bridge_no_path_retry_stop_on_first_success = (
         bool(args.query_bridge_no_path_retry_stop_on_first_success) or hipac_improved
     )
-    # TransitionPortal remains disabled unless the new OBB-zonotope
-    # certificate is explicitly requested.  This avoids enabling the older
-    # unvalidated transition resolver in paper runs.
-    hipac_online_transition_portal = (
-        bool(args.hipac_online_transition_portal) and bool(args.hipac_transition_obb_portal)
-    )
     hipac_promote_transition_slices = (
         bool(args.hipac_promote_transition_slices) and bool(args.hipac_transition_obb_portal)
     )
@@ -347,14 +341,6 @@ def make_case_options(case: str, seed: int, deep_max_boxes: int, args: argparse.
         hipac_online_prebridge_max_pair_distance=float(args.hipac_online_prebridge_max_pair_distance),
         hipac_online_prebridge_route_distance_weight=float(args.hipac_online_prebridge_route_distance_weight),
         hipac_online_prebridge_pair_distance_weight=float(args.hipac_online_prebridge_pair_distance_weight),
-        hipac_online_transition_portal=hipac_online_transition_portal,
-        hipac_transition_target_query_indices=str(args.hipac_transition_target_query_indices),
-        hipac_transition_max_attempts_per_query=int(args.hipac_transition_max_attempts_per_query),
-        hipac_transition_candidate_limit=int(args.hipac_transition_candidate_limit),
-        hipac_transition_window_stride=int(args.hipac_transition_window_stride),
-        hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
-        hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
-        hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
         hipac_transition_obb_portal=bool(args.hipac_transition_obb_portal),
         hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
         hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
@@ -597,14 +583,6 @@ def config_scalar_summary(case: str, seed: int, deep_max_boxes: int, args: argpa
         "option.hipac_online_prebridge_max_pair_distance": float(options.hipac_online_prebridge_max_pair_distance),
         "option.hipac_online_prebridge_route_distance_weight": float(options.hipac_online_prebridge_route_distance_weight),
         "option.hipac_online_prebridge_pair_distance_weight": float(options.hipac_online_prebridge_pair_distance_weight),
-        "option.hipac_online_transition_portal": bool(options.hipac_online_transition_portal),
-        "option.hipac_transition_target_query_indices": str(options.hipac_transition_target_query_indices),
-        "option.hipac_transition_max_attempts_per_query": int(options.hipac_transition_max_attempts_per_query),
-        "option.hipac_transition_candidate_limit": int(options.hipac_transition_candidate_limit),
-        "option.hipac_transition_window_stride": int(options.hipac_transition_window_stride),
-        "option.hipac_transition_min_predicted_bridge_edges": int(options.hipac_transition_min_predicted_bridge_edges),
-        "option.hipac_transition_max_pair_distance": float(options.hipac_transition_max_pair_distance),
-        "option.hipac_transition_allow_same_component": bool(options.hipac_transition_allow_same_component),
         "option.hipac_transition_obb_portal": bool(options.hipac_transition_obb_portal),
         "option.hipac_transition_obb_lateral_radius": float(options.hipac_transition_obb_lateral_radius),
         "option.hipac_transition_obb_longitudinal_margin": float(options.hipac_transition_obb_longitudinal_margin),
@@ -1028,27 +1006,6 @@ def aggregate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "query_bridge_hipac_prebridge_ffb_calls_median": median(row.get("query_bridge_hipac_prebridge_ffb_calls", 0) for row in items),
             "query_bridge_hipac_prebridge_cell_native_validations_median": median(row.get("query_bridge_hipac_prebridge_cell_native_validations", 0) for row in items),
             "query_bridge_hipac_prebridge_cell_native_free_median": median(row.get("query_bridge_hipac_prebridge_cell_native_free", 0) for row in items),
-            "query_bridge_hipac_transition_attempts_median": median(row.get("query_bridge_hipac_transition_attempts", 0) for row in items),
-            "query_bridge_hipac_transition_candidates_median": median(row.get("query_bridge_hipac_transition_candidates", 0) for row in items),
-            "query_bridge_hipac_transition_gated_median": median(row.get("query_bridge_hipac_transition_gated", 0) for row in items),
-            "query_bridge_hipac_transition_portal_attempts_median": median(row.get("query_bridge_hipac_transition_portal_attempts", 0) for row in items),
-            "query_bridge_hipac_transition_added_median": median(row.get("query_bridge_hipac_transition_added", 0) for row in items),
-            "query_bridge_hipac_transition_satisfied_median": median(row.get("query_bridge_hipac_transition_satisfied", 0) for row in items),
-            "query_bridge_hipac_transition_not_sufficient_median": median(row.get("query_bridge_hipac_transition_not_sufficient", 0) for row in items),
-            "query_bridge_hipac_transition_failures_median": median(row.get("query_bridge_hipac_transition_failures", 0) for row in items),
-            "query_bridge_hipac_transition_ms_median": median(row.get("query_bridge_hipac_transition_ms", 0.0) for row in items),
-            "query_bridge_hipac_transition_portal_edges_median": median(row.get("query_bridge_hipac_transition_portal_edges", 0) for row in items),
-            "query_bridge_hipac_transition_internal_boxes_median": median(row.get("query_bridge_hipac_transition_internal_boxes", 0) for row in items),
-            "query_bridge_hipac_transition_ffb_calls_median": median(row.get("query_bridge_hipac_transition_ffb_calls", 0) for row in items),
-            "query_bridge_hipac_transition_cell_native_validations_median": median(row.get("query_bridge_hipac_transition_cell_native_validations", 0) for row in items),
-            "query_bridge_hipac_transition_cell_native_free_median": median(row.get("query_bridge_hipac_transition_cell_native_free", 0) for row in items),
-            "query_bridge_hipac_transition_obb_attempts_median": median(row.get("query_bridge_hipac_transition_obb_attempts", 0) for row in items),
-            "query_bridge_hipac_transition_obb_success_median": median(row.get("query_bridge_hipac_transition_obb_success", 0) for row in items),
-            "query_bridge_hipac_transition_obb_fail_median": median(row.get("query_bridge_hipac_transition_obb_fail", 0) for row in items),
-            "query_bridge_hipac_transition_obb_joint_limit_rejects_median": median(row.get("query_bridge_hipac_transition_obb_joint_limit_rejects", 0) for row in items),
-            "query_bridge_hipac_transition_obb_gjk_tests_median": median(row.get("query_bridge_hipac_transition_obb_gjk_tests", 0) for row in items),
-            "query_bridge_hipac_transition_obb_maybe_pairs_median": median(row.get("query_bridge_hipac_transition_obb_maybe_pairs", 0) for row in items),
-            "query_bridge_hipac_transition_obb_ms_median": median(row.get("query_bridge_hipac_transition_obb_ms", 0.0) for row in items),
             "segment_edge_obb_cover_attempts_median": median(row.get("segment_edge_obb_cover_attempts", 0) for row in items),
             "segment_edge_obb_cover_success_median": median(row.get("segment_edge_obb_cover_success", 0) for row in items),
             "segment_edge_obb_cover_fail_median": median(row.get("segment_edge_obb_cover_fail", 0) for row in items),
@@ -1312,27 +1269,6 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "query_bridge_hipac_prebridge_ffb_calls_median",
         "query_bridge_hipac_prebridge_cell_native_validations_median",
         "query_bridge_hipac_prebridge_cell_native_free_median",
-        "query_bridge_hipac_transition_attempts_median",
-        "query_bridge_hipac_transition_candidates_median",
-        "query_bridge_hipac_transition_gated_median",
-        "query_bridge_hipac_transition_portal_attempts_median",
-        "query_bridge_hipac_transition_added_median",
-        "query_bridge_hipac_transition_satisfied_median",
-        "query_bridge_hipac_transition_not_sufficient_median",
-        "query_bridge_hipac_transition_failures_median",
-        "query_bridge_hipac_transition_ms_median",
-        "query_bridge_hipac_transition_portal_edges_median",
-        "query_bridge_hipac_transition_internal_boxes_median",
-        "query_bridge_hipac_transition_ffb_calls_median",
-        "query_bridge_hipac_transition_cell_native_validations_median",
-        "query_bridge_hipac_transition_cell_native_free_median",
-        "query_bridge_hipac_transition_obb_attempts_median",
-        "query_bridge_hipac_transition_obb_success_median",
-        "query_bridge_hipac_transition_obb_fail_median",
-        "query_bridge_hipac_transition_obb_joint_limit_rejects_median",
-        "query_bridge_hipac_transition_obb_gjk_tests_median",
-        "query_bridge_hipac_transition_obb_maybe_pairs_median",
-        "query_bridge_hipac_transition_obb_ms_median",
         "segment_edge_obb_cover_attempts_median",
         "segment_edge_obb_cover_success_median",
         "segment_edge_obb_cover_fail_median",
@@ -1619,14 +1555,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-online-prebridge-max-pair-distance", type=float, default=1.25)
     parser.add_argument("--hipac-online-prebridge-route-distance-weight", type=float, default=1.0)
     parser.add_argument("--hipac-online-prebridge-pair-distance-weight", type=float, default=0.25)
-    parser.add_argument("--hipac-online-transition-portal", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--hipac-transition-target-query-indices", default="2,3")
-    parser.add_argument("--hipac-transition-max-attempts-per-query", type=int, default=1)
-    parser.add_argument("--hipac-transition-candidate-limit", type=int, default=16)
-    parser.add_argument("--hipac-transition-window-stride", type=int, default=2)
-    parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
-    parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
-    parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--hipac-transition-obb-portal", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
     parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)

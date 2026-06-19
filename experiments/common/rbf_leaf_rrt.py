@@ -499,14 +499,6 @@ class RBFLeafRRTOptions:
     hipac_online_prebridge_max_pair_distance: float = 1.25
     hipac_online_prebridge_route_distance_weight: float = 1.0
     hipac_online_prebridge_pair_distance_weight: float = 0.25
-    hipac_online_transition_portal: bool = False
-    hipac_transition_target_query_indices: str = "2,3"
-    hipac_transition_max_attempts_per_query: int = 1
-    hipac_transition_candidate_limit: int = 16
-    hipac_transition_window_stride: int = 2
-    hipac_transition_min_predicted_bridge_edges: int = 16
-    hipac_transition_max_pair_distance: float = 1.50
-    hipac_transition_allow_same_component: bool = True
     hipac_transition_obb_portal: bool = False
     hipac_transition_obb_lateral_radius: float = 0.01
     hipac_transition_obb_longitudinal_margin: float = 0.0
@@ -1412,22 +1404,6 @@ def make_adaptive_leaf_sweep_config(options: RBFLeafRRTOptions) -> Any:
         cfg.hipac_online_prebridge_route_distance_weight = float(options.hipac_online_prebridge_route_distance_weight)
     if hasattr(cfg, "hipac_online_prebridge_pair_distance_weight"):
         cfg.hipac_online_prebridge_pair_distance_weight = float(options.hipac_online_prebridge_pair_distance_weight)
-    if hasattr(cfg, "hipac_online_transition_portal"):
-        cfg.hipac_online_transition_portal = bool(options.hipac_online_transition_portal)
-    if hasattr(cfg, "hipac_transition_target_query_indices"):
-        cfg.hipac_transition_target_query_indices = str(options.hipac_transition_target_query_indices)
-    if hasattr(cfg, "hipac_transition_max_attempts_per_query"):
-        cfg.hipac_transition_max_attempts_per_query = int(options.hipac_transition_max_attempts_per_query)
-    if hasattr(cfg, "hipac_transition_candidate_limit"):
-        cfg.hipac_transition_candidate_limit = int(options.hipac_transition_candidate_limit)
-    if hasattr(cfg, "hipac_transition_window_stride"):
-        cfg.hipac_transition_window_stride = int(options.hipac_transition_window_stride)
-    if hasattr(cfg, "hipac_transition_min_predicted_bridge_edges"):
-        cfg.hipac_transition_min_predicted_bridge_edges = int(options.hipac_transition_min_predicted_bridge_edges)
-    if hasattr(cfg, "hipac_transition_max_pair_distance"):
-        cfg.hipac_transition_max_pair_distance = float(options.hipac_transition_max_pair_distance)
-    if hasattr(cfg, "hipac_transition_allow_same_component"):
-        cfg.hipac_transition_allow_same_component = bool(options.hipac_transition_allow_same_component)
     if hasattr(cfg, "hipac_transition_obb_portal"):
         cfg.hipac_transition_obb_portal = bool(options.hipac_transition_obb_portal)
     if hasattr(cfg, "hipac_transition_obb_lateral_radius"):
@@ -2801,28 +2777,6 @@ def run_leaf_rrt(
         "query_bridge_hipac_prebridge_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_ffb_calls", 0.0)),
         "query_bridge_hipac_prebridge_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_cell_native_validations", 0.0)),
         "query_bridge_hipac_prebridge_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_prebridge.portal_corridor_cell_native_free", 0.0)),
-        "query_bridge_hipac_transition_attempts": int(diagnostics.get("query_bridge.hipac_transition_attempts", 0.0)),
-        "query_bridge_hipac_transition_candidates": int(diagnostics.get("query_bridge.hipac_transition_candidates", 0.0)),
-        "query_bridge_hipac_transition_gated": int(diagnostics.get("query_bridge.hipac_transition_gated", 0.0)),
-        "query_bridge_hipac_transition_portal_attempts": int(diagnostics.get("query_bridge.hipac_transition_portal_attempts", 0.0)),
-        "query_bridge_hipac_transition_added": int(diagnostics.get("query_bridge.hipac_transition_added", 0.0)),
-        "query_bridge_hipac_transition_satisfied": int(diagnostics.get("query_bridge.hipac_transition_satisfied", 0.0)),
-        "query_bridge_hipac_transition_not_sufficient": int(diagnostics.get("query_bridge.hipac_transition_not_sufficient", 0.0)),
-        "query_bridge_hipac_transition_failures": int(diagnostics.get("query_bridge.hipac_transition_failures", 0.0)),
-        "query_bridge_hipac_transition_ms": float(diagnostics.get("query_bridge.hipac_transition_ms_total", 0.0)),
-        "query_bridge_hipac_transition_portal_edges": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_added", 0.0)),
-        "query_bridge_hipac_transition_internal_boxes": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_internal_boxes", 0.0)),
-        "query_bridge_hipac_transition_ffb_calls": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_ffb_calls", 0.0)),
-        "query_bridge_hipac_transition_cell_native_validations": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_validations", 0.0)),
-        "query_bridge_hipac_transition_cell_native_free": int(diagnostics.get("query_bridge.hipac_online_transition.portal_corridor_cell_native_free", 0.0)),
-        "query_bridge_hipac_transition_obb_attempts": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_attempts", 0.0)),
-        "query_bridge_hipac_transition_obb_success": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_success", 0.0)),
-        "query_bridge_hipac_transition_obb_fail": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_fail", 0.0)),
-        "query_bridge_hipac_transition_obb_edge_fail": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_edge_fail", 0.0)),
-        "query_bridge_hipac_transition_obb_joint_limit_rejects": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_joint_limit_rejects", 0.0)),
-        "query_bridge_hipac_transition_obb_gjk_tests": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_gjk_tests", 0.0)),
-        "query_bridge_hipac_transition_obb_maybe_pairs": int(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_maybe_pairs", 0.0)),
-        "query_bridge_hipac_transition_obb_ms": float(diagnostics.get("query_bridge.hipac_online_transition.obb_zonotope_ms", 0.0)),
         "segment_edge_obb_cover_attempts": int(sum(
             value for key, value in diagnostics.items()
             if key.endswith(".segment_obb_cover_attempts")

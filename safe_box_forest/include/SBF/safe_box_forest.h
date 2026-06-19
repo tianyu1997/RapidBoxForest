@@ -332,14 +332,6 @@ struct AdaptiveLeafSweepConfig {
 	double hipac_online_prebridge_max_pair_distance = 1.25;
 	double hipac_online_prebridge_route_distance_weight = 1.0;
 	double hipac_online_prebridge_pair_distance_weight = 0.25;
-	bool hipac_online_transition_portal = false;
-	std::string hipac_transition_target_query_indices = "2,3";
-	int hipac_transition_max_attempts_per_query = 1;
-	int hipac_transition_candidate_limit = 16;
-	int hipac_transition_window_stride = 2;
-	int hipac_transition_min_predicted_bridge_edges = 16;
-	double hipac_transition_max_pair_distance = 1.50;
-	bool hipac_transition_allow_same_component = true;
 	bool hipac_transition_obb_portal = false;
 	double hipac_transition_obb_lateral_radius = 0.01;
 	double hipac_transition_obb_longitudinal_margin = 0.0;
@@ -723,11 +715,6 @@ private:
 		StageContext& context,
 		int query_index);
 	int try_hipac_prebridge_portal_task(
-		QueryBridgeSearchTask& task,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		StageContext& context,
-		int query_index);
-	int try_hipac_transition_portal_task(
 		QueryBridgeSearchTask& task,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		StageContext& context,

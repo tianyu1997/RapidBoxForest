@@ -266,7 +266,6 @@ def apply_hipac_improved_leaf_sweep_profile(args: argparse.Namespace,
         args.query_bridge_no_path_retry_stop_on_first_success = True
     max_float_if_implicit("query_bridge_direct_max_length", "--query-bridge-direct-max-length", 15.0)
     if not bool(getattr(args, "hipac_transition_obb_portal", False)):
-        args.hipac_online_transition_portal = False
         args.hipac_promote_transition_slices = False
 
 
@@ -595,7 +594,6 @@ def effective_rbf_profile(args: argparse.Namespace,
         "portal_cell_native_validate": bool(args.hipac_portal_cell_native_validate),
         "online_connectivity": bool(args.hipac_online_connectivity),
         "online_prebridge_portal": bool(args.hipac_online_prebridge_portal),
-        "online_transition_portal": bool(args.hipac_online_transition_portal),
         "promote_transition_slices": bool(args.hipac_promote_transition_slices),
     }
     profile["obb"] = {
@@ -873,14 +871,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hipac-online-prebridge-max-pair-distance", type=float, default=1.25)
     parser.add_argument("--hipac-online-prebridge-route-distance-weight", type=float, default=1.0)
     parser.add_argument("--hipac-online-prebridge-pair-distance-weight", type=float, default=0.25)
-    parser.add_argument("--hipac-online-transition-portal", action=argparse.BooleanOptionalAction, default=False)
-    parser.add_argument("--hipac-transition-target-query-indices", default="")
-    parser.add_argument("--hipac-transition-max-attempts-per-query", type=int, default=1)
-    parser.add_argument("--hipac-transition-candidate-limit", type=int, default=16)
-    parser.add_argument("--hipac-transition-window-stride", type=int, default=2)
-    parser.add_argument("--hipac-transition-min-predicted-bridge-edges", type=int, default=16)
-    parser.add_argument("--hipac-transition-max-pair-distance", type=float, default=1.50)
-    parser.add_argument("--hipac-transition-allow-same-component", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--hipac-transition-obb-portal", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--hipac-transition-obb-lateral-radius", type=float, default=0.01)
     parser.add_argument("--hipac-transition-obb-longitudinal-margin", type=float, default=0.0)
@@ -1186,12 +1176,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     hipac_portal_connectivity = bool(args.hipac_portal_connectivity) or hipac_improved
     hipac_online_connectivity = bool(args.hipac_online_connectivity) or hipac_improved
     hipac_online_prebridge_portal = bool(args.hipac_online_prebridge_portal) or hipac_improved
-    # TransitionPortal remains disabled unless the new OBB-zonotope
-    # certificate is explicitly requested.  This avoids enabling the older
-    # unvalidated transition resolver in paper runs.
-    hipac_online_transition_portal = (
-        bool(args.hipac_online_transition_portal) and bool(args.hipac_transition_obb_portal)
-    )
     hipac_promote_transition_slices = (
         bool(args.hipac_promote_transition_slices) and bool(args.hipac_transition_obb_portal)
     )
@@ -1206,7 +1190,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
     hipac_profile_tag = (
         f"_hp{int(hipac_improved)}"
         f"_hpre{int(hipac_online_prebridge_portal)}"
-        f"_htr{int(hipac_online_transition_portal)}"
         f"_askip{int(scene_anchor_skip_if_main_accessible)}"
         f"_ath{fmt_float(float(args.offline_anchor_main_accessible_threshold))}"
     )
@@ -1360,14 +1343,6 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             hipac_online_prebridge_max_pair_distance=float(args.hipac_online_prebridge_max_pair_distance),
             hipac_online_prebridge_route_distance_weight=float(args.hipac_online_prebridge_route_distance_weight),
             hipac_online_prebridge_pair_distance_weight=float(args.hipac_online_prebridge_pair_distance_weight),
-            hipac_online_transition_portal=hipac_online_transition_portal,
-            hipac_transition_target_query_indices=str(args.hipac_transition_target_query_indices),
-            hipac_transition_max_attempts_per_query=int(args.hipac_transition_max_attempts_per_query),
-            hipac_transition_candidate_limit=int(args.hipac_transition_candidate_limit),
-            hipac_transition_window_stride=int(args.hipac_transition_window_stride),
-            hipac_transition_min_predicted_bridge_edges=int(args.hipac_transition_min_predicted_bridge_edges),
-            hipac_transition_max_pair_distance=float(args.hipac_transition_max_pair_distance),
-            hipac_transition_allow_same_component=bool(args.hipac_transition_allow_same_component),
             hipac_transition_obb_portal=bool(args.hipac_transition_obb_portal),
             hipac_transition_obb_lateral_radius=float(args.hipac_transition_obb_lateral_radius),
             hipac_transition_obb_longitudinal_margin=float(args.hipac_transition_obb_longitudinal_margin),
@@ -1532,11 +1507,8 @@ def run_rbf_scene(args: argparse.Namespace, catalog: dict[str, Any], robot_name:
             "hipac_portal_cell_native_validate": bool(args.hipac_portal_cell_native_validate),
             "hipac_online_connectivity": hipac_online_connectivity,
             "hipac_online_prebridge_portal": hipac_online_prebridge_portal,
-            "hipac_online_transition_portal": hipac_online_transition_portal,
             "hipac_online_max_resolves_per_query": int(args.hipac_online_max_resolves_per_query),
             "hipac_online_max_hidden_boxes_per_portal": int(args.hipac_online_max_hidden_boxes_per_portal),
-            "hipac_transition_candidate_limit": int(args.hipac_transition_candidate_limit),
-            "hipac_transition_target_query_indices": str(args.hipac_transition_target_query_indices),
             "hipac_promote_transition_slices": hipac_promote_transition_slices,
             "query_bridge_to_main_island": bool(args.query_bridge_to_main_island),
             "query_bridge_failure_fallback_to_main": bool(args.query_bridge_failure_fallback_to_main),

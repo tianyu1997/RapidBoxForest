@@ -203,7 +203,6 @@ int RBFPlanningForest::add_partition_portal_corridor_overlay(
     const bool online_portal = online_portal_prefix;
     const auto domain = oracle_->planning_intervals();
     const bool transition_obb_prefix =
-        prefix.find("hipac_online_transition") != std::string::npos ||
         prefix.find("hipac_promote_transition") != std::string::npos;
     if (transition_obb_prefix && last_adaptive_partition_config_.hipac_transition_obb_portal) {
         auto obb_t0 = std::chrono::steady_clock::now();

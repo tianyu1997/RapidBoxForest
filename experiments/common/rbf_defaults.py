@@ -142,7 +142,6 @@ OFFLINE_COVERAGE_V1_SETTINGS: dict[str, Any] = {
     "query_bridge_accept_path_additive": 0.75,
     "hipac_online_connectivity": True,
     "hipac_online_prebridge_portal": False,
-    "hipac_online_transition_portal": False,
     "hipac_promote_query_repairs": True,
 }
 
@@ -205,7 +204,6 @@ def apply_offline_coverage_profile(args: Any, argv: list[str] | None = None) -> 
         "query_bridge_accept_path_additive": "--query-bridge-accept-path-additive",
         "hipac_online_connectivity": "--hipac-online-connectivity",
         "hipac_online_prebridge_portal": "--hipac-online-prebridge-portal",
-        "hipac_online_transition_portal": "--hipac-online-transition-portal",
         "hipac_promote_query_repairs": "--hipac-promote-query-repairs",
     }
     for attr, value in OFFLINE_COVERAGE_V1_SETTINGS.items():

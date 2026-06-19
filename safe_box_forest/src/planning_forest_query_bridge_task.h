@@ -23,7 +23,6 @@ struct QueryBridgeSearchTask {
     bool hipac_online_satisfied = false;
     bool direct_start_goal_satisfied = false;
     int hipac_prebridge_resolves_used = 0;
-    int hipac_transition_resolves_used = 0;
     int hipac_online_resolves_used = 0;
 };
 
