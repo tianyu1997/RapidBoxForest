@@ -89,6 +89,8 @@ src/lect_database/                 core persistence implementation
                                    pages, evidence index, journal, checkpoint
   database_evidence_codec.h        evidence binary/text codec, sidecar layout,
                                    payload checksum, and half-float quantizer
+  database_mapped_file.cpp         platform-specific read-only evidence mmap
+                                   and prefetch RAII wrapper
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
 tools/                             database CLI and benchmark
