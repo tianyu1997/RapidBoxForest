@@ -225,9 +225,12 @@ src/planning_forest_query_utils_rrt.cpp
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
 src/planning_forest_query_bridge_batch_utils.cpp
-                                   query bridge batch task records and oracle
-                                   counter aggregation, acceptance, and route
-                                   scoring helpers
+                                   query bridge batch task records, acceptance,
+                                   and route scoring helpers
+src/planning_forest_query_bridge_batch_diagnostics.cpp
+                                   query bridge oracle counter deltas, task
+                                   skip records, and direct-corridor diagnostic
+                                   aggregation
 src/planning_forest_query_bridge_batch_options.cpp
                                    environment/config parsing for batch bridge
                                    retries, parallel RRT, detours, path-quality
