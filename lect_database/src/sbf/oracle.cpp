@@ -1,6 +1,7 @@
 #include <LECTDatabase/sbf/oracle.h>
 
 #include "oracle_material_point.h"
+#include "oracle_options.h"
 #include "oracle_support.h"
 
 #include <sbf/core/joint_symmetry.h>
@@ -15,7 +16,6 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
-#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <mutex>
@@ -704,7 +704,7 @@ BestTightenCandidate choose_best_tighten_split(const std::vector<Interval>& inte
                                                          boundary.has_value(),
                                                          recent_dim_fraction(recent_dims, dim, options),
                                                          options);
-        if (std::getenv("SBF_BT_DEBUG") && depth <= 2) {
+        if (oracle_best_tighten_debug_enabled() && depth <= 2) {
             std::fprintf(stderr,
                          "[BT_DIM] depth=%d dim=%d val=%.5f sect=%d parent=%.6f L=%.6f R=%.6f minimax=%.6f valid=%d\n",
                          depth, dim, split_val, (int)boundary.has_value(),
@@ -715,7 +715,7 @@ BestTightenCandidate choose_best_tighten_split(const std::vector<Interval>& inte
             best = candidate;
         }
     }
-    if (std::getenv("SBF_BT_DEBUG") && depth <= 2) {
+    if (oracle_best_tighten_debug_enabled() && depth <= 2) {
         std::fprintf(stderr, "[BT_PICK] depth=%d -> dim=%d val=%.5f minimax=%.6f\n",
                      depth, best.dim, best.split_val, best.minimax_score);
     }
@@ -1048,7 +1048,7 @@ std::vector<Interval> DatabaseBoxOracle::query_intervals_for_node(OracleNodeId n
         q[static_cast<int>(joint_index)]);
     if (!query_intervals[joint_index].contains(seed_value, 1e-9)) {
         counters_.canonical_reflected_seed_misses += 1;
-        if (const char* dbg = std::getenv("RBF_CANONICAL_DEBUG"); dbg != nullptr && dbg[0] == '1') {
+        if (oracle_canonical_debug_enabled()) {
             std::fprintf(stderr,
                          "[CANONICAL] reflected interval misses seed: seed=%.17g sector=%d interval=[%.17g, %.17g] tree=[%.17g, %.17g]\n",
                          seed_value,
@@ -1213,7 +1213,7 @@ SplitNodeResult DatabaseBoxOracle::split_node(OracleNodeId node,
                                                              best_tighten_depth_dims_,
                                                              best_tighten_recent_dims_);
             children = database_.split_leaf(to_database_node(node), candidate.dim, candidate.split_val);
-            if (std::getenv("SBF_BT_DEBUG")) {
+            if (oracle_best_tighten_debug_enabled()) {
                 static std::atomic<long> ok{0};
                 long n = ++ok;
                 if (n <= 20 || n % 200 == 0) {
@@ -1225,7 +1225,7 @@ SplitNodeResult DatabaseBoxOracle::split_node(OracleNodeId node,
                 }
             }
         } catch (const std::exception& e) {
-            if (std::getenv("SBF_BT_DEBUG")) {
+            if (oracle_best_tighten_debug_enabled()) {
                 static std::atomic<long> bad{0};
                 long n = ++bad;
                 if (n <= 20 || n % 200 == 0) {
@@ -1571,7 +1571,7 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     const LinkEnvelope* envelope = nullptr;
     const bool use_envelope_cache = endpoint_payload.envelope_cacheable &&
         enable_envelope_cache_ &&
-        !std::getenv("RBF_DISABLE_ENVELOPE_CACHE") &&
+        !oracle_envelope_cache_disabled() &&
         !database_.bulk_prewarm_mode_enabled() &&
         !database_.streaming_prewarm_mode_enabled();
     const std::uint64_t envelope_cache_key = use_envelope_cache
@@ -1620,7 +1620,7 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     collision_options.direct_support_hull_collision =
         envelope_config_.support_hull_config.direct_collision;
     collision_options.count_all_pairs = validation_config_.collect_full_overlap_stats;
-    if (const char* dbg = std::getenv("RBF_ENV_DEBUG"); dbg != nullptr && dbg[0] == '1') {
+    if (oracle_envelope_debug_enabled()) {
         std::fprintf(stderr,
             "[ENVDBG] cfg.type=%d n_sub=%d keep_kdop=%d || env.type=%d env.n_sub=%d env.n_active=%d link_iaabbs=%zu support_hulls=%zu kdop_intervals=%zu kdop_n_axes=%d\n",
             static_cast<int>(envelope_config_.type), envelope_config_.n_subdivisions,
@@ -1640,7 +1640,7 @@ BoxValidation DatabaseBoxOracle::classify_payload(OracleNodeId node,
     counters_.materialization_envelope_time_us += envelope_compute_us + collision_us;
     record_envelope_collision(counters_, collision_stats);
     counters_.envelope_collision_queries += 1;
-    if (const char* dbg = std::getenv("RBF_ENV_DEBUG"); dbg != nullptr && dbg[0] == '1') {
+    if (oracle_envelope_debug_enabled()) {
         EnvelopeCollisionStats all_stats;
         EnvelopeCollisionOptions all_opts = collision_options;
         all_opts.count_all_pairs = true;

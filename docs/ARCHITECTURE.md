@@ -118,6 +118,8 @@ src/sbf/                           planner adapter implementation
                                    validation
   oracle_material_point.cpp        material-point occupied-certificate helper
                                    for oracle validation
+  oracle_options.h                 oracle-local environment/debug option
+                                   accessors
   oracle_support.cpp               oracle-local hashing, timing, blocker,
                                    cache-key, and counter helpers
 tools/                             database CLI and benchmark
