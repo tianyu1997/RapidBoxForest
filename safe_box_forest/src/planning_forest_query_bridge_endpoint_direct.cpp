@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <string>
 #include <vector>
 
 namespace rbf {
@@ -19,6 +20,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     if (boxes_.empty() || !oracle_) {
         return 0;
     }
+    const auto add_direct_diag = [&](const std::string& suffix, double value = 1.0) {
+        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_" + suffix] += value;
+    };
     record_portal_membership_policy(last_build_.diagnostics, config_.portal_membership_policy);
     const std::size_t boxes_before_endpoint_main = boxes_.size();
     std::vector<int> pre_anchor_main_island_storage;
@@ -35,7 +39,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     }
     if (main_island_storage.empty()) {
         if (partition_native_mode()) {
-            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_partition_missing_no_graph_fallback"] += 1.0;
+            add_direct_diag("partition_missing_no_graph_fallback");
             return 0;
         }
         auto islands = find_islands(adjacency_);
@@ -50,7 +54,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
     const auto& main_island = main_island_storage;
     if (source_box_id >= 0 &&
         std::find(main_island.begin(), main_island.end(), source_box_id) != main_island.end()) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_already_main"] += 1.0;
+        add_direct_diag("already_main");
         return 0;
     }
 
@@ -63,7 +67,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
             target_box_id = nearest.front().box_id;
             target_point = nearest.front().closest_point;
             best_dist2 = nearest.front().distance_sq;
-            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_partition_nearest"] += 1.0;
+            add_direct_diag("partition_nearest");
         }
     } else {
         for (int box_id : main_island) {
@@ -81,15 +85,15 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
         }
     }
     if (target_box_id < 0 || best_dist2 <= 1e-18) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_missing_target"] += 1.0;
+        add_direct_diag("missing_target");
         return 0;
     }
     const double length = std::sqrt(best_dist2);
     if (max_segment_length > 0.0 && length > max_segment_length) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long"] += 1.0;
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long_length"] += length;
+        add_direct_diag("too_long");
+        add_direct_diag("too_long_length", length);
         if (source_box_id < 0) {
-            last_build_.diagnostics["query_bridge.endpoint_to_main_direct_too_long_anchor_skipped"] += 1.0;
+            add_direct_diag("too_long_anchor_skipped");
         }
         return 0;
     }
@@ -109,7 +113,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
         }
     }
     if (source_box_id < 0) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_missing_source"] += 1.0;
+        add_direct_diag("missing_source");
         return 0;
     }
 
@@ -119,9 +123,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
                                                      checker,
                                                      config_.query.audit_resolution,
                                                      config_.query.audit_segment_step);
-    last_build_.diagnostics["query_bridge.endpoint_to_main_direct_attempts"] += 1.0;
+    add_direct_diag("attempts");
     if (!audit.passed) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_audit_fail"] += 1.0;
+        add_direct_diag("audit_fail");
         return 0;
     }
     const int edge_id = add_segment_edge_partition_first(source_box_id,
@@ -133,11 +137,11 @@ int RBFPlanningForest::connect_query_endpoint_to_main_island(
                                                          true,
                                                          -1);
     if (edge_id < 0) {
-        last_build_.diagnostics["query_bridge.endpoint_to_main_direct_add_fail"] += 1.0;
+        add_direct_diag("add_fail");
         return 0;
     }
-    last_build_.diagnostics["query_bridge.endpoint_to_main_direct_success"] += 1.0;
-    last_build_.diagnostics["query_bridge.endpoint_to_main_direct_length"] += length;
+    add_direct_diag("success");
+    add_direct_diag("length", length);
     sync_adaptive_partition_segment_edges(&last_build_, "query_bridge.endpoint_to_main_direct");
     invalidate_query_cache();
     return 1;
