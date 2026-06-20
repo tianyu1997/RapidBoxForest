@@ -346,7 +346,12 @@ src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core me
 src/planning_forest_ffb.cpp        forest/domain-aware FFB entry point,
                                    prechecks, and linear descent fallback
 src/planning_forest_ffb_binary.cpp forest/domain-aware BinaryDepth FFB search
-src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
+src/planning_forest_partition.cpp  adaptive-partition rebuild, dynamic refresh,
+                                   overlay sync, and partition-first query
+                                   helpers
+src/planning_forest_partition_diagnostics.cpp
+                                   adaptive-partition diagnostics for build and
+                                   dynamic-update profiles
 src/planning_forest_shortcut.cpp   offline shortcut-edge selection and audited
                                    shortcut/corridor insertion
 src/planning_forest_dynamic_cache.cpp

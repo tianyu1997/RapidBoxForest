@@ -497,6 +497,7 @@ private:
 	void rebuild_adjacency();
 	void rebuild_adaptive_partition(const AdaptiveLeafSweepConfig& config, BuildProfile* profile);
 	void refresh_adaptive_partition_diagnostics(BuildProfile* profile) const;
+	void refresh_adaptive_partition_diagnostics(RebuildProfile& profile) const;
 	void refresh_dynamic_partition_after_update(RebuildProfile& profile,
 												const char* diagnostic_prefix);
 	void refresh_dynamic_partition_after_append(RebuildProfile& profile,

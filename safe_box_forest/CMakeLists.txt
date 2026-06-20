@@ -171,6 +171,7 @@ add_library(sbf_core STATIC
     src/planning_forest_overlay_obb_retry.cpp
     src/planning_forest_overlay_portal_resolvers.cpp
     src/planning_forest_partition.cpp
+    src/planning_forest_partition_diagnostics.cpp
     src/planning_forest_qroot_helpers.cpp
     src/planning_forest_qroot_growers.cpp
     src/planning_forest_query.cpp
