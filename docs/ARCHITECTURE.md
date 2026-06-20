@@ -312,6 +312,9 @@ src/planning_forest_overlay.cpp    partition box/portal overlay corridor helpers
 src/planning_forest_overlay_edges.cpp
                                    partition-first segment edge insertion,
                                    OBB bridge/segment cover, and edge sync
+src/planning_forest_overlay_obb_retry.cpp
+                                   clearance-aware RRT retry path generation
+                                   for strict OBB bridge replacement
 src/planning_forest_obb_diagnostics.cpp
                                    OBB cover/portal validation diagnostic
                                    emission shared by overlay stages

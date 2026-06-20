@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -28,6 +29,8 @@ namespace rbf {
 struct QueryBridgeAcceptanceThresholds;
 struct QueryBridgeRetryOptions;
 struct QueryBridgeSearchTask;
+struct ObbPathCoverResult;
+struct ObbValidationOptions;
 
 class RBFPlanningForest {
 public:
@@ -415,6 +418,19 @@ private:
 										 int query_index = -1,
 										 BuildProfile* profile = nullptr,
 										 const char* diagnostic_prefix = nullptr);
+	int try_add_clearance_retry_obb_edge(
+		int source_box_id,
+		int target_box_id,
+		const BoxNode& source_box,
+		const BoxNode& target_box,
+		const std::vector<Eigen::VectorXd>& waypoints,
+		const ObbValidationOptions& obb_validation_options,
+		double obb_safety_epsilon,
+		const std::string& diagnostic_prefix,
+		const std::string& obb_diag,
+		int query_index,
+		BuildProfile* profile,
+		ObbPathCoverResult& cover);
 	void invalidate_query_cache() const;
 	const QueryGraphCache& query_cache() const;
 	int next_box_id() const;

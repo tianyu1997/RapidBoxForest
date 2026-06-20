@@ -149,6 +149,7 @@ add_library(sbf_core STATIC
     src/planning_forest_obb_zonotope.cpp
     src/planning_forest_overlay.cpp
     src/planning_forest_overlay_edges.cpp
+    src/planning_forest_overlay_obb_retry.cpp
     src/planning_forest_partition.cpp
     src/planning_forest_qroot_helpers.cpp
     src/planning_forest_qroot_growers.cpp
