@@ -5,6 +5,7 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <functional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -47,6 +48,11 @@ struct QueryBridgeSampleAssimilationResult {
     bool full_scan_fallback = false;
 };
 
+struct QueryBridgeInitialDsuStats {
+    int adjacency_tests = 0;
+    int adjacency_edges = 0;
+};
+
 bool query_bridge_mark_sample_coverage_from_candidates(
     const std::vector<BoxNode>& boxes,
     const std::vector<Eigen::VectorXd>& samples,
@@ -55,6 +61,12 @@ bool query_bridge_mark_sample_coverage_from_candidates(
     double tolerance,
     std::vector<std::vector<int>>& sample_layers,
     std::vector<bool>& covered);
+
+QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
+    const std::vector<std::vector<int>>& sample_layers,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<void(int, int)>& on_adjacent_pair);
 
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,

@@ -174,29 +174,24 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     };
     auto initialize_dsu = [&]() {
         const auto dsu_t0 = Clock::now();
-        for (const auto& layer : sample_layers) {
-            if (layer.empty()) {
-                continue;
-            }
-            const int root = layer.front();
-            for (int index : layer) {
-                dsu.unite(root, index);
-            }
-        }
-        for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
-            for (int lhs : sample_layers[sample_index]) {
-                for (int rhs : sample_layers[sample_index + 1]) {
-                    if (direct_boxes_adjacent(lhs, rhs)) {
-                        dsu.unite(lhs, rhs);
-                        if (!graphless_direct_corridor) {
-                            append_local_edge(adjacency_,
-                                              boxes_[static_cast<std::size_t>(lhs)].id,
-                                              boxes_[static_cast<std::size_t>(rhs)].id);
-                        }
+        const QueryBridgeInitialDsuStats stats =
+            query_bridge_initialize_sample_dsu(
+                sample_layers,
+                dsu,
+                direct_boxes_adjacent,
+                [&](int lhs, int rhs) {
+                    if (!graphless_direct_corridor) {
+                        append_local_edge(adjacency_,
+                                          boxes_[static_cast<std::size_t>(lhs)].id,
+                                          boxes_[static_cast<std::size_t>(rhs)].id);
                     }
-                }
-            }
-        }
+                });
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_initial_dsu_adjacency_tests",
+            static_cast<double>(stats.adjacency_tests));
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_initial_dsu_adjacency_edges",
+            static_cast<double>(stats.adjacency_edges));
         context.diagnostics().record_timing(
             "query_bridge.direct_corridor_initialize_dsu_ms",
             std::chrono::duration<double, std::milli>(Clock::now() - dsu_t0).count());

@@ -85,6 +85,39 @@ bool query_bridge_mark_sample_coverage_from_candidates(
     return newly_covered;
 }
 
+QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
+    const std::vector<std::vector<int>>& sample_layers,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<void(int, int)>& on_adjacent_pair) {
+    QueryBridgeInitialDsuStats stats;
+    for (const auto& layer : sample_layers) {
+        if (layer.empty()) {
+            continue;
+        }
+        const int root = layer.front();
+        for (int index : layer) {
+            dsu.unite(root, index);
+        }
+    }
+    for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
+        for (int lhs : sample_layers[sample_index]) {
+            for (int rhs : sample_layers[sample_index + 1]) {
+                stats.adjacency_tests += 1;
+                if (!boxes_adjacent(lhs, rhs)) {
+                    continue;
+                }
+                dsu.unite(lhs, rhs);
+                stats.adjacency_edges += 1;
+                if (on_adjacent_pair) {
+                    on_adjacent_pair(lhs, rhs);
+                }
+            }
+        }
+    }
+    return stats;
+}
+
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,
     const std::vector<Eigen::VectorXd>& samples,
