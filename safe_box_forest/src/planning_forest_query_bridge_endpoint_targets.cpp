@@ -3,6 +3,7 @@
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace rbf {
 
@@ -68,6 +69,44 @@ void sort_endpoint_main_targets(std::vector<EndpointMainTargetCandidate>& target
                  const EndpointMainTargetCandidate& rhs) {
                   return lhs.dist2 < rhs.dist2;
               });
+}
+
+EndpointMainSamplePlan endpoint_main_sample_plan(
+    const Eigen::VectorXd& point,
+    const EndpointMainTargetCandidate& target,
+    double coarse_step,
+    double fine_step,
+    const std::function<int(const Eigen::VectorXd&)>& main_owner) {
+    EndpointMainSamplePlan plan;
+    plan.samples = densify_waypoint_path_local({point, target.point},
+                                               std::max(1e-4, coarse_step));
+    if (plan.samples.size() < 2) {
+        return plan;
+    }
+    plan.target_sample_index = static_cast<int>(plan.samples.size()) - 1;
+    plan.target_owner = target.box_id;
+    for (int sample_index = 1;
+         sample_index < static_cast<int>(plan.samples.size());
+         ++sample_index) {
+        const int owner = main_owner(plan.samples[static_cast<std::size_t>(sample_index)]);
+        if (owner >= 0) {
+            plan.target_sample_index = sample_index;
+            plan.target_owner = owner;
+            break;
+        }
+    }
+    if (plan.target_sample_index > 1 && fine_step > 0.0) {
+        std::vector<Eigen::VectorXd> fine =
+            densify_waypoint_path_local({plan.samples.front(),
+                                         plan.samples[static_cast<std::size_t>(
+                                             plan.target_sample_index)]},
+                                        std::max(1e-4, fine_step));
+        if (fine.size() >= 2) {
+            plan.samples = std::move(fine);
+            plan.target_sample_index = static_cast<int>(plan.samples.size()) - 1;
+        }
+    }
+    return plan;
 }
 
 }  // namespace rbf

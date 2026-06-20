@@ -446,32 +446,18 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         }
         add_diag("targets_tested");
         const EndpointMainTargetCandidate& target = targets[static_cast<std::size_t>(target_index)];
-        std::vector<Eigen::VectorXd> samples =
-            densify_waypoint_path_local({point, target.point},
-                                        std::max(1e-4, corridor_config.coarse_step));
-        if (samples.size() < 2) {
+        const EndpointMainSamplePlan sample_plan =
+            endpoint_main_sample_plan(point,
+                                      target,
+                                      corridor_config.coarse_step,
+                                      corridor_config.fine_step,
+                                      main_owner);
+        const std::vector<Eigen::VectorXd>& samples = sample_plan.samples;
+        if (samples.size() < 2 || sample_plan.target_sample_index < 1) {
             continue;
         }
-        int target_sample_index = static_cast<int>(samples.size()) - 1;
-        int target_owner = target.box_id;
-        for (int sample_index = 1; sample_index < static_cast<int>(samples.size()); ++sample_index) {
-            const int owner = main_owner(samples[static_cast<std::size_t>(sample_index)]);
-            if (owner >= 0) {
-                target_sample_index = sample_index;
-                target_owner = owner;
-                break;
-            }
-        }
-        if (target_sample_index > 1 && corridor_config.fine_step > 0.0) {
-            std::vector<Eigen::VectorXd> fine =
-                densify_waypoint_path_local({samples.front(),
-                                             samples[static_cast<std::size_t>(target_sample_index)]},
-                                            std::max(1e-4, corridor_config.fine_step));
-            if (fine.size() >= 2) {
-                samples = std::move(fine);
-                target_sample_index = static_cast<int>(samples.size()) - 1;
-            }
-        }
+        const int target_sample_index = sample_plan.target_sample_index;
+        const int target_owner = sample_plan.target_owner;
         std::vector<int> chain_ids{source_box_id};
         int current_box_id = source_box_id;
         int current_sample_index = furthest_sample(current_box_id, samples, 0, target_sample_index);

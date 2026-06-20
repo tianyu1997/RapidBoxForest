@@ -6,6 +6,7 @@
 #include <Eigen/Core>
 
 #include <cstddef>
+#include <functional>
 #include <unordered_map>
 #include <vector>
 
@@ -15,6 +16,12 @@ struct EndpointMainTargetCandidate {
     int box_id = -1;
     Eigen::VectorXd point;
     double dist2 = 0.0;
+};
+
+struct EndpointMainSamplePlan {
+    std::vector<Eigen::VectorXd> samples;
+    int target_sample_index = -1;
+    int target_owner = -1;
 };
 
 std::vector<EndpointMainTargetCandidate> endpoint_main_partition_targets(
@@ -30,5 +37,12 @@ std::vector<EndpointMainTargetCandidate> endpoint_main_graph_targets(
     const std::vector<int>& main_island);
 
 void sort_endpoint_main_targets(std::vector<EndpointMainTargetCandidate>& targets);
+
+EndpointMainSamplePlan endpoint_main_sample_plan(
+    const Eigen::VectorXd& point,
+    const EndpointMainTargetCandidate& target,
+    double coarse_step,
+    double fine_step,
+    const std::function<int(const Eigen::VectorXd&)>& main_owner);
 
 }  // namespace rbf
