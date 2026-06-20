@@ -218,7 +218,10 @@ src/runtime.cpp                    runtime budget, deadline, and diagnostics hel
 src/find_free_box.cpp              seed-to-certified-box search service
 src/find_free_box_binary.cpp       BinaryDepth and virtual sparse FFB search
                                    implementation
-src/grower.cpp                     RRT-style forest grower implementation
+src/grower.cpp                     RRT-style forest grower orchestration and
+                                   main run loop
+src/grower_commit.cpp              RRT grower FFB result validation, box
+                                   creation, and commit checks
 src/frontwave_grower.cpp           frontwave coverage grower implementation
 src/grower_failure_cooling.cpp     RRT grower failure-cooling and hard-frontier
                                    stop-loss policy
