@@ -60,6 +60,19 @@ struct AdaptiveDepthSnapshot {
     std::string stop_reason;
 };
 
+struct AdaptiveLeafBuildSetup {
+    bool adaptive_depth_enabled = false;
+    int adaptive_depth_min = 0;
+    int adaptive_depth_max = 0;
+    int initial_leaf_depth = 0;
+    int target_leaf_depth = 0;
+    LeafSweepConfig leaf_config;
+    AdaptiveLeafSweepConfig partition_config;
+};
+
+AdaptiveLeafBuildSetup make_adaptive_leaf_build_setup(
+    const AdaptiveLeafSweepConfig& adaptive_config);
+
 bool adaptive_depth_snapshot_readiness_met(const AdaptiveDepthSnapshot& snapshot,
                                            const AdaptiveLeafSweepConfig& config);
 AdaptiveDepthSnapshot adaptive_snapshot_from_fast_candidate(const AdaptiveLeafSweepResult& candidate,

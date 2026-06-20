@@ -101,6 +101,53 @@ int adaptive_virtual_depth(OracleNodeId node) {
     return std::max(0, depth);
 }
 
+AdaptiveLeafBuildSetup make_adaptive_leaf_build_setup(
+    const AdaptiveLeafSweepConfig& adaptive_config) {
+    AdaptiveLeafBuildSetup setup;
+    setup.adaptive_depth_enabled = adaptive_config.adaptive_depth_enabled;
+    setup.adaptive_depth_min = std::max(
+        adaptive_config.shallow_start_depth,
+        adaptive_config.adaptive_depth_min > 0
+            ? adaptive_config.adaptive_depth_min
+            : adaptive_config.shallow_max_depth);
+    setup.adaptive_depth_max = std::max(
+        setup.adaptive_depth_min,
+        adaptive_config.adaptive_depth_max > 0
+            ? adaptive_config.adaptive_depth_max
+            : adaptive_config.target_max_depth);
+    setup.initial_leaf_depth = setup.adaptive_depth_enabled
+        ? setup.adaptive_depth_min
+        : adaptive_config.shallow_max_depth;
+    setup.target_leaf_depth = setup.adaptive_depth_enabled
+        ? setup.adaptive_depth_max
+        : adaptive_config.target_max_depth;
+
+    setup.leaf_config.obstacle_cluster_gap = adaptive_config.obstacle_cluster_gap;
+    setup.leaf_config.n_threads = std::max(1, adaptive_config.threads);
+    setup.leaf_config.validation_batch_size = std::max(1, adaptive_config.validation_batch_size);
+    setup.leaf_config.timeout_ms = adaptive_config.time_budget_ms > 0.0
+        ? adaptive_config.time_budget_ms
+        : 0.0;
+    setup.leaf_config.store_group_results = adaptive_config.store_group_results;
+    setup.leaf_config.use_virtual_topology = adaptive_config.use_virtual_topology;
+    setup.leaf_config.parallel_virtual_validation = adaptive_config.parallel_virtual_validation;
+    setup.leaf_config.max_free_boxes = std::max(0, adaptive_config.max_free_boxes);
+    setup.leaf_config.max_collision_boxes = std::max(0, adaptive_config.max_unresolved_domains);
+    setup.leaf_config.collision_overlap_prune_min_depth = -1;
+    setup.leaf_config.collision_overlap_prune_threshold = 0.0;
+    setup.leaf_config.collision_overlap_prune_min_threshold = 0.0;
+    setup.leaf_config.collision_overlap_prune_decay_per_depth = 0.0;
+    setup.leaf_config.collision_overlap_prune_ratio_threshold = 0.0;
+
+    setup.partition_config = adaptive_config;
+    setup.partition_config.shallow_max_depth = setup.initial_leaf_depth;
+    setup.partition_config.target_max_depth = setup.target_leaf_depth;
+    if (setup.adaptive_depth_enabled || setup.partition_config.grid_target_depth <= 0) {
+        setup.partition_config.grid_target_depth = setup.target_leaf_depth;
+    }
+    return setup;
+}
+
 bool adaptive_depth_snapshot_readiness_met(const AdaptiveDepthSnapshot& snapshot,
                                            const AdaptiveLeafSweepConfig& config) {
     const int min_covered_probes = std::max(0, config.adaptive_depth_min_covered_probes);

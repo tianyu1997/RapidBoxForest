@@ -67,48 +67,14 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     out.diagnostics["adaptive.terminal_controller_enabled"] =
         adaptive_config.fast_virtual_checkpoint_mode ? 0.0 : 1.0;
 
-    const bool adaptive_depth_enabled = adaptive_config.adaptive_depth_enabled;
-    const int adaptive_depth_min = std::max(
-        adaptive_config.shallow_start_depth,
-        adaptive_config.adaptive_depth_min > 0
-            ? adaptive_config.adaptive_depth_min
-            : adaptive_config.shallow_max_depth);
-    const int adaptive_depth_max = std::max(
-        adaptive_depth_min,
-        adaptive_config.adaptive_depth_max > 0
-            ? adaptive_config.adaptive_depth_max
-            : adaptive_config.target_max_depth);
-    const int initial_leaf_depth = adaptive_depth_enabled
-        ? adaptive_depth_min
-        : adaptive_config.shallow_max_depth;
-    const int target_leaf_depth = adaptive_depth_enabled
-        ? adaptive_depth_max
-        : adaptive_config.target_max_depth;
-
-    LeafSweepConfig leaf_config;
-    leaf_config.obstacle_cluster_gap = adaptive_config.obstacle_cluster_gap;
-    leaf_config.n_threads = std::max(1, adaptive_config.threads);
-    leaf_config.validation_batch_size = std::max(1, adaptive_config.validation_batch_size);
-    leaf_config.timeout_ms = adaptive_config.time_budget_ms > 0.0
-        ? adaptive_config.time_budget_ms
-        : 0.0;
-    leaf_config.store_group_results = adaptive_config.store_group_results;
-    leaf_config.use_virtual_topology = adaptive_config.use_virtual_topology;
-    leaf_config.parallel_virtual_validation = adaptive_config.parallel_virtual_validation;
-    leaf_config.max_free_boxes = std::max(0, adaptive_config.max_free_boxes);
-    leaf_config.max_collision_boxes = std::max(0, adaptive_config.max_unresolved_domains);
-    leaf_config.collision_overlap_prune_min_depth = -1;
-    leaf_config.collision_overlap_prune_threshold = 0.0;
-    leaf_config.collision_overlap_prune_min_threshold = 0.0;
-    leaf_config.collision_overlap_prune_decay_per_depth = 0.0;
-    leaf_config.collision_overlap_prune_ratio_threshold = 0.0;
-
-    AdaptiveLeafSweepConfig partition_config = adaptive_config;
-    partition_config.shallow_max_depth = initial_leaf_depth;
-    partition_config.target_max_depth = target_leaf_depth;
-    if (adaptive_depth_enabled || partition_config.grid_target_depth <= 0) {
-        partition_config.grid_target_depth = target_leaf_depth;
-    }
+    const AdaptiveLeafBuildSetup build_setup =
+        make_adaptive_leaf_build_setup(adaptive_config);
+    const bool adaptive_depth_enabled = build_setup.adaptive_depth_enabled;
+    const int adaptive_depth_min = build_setup.adaptive_depth_min;
+    const int initial_leaf_depth = build_setup.initial_leaf_depth;
+    const int target_leaf_depth = build_setup.target_leaf_depth;
+    LeafSweepConfig leaf_config = build_setup.leaf_config;
+    const AdaptiveLeafSweepConfig partition_config = build_setup.partition_config;
 
     if (adaptive_depth_enabled && adaptive_config.fast_virtual_checkpoint_mode) {
         return build_adaptive_fast_virtual_checkpoint_cover(obstacles,
