@@ -165,6 +165,10 @@ python/binding_planner_core_types.h
                                    envelope, graph node/edge, runtime,
                                    dynamic, subtractive, and leaf-sweep
                                    type registration
+python/binding_planning_option_types.h
+                                   split, validation, grower, connector,
+                                   query, database, planner, profile, and
+                                   query-result type registration
 python/binding_utils.h             Python/Eigen/interval/oracle conversion helpers
 python/ompl_binding_utils.h        OMPL baseline sampler, seeding, C-space,
                                    planner, and path extraction helpers
