@@ -512,9 +512,11 @@ monolithic facade implementation file.
 
 Public planner header ownership follows the same rule. `SBF/safe_box_forest.h`
 is the facade for `RBFPlanningForest` and should not accumulate unrelated data
-models. Planner options live in `SBF/planning_config.h`; build, update, and
-coverage result payloads live in `SBF/planning_result.h`; isolated diagnostic
-types live in `SBF/debug.h`. If a new option or result is specific to adaptive
+models. `SBF/planning_config.h` is the compatibility aggregate for planner
+options; build/offline options live in `SBF/build_config.h`, query bridge and
+runtime query options live in `SBF/query_bridge_config.h`, build/update/coverage
+result payloads live in `SBF/planning_result.h`, and isolated diagnostic types
+live in `SBF/debug.h`. If a new option or result is specific to adaptive
 coverage, query bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the
 matching typed header rather than extending the facade header directly.
 
