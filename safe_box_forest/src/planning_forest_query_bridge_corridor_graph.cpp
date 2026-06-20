@@ -141,6 +141,37 @@ QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
     return stats;
 }
 
+std::unordered_map<int, int> query_bridge_build_box_id_index(
+    const std::vector<BoxNode>& boxes) {
+    std::unordered_map<int, int> box_id_to_index;
+    box_id_to_index.reserve(boxes.size() * 2);
+    for (std::size_t box_index = 0; box_index < boxes.size(); ++box_index) {
+        box_id_to_index.emplace(boxes[box_index].id, static_cast<int>(box_index));
+    }
+    return box_id_to_index;
+}
+
+std::vector<int> query_bridge_partition_neighbor_index_candidates(
+    const AdaptiveGridPartition& partition,
+    const BoxNode& box,
+    double tolerance,
+    const std::unordered_map<int, int>& box_id_to_index,
+    int* raw_neighbor_count) {
+    const auto neighbor_ids = partition.adjacent_box_ids(box, tolerance);
+    if (raw_neighbor_count != nullptr) {
+        *raw_neighbor_count = static_cast<int>(neighbor_ids.size());
+    }
+    std::vector<int> candidates;
+    candidates.reserve(neighbor_ids.size());
+    for (int neighbor_box_id : neighbor_ids) {
+        const auto index_it = box_id_to_index.find(neighbor_box_id);
+        if (index_it != box_id_to_index.end()) {
+            candidates.push_back(index_it->second);
+        }
+    }
+    return candidates;
+}
+
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,
     const std::vector<Eigen::VectorXd>& samples,

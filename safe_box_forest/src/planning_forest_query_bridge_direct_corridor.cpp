@@ -75,10 +75,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     }
     std::unordered_map<int, int> box_id_to_index;
     if (use_partition_neighbor_candidates) {
-        box_id_to_index.reserve(boxes_.size() * 2);
-        for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
-            box_id_to_index.emplace(boxes_[box_index].id, static_cast<int>(box_index));
-        }
+        box_id_to_index = query_bridge_build_box_id_index(boxes_);
     }
     std::vector<int> corridor_new_box_indices;
     std::size_t direct_partition_append_base = boxes_.size();
@@ -219,19 +216,20 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 sample_assimilation,
                 repair_indices);
         if (use_partition_neighbor_candidates && adaptive_partition_) {
-            const auto partition_neighbor_ids =
-                adaptive_partition_->adjacent_box_ids(
+            int raw_neighbor_count = 0;
+            const std::vector<int> partition_candidates =
+                query_bridge_partition_neighbor_index_candidates(
+                    *adaptive_partition_,
                     boxes_[static_cast<std::size_t>(box_index)],
-                    config_.query.adjacency_tolerance);
+                    config_.query.adjacency_tolerance,
+                    box_id_to_index,
+                    &raw_neighbor_count);
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_partition_neighbor_candidates",
-                static_cast<double>(partition_neighbor_ids.size()));
-            for (int neighbor_box_id : partition_neighbor_ids) {
-                const auto index_it = box_id_to_index.find(neighbor_box_id);
-                if (index_it != box_id_to_index.end()) {
-                    candidates.push_back(index_it->second);
-                }
-            }
+                static_cast<double>(raw_neighbor_count));
+            candidates.insert(candidates.end(),
+                              partition_candidates.begin(),
+                              partition_candidates.end());
         }
         std::sort(candidates.begin(), candidates.end());
         candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());

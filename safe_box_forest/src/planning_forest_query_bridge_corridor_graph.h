@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
 
 #include <Eigen/Core>
@@ -82,6 +83,16 @@ QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
     QueryBridgeLocalDsu& dsu,
     const std::function<bool(int, int)>& boxes_adjacent,
     const std::function<void(int, int)>& on_adjacent_pair);
+
+std::unordered_map<int, int> query_bridge_build_box_id_index(
+    const std::vector<BoxNode>& boxes);
+
+std::vector<int> query_bridge_partition_neighbor_index_candidates(
+    const AdaptiveGridPartition& partition,
+    const BoxNode& box,
+    double tolerance,
+    const std::unordered_map<int, int>& box_id_to_index,
+    int* raw_neighbor_count = nullptr);
 
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,
