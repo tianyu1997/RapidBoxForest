@@ -468,7 +468,7 @@ belong to the main source tree:
   `lect_database/src/lect_database/read_snapshot_evidence.*`, keeping the
   snapshot facade focused on file loading and public query methods.
 
-The source release tools enforce this rule. If an `improve_workspace/`
+The source release tools enforce this rule. If a forbidden prototype sidecar
 directory exists anywhere in the source tree, release export and readiness
 checks fail; the correct fix is to migrate the code into the owning module and
 delete the sidecar directory.

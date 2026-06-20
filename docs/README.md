@@ -30,10 +30,9 @@ exploratory algorithm notes, and paper-drafting notes are not canonical
 documentation and should not be committed under `docs/`.
 
 Prototype source trees must be upstreamed into the main modules instead of kept
-as parallel workspaces. In particular, `improve_workspace/` is a forbidden
-sidecar: it is not ignored, and the release-readiness checks fail if it exists
-in the source tree. The correct fix is to migrate the implementation into the
-owning module and delete the sidecar.
+as parallel workspaces. The release-readiness checks fail if a forbidden
+sidecar source tree exists in the checkout. The correct fix is to migrate the
+implementation into the owning module and delete the sidecar.
 
 ## Archive Policy
 

@@ -35,7 +35,7 @@ local paths, and discarded implementation attempts.
   explicitly with `--only`.
 - `scripts/export_public_release.py` exports an allowlisted public source tree
   and excludes local outputs, caches, build trees, and historical archives by
-  default. It fails if an `improve_workspace` sidecar exists, because optimized
+  default. It fails if a forbidden prototype sidecar exists, because optimized
   implementations must be migrated into the main modules rather than kept in a
   parallel workspace.
   The generated `PUBLIC_RELEASE_MANIFEST.json` records every exported file and
