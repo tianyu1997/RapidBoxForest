@@ -155,6 +155,44 @@ Eigen::VectorXd obb_grown_radii(const Eigen::VectorXd& base,
     return radii;
 }
 
+void obb_refine_candidate_radii_between(const Robot& robot,
+                                        const Scene& scene,
+                                        const std::vector<Interval>& domain,
+                                        const ObbPortalCandidate& seed,
+                                        const Eigen::VectorXd& lo,
+                                        const Eigen::VectorXd& hi,
+                                        double safety_epsilon,
+                                        int binary_iterations,
+                                        int max_validations,
+                                        ObbPortalValidationStats& stats,
+                                        const ObbValidationOptions& options,
+                                        ObbPortalCandidate& good) {
+    Eigen::VectorXd good_r = lo;
+    Eigen::VectorXd bad_r = hi;
+    for (int iter = 0; iter < std::max(0, binary_iterations); ++iter) {
+        if (obb_validation_budget_exhausted(stats, max_validations)) {
+            break;
+        }
+        Eigen::VectorXd mid = 0.5 * (good_r + bad_r);
+        ObbPortalCandidate mid_candidate;
+        ++stats.grow_attempts;
+        if (obb_try_candidate_with_radii(robot,
+                                         scene,
+                                         domain,
+                                         seed,
+                                         mid,
+                                         safety_epsilon,
+                                         mid_candidate,
+                                         stats,
+                                         options)) {
+            good = std::move(mid_candidate);
+            good_r = mid;
+        } else {
+            bad_r = mid;
+        }
+    }
+}
+
 ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                       const Scene& scene,
                                       const std::vector<Interval>& domain,
@@ -168,35 +206,7 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
     ObbPortalCandidate good = seed;
     const int dims = static_cast<int>(seed.radii_y.size());
     const int grow_cap = std::max(0, grow_iterations);
-    const int binary_cap = std::max(0, binary_iterations);
     constexpr double kGrow = 1.7;
-
-    auto refine_between = [&](const Eigen::VectorXd& lo, const Eigen::VectorXd& hi) {
-        Eigen::VectorXd good_r = lo;
-        Eigen::VectorXd bad_r = hi;
-        for (int iter = 0; iter < binary_cap; ++iter) {
-            if (obb_validation_budget_exhausted(stats, max_validations)) {
-                break;
-            }
-            Eigen::VectorXd mid = 0.5 * (good_r + bad_r);
-            ObbPortalCandidate mid_candidate;
-            ++stats.grow_attempts;
-            if (obb_try_candidate_with_radii(robot,
-                                            scene,
-                                            domain,
-                                            seed,
-                                            mid,
-                                            safety_epsilon,
-                                            mid_candidate,
-                                            stats,
-                                            options)) {
-                good = std::move(mid_candidate);
-                good_r = mid;
-            } else {
-                bad_r = mid;
-            }
-        }
-    };
 
     Eigen::VectorXd current = good.radii_y;
     for (int iter = 0; iter < grow_cap; ++iter) {
@@ -218,7 +228,18 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
             good = std::move(next_candidate);
             current = next;
         } else {
-            refine_between(current, next);
+            obb_refine_candidate_radii_between(robot,
+                                               scene,
+                                               domain,
+                                               seed,
+                                               current,
+                                               next,
+                                               safety_epsilon,
+                                               binary_iterations,
+                                               max_validations,
+                                               stats,
+                                               options,
+                                               good);
             current = good.radii_y;
             break;
         }
@@ -245,7 +266,18 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                 good = std::move(next_candidate);
                 current = next;
             } else {
-                refine_between(current, next);
+                obb_refine_candidate_radii_between(robot,
+                                                   scene,
+                                                   domain,
+                                                   seed,
+                                                   current,
+                                                   next,
+                                                   safety_epsilon,
+                                                   binary_iterations,
+                                                   max_validations,
+                                                   stats,
+                                                   options,
+                                                   good);
                 break;
             }
         }
