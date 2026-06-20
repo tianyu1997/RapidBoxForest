@@ -31,6 +31,28 @@ int query_bridge_edge_query_index(bool scene_reusable_edges,
     return scene_reusable_edges ? -1 : task.query_index;
 }
 
+std::unordered_set<int> query_bridge_forced_query_index_set(
+    const std::vector<int>& forced_query_indices,
+    std::size_t batch_size) {
+    std::unordered_set<int> result;
+    result.reserve(forced_query_indices.size());
+    for (int index : forced_query_indices) {
+        if (index >= 0 && static_cast<std::size_t>(index) < batch_size) {
+            result.insert(index);
+        }
+    }
+    return result;
+}
+
+int query_bridge_batch_global_query_index(
+    const QueryBridgeBatchOptions& options,
+    std::size_t index) {
+    if (index < options.global_query_indices.size()) {
+        return options.global_query_indices[index];
+    }
+    return static_cast<int>(index);
+}
+
 QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
     const QueryBridgeSearchTask& task,
     const std::unordered_set<int>& forced_query_indices,

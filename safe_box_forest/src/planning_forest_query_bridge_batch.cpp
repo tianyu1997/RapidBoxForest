@@ -52,27 +52,6 @@ bool query_bridge_current_query_good(
                                           bridge_acceptance);
 }
 
-std::unordered_set<int> make_forced_query_index_set(
-    const std::vector<int>& forced_query_indices,
-    std::size_t batch_size) {
-    std::unordered_set<int> result;
-    result.reserve(forced_query_indices.size());
-    for (int index : forced_query_indices) {
-        if (index >= 0 && static_cast<std::size_t>(index) < batch_size) {
-            result.insert(index);
-        }
-    }
-    return result;
-}
-
-int batch_global_query_index(const QueryBridgeBatchOptions& options,
-                             std::size_t index) {
-    if (index < options.global_query_indices.size()) {
-        return options.global_query_indices[index];
-    }
-    return static_cast<int>(index);
-}
-
 }  // namespace
 
 std::vector<int> RBFPlanningForest::finish_query_bridge_batch_result(
@@ -129,7 +108,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeAcceptanceThresholds bridge_acceptance =
         query_bridge_acceptance_thresholds_from_config(config_);
     const std::unordered_set<int> forced_query_indices =
-        make_forced_query_index_set(options.forced_query_indices, starts.size());
+        query_bridge_forced_query_index_set(options.forced_query_indices, starts.size());
 
     std::vector<QueryBridgeSearchTask> tasks;
     tasks.reserve(starts.size());
@@ -187,7 +166,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         QueryBridgeSearchTask task;
         task.index = index;
-        task.query_index = batch_global_query_index(options, index);
+        task.query_index = query_bridge_batch_global_query_index(options, index);
         last_build_.diagnostics["query_bridge.batch_task." +
                                 std::to_string(index) +
                                 ".global_index"] = static_cast<double>(task.query_index);

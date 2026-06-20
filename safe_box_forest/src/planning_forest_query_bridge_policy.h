@@ -5,7 +5,9 @@
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_bridge_task.h"
 
+#include <cstddef>
 #include <unordered_set>
+#include <vector>
 
 namespace rbf {
 
@@ -22,6 +24,14 @@ bool query_bridge_task_has_explicit_satisfaction(
 
 int query_bridge_edge_query_index(bool scene_reusable_edges,
                                   const QueryBridgeSearchTask& task);
+
+std::unordered_set<int> query_bridge_forced_query_index_set(
+    const std::vector<int>& forced_query_indices,
+    std::size_t batch_size);
+
+int query_bridge_batch_global_query_index(
+    const QueryBridgeBatchOptions& options,
+    std::size_t index);
 
 QueryBridgeAttemptPlan query_bridge_prepare_attempt_plan(
     const QueryBridgeSearchTask& task,
