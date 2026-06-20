@@ -308,6 +308,34 @@ std::uint64_t chain_pave_boundary_seed_key(int parent_id,
     return key;
 }
 
+struct ChainPaveConnectedStats {
+    int segments = 0;
+    int steps = 0;
+    int reach_failures = 0;
+    int target_hits = 0;
+};
+
+void record_chain_pave_connected_stats(StageContext& context,
+                                       int added,
+                                       int max_chain,
+                                       const ChainPaveConnectedStats& stats) {
+    context.diagnostics().set_value("connector.chain_pave_connected_added",
+                                    static_cast<double>(added));
+    context.diagnostics().set_value("connector.chain_pave_connected_segments",
+                                    static_cast<double>(stats.segments));
+    context.diagnostics().set_value("connector.chain_pave_connected_steps",
+                                    static_cast<double>(stats.steps));
+    context.diagnostics().set_value("connector.chain_pave_connected_reach_failures",
+                                    static_cast<double>(stats.reach_failures));
+    context.diagnostics().set_value("connector.chain_pave_connected_target_hits",
+                                    static_cast<double>(stats.target_hits));
+    context.diagnostics().set_value("connector.chain_pave_boundary_target_hits",
+                                    static_cast<double>(stats.target_hits));
+    if (added >= max_chain) {
+        context.diagnostics().add_counter("connector.chain_pave_connected_max_chain_hits");
+    }
+}
+
 }  // namespace
 
 int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
@@ -668,10 +696,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
     std::unordered_set<std::uint64_t> failed_boundary_seed_keys;
 
     if (waypoint_path.size() >= 2) {
-        int connected_segments = 0;
-        int connected_steps = 0;
-        int connected_reach_failures = 0;
-        int connected_target_hits = 0;
+        ChainPaveConnectedStats connected_stats;
         for (std::size_t seg = 1;
              seg < waypoint_path.size() && added < config.max_chain &&
              !context.should_stop();
@@ -682,7 +707,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             if (seg_len < 1e-12) {
                 continue;
             }
-            connected_segments += 1;
+            connected_stats.segments += 1;
             BoxNode* current_box = box_by_id(current_box_id);
             if (current_box == nullptr) {
                 break;
@@ -704,10 +729,10 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                     break;
                 }
                 if (current_box->contains(b)) {
-                    connected_target_hits += 1;
+                    connected_stats.target_hits += 1;
                     break;
                 }
-                connected_steps += 1;
+                connected_stats.steps += 1;
                 if (!current_box->contains(cursor)) {
                     cursor = chain_pave_closest_point_in_box(*current_box, cursor);
                 }
@@ -754,7 +779,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                     attempt_step *= 0.5;
                 }
                 if (reached == current_box_id) {
-                    connected_reach_failures += 1;
+                    connected_stats.reach_failures += 1;
                     context.diagnostics().add_counter("connector.chain_pave_boundary_stall");
                     break;
                 }
@@ -764,21 +789,10 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 }
             }
         }
-        context.diagnostics().set_value("connector.chain_pave_connected_added",
-                                        static_cast<double>(added));
-        context.diagnostics().set_value("connector.chain_pave_connected_segments",
-                                        static_cast<double>(connected_segments));
-        context.diagnostics().set_value("connector.chain_pave_connected_steps",
-                                        static_cast<double>(connected_steps));
-        context.diagnostics().set_value("connector.chain_pave_connected_reach_failures",
-                                        static_cast<double>(connected_reach_failures));
-        context.diagnostics().set_value("connector.chain_pave_connected_target_hits",
-                                        static_cast<double>(connected_target_hits));
-        context.diagnostics().set_value("connector.chain_pave_boundary_target_hits",
-                                        static_cast<double>(connected_target_hits));
-        if (added >= config.max_chain) {
-            context.diagnostics().add_counter("connector.chain_pave_connected_max_chain_hits");
-        }
+        record_chain_pave_connected_stats(context,
+                                          added,
+                                          config.max_chain,
+                                          connected_stats);
         return added;
     }
 
