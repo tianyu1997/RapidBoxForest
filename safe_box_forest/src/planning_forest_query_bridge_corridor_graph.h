@@ -65,6 +65,16 @@ struct QueryBridgeAdjacencyCandidateSet {
     int partition_neighbor_raw_count = 0;
 };
 
+struct QueryBridgeDirectCorridorCommitState {
+    std::unordered_map<OracleNodeId, int>* node_to_box_index = nullptr;
+    std::vector<int>* corridor_new_box_indices = nullptr;
+    BoxSpatialIndex* direct_box_index = nullptr;
+    std::unordered_map<int, int>* box_id_to_index = nullptr;
+    bool use_partition_cover_index = false;
+    bool use_partition_neighbor_candidates = false;
+    double adjacency_tolerance = 0.0;
+};
+
 using QueryBridgeSampleCandidateProvider =
     std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
 
@@ -98,6 +108,12 @@ BoxNode query_bridge_box_from_ffb_result(
     const FindFreeBoxResult& result,
     const Eigen::Ref<const Eigen::VectorXd>& seed,
     int box_id);
+
+int query_bridge_append_direct_corridor_box(
+    BoxNode box,
+    std::vector<BoxNode>& boxes,
+    std::vector<BoxNode>& raw_boxes,
+    QueryBridgeDirectCorridorCommitState& state);
 
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,

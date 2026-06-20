@@ -169,6 +169,34 @@ BoxNode query_bridge_box_from_ffb_result(
     return box;
 }
 
+int query_bridge_append_direct_corridor_box(
+    BoxNode box,
+    std::vector<BoxNode>& boxes,
+    std::vector<BoxNode>& raw_boxes,
+    QueryBridgeDirectCorridorCommitState& state) {
+    const int box_index = static_cast<int>(boxes.size());
+    const OracleNodeId node = box.tree_id;
+    const int box_id = box.id;
+    boxes.push_back(box);
+    raw_boxes.push_back(boxes.back());
+    if (node != kInvalidOracleNodeId && state.node_to_box_index != nullptr) {
+        state.node_to_box_index->emplace(node, box_index);
+    }
+    if (state.use_partition_cover_index &&
+        state.corridor_new_box_indices != nullptr) {
+        state.corridor_new_box_indices->push_back(box_index);
+    } else if (state.direct_box_index != nullptr) {
+        state.direct_box_index->add_box(boxes.back(),
+                                        box_index,
+                                        state.adjacency_tolerance);
+    }
+    if (state.use_partition_neighbor_candidates &&
+        state.box_id_to_index != nullptr) {
+        (*state.box_id_to_index)[box_id] = box_index;
+    }
+    return box_index;
+}
+
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,
     const BoxNode& box,
