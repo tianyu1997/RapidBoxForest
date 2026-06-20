@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <random>
 #include <sstream>
@@ -467,6 +468,57 @@ std::vector<Eigen::VectorXd> adaptive_generate_free_probes(DatabaseBoxOracle& or
         }
     }
     return free_points;
+}
+
+std::vector<Eigen::VectorXd> adaptive_generate_initial_free_probes(
+    DatabaseBoxOracle& oracle,
+    const std::vector<Interval>& domain,
+    const AdaptiveLeafSweepConfig& config,
+    bool adaptive_depth_enabled,
+    int& attempted) {
+    attempted = 0;
+    const int requested_probe_count = adaptive_depth_enabled
+        ? std::max(0, config.adaptive_depth_probe_count)
+        : std::max(0, config.seed_probe_count);
+    const int requested_probe_seed = adaptive_depth_enabled
+        ? config.adaptive_depth_probe_seed
+        : config.seed_probe_rng_seed;
+    std::vector<Eigen::VectorXd> free_probes =
+        adaptive_generate_free_probes(oracle,
+                                      domain,
+                                      requested_probe_count,
+                                      requested_probe_seed,
+                                      attempted);
+    if (!adaptive_depth_enabled ||
+        config.adaptive_depth_min_free_probes <= 0 ||
+        static_cast<int>(free_probes.size()) >= config.adaptive_depth_min_free_probes) {
+        return free_probes;
+    }
+    const int supplement_limit = std::max(
+        requested_probe_count,
+        std::min(8192, std::max(requested_probe_count * 4,
+                                config.adaptive_depth_min_free_probes * 64)));
+    int supplement_seed_offset = 1;
+    while (attempted < supplement_limit &&
+           static_cast<int>(free_probes.size()) < config.adaptive_depth_min_free_probes) {
+        const int batch = std::min(std::max(128, requested_probe_count),
+                                   supplement_limit - attempted);
+        int extra_attempted = 0;
+        auto extra = adaptive_generate_free_probes(oracle,
+                                                   domain,
+                                                   batch,
+                                                   requested_probe_seed + supplement_seed_offset,
+                                                   extra_attempted);
+        attempted += extra_attempted;
+        free_probes.insert(free_probes.end(),
+                           std::make_move_iterator(extra.begin()),
+                           std::make_move_iterator(extra.end()));
+        ++supplement_seed_offset;
+        if (batch <= 0 || extra_attempted <= 0) {
+            break;
+        }
+    }
+    return free_probes;
 }
 
 int adaptive_count_seed_hits(const AdaptiveFrontierItem& item,

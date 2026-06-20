@@ -11,7 +11,6 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
-#include <iterator>
 #include <limits>
 #include <queue>
 #include <random>
@@ -197,47 +196,14 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     deferred.reserve(out.leaf_sweep.collision_boxes.size());
     const auto planning_domain = oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
     int probe_attempted = 0;
-    const int requested_probe_count = adaptive_depth_enabled
-        ? std::max(0, adaptive_config.adaptive_depth_probe_count)
-        : std::max(0, adaptive_config.seed_probe_count);
-    const int requested_probe_seed = adaptive_depth_enabled
-        ? adaptive_config.adaptive_depth_probe_seed
-        : adaptive_config.seed_probe_rng_seed;
     const auto probe_seed_start = Clock::now();
     std::vector<Eigen::VectorXd> free_probes =
-        oracle_ ? adaptive_generate_free_probes(*oracle_,
-                                                planning_domain,
-                                                requested_probe_count,
-                                                requested_probe_seed,
-                                                probe_attempted)
+        oracle_ ? adaptive_generate_initial_free_probes(*oracle_,
+                                                        planning_domain,
+                                                        adaptive_config,
+                                                        adaptive_depth_enabled,
+                                                        probe_attempted)
                 : std::vector<Eigen::VectorXd>{};
-    if (adaptive_depth_enabled && oracle_ &&
-        adaptive_config.adaptive_depth_min_free_probes > 0 &&
-        static_cast<int>(free_probes.size()) < adaptive_config.adaptive_depth_min_free_probes) {
-        const int supplement_limit = std::max(
-            requested_probe_count,
-            std::min(8192, std::max(requested_probe_count * 4,
-                                    adaptive_config.adaptive_depth_min_free_probes * 64)));
-        int supplement_seed_offset = 1;
-        while (probe_attempted < supplement_limit &&
-               static_cast<int>(free_probes.size()) < adaptive_config.adaptive_depth_min_free_probes) {
-            const int batch = std::min(std::max(128, requested_probe_count), supplement_limit - probe_attempted);
-            int extra_attempted = 0;
-            auto extra = adaptive_generate_free_probes(*oracle_,
-                                                       planning_domain,
-                                                       batch,
-                                                       requested_probe_seed + supplement_seed_offset,
-                                                       extra_attempted);
-            probe_attempted += extra_attempted;
-            free_probes.insert(free_probes.end(),
-                               std::make_move_iterator(extra.begin()),
-                               std::make_move_iterator(extra.end()));
-            ++supplement_seed_offset;
-            if (batch <= 0 || extra_attempted <= 0) {
-                break;
-            }
-        }
-    }
     const double initial_probe_ms =
         std::chrono::duration<double, std::milli>(Clock::now() - probe_seed_start).count();
     out.seed_probe_count = probe_attempted;

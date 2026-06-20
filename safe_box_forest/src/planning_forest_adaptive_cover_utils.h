@@ -130,6 +130,12 @@ std::vector<Eigen::VectorXd> adaptive_generate_free_probes(DatabaseBoxOracle& or
                                                            int probe_count,
                                                            int rng_seed,
                                                            int& attempted);
+std::vector<Eigen::VectorXd> adaptive_generate_initial_free_probes(
+    DatabaseBoxOracle& oracle,
+    const std::vector<Interval>& domain,
+    const AdaptiveLeafSweepConfig& config,
+    bool adaptive_depth_enabled,
+    int& attempted);
 
 int adaptive_count_seed_hits(const AdaptiveFrontierItem& item,
                              const std::vector<Eigen::VectorXd>& free_probes);
