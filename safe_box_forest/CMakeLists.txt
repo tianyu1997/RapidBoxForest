@@ -162,6 +162,7 @@ add_library(sbf_core STATIC
     src/planning_forest_dynamic_segment_fallback.cpp
     src/planning_forest_ffb.cpp
     src/planning_forest_ffb_binary.cpp
+    src/planning_forest_ffb_binary_sparse.cpp
     src/planning_forest_obb.cpp
     src/planning_forest_obb_diagnostics.cpp
     src/planning_forest_obb_geometry.cpp

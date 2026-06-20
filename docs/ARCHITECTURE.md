@@ -357,7 +357,11 @@ src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
 src/planning_forest_ffb.cpp        forest/domain-aware FFB entry point,
                                    prechecks, and linear descent fallback
-src/planning_forest_ffb_binary.cpp forest/domain-aware BinaryDepth FFB search
+src/planning_forest_ffb_binary.cpp forest/domain-aware BinaryDepth FFB
+                                   orchestration and materialized fallback
+src/planning_forest_ffb_binary_sparse.cpp
+                                   virtual sparse BinaryDepth FFB probe,
+                                   materialization, and diagnostics
 src/planning_forest_partition.cpp  adaptive-partition rebuild, dynamic refresh,
                                    overlay sync, and partition-first query
                                    helpers
@@ -548,7 +552,8 @@ Integrated mechanisms that previously lived in prototype workspace form now
 belong to the main source tree:
 
 - sparse/binary FFB execution belongs in
-  `safe_box_forest/src/find_free_box_binary.cpp` and
+  `safe_box_forest/src/find_free_box_binary.cpp`,
+  `safe_box_forest/src/planning_forest_ffb_binary*.cpp`, and
   `safe_box_forest/src/virtual_sparse_ffb.*`;
 - adaptive-grid sparse indexing belongs in
   `safe_box_forest/src/adaptive_grid_partition_sparse.cpp` and related
