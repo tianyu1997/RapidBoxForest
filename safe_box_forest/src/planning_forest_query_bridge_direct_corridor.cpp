@@ -202,30 +202,24 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         query_bridge_record_assimilation_result(context,
                                                 runtime_stats,
                                                 sample_assimilation);
-        std::vector<int> candidates =
-            query_bridge_sample_layer_adjacency_candidates(
+        const QueryBridgeAdjacencyCandidateSet candidate_set =
+            query_bridge_collect_adjacency_candidates(
                 sample_layers,
                 transition_hint,
                 sample_assimilation,
-                repair_indices);
-        if (use_partition_neighbor_candidates && adaptive_partition_) {
-            int raw_neighbor_count = 0;
-            const std::vector<int> partition_candidates =
-                query_bridge_partition_neighbor_index_candidates(
-                    *adaptive_partition_,
-                    boxes_[static_cast<std::size_t>(box_index)],
-                    config_.query.adjacency_tolerance,
-                    box_id_to_index,
-                    &raw_neighbor_count);
+                repair_indices,
+                use_partition_neighbor_candidates ? adaptive_partition_.get() : nullptr,
+                use_partition_neighbor_candidates
+                    ? &boxes_[static_cast<std::size_t>(box_index)]
+                    : nullptr,
+                config_.query.adjacency_tolerance,
+                box_id_to_index);
+        const std::vector<int>& candidates = candidate_set.candidates;
+        if (use_partition_neighbor_candidates) {
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_partition_neighbor_candidates",
-                static_cast<double>(raw_neighbor_count));
-            candidates.insert(candidates.end(),
-                              partition_candidates.begin(),
-                              partition_candidates.end());
+                static_cast<double>(candidate_set.partition_neighbor_raw_count));
         }
-        std::sort(candidates.begin(), candidates.end());
-        candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
         int local_edges = 0;
         for (int candidate : candidates) {
             if (candidate == box_index ||

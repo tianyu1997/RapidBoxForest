@@ -58,6 +58,11 @@ struct QueryBridgeInitialSampleCoverageStats {
     int covered_samples = 0;
 };
 
+struct QueryBridgeAdjacencyCandidateSet {
+    std::vector<int> candidates;
+    int partition_neighbor_raw_count = 0;
+};
+
 using QueryBridgeSampleCandidateProvider =
     std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
 
@@ -109,6 +114,16 @@ std::vector<int> query_bridge_sample_layer_adjacency_candidates(
     int transition_hint,
     const QueryBridgeSampleAssimilationResult& sample_assimilation,
     const std::vector<int>& repair_indices);
+
+QueryBridgeAdjacencyCandidateSet query_bridge_collect_adjacency_candidates(
+    const std::vector<std::vector<int>>& sample_layers,
+    int transition_hint,
+    const QueryBridgeSampleAssimilationResult& sample_assimilation,
+    const std::vector<int>& repair_indices,
+    const AdaptiveGridPartition* partition,
+    const BoxNode* partition_box,
+    double tolerance,
+    const std::unordered_map<int, int>& box_id_to_index);
 
 bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,
                                               QueryBridgeLocalDsu& dsu,
