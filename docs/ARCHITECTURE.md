@@ -90,10 +90,12 @@ src/lect_database/                 core persistence implementation
                                    and parent-hull materialization
   database_evidence_api.cpp        public evidence read/write/delete entry
                                    points and endpoint exact-box evidence API
-  database_evidence_index.cpp      in-memory open-addressed evidence index
-                                   reserve/find/upsert operations
   database_evidence_codec.cpp      evidence binary/text codec, sidecar layout,
                                    payload checksum, and half-float quantizer
+  database_evidence_index.cpp      in-memory open-addressed evidence index
+                                   reserve/find/upsert operations
+  database_evidence_store.cpp      append-only evidence file, mmap read path,
+                                   sidecar load/save, and resident cache trim
   database_file_layout.cpp         manifest, node-page, journal, and evidence
                                    file-path helpers plus node-row text codec
   database_mapped_file.cpp         platform-specific read-only evidence mmap
