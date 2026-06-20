@@ -373,6 +373,9 @@ src/planning_forest_obb_geometry.cpp
 src/planning_forest_obb_path_cover.cpp
                                    greedy/recursive path-window covering with
                                    certified OBB regions
+src/planning_forest_obb_path_windows.cpp
+                                   OBB path-window validation and greedy
+                                   window-size search
 src/planning_forest_obb_sampled.cpp
                                    sampled-support and clearance-sampled OBB
                                    validation backends
