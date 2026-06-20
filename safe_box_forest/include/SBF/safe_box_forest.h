@@ -349,6 +349,15 @@ private:
 		double checkpoint_probe_ms_total,
 		std::chrono::steady_clock::time_point total_start,
 		bool use_partition_backend);
+	double initialize_adaptive_build_topology(
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		double adjacency_tolerance,
+		AdaptiveLeafSweepResult& out,
+		BudgetedMergeStats& merge_stats,
+		AdjacencyBuildStats& initial_adjacency_stats,
+		std::unordered_set<int>& main_ids,
+		bool use_partition_backend);
 	AdaptiveDepthSnapshot evaluate_adaptive_depth_snapshot(
 		int depth,
 		bool allow_anchor_probe,

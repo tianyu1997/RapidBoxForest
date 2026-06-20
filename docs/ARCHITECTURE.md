@@ -329,6 +329,9 @@ src/planning_forest_adaptive_merge_grid.cpp
 src/planning_forest_adaptive_snapshot.cpp
                                    adaptive depth checkpoint coverage and
                                    anchor-probe snapshot evaluation
+src/planning_forest_adaptive_topology.cpp
+                                   adaptive build post-leaf merge, partition
+                                   initialization, and initial island state
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
