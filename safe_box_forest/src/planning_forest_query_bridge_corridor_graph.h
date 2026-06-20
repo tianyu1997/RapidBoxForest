@@ -101,6 +101,15 @@ struct QueryBridgeDirectCorridorCommitResult {
 using QueryBridgeSampleCandidateProvider =
     std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
 
+QueryBridgeDirectCorridorCommitState query_bridge_make_direct_corridor_commit_state(
+    std::unordered_map<OracleNodeId, int>& node_to_box_index,
+    std::vector<int>& corridor_new_box_indices,
+    BoxSpatialIndex& direct_box_index,
+    std::unordered_map<int, int>& box_id_to_index,
+    bool use_partition_cover_index,
+    bool use_partition_neighbor_candidates,
+    double adjacency_tolerance);
+
 bool query_bridge_mark_sample_coverage_from_candidates(
     const std::vector<BoxNode>& boxes,
     const std::vector<Eigen::VectorXd>& samples,

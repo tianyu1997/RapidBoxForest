@@ -53,6 +53,25 @@ void QueryBridgeLocalDsu::unite(int lhs, int rhs) {
     }
 }
 
+QueryBridgeDirectCorridorCommitState query_bridge_make_direct_corridor_commit_state(
+    std::unordered_map<OracleNodeId, int>& node_to_box_index,
+    std::vector<int>& corridor_new_box_indices,
+    BoxSpatialIndex& direct_box_index,
+    std::unordered_map<int, int>& box_id_to_index,
+    bool use_partition_cover_index,
+    bool use_partition_neighbor_candidates,
+    double adjacency_tolerance) {
+    QueryBridgeDirectCorridorCommitState state;
+    state.node_to_box_index = &node_to_box_index;
+    state.corridor_new_box_indices = &corridor_new_box_indices;
+    state.direct_box_index = &direct_box_index;
+    state.box_id_to_index = &box_id_to_index;
+    state.use_partition_cover_index = use_partition_cover_index;
+    state.use_partition_neighbor_candidates = use_partition_neighbor_candidates;
+    state.adjacency_tolerance = adjacency_tolerance;
+    return state;
+}
+
 bool query_bridge_mark_sample_coverage_from_candidates(
     const std::vector<BoxNode>& boxes,
     const std::vector<Eigen::VectorXd>& samples,

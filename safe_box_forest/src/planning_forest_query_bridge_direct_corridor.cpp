@@ -143,14 +143,15 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
 
     std::unordered_map<OracleNodeId, int> node_to_box_index =
         build_box_node_index(boxes_, samples.size());
-    QueryBridgeDirectCorridorCommitState commit_state;
-    commit_state.node_to_box_index = &node_to_box_index;
-    commit_state.corridor_new_box_indices = &corridor_new_box_indices;
-    commit_state.direct_box_index = &direct_box_index;
-    commit_state.box_id_to_index = &box_id_to_index;
-    commit_state.use_partition_cover_index = use_partition_cover_index;
-    commit_state.use_partition_neighbor_candidates = use_partition_neighbor_candidates;
-    commit_state.adjacency_tolerance = config_.query.adjacency_tolerance;
+    QueryBridgeDirectCorridorCommitState commit_state =
+        query_bridge_make_direct_corridor_commit_state(
+            node_to_box_index,
+            corridor_new_box_indices,
+            direct_box_index,
+            box_id_to_index,
+            use_partition_cover_index,
+            use_partition_neighbor_candidates,
+            config_.query.adjacency_tolerance);
     std::vector<int> repair_indices;
     auto assimilate_box = [&](int box_index, int transition_hint) {
         const auto assimilate_t0 = Clock::now();
