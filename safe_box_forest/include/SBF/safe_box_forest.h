@@ -469,6 +469,8 @@ private:
 										 const char* diagnostic_prefix);
 	int sync_adaptive_partition_segment_edges(BuildProfile* profile,
 											 const char* diagnostic_prefix);
+	std::vector<int> endpoint_main_largest_island_partition_first(
+		const std::vector<int>& preferred_island) const;
 	int add_segment_edge_partition_first(int source_box_id,
 										 int target_box_id,
 										 std::vector<Eigen::VectorXd> waypoints,

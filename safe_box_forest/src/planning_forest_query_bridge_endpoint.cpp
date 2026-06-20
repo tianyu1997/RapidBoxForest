@@ -71,27 +71,16 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return 0;
     }
 
-    std::vector<int> main_island_storage;
-    if (!pre_anchor_main_island_storage.empty()) {
-        main_island_storage = pre_anchor_main_island_storage;
-    } else if (adaptive_partition_query_enabled_ && adaptive_partition_ && !adaptive_partition_->empty()) {
-        main_island_storage = adaptive_partition_->largest_component_box_ids_with_overlay();
-    }
+    std::vector<int> main_island_storage =
+        endpoint_main_largest_island_partition_first(pre_anchor_main_island_storage);
     if (main_island_storage.empty()) {
         if (partition_native_mode()) {
             add_diag("partition_missing_no_graph_fallback");
             add_diag("fallback_to_e2e");
             return 0;
         }
-        auto islands = find_islands(adjacency_);
-        if (islands.empty()) {
-            add_diag("fallback_to_e2e");
-            return 0;
-        }
-        std::sort(islands.begin(), islands.end(), [](const auto& lhs, const auto& rhs) {
-            return lhs.size() > rhs.size();
-        });
-        main_island_storage = islands.front();
+        add_diag("fallback_to_e2e");
+        return 0;
     }
     const auto& main_island = main_island_storage;
     std::unordered_set<int> main_ids(main_island.begin(), main_island.end());

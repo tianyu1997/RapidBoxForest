@@ -185,6 +185,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_edges.cpp
     src/planning_forest_query_bridge_endpoint.cpp
     src/planning_forest_query_bridge_endpoint_direct.cpp
+    src/planning_forest_query_bridge_endpoint_island.cpp
     src/planning_forest_query_bridge_endpoint_residual.cpp
     src/planning_forest_query_bridge_endpoint_targets.cpp
     src/planning_forest_query_bridge_hipac.cpp
