@@ -15,6 +15,7 @@
 namespace rbf {
 
 using ffb_internal::record_elapsed;
+using ffb_internal::record_free_ancestor_diagnostics;
 using ffb_internal::record_split_diagnostics;
 using ffb_internal::set_max_diagnostic;
 
@@ -161,25 +162,11 @@ FindFreeBoxResult FindFreeBoxService::find_binary_depth(
                     context.diagnostics().add_counter("ffb.virtual_sparse_binary_successes");
                     context.diagnostics().add_counter(
                         "ffb.virtual_sparse_binary_materialize_skipped");
-                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
-                                                      static_cast<double>(best_depth));
                 }
-                set_max_diagnostic(context,
-                                   "ffb.free_ancestor_depth_max",
-                                   static_cast<double>(best_depth),
-                                   options.record_diagnostics);
-                double free_log_volume = 0.0;
-                for (const auto& interval : best.intervals) {
-                    const double width = std::max(0.0, interval.width());
-                    if (width > 0.0) {
-                        free_log_volume += std::log(width);
-                    }
-                }
-                if (options.record_diagnostics) {
-                    context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
-                                                      free_log_volume);
-                }
+                record_free_ancestor_diagnostics(context,
+                                                 best.intervals,
+                                                 static_cast<double>(best_depth),
+                                                 options.record_diagnostics);
                 return best;
             }
             const auto materialized = detail::materialize_seed_path_to_depth(
@@ -236,14 +223,12 @@ FindFreeBoxResult FindFreeBoxService::find_binary_depth(
                 best.total_ms = elapsed_ms();
                 if (options.record_diagnostics) {
                     context.diagnostics().add_counter("ffb.virtual_sparse_binary_successes");
-                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
-                                                      static_cast<double>(best_depth));
                 }
-                set_max_diagnostic(context,
-                                   "ffb.free_ancestor_depth_max",
-                                   static_cast<double>(best_depth),
-                                   options.record_diagnostics);
+                record_free_ancestor_diagnostics(context,
+                                                 best.intervals,
+                                                 static_cast<double>(best_depth),
+                                                 options.record_diagnostics,
+                                                 false);
                 return best;
             }
             if (options.record_diagnostics) {
@@ -441,21 +426,10 @@ FindFreeBoxResult FindFreeBoxService::find_binary_depth(
     best.total_ms = elapsed_ms();
     if (best.found) {
         const double free_depth = static_cast<double>(oracle_.depth(best.node));
-        if (options.record_diagnostics) {
-            context.diagnostics().add_counter("ffb.free_ancestor_hits");
-            context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-        }
-        set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
-        double free_log_volume = 0.0;
-        for (const auto& interval : best.intervals) {
-            const double width = std::max(0.0, interval.width());
-            if (width > 0.0) {
-                free_log_volume += std::log(width);
-            }
-        }
-        if (options.record_diagnostics) {
-            context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
-        }
+        record_free_ancestor_diagnostics(context,
+                                         best.intervals,
+                                         free_depth,
+                                         options.record_diagnostics);
     }
     return best;
 }

@@ -13,9 +13,9 @@
 namespace rbf {
 
 using ffb_internal::record_elapsed;
+using ffb_internal::record_free_ancestor_diagnostics;
 using ffb_internal::record_split_diagnostics;
 using ffb_internal::scheduled_depths;
-using ffb_internal::set_max_diagnostic;
 
 FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorXd>& seed,
                                            const FindFreeBoxOptions& options) {
@@ -144,28 +144,11 @@ FindFreeBoxResult FindFreeBoxService::find(const Eigen::Ref<const Eigen::VectorX
             result.changed_dim = changed_dim;
             result.intervals = std::move(query_intervals);
             result.fail_code = 0;
-            // P4: the descent returns the FIRST (hence shallowest) canonical
-            // ancestor that certifies DefinitelyFree along the seed path; this is
-            // the largest certified box containing the seed and depends only on
-            // which canonical nodes are certified (seed-independent). Record the
-            // hit depth and box log-volume so the seed-independent reuse can be
-            // measured (mean hit depth should drop / certified box volume rise).
             const double free_depth = static_cast<double>(oracle_.depth(node));
-            if (options.record_diagnostics) {
-                context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-            }
-            set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
-            double free_log_volume = 0.0;
-            for (const auto& interval : result.intervals) {
-                const double width = std::max(0.0, interval.width());
-                if (width > 0.0) {
-                    free_log_volume += std::log(width);
-                }
-            }
-            if (options.record_diagnostics) {
-                context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
-            }
+            record_free_ancestor_diagnostics(context,
+                                             result.intervals,
+                                             free_depth,
+                                             options.record_diagnostics);
             break;
         }
         if (validation == BoxValidation::Occupied) {
@@ -328,21 +311,10 @@ FindFreeBoxResult FindFreeBoxService::find_incremental(
             if (must_accept && (!accept || accept(candidate))) {
                 result = std::move(candidate);
                 const double free_depth = static_cast<double>(oracle_.depth(node));
-                if (options.record_diagnostics) {
-                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
-                }
-                set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, options.record_diagnostics);
-                double free_log_volume = 0.0;
-                for (const auto& interval : result.intervals) {
-                    const double width = std::max(0.0, interval.width());
-                    if (width > 0.0) {
-                        free_log_volume += std::log(width);
-                    }
-                }
-                if (options.record_diagnostics) {
-                    context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum", free_log_volume);
-                }
+                record_free_ancestor_diagnostics(context,
+                                                 result.intervals,
+                                                 free_depth,
+                                                 options.record_diagnostics);
                 break;
             }
             if (options.record_diagnostics) {

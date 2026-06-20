@@ -6,11 +6,14 @@
 #include <utility>
 #include <vector>
 
+#include "find_free_box_internal.h"
 #include "planning_forest_ffb_helpers.h"
 #include "virtual_sparse_ffb.h"
 #include "virtual_sparse_ffb_options.h"
 
 namespace rbf {
+
+using ffb_internal::record_free_ancestor_diagnostics;
 
 FindFreeBoxResult RBFPlanningForest::find_free_box_binary_in_domain(
     const Eigen::Ref<const Eigen::VectorXd>& seed,
@@ -210,23 +213,11 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_binary_in_domain(
                         "ffb.virtual_sparse_binary_successes");
                     context.diagnostics().add_counter(
                         "ffb.virtual_sparse_binary_materialize_skipped");
-                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
-                                                      static_cast<double>(best_depth));
-                    context.diagnostics().set_value(
-                        "ffb.free_ancestor_depth_max",
-                        std::max(context.diagnostics().value("ffb.free_ancestor_depth_max"),
-                                 static_cast<double>(best_depth)));
-                    double free_log_volume = 0.0;
-                    for (const auto& interval : best.intervals) {
-                        const double width = std::max(0.0, interval.width());
-                        if (width > 0.0) {
-                            free_log_volume += std::log(width);
-                        }
-                    }
-                    context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
-                                                      free_log_volume);
                 }
+                record_free_ancestor_diagnostics(context,
+                                                 best.intervals,
+                                                 static_cast<double>(best_depth),
+                                                 options.record_diagnostics);
                 return best;
             }
             const auto materialized = detail::materialize_seed_path_to_depth(
@@ -293,23 +284,11 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_binary_in_domain(
                 best.total_ms = elapsed_ms();
                 if (options.record_diagnostics) {
                     context.diagnostics().add_counter("ffb.virtual_sparse_binary_successes");
-                    context.diagnostics().add_counter("ffb.free_ancestor_hits");
-                    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
-                                                      static_cast<double>(best_depth));
-                    context.diagnostics().set_value(
-                        "ffb.free_ancestor_depth_max",
-                        std::max(context.diagnostics().value("ffb.free_ancestor_depth_max"),
-                                 static_cast<double>(best_depth)));
-                    double free_log_volume = 0.0;
-                    for (const auto& interval : best.intervals) {
-                        const double width = std::max(0.0, interval.width());
-                        if (width > 0.0) {
-                            free_log_volume += std::log(width);
-                        }
-                    }
-                    context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
-                                                      free_log_volume);
                 }
+                record_free_ancestor_diagnostics(context,
+                                                 best.intervals,
+                                                 static_cast<double>(best_depth),
+                                                 options.record_diagnostics);
                 return best;
             }
             if (options.record_diagnostics) {
@@ -523,22 +502,10 @@ FindFreeBoxResult RBFPlanningForest::find_free_box_binary_in_domain(
     if (best.found && options.record_diagnostics) {
         const double free_depth =
             static_cast<double>(oracle_->node_topology(best.node).depth);
-        context.diagnostics().add_counter("ffb.free_ancestor_hits");
-        context.diagnostics().add_counter("ffb.free_ancestor_depth_sum",
-                                          free_depth);
-        context.diagnostics().set_value(
-            "ffb.free_ancestor_depth_max",
-            std::max(context.diagnostics().value("ffb.free_ancestor_depth_max"),
-                     free_depth));
-        double free_log_volume = 0.0;
-        for (const auto& interval : best.intervals) {
-            const double width = std::max(0.0, interval.width());
-            if (width > 0.0) {
-                free_log_volume += std::log(width);
-            }
-        }
-        context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
-                                          free_log_volume);
+        record_free_ancestor_diagnostics(context,
+                                         best.intervals,
+                                         free_depth,
+                                         true);
     }
     return best;
 }

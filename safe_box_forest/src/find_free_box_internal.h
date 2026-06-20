@@ -75,6 +75,36 @@ inline void record_split_diagnostics(StageContext& context,
     }
 }
 
+inline double interval_log_volume(const std::vector<Interval>& intervals) {
+    double log_volume = 0.0;
+    for (const auto& interval : intervals) {
+        const double width = std::max(0.0, interval.width());
+        if (width > 0.0) {
+            log_volume += std::log(width);
+        }
+    }
+    return log_volume;
+}
+
+inline void record_free_ancestor_diagnostics(StageContext& context,
+                                             const std::vector<Interval>& intervals,
+                                             double free_depth,
+                                             bool enabled,
+                                             bool record_log_volume = true) {
+    if (!enabled) {
+        return;
+    }
+    // The descent returns the shallowest certified-free ancestor along the seed
+    // path. Record depth and volume to measure seed-independent evidence reuse.
+    context.diagnostics().add_counter("ffb.free_ancestor_hits");
+    context.diagnostics().add_counter("ffb.free_ancestor_depth_sum", free_depth);
+    set_max_diagnostic(context, "ffb.free_ancestor_depth_max", free_depth, true);
+    if (record_log_volume) {
+        context.diagnostics().add_counter("ffb.free_ancestor_log_volume_sum",
+                                          interval_log_volume(intervals));
+    }
+}
+
 inline std::vector<int> scheduled_depths(const FindFreeBoxOptions& options,
                                          int effective_max_depth) {
     std::vector<int> depths;

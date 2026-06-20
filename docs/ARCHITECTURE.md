@@ -218,6 +218,8 @@ src/runtime.cpp                    runtime budget, deadline, and diagnostics hel
 src/find_free_box.cpp              seed-to-certified-box search service
 src/find_free_box_binary.cpp       BinaryDepth and virtual sparse FFB search
                                    implementation
+src/find_free_box_internal.h       FFB-local diagnostics and depth-schedule
+                                   helpers shared by linear and binary search
 src/grower.cpp                     RRT-style forest grower orchestration and
                                    main run loop
 src/grower_commit.cpp              RRT grower FFB result validation, box
