@@ -85,6 +85,7 @@ add_library(lect_database_sbf_adapter STATIC
     src/sbf/oracle_canonical.cpp
     src/sbf/oracle_endpoint_materialization.cpp
     src/sbf/oracle_material_point.cpp
+    src/sbf/oracle_node.cpp
     src/sbf/oracle_session.cpp
     src/sbf/oracle_support.cpp
     src/sbf/scene.cpp

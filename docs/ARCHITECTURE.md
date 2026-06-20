@@ -129,7 +129,7 @@ src/lect_database/                 core persistence implementation
 src/online_cache/                  online cache implementation
 src/sbf/                           planner adapter implementation
   oracle.cpp                       database-backed SBF oracle, evidence lookup,
-                                   node topology, and box validation
+                                   split execution, and box validation
   oracle_best_tighten.cpp          best-tighten split-dimension scoring and
                                    schedule replay helpers
   oracle_canonical.cpp             canonical-sector and native/canonical
@@ -139,6 +139,8 @@ src/sbf/                           planner adapter implementation
                                    database-backed oracle validation
   oracle_material_point.cpp        material-point occupied-certificate helper
                                    for oracle validation
+  oracle_node.cpp                  node topology, canonical query intervals,
+                                   and native interval reflection
   oracle_session.cpp               worker oracle sessions, temporary worker DB,
                                    structure replay, and evidence replay
   oracle_options.h                 oracle-local debug-print accessors
