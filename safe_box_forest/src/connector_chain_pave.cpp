@@ -172,6 +172,76 @@ Eigen::VectorXd chain_pave_boundary_seed_from_box(const BoxNode& box,
     return (from + u_seed * (target - from)).eval();
 }
 
+std::vector<Eigen::VectorXd> chain_pave_boundary_seed_candidates(const BoxNode& box,
+                                                                 const Eigen::VectorXd& from,
+                                                                 const Eigen::VectorXd& target,
+                                                                 double requested_step,
+                                                                 double adjacency_tolerance,
+                                                                 double gap_fill_min_step) {
+    std::vector<Eigen::VectorXd> seeds;
+    const Eigen::VectorXd forward_seed =
+        chain_pave_boundary_seed_from_box(box,
+                                          from,
+                                          target,
+                                          adjacency_tolerance,
+                                          gap_fill_min_step);
+    seeds.push_back(forward_seed);
+    if (from.size() != target.size() || box.n_dims() != from.size()) {
+        return seeds;
+    }
+    const Eigen::VectorXd delta = target - from;
+    const double distance = delta.norm();
+    if (distance < 1e-12) {
+        return seeds;
+    }
+
+    struct LateralDim {
+        int dim = -1;
+        double score = 0.0;
+        double width = 0.0;
+    };
+    std::vector<LateralDim> dims;
+    dims.reserve(static_cast<std::size_t>(from.size()));
+    for (int dim = 0; dim < from.size(); ++dim) {
+        const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+        const double width = interval.width();
+        if (width <= 2.0 * adjacency_tolerance) {
+            continue;
+        }
+        const double alignment = std::abs(delta[dim]) / distance;
+        dims.push_back({dim, width * (1.0 - alignment), width});
+    }
+    std::sort(dims.begin(), dims.end(), [](const LateralDim& lhs,
+                                           const LateralDim& rhs) {
+        return lhs.score > rhs.score;
+    });
+
+    const double base_radius =
+        std::max(gap_fill_min_step,
+                 0.35 * std::max(requested_step, gap_fill_min_step));
+    const int max_lateral_dims = std::min<int>(2, static_cast<int>(dims.size()));
+    for (int rank = 0; rank < max_lateral_dims; ++rank) {
+        const int dim = dims[static_cast<std::size_t>(rank)].dim;
+        const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+        const double radius =
+            std::min(base_radius,
+                     std::max(gap_fill_min_step,
+                              0.45 * dims[static_cast<std::size_t>(rank)].width));
+        for (const double sign : {1.0, -1.0}) {
+            Eigen::VectorXd candidate = seeds.front();
+            candidate[dim] = std::clamp(candidate[dim] + sign * radius,
+                                        interval.lo + adjacency_tolerance,
+                                        interval.hi - adjacency_tolerance);
+            if ((candidate - from).norm() >=
+                std::max(gap_fill_min_step, 1e-6) * 0.25 &&
+                (candidate - seeds.front()).norm() > 1e-12) {
+                seeds.push_back(std::move(candidate));
+            }
+        }
+    }
+    return seeds;
+}
+
 }  // namespace
 
 int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
@@ -529,75 +599,6 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return cover(via, mid, to_pt, budget - 1);
     };
 
-    auto boundary_seed_candidates = [&](const BoxNode& box,
-                                        const Eigen::VectorXd& from,
-                                        const Eigen::VectorXd& target,
-                                        double requested_step)
-        -> std::vector<Eigen::VectorXd> {
-        std::vector<Eigen::VectorXd> seeds;
-        const Eigen::VectorXd forward_seed =
-            chain_pave_boundary_seed_from_box(box,
-                                              from,
-                                              target,
-                                              config.adjacency_tolerance,
-                                              config.gap_fill_min_step);
-        seeds.push_back(forward_seed);
-        if (from.size() != target.size() || box.n_dims() != from.size()) {
-            return seeds;
-        }
-        const Eigen::VectorXd delta = target - from;
-        const double distance = delta.norm();
-        if (distance < 1e-12) {
-            return seeds;
-        }
-
-        struct LateralDim {
-            int dim = -1;
-            double score = 0.0;
-            double width = 0.0;
-        };
-        std::vector<LateralDim> dims;
-        dims.reserve(static_cast<std::size_t>(from.size()));
-        for (int dim = 0; dim < from.size(); ++dim) {
-            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
-            const double width = interval.width();
-            if (width <= 2.0 * config.adjacency_tolerance) {
-                continue;
-            }
-            const double alignment = std::abs(delta[dim]) / distance;
-            dims.push_back({dim, width * (1.0 - alignment), width});
-        }
-        std::sort(dims.begin(), dims.end(), [](const LateralDim& lhs,
-                                               const LateralDim& rhs) {
-            return lhs.score > rhs.score;
-        });
-
-        const double base_radius =
-            std::max(config.gap_fill_min_step,
-                     0.35 * std::max(requested_step, config.gap_fill_min_step));
-        const int max_lateral_dims = std::min<int>(2, static_cast<int>(dims.size()));
-        for (int rank = 0; rank < max_lateral_dims; ++rank) {
-            const int dim = dims[static_cast<std::size_t>(rank)].dim;
-            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
-            const double radius =
-                std::min(base_radius,
-                         std::max(config.gap_fill_min_step,
-                                  0.45 * dims[static_cast<std::size_t>(rank)].width));
-            for (const double sign : {1.0, -1.0}) {
-                Eigen::VectorXd candidate = seeds.front();
-                candidate[dim] = std::clamp(candidate[dim] + sign * radius,
-                                            interval.lo + config.adjacency_tolerance,
-                                            interval.hi - config.adjacency_tolerance);
-                if ((candidate - from).norm() >=
-                    std::max(config.gap_fill_min_step, 1e-6) * 0.25 &&
-                    (candidate - seeds.front()).norm() > 1e-12) {
-                    seeds.push_back(std::move(candidate));
-                }
-            }
-        }
-        return seeds;
-    };
-
     auto closest_point_in_box = [&](const BoxNode& box,
                                     const Eigen::VectorXd& point) -> Eigen::VectorXd {
         Eigen::VectorXd out(point.size());
@@ -708,7 +709,12 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 for (int attempt = 0; attempt < 8 && reached == current_box_id;
                      ++attempt) {
                     const auto seeds =
-                        boundary_seed_candidates(*current_box, cursor, b, attempt_step);
+                        chain_pave_boundary_seed_candidates(*current_box,
+                                                            cursor,
+                                                            b,
+                                                            attempt_step,
+                                                            config.adjacency_tolerance,
+                                                            config.gap_fill_min_step);
                     const double min_seed_motion =
                         std::max(4.0 * std::max(0.0, config.adjacency_tolerance), 1e-12);
                     if (seeds.empty() ||
