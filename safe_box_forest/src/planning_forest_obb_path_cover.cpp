@@ -10,6 +10,12 @@
 
 namespace rbf {
 
+struct ObbGreedyWindowSearchResult {
+    std::size_t good_end = 0;
+    Eigen::VectorXd center;
+    Eigen::MatrixXd generators;
+};
+
 double obb_generator_parallelotope_log_volume(const Eigen::MatrixXd& generators) {
     const int rows = generators.rows();
     const int cols = generators.cols();
@@ -193,6 +199,97 @@ bool obb_validate_path_window(const Robot& robot,
         ++result.windows_success;
     }
     return ok;
+}
+
+ObbGreedyWindowSearchResult obb_find_greedy_path_window(
+    const Robot& robot,
+    const Scene& scene,
+    const std::vector<Interval>& domain,
+    const std::vector<Eigen::VectorXd>& path,
+    std::size_t begin,
+    std::size_t max_end,
+    double lateral_radius,
+    double longitudinal_margin,
+    double safety_epsilon,
+    int grow_iterations,
+    int binary_iterations,
+    int max_validations,
+    ObbPathCoverResult& result,
+    ObbValidationOptions options) {
+    ObbGreedyWindowSearchResult search;
+    search.good_end = begin;
+    std::size_t step = 1;
+    std::size_t first_fail = 0;
+    while (begin + step <= max_end) {
+        Eigen::VectorXd center;
+        Eigen::MatrixXd generators;
+        const std::size_t end = begin + step;
+        if (obb_validate_path_window(robot,
+                                     scene,
+                                     domain,
+                                     path,
+                                     begin,
+                                     end,
+                                     lateral_radius,
+                                     longitudinal_margin,
+                                     safety_epsilon,
+                                     grow_iterations,
+                                     binary_iterations,
+                                     max_validations,
+                                     result,
+                                     center,
+                                     generators,
+                                     options)) {
+            search.good_end = end;
+            search.center = std::move(center);
+            search.generators = std::move(generators);
+            step *= 2U;
+        } else {
+            first_fail = end;
+            break;
+        }
+    }
+    if (search.good_end == max_end) {
+        first_fail = 0;
+    } else if (first_fail == 0 && begin + step > max_end) {
+        first_fail = max_end + 1U;
+    }
+    if (first_fail > search.good_end + 1U && search.good_end > begin) {
+        std::size_t lo = search.good_end + 1U;
+        std::size_t hi = std::min(first_fail - 1U, max_end);
+        while (lo <= hi) {
+            const std::size_t mid = lo + (hi - lo) / 2U;
+            Eigen::VectorXd center;
+            Eigen::MatrixXd generators;
+            if (obb_validate_path_window(robot,
+                                         scene,
+                                         domain,
+                                         path,
+                                         begin,
+                                         mid,
+                                         lateral_radius,
+                                         longitudinal_margin,
+                                         safety_epsilon,
+                                         grow_iterations,
+                                         binary_iterations,
+                                         max_validations,
+                                         result,
+                                         center,
+                                         generators,
+                                         options)) {
+                search.good_end = mid;
+                search.center = std::move(center);
+                search.generators = std::move(generators);
+                lo = mid + 1U;
+            } else {
+                if (mid == 0U) {
+                    break;
+                }
+                hi = mid - 1U;
+            }
+        }
+    }
+    return search;
 }
 
 bool obb_cover_segment_recursive(const Robot& robot,
@@ -393,81 +490,22 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
     while (begin < last) {
         const std::size_t max_end =
             std::min(last, begin + static_cast<std::size_t>(window_cap));
-        std::size_t good_end = begin;
-        Eigen::VectorXd good_center;
-        Eigen::MatrixXd good_generators;
-        std::size_t step = 1;
-        std::size_t first_fail = 0;
-        while (begin + step <= max_end) {
-            Eigen::VectorXd center;
-            Eigen::MatrixXd generators;
-            const std::size_t end = begin + step;
-            if (obb_validate_path_window(robot,
-                                         scene,
-                                         domain,
-                                         path,
-                                         begin,
-                                         end,
-                                         lateral_radius,
-                                         longitudinal_margin,
-                                         safety_epsilon,
-                                         grow_iterations,
-                                         binary_iterations,
-                                         max_validations,
-                                         result,
-                                         center,
-                                         generators,
-                                         options)) {
-                good_end = end;
-                good_center = std::move(center);
-                good_generators = std::move(generators);
-                step *= 2U;
-            } else {
-                first_fail = end;
-                break;
-            }
-        }
-        if (good_end == max_end) {
-            first_fail = 0;
-        } else if (first_fail == 0 && begin + step > max_end) {
-            first_fail = max_end + 1U;
-        }
-        if (first_fail > good_end + 1U && good_end > begin) {
-            std::size_t lo = good_end + 1U;
-            std::size_t hi = std::min(first_fail - 1U, max_end);
-            while (lo <= hi) {
-                const std::size_t mid = lo + (hi - lo) / 2U;
-                Eigen::VectorXd center;
-                Eigen::MatrixXd generators;
-                if (obb_validate_path_window(robot,
-                                             scene,
-                                             domain,
-                                             path,
-                                             begin,
-                                             mid,
-                                             lateral_radius,
-                                             longitudinal_margin,
-                                             safety_epsilon,
-                                             grow_iterations,
-                                             binary_iterations,
-                                             max_validations,
-                                             result,
-                                             center,
-                                             generators,
-                                             options)) {
-                    good_end = mid;
-                    good_center = std::move(center);
-                    good_generators = std::move(generators);
-                    lo = mid + 1U;
-                } else {
-                    if (mid == 0U) {
-                        break;
-                    }
-                    hi = mid - 1U;
-                }
-            }
-        }
-        if (good_end <= begin) {
+        ObbGreedyWindowSearchResult window =
+            obb_find_greedy_path_window(robot,
+                                        scene,
+                                        domain,
+                                        path,
+                                        begin,
+                                        max_end,
+                                        lateral_radius,
+                                        longitudinal_margin,
+                                        safety_epsilon,
+                                        grow_iterations,
+                                        binary_iterations,
+                                        max_validations,
+                                        result,
+                                        options);
+        if (window.good_end <= begin) {
             std::vector<Eigen::VectorXd> split_line;
             const bool split_ok = obb_cover_segment_recursive(robot,
                                                               scene,
@@ -500,11 +538,11 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
         obb_commit_path_window_region(result,
                                       path,
                                       begin,
-                                      good_end,
-                                      std::move(good_center),
-                                      std::move(good_generators),
+                                      window.good_end,
+                                      std::move(window.center),
+                                      std::move(window.generators),
                                       out_centerline);
-        begin = good_end;
+        begin = window.good_end;
     }
     result.success = !result.regions.empty() &&
                      !out_centerline.empty() &&
