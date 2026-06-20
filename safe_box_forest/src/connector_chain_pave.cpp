@@ -181,7 +181,6 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
     auto commit_box = [&](FindFreeBoxResult& result,
                           const Eigen::VectorXd& seed,
                           int parent_id,
-                          bool /*require_adjacency*/,
                           bool allow_duplicate_node = false) -> int {
         BoxNode* parent_box = box_by_id(parent_id);
         if (parent_box == nullptr) {
@@ -343,7 +342,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         }
         auto consume_result = [&](FindFreeBoxResult& result) {
             saw_certifiable = true;
-            const int committed = commit_box(result, to_pt, from_id, true);
+            const int committed = commit_box(result, to_pt, from_id);
             if (committed >= 0) {
                 to_id = committed;
                 if (added > added_before) {

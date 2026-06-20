@@ -82,8 +82,9 @@ struct ChainPaveConfig {
 	// Maximum fresh FFB calls in fast gap-fill. <0 means unlimited (subject to
 	// max_chain/time); 0 means reuse-only coverage.
 	int gap_fill_max_ffb_calls = 32;
-	// When true, the RRT shortcut polyline is densified and chain-paved with
-	// graph-adjacent boxes instead of being used as a loose witness only.
+	// Compatibility flag for connector bridge handling. Chain paving always
+	// commits only graph-adjacent boxes; this flag only requests shortcutting and
+	// densification of the bridge polyline before paving.
 	bool require_connected_chain = false;
 	FindFreeBoxOptions find_free_box;
 	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;
