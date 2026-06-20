@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/find_free_box.h>
 #include <SBF/runtime.h>
 
 namespace rbf {
@@ -38,5 +39,9 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
     const RBFPlanningConfig& config,
     int query_index,
     double audit_step);
+
+FindFreeBoxOptions query_bridge_direct_ffb_options(
+    const RBFPlanningConfig& config,
+    int max_depth);
 
 }  // namespace rbf

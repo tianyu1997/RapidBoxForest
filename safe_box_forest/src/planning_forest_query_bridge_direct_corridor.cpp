@@ -377,16 +377,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                              point,
                                              config_.query.adjacency_tolerance) >= 0;
     };
-    FindFreeBoxOptions direct_options = config_.connector.pave.find_free_box;
-    direct_options.max_depth = query_bridge_ffb_depth;
-    if (config_.query_bridge_ffb_start_depth >= 0) {
-        direct_options.start_depth = config_.query_bridge_ffb_start_depth;
-        direct_options.skip_to_depth = config_.query_bridge_ffb_start_depth;
-    }
-    direct_options.reject_seed_collision = false;
-    direct_options.skip_existing_cover_check = true;
-    direct_options.materialize_result_node = false;
-    direct_options.record_diagnostics = false;
+    const FindFreeBoxOptions direct_options =
+        query_bridge_direct_ffb_options(config_, query_bridge_ffb_depth);
     const std::vector<Interval> direct_planning_domain =
         oracle_ ? oracle_->planning_intervals() : std::vector<Interval>{};
     int direct_calls = 0;

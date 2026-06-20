@@ -57,4 +57,20 @@ QueryBridgeDirectCorridorRuntimeOptions query_bridge_direct_corridor_runtime_opt
     return options;
 }
 
+FindFreeBoxOptions query_bridge_direct_ffb_options(
+    const RBFPlanningConfig& config,
+    int max_depth) {
+    FindFreeBoxOptions options = config.connector.pave.find_free_box;
+    options.max_depth = max_depth;
+    if (config.query_bridge_ffb_start_depth >= 0) {
+        options.start_depth = config.query_bridge_ffb_start_depth;
+        options.skip_to_depth = config.query_bridge_ffb_start_depth;
+    }
+    options.reject_seed_collision = false;
+    options.skip_existing_cover_check = true;
+    options.materialize_result_node = false;
+    options.record_diagnostics = false;
+    return options;
+}
+
 }  // namespace rbf
