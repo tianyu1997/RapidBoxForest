@@ -3,6 +3,7 @@
 #include "connector_internal.h"
 
 #include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
 
 #include <algorithm>
 #include <cmath>

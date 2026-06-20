@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/find_free_box.h>
 #include <SBF/sbf.h>
 
 #include "binding_utils.h"

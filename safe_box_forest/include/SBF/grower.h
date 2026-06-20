@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/find_free_box.h>
 #include <SBF/grower_types.h>
 #include <SBF/runtime.h>
 

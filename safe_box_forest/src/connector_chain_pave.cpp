@@ -1,5 +1,7 @@
 #include "connector_chain_pave_internal.h"
 
+#include <SBF/find_free_box.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>

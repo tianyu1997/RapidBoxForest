@@ -1,7 +1,7 @@
 #pragma once
 
 #include <SBF/box_graph.h>
-#include <SBF/find_free_box.h>
+#include <SBF/find_free_box_types.h>
 
 #include <Eigen/Core>
 

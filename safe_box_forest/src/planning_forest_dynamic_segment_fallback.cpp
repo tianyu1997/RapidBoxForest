@@ -3,6 +3,7 @@
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/find_free_box.h>
 
 #include <algorithm>
 #include <chrono>
