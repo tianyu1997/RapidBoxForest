@@ -83,6 +83,54 @@ std::unordered_map<int, const BoxNode*> make_box_map(const std::vector<BoxNode>&
     return map;
 }
 
+void record_chain_pave_boundary_ffb_failure(const FindFreeBoxResult& result,
+                                            const Eigen::VectorXd& seed,
+                                            BoxOracle& oracle,
+                                            const ChainPaveConfig& config,
+                                            StageContext& context) {
+    context.diagnostics().add_counter(
+        "connector.chain_pave_boundary_fail_code." + std::to_string(result.fail_code));
+    if (result.seed_collision || result.fail_code == 1) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_seed_collision");
+    }
+    if (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap ||
+        result.fail_code == 2) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_depth_cap");
+    }
+    if (result.hit_unknown_depth_cap) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_unknown_depth_cap");
+    }
+    if (result.hit_reserved_depth_cap) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_reserved_depth_cap");
+    }
+    if (result.fail_code == 3) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_occupied");
+    }
+    if (result.deadline_reached || result.fail_code == 4) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_deadline");
+    }
+    if (result.fail_code == 5) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_out_of_domain");
+    }
+    if (result.fail_code == 6) {
+        context.diagnostics().add_counter("connector.chain_pave_boundary_fail_split");
+    }
+    if (config.debug_boundary_failures != nullptr &&
+        (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap)) {
+        DebugBoundaryFfbFailure failure;
+        failure.seed.assign(seed.data(), seed.data() + seed.size());
+        failure.intervals = result.intervals;
+        failure.validation_detail = result.validation_detail;
+        failure.node = result.node;
+        failure.depth = result.node >= 0 ? oracle.depth(result.node) : -1;
+        failure.changed_dim = result.changed_dim;
+        failure.fail_code = result.fail_code;
+        failure.hit_unknown_depth_cap = result.hit_unknown_depth_cap;
+        failure.hit_reserved_depth_cap = result.hit_reserved_depth_cap;
+        config.debug_boundary_failures->push_back(std::move(failure));
+    }
+}
+
 }  // namespace
 
 int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
@@ -379,54 +427,11 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
             }
             return false;
         };
-        auto record_boundary_ffb_failure = [&](const FindFreeBoxResult& result) {
-            context.diagnostics().add_counter(
-                "connector.chain_pave_boundary_fail_code." + std::to_string(result.fail_code));
-            if (result.seed_collision || result.fail_code == 1) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_seed_collision");
-            }
-            if (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap ||
-                result.fail_code == 2) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_depth_cap");
-            }
-            if (result.hit_unknown_depth_cap) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_unknown_depth_cap");
-            }
-            if (result.hit_reserved_depth_cap) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_reserved_depth_cap");
-            }
-            if (result.fail_code == 3) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_occupied");
-            }
-            if (result.deadline_reached || result.fail_code == 4) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_deadline");
-            }
-            if (result.fail_code == 5) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_out_of_domain");
-            }
-            if (result.fail_code == 6) {
-                context.diagnostics().add_counter("connector.chain_pave_boundary_fail_split");
-            }
-            if (config.debug_boundary_failures != nullptr &&
-                (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap)) {
-                DebugBoundaryFfbFailure failure;
-                failure.seed.assign(to_pt.data(), to_pt.data() + to_pt.size());
-                failure.intervals = result.intervals;
-                failure.validation_detail = result.validation_detail;
-                failure.node = result.node;
-                failure.depth = result.node >= 0 ? oracle.depth(result.node) : -1;
-                failure.changed_dim = result.changed_dim;
-                failure.fail_code = result.fail_code;
-                failure.hit_unknown_depth_cap = result.hit_unknown_depth_cap;
-                failure.hit_reserved_depth_cap = result.hit_reserved_depth_cap;
-                config.debug_boundary_failures->push_back(std::move(failure));
-            }
-        };
         if (existing_cover < 0) {
             context.diagnostics().add_counter("connector.chain_pave_boundary_ffb_calls");
             auto result = find_at_depth(to_pt, context, config.find_free_box.max_depth);
             if (result.seed_collision) {
-                record_boundary_ffb_failure(result);
+                record_chain_pave_boundary_ffb_failure(result, to_pt, oracle, config, context);
                 context.diagnostics().add_counter("connector.chain_pave_boundary_reject_not_free");
                 rejection_counted = true;
             } else if (result.found ||
@@ -436,7 +441,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                                                 config.adjacency_tolerance))) {
                 consume_result(result);
             } else {
-                record_boundary_ffb_failure(result);
+                record_chain_pave_boundary_ffb_failure(result, to_pt, oracle, config, context);
             }
         }
         if (bridge_to_existing_cover && budget <= 0 && config.fill_gaps) {
