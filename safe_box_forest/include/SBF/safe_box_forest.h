@@ -216,18 +216,18 @@ private:
 		int bridge_edge_query_index,
 		const char* reason,
 		bool& attempted);
-		int try_add_query_box_corridor_edge(int source_box_id,
-											int target_box_id,
-											const std::vector<Eigen::VectorXd>& waypoint_path,
-											double segment_resolution,
-											int query_index);
-		int add_verified_query_box_corridor_edge(int source_box_id,
-												 int target_box_id,
-												 const std::vector<Eigen::VectorXd>& waypoint_path,
-												 double segment_resolution,
-												 int query_index);
-		int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
-														int target_box_id,
+	int try_add_query_box_corridor_edge(int source_box_id,
+										int target_box_id,
+										const std::vector<Eigen::VectorXd>& waypoint_path,
+										double segment_resolution,
+										int query_index);
+	int add_verified_query_box_corridor_edge(int source_box_id,
+											 int target_box_id,
+											 const std::vector<Eigen::VectorXd>& waypoint_path,
+											 double segment_resolution,
+											 int query_index);
+	int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
+													int target_box_id,
 													const std::vector<Eigen::VectorXd>& waypoint_path,
 													const RRTConnectConfig& bridge_rrt,
 													const CollisionChecker& checker,
@@ -269,9 +269,9 @@ private:
 		int shortcut_query_index,
 		int edge_query_index,
 		int batch_task_index = -1);
-		int try_add_query_residual_segment_edge(int source_box_id,
-												int target_box_id,
-												const std::vector<Eigen::VectorXd>& waypoint_path,
+	int try_add_query_residual_segment_edge(int source_box_id,
+											int target_box_id,
+											const std::vector<Eigen::VectorXd>& waypoint_path,
 											const RRTConnectConfig& bridge_rrt,
 											const CollisionChecker& checker,
 											StageContext& context,
@@ -377,12 +377,12 @@ private:
 		int& added_for_task,
 		StageContext& context,
 		bool scene_reusable_edges);
-		void finish_query_bridge_ready_waypoint_task(
-			QueryBridgeSearchTask& task,
-			int& added_for_task,
-			bool forced_task,
-			double best_length,
-			StageContext& context,
+	void finish_query_bridge_ready_waypoint_task(
+		QueryBridgeSearchTask& task,
+		int& added_for_task,
+		bool forced_task,
+		double best_length,
+		StageContext& context,
 		bool scene_reusable_edges,
 		const std::unordered_set<int>& forced_query_indices,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
