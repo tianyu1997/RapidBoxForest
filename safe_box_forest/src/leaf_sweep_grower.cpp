@@ -492,9 +492,9 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 				index = pending.size();
 				break;
 			}
-		if (!valid_oracle_node(item.node)) {
-			add_counter(result, context, "leaf_sweep.invalid_pending_nodes");
-			continue;
+			if (!valid_oracle_node(item.node)) {
+				add_counter(result, context, "leaf_sweep.invalid_pending_nodes");
+				continue;
 			}
 			const auto intervals = item.intervals.empty() ? oracle_.node_intervals(item.node) : item.intervals;
 			if (!intervals_overlap_domain(intervals, planning_domain, 0.0)) {
@@ -513,18 +513,18 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 			BoxValidation validation = BoxValidation::Unknown;
 			try {
 				validation = oracle_.validate_node(item.node, intervals, item.changed_dim);
-		} catch (...) {
-			add_counter(result, context, "leaf_sweep.validation_exceptions");
-			validation = BoxValidation::Unknown;
-		}
-		const auto detail = oracle_.last_validation_detail();
-		add_counter(result, context, "leaf_sweep.node_validations");
+			} catch (...) {
+				add_counter(result, context, "leaf_sweep.validation_exceptions");
+				validation = BoxValidation::Unknown;
+			}
+			const auto detail = oracle_.last_validation_detail();
+			add_counter(result, context, "leaf_sweep.node_validations");
 			if (validation == BoxValidation::Free) {
 				append_free_box(item.node, commit_intervals, detail);
 				continue;
 			}
 
-		const int depth = config_.use_virtual_topology ? virtual_depth(item.node) : oracle_.depth(item.node);
+			const int depth = config_.use_virtual_topology ? virtual_depth(item.node) : oracle_.depth(item.node);
 			if (should_prune_by_overlap(config_, depth, detail)) {
 				add_counter(result, context, "leaf_sweep.collision_overlap_pruned");
 				append_collision_box(item.node, commit_intervals);
@@ -535,13 +535,13 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 				continue;
 			}
 
-		if (config_.use_virtual_topology) {
-			PendingNode left;
-			PendingNode right;
-			if (!virtual_split_node(item, depth, left, right)) {
+			if (config_.use_virtual_topology) {
+				PendingNode left;
+				PendingNode right;
+				if (!virtual_split_node(item, depth, left, right)) {
 					add_counter(result, context, "leaf_sweep.split_failures");
 					append_collision_box(item.node, commit_intervals);
-				continue;
+					continue;
 				}
 				add_counter(result, context, "leaf_sweep.splits");
 				if (intervals_overlap_domain(left.intervals, planning_domain, 0.0)) {
@@ -557,29 +557,29 @@ void LeafSweepGrower::sweep_group(GroupWork& group,
 				continue;
 			}
 
-		if (oracle_.is_leaf(item.node)) {
-			SplitNodeResult split;
-			try {
-				const auto split_start = Clock::now();
-				split = oracle_.split_node(item.node, intervals, item.changed_dim, split_options_);
-				record_timing(result,
-							  context,
-							  "profile.oracle.split_node",
-							  std::chrono::duration<double, std::milli>(Clock::now() - split_start).count());
-			} catch (...) {
-				add_counter(result, context, "leaf_sweep.split_exceptions");
-			}
+			if (oracle_.is_leaf(item.node)) {
+				SplitNodeResult split;
+				try {
+					const auto split_start = Clock::now();
+					split = oracle_.split_node(item.node, intervals, item.changed_dim, split_options_);
+					record_timing(result,
+								  context,
+								  "profile.oracle.split_node",
+								  std::chrono::duration<double, std::milli>(Clock::now() - split_start).count());
+				} catch (...) {
+					add_counter(result, context, "leaf_sweep.split_exceptions");
+				}
 				if (!split.split) {
 					add_counter(result, context, "leaf_sweep.split_failures");
 					append_collision_box(item.node, commit_intervals);
 					continue;
 				}
-			add_counter(result, context, "leaf_sweep.splits");
-		}
-		const int split_dim = oracle_.split_dim(item.node);
-		const OracleNodeId left = oracle_.left_child(item.node);
-		const OracleNodeId right = oracle_.right_child(item.node);
-		if (valid_oracle_node(left)) {
+				add_counter(result, context, "leaf_sweep.splits");
+			}
+			const int split_dim = oracle_.split_dim(item.node);
+			const OracleNodeId left = oracle_.left_child(item.node);
+			const OracleNodeId right = oracle_.right_child(item.node);
+			if (valid_oracle_node(left)) {
 				PendingNode child;
 				child.node = left;
 				child.changed_dim = split_dim;
