@@ -1,6 +1,11 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/box_graph.h>
+#include <SBF/connector_types.h>
+#include <SBF/planning_config.h>
+#include <SBF/query.h>
+#include <SBF/query_bridge_config.h>
+#include <LECTDatabase/sbf/scene.h>
 
 #include "planning_forest_audit.h"
 

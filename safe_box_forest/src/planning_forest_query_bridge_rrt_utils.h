@@ -1,6 +1,9 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/connector_types.h>
+#include <SBF/planning_config.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/scene.h>
 
 #include <Eigen/Core>
 

@@ -1,7 +1,9 @@
 #pragma once
 
-#include <SBF/connector.h>
-#include <SBF/safe_box_forest.h>
+#include <SBF/connector_types.h>
+#include <SBF/query.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/scene.h>
 
 #include "planning_forest_query_bridge_corridor_options.h"
 

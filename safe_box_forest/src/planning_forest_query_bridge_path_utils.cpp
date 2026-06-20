@@ -4,6 +4,8 @@
 #include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_query_utils.h"
 
+#include <SBF/connector.h>
+
 #include <algorithm>
 #include <chrono>
 #include <string>

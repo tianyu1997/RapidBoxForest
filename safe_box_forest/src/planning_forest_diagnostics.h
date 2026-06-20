@@ -1,6 +1,10 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/api.h>
+#include <SBF/find_free_box_types.h>
+#include <SBF/query_bridge_config.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <string>
 #include <unordered_map>

@@ -1,6 +1,11 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/box_graph.h>
+#include <SBF/connector_types.h>
+#include <SBF/query.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/scene.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
 

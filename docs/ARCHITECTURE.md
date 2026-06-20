@@ -582,6 +582,10 @@ headers that call `BoxOracle` or `DatabaseBoxOracle` methods include full
 `SBF/oracle.h`. If a new option or result is specific to adaptive coverage, query
 bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the matching typed
 header rather than extending the facade header directly.
+Internal helper headers follow the same ownership rule: include the narrow type
+headers they declare against and avoid `SBF/safe_box_forest.h` as a convenience
+aggregate. When a helper implementation calls a concrete algorithm entry point,
+the corresponding `.cpp` file should include the full algorithm header locally.
 
 The former sidecar prototype tree has been retired. Its useful mechanisms are
 now production code in `lect_database` and `safe_box_forest`; new experiments

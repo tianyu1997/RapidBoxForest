@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/planning_config.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/scene.h>
 
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
