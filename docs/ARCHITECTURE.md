@@ -95,7 +95,9 @@ src/lect_database/                 core persistence implementation
   database_evidence_index.cpp      in-memory open-addressed evidence index
                                    reserve/find/upsert operations
   database_evidence_store.cpp      append-only evidence file, mmap read path,
-                                   sidecar load/save, and resident cache trim
+                                   scan/load/save, append, and resident cache trim
+  database_evidence_sidecar.cpp    evidence index sidecar load/save and mapped
+                                   evidence prefetch range scheduling
   database_file_layout.cpp         manifest, node-page, journal, and evidence
                                    file-path helpers plus node-row text codec
   database_journal.cpp             write-ahead journal replay, append stream,

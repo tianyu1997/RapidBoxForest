@@ -60,6 +60,7 @@ add_library(lect_database_core STATIC
     src/lect_database/database_evidence_api.cpp
     src/lect_database/database_evidence_codec.cpp
     src/lect_database/database_evidence_store.cpp
+    src/lect_database/database_evidence_sidecar.cpp
     src/lect_database/database_evidence_index.cpp
     src/lect_database/database_file_layout.cpp
     src/lect_database/database_journal.cpp
