@@ -6,6 +6,7 @@
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_bridge_endpoint_index.h"
+#include "planning_forest_query_bridge_endpoint_runtime.h"
 #include "planning_forest_query_bridge_endpoint_targets.h"
 #include "planning_forest_query_utils.h"
 
@@ -120,6 +121,16 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     const auto& targets = target_set.targets;
     const auto& target_box_ids = target_set.target_box_ids;
     const int target_limit = target_set.target_limit;
+    EndpointMainRuntime endpoint_runtime{
+        boxes_,
+        adjacency_,
+        adaptive_partition_.get(),
+        indexes,
+        main_ids,
+        boxes_before_endpoint_main,
+        config_.query.adjacency_tolerance,
+        graphless_endpoint_main,
+        use_partition_endpoint_index};
 
     int next_id = next_box_id();
     auto finish_endpoint_main = [&](int value) {
@@ -148,133 +159,6 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     const int final_ffb_depth = std::min(std::max(1, config_.database.max_tree_depth),
                                          std::max(1, requested_final_depth));
 
-    auto box_by_id = [&](int box_id) -> BoxNode* {
-        auto it = indexes.box_index_by_id.find(box_id);
-        if (it == indexes.box_index_by_id.end() || it->second >= boxes_.size()) {
-            return nullptr;
-        }
-        return &boxes_[it->second];
-    };
-    auto contains_point = [&](int box_id, const Eigen::VectorXd& q) {
-        if (use_partition_endpoint_index &&
-            adaptive_partition_->box_contains_point(box_id,
-                                                    q,
-                                                    config_.query.adjacency_tolerance)) {
-            return true;
-        }
-        const BoxNode* box = box_by_id(box_id);
-        return box != nullptr && box->contains(q, config_.query.adjacency_tolerance);
-    };
-    auto append_edge_if_connected = [&](int lhs, int rhs) {
-        if (lhs == rhs) {
-            return true;
-        }
-        if (use_partition_endpoint_index &&
-            adaptive_partition_->contains_box_id(lhs) &&
-            adaptive_partition_->contains_box_id(rhs)) {
-            local_adj_checks += 1;
-            return adaptive_partition_->boxes_are_neighbors(lhs, rhs);
-        }
-        BoxNode* lhs_box = box_by_id(lhs);
-        BoxNode* rhs_box = box_by_id(rhs);
-        if (lhs_box == nullptr || rhs_box == nullptr) {
-            return false;
-        }
-        local_adj_checks += 1;
-        if (!boxes_connected(*lhs_box, *rhs_box, config_.query.adjacency_tolerance)) {
-            return false;
-        }
-        if (!graphless_endpoint_main) {
-            append_local_edge(adjacency_, lhs, rhs);
-        }
-        return true;
-    };
-    auto main_owner = [&](const Eigen::VectorXd& q) {
-        if (use_partition_endpoint_index) {
-            const auto ids = adaptive_partition_->covering_box_ids(
-                q,
-                config_.query.adjacency_tolerance);
-            for (int box_id : ids) {
-                if (main_ids.find(box_id) != main_ids.end()) {
-                    return box_id;
-                }
-            }
-            return -1;
-        }
-        auto candidates = indexes.main_box_index.point_candidates(q);
-        if (candidates.empty()) {
-            candidates.reserve(indexes.main_boxes.size());
-            for (int index = 0; index < static_cast<int>(indexes.main_boxes.size()); ++index) {
-                candidates.push_back(index);
-            }
-        }
-        for (int index : candidates) {
-            if (index < 0 || index >= static_cast<int>(indexes.main_boxes.size())) {
-                continue;
-            }
-            const BoxNode& box = indexes.main_boxes[static_cast<std::size_t>(index)];
-            if (box.contains(q, config_.query.adjacency_tolerance)) {
-                return indexes.main_box_ids[static_cast<std::size_t>(index)];
-            }
-        }
-        return -1;
-    };
-    auto first_existing_cover = [&](const Eigen::VectorXd& q) {
-        if (use_partition_endpoint_index) {
-            const auto ids = adaptive_partition_->covering_box_ids(
-                q,
-                config_.query.adjacency_tolerance);
-            if (!ids.empty()) {
-                return ids.front();
-            }
-            for (std::size_t index = boxes_before_endpoint_main; index < boxes_.size(); ++index) {
-                if (intervals_contain_point_local(boxes_[index].joint_intervals,
-                                                  q,
-                                                  config_.query.adjacency_tolerance)) {
-                    return boxes_[index].id;
-                }
-            }
-            return -1;
-        }
-        const int index = indexes.all_box_index.covering_box(
-            boxes_,
-            q,
-            config_.query.adjacency_tolerance);
-        if (index >= 0 && index < static_cast<int>(boxes_.size())) {
-            return boxes_[static_cast<std::size_t>(index)].id;
-        }
-        return -1;
-    };
-    auto make_seed_from_face = [&](int box_id,
-                                   const Eigen::VectorXd& from,
-                                   const Eigen::VectorXd& to) {
-        std::vector<Interval> intervals;
-        if (!(use_partition_endpoint_index &&
-              adaptive_partition_->intervals_for_box(box_id, intervals))) {
-            const BoxNode* box = find_box_by_id(boxes_, box_id);
-            if (box == nullptr) {
-                return from;
-            }
-            intervals = box->joint_intervals;
-        }
-        return boundary_seed_from_intervals(intervals,
-                                            from,
-                                            to,
-                                            oracle_->planning_intervals(),
-                                            corridor_config.face_epsilon);
-    };
-    auto furthest_sample = [&](int box_id,
-                               const std::vector<Eigen::VectorXd>& samples,
-                               int start_index,
-                               int target_index) {
-        int best = std::max(0, start_index);
-        for (int index = best; index <= target_index; ++index) {
-            if (contains_point(box_id, samples[static_cast<std::size_t>(index)])) {
-                best = index;
-            }
-        }
-        return best;
-    };
     auto attempt_seed = [&](const Eigen::VectorXd& seed,
                             int parent_box_id,
                             const std::vector<int>& local_candidates,
@@ -282,9 +166,11 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                             int depth) {
         int reached_box_id = -1;
         bool reached_main = false;
-        const int existing_cover = first_existing_cover(seed);
+        const int existing_cover = endpoint_runtime.first_existing_cover(seed);
         if (existing_cover >= 0 &&
-            append_edge_if_connected(parent_box_id, existing_cover)) {
+            endpoint_runtime.append_edge_if_connected(parent_box_id,
+                                                      existing_cover,
+                                                      local_adj_checks)) {
             reached_box_id = existing_cover;
             reached_main = main_ids.find(existing_cover) != main_ids.end();
             return std::pair<int, bool>{reached_box_id, reached_main};
@@ -324,22 +210,10 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         candidate.safety_status = result.validation_detail.safety_status;
         candidate.strict_audit_required = result.validation_detail.strict_audit_required;
         candidate.compute_volume();
-        BoxNode* parent_box = box_by_id(parent_box_id);
-        bool parent_adjacent = false;
-        if (use_partition_endpoint_index &&
-            adaptive_partition_->contains_box_id(parent_box_id)) {
-            local_adj_checks += 1;
-            parent_adjacent = adaptive_partition_->box_adjacent_to_box(
-                parent_box_id,
-                candidate,
-                config_.query.adjacency_tolerance);
-        } else if (parent_box != nullptr) {
-            local_adj_checks += 1;
-            parent_adjacent = boxes_connected(*parent_box,
-                                              candidate,
-                                              config_.query.adjacency_tolerance);
-        }
-        if (!parent_adjacent) {
+        BoxNode* parent_box = endpoint_runtime.box_by_id(parent_box_id);
+        if (!endpoint_runtime.parent_adjacent_to_candidate(parent_box_id,
+                                                           candidate,
+                                                           local_adj_checks)) {
             if (is_max_depth_attempt) {
                 max_depth_ffb_failed = true;
             }
@@ -356,15 +230,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         boxes_.push_back(candidate);
         raw_boxes_.push_back(candidate);
         const std::size_t new_index = boxes_.size() - 1;
-        indexes.box_index_by_id[new_id] = new_index;
-        if (!use_partition_endpoint_index) {
-            indexes.all_box_index.add_box(boxes_.back(),
-                                          static_cast<int>(new_index),
-                                          config_.query.adjacency_tolerance);
-        } else {
-            adaptive_partition_->append_box(boxes_.back(),
-                                            config_.query.adjacency_tolerance);
-        }
+        endpoint_runtime.add_box_to_indexes(boxes_.back(), new_index);
         if (!graphless_endpoint_main) {
             adjacency_[new_id] = {};
             append_local_edge(adjacency_, parent_box_id, new_id);
@@ -374,10 +240,14 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         add_diag("boxes_added");
 
         for (int candidate_id : local_candidates) {
-            append_edge_if_connected(new_id, candidate_id);
+            endpoint_runtime.append_edge_if_connected(new_id,
+                                                      candidate_id,
+                                                      local_adj_checks);
         }
         for (int target_id : target_box_ids) {
-            if (append_edge_if_connected(new_id, target_id)) {
+            if (endpoint_runtime.append_edge_if_connected(new_id,
+                                                          target_id,
+                                                          local_adj_checks)) {
                 reached_main = true;
             }
         }
@@ -412,7 +282,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                                       target,
                                       corridor_config.coarse_step,
                                       corridor_config.fine_step,
-                                      main_owner);
+                                      [&](const Eigen::VectorXd& q) {
+                                          return endpoint_runtime.main_owner(q);
+                                      });
         const std::vector<Eigen::VectorXd>& samples = sample_plan.samples;
         if (samples.size() < 2 || sample_plan.target_sample_index < 1) {
             continue;
@@ -421,36 +293,30 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         const int target_owner = sample_plan.target_owner;
         std::vector<int> chain_ids{source_box_id};
         int current_box_id = source_box_id;
-        int current_sample_index = furthest_sample(current_box_id, samples, 0, target_sample_index);
+        int current_sample_index =
+            endpoint_runtime.furthest_sample(current_box_id, samples, 0, target_sample_index);
         int stall_count = 0;
         while (current_sample_index < target_sample_index &&
                ffb_calls < std::max(1, corridor_config.max_ffb_calls) &&
                boxes_added < std::max(1, corridor_config.max_boxes)) {
-            if (append_edge_if_connected(current_box_id, target_owner)) {
+            if (endpoint_runtime.append_edge_if_connected(current_box_id,
+                                                          target_owner,
+                                                          local_adj_checks)) {
                 return finish_main_contact(std::max(1, added_total));
             }
             const Eigen::VectorXd current_sample =
                 samples[static_cast<std::size_t>(current_sample_index)];
             Eigen::VectorXd from = current_sample;
-            if (!contains_point(current_box_id, current_sample)) {
-                if (use_partition_endpoint_index) {
-                    if (!adaptive_partition_->closest_point_for_box(current_box_id,
-                                                                    current_sample,
-                                                                    from)) {
-                        break;
-                    }
-                } else {
-                    const BoxNode* current_box = find_box_by_id(boxes_, current_box_id);
-                    if (current_box == nullptr) {
-                        break;
-                    }
-                    from = closest_point_in_box(*current_box, current_sample);
-                }
+            if (!endpoint_runtime.contains_point(current_box_id, current_sample) &&
+                !endpoint_runtime.closest_point_for_box(current_box_id, current_sample, from)) {
+                break;
             }
-            const Eigen::VectorXd seed = make_seed_from_face(
+            const Eigen::VectorXd seed = endpoint_runtime.make_seed_from_face(
                 current_box_id,
                 from,
-                samples[static_cast<std::size_t>(target_sample_index)]);
+                samples[static_cast<std::size_t>(target_sample_index)],
+                oracle_->planning_intervals(),
+                corridor_config.face_epsilon);
             std::vector<int> local_candidates = chain_ids;
             local_candidates.push_back(target_owner);
             const auto [new_box_id, reached_main] = attempt_seed(
@@ -464,7 +330,10 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             }
             if (new_box_id >= 0) {
                 const int next_sample_index =
-                    furthest_sample(new_box_id, samples, current_sample_index, target_sample_index);
+                    endpoint_runtime.furthest_sample(new_box_id,
+                                                     samples,
+                                                     current_sample_index,
+                                                     target_sample_index);
                 current_box_id = new_box_id;
                 chain_ids.push_back(new_box_id);
                 if (next_sample_index > current_sample_index) {
@@ -502,7 +371,10 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                     }
                     if (lat_box_id >= 0) {
                         const int next_sample_index =
-                            furthest_sample(lat_box_id, samples, current_sample_index, target_sample_index);
+                            endpoint_runtime.furthest_sample(lat_box_id,
+                                                             samples,
+                                                             current_sample_index,
+                                                             target_sample_index);
                         current_box_id = lat_box_id;
                         chain_ids.push_back(lat_box_id);
                         if (next_sample_index > current_sample_index) {
@@ -522,7 +394,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             }
             break;
         }
-        if (append_edge_if_connected(current_box_id, target_owner) ||
+        if (endpoint_runtime.append_edge_if_connected(current_box_id,
+                                                      target_owner,
+                                                      local_adj_checks) ||
             box_only_path_connected_partition_first(current_box_id, target_owner)) {
             return finish_main_contact(std::max(1, added_total));
         }

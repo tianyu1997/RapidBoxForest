@@ -493,6 +493,9 @@ src/planning_forest_query_bridge_endpoint_direct.cpp
 src/planning_forest_query_bridge_endpoint.cpp
                                    endpoint anchoring and endpoint-to-main
                                    box-corridor repair
+src/planning_forest_query_bridge_endpoint_runtime.cpp
+                                   endpoint-to-main runtime box lookup,
+                                   partition/graph adjacency, and seed helpers
 src/planning_forest_query_bridge_pave.cpp
                                    query bridge chain-pave execution and
                                    partition append helpers
