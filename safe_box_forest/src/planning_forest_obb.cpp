@@ -136,6 +136,25 @@ bool obb_try_candidate_with_radii(const Robot& robot,
     return true;
 }
 
+bool obb_validation_budget_exhausted(const ObbPortalValidationStats& stats,
+                                     int max_validations) {
+    return max_validations > 0 && stats.validations >= max_validations;
+}
+
+Eigen::VectorXd obb_grown_radii(const Eigen::VectorXd& base,
+                                int axis,
+                                double growth_factor) {
+    Eigen::VectorXd radii = base;
+    if (axis < 0) {
+        for (int col = 1; col < radii.size(); ++col) {
+            radii[col] *= growth_factor;
+        }
+    } else if (axis < radii.size()) {
+        radii[axis] *= growth_factor;
+    }
+    return radii;
+}
+
 ObbPortalCandidate obb_grow_candidate(const Robot& robot,
                                       const Scene& scene,
                                       const std::vector<Interval>& domain,
@@ -151,27 +170,12 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
     const int grow_cap = std::max(0, grow_iterations);
     const int binary_cap = std::max(0, binary_iterations);
     constexpr double kGrow = 1.7;
-    auto budget_exhausted = [&]() {
-        return max_validations > 0 && stats.validations >= max_validations;
-    };
-
-    auto grow_radii = [&](const Eigen::VectorXd& base, int axis) {
-        Eigen::VectorXd radii = base;
-        if (axis < 0) {
-            for (int col = 1; col < dims; ++col) {
-                radii[col] *= kGrow;
-            }
-        } else {
-            radii[axis] *= kGrow;
-        }
-        return radii;
-    };
 
     auto refine_between = [&](const Eigen::VectorXd& lo, const Eigen::VectorXd& hi) {
         Eigen::VectorXd good_r = lo;
         Eigen::VectorXd bad_r = hi;
         for (int iter = 0; iter < binary_cap; ++iter) {
-            if (budget_exhausted()) {
+            if (obb_validation_budget_exhausted(stats, max_validations)) {
                 break;
             }
             Eigen::VectorXd mid = 0.5 * (good_r + bad_r);
@@ -196,10 +200,10 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
 
     Eigen::VectorXd current = good.radii_y;
     for (int iter = 0; iter < grow_cap; ++iter) {
-        if (budget_exhausted()) {
+        if (obb_validation_budget_exhausted(stats, max_validations)) {
             break;
         }
-        const Eigen::VectorXd next = grow_radii(current, -1);
+        const Eigen::VectorXd next = obb_grown_radii(current, -1, kGrow);
         ObbPortalCandidate next_candidate;
         ++stats.grow_attempts;
         if (obb_try_candidate_with_radii(robot,
@@ -223,10 +227,10 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
     for (int axis = 1; axis < dims; ++axis) {
         current = good.radii_y;
         for (int iter = 0; iter < grow_cap; ++iter) {
-            if (budget_exhausted()) {
+            if (obb_validation_budget_exhausted(stats, max_validations)) {
                 break;
             }
-            const Eigen::VectorXd next = grow_radii(current, axis);
+            const Eigen::VectorXd next = obb_grown_radii(current, axis, kGrow);
             ObbPortalCandidate next_candidate;
             ++stats.grow_attempts;
             if (obb_try_candidate_with_radii(robot,
