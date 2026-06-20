@@ -442,6 +442,52 @@ bool obb_cover_segment_recursive(const Robot& robot,
     return left_ok && right_ok;
 }
 
+bool obb_apply_greedy_window_split_fallback(
+    const Robot& robot,
+    const Scene& scene,
+    const std::vector<Interval>& domain,
+    const std::vector<Eigen::VectorXd>& path,
+    std::size_t begin,
+    std::size_t last,
+    int segment_split_depth,
+    double lateral_radius,
+    double longitudinal_margin,
+    double safety_epsilon,
+    int grow_iterations,
+    int binary_iterations,
+    int max_validations,
+    ObbPathCoverResult& result,
+    std::vector<Eigen::VectorXd>& out_centerline,
+    ObbValidationOptions options) {
+    std::vector<Eigen::VectorXd> split_line;
+    const bool split_ok = obb_cover_segment_recursive(robot,
+                                                      scene,
+                                                      domain,
+                                                      path[begin],
+                                                      path[begin + 1U],
+                                                      std::max(0, segment_split_depth),
+                                                      lateral_radius,
+                                                      longitudinal_margin,
+                                                      safety_epsilon,
+                                                      grow_iterations,
+                                                      binary_iterations,
+                                                      max_validations,
+                                                      result,
+                                                      split_line,
+                                                      options);
+    for (const auto& waypoint : split_line) {
+        obb_append_centerline_waypoint(out_centerline, waypoint);
+    }
+    if (!split_ok) {
+        for (std::size_t index = begin + 1U; index <= last; ++index) {
+            obb_append_centerline_waypoint(out_centerline, path[index]);
+        }
+        result.success = false;
+        return false;
+    }
+    return true;
+}
+
 ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
     const Robot& robot,
     const Scene& scene,
@@ -506,30 +552,22 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                         result,
                                         options);
         if (window.good_end <= begin) {
-            std::vector<Eigen::VectorXd> split_line;
-            const bool split_ok = obb_cover_segment_recursive(robot,
-                                                              scene,
-                                                              domain,
-                                                              path[begin],
-                                                              path[begin + 1U],
-                                                              std::max(0, segment_split_depth),
-                                                              lateral_radius,
-                                                              longitudinal_margin,
-                                                              safety_epsilon,
-                                                              grow_iterations,
-                                                              binary_iterations,
-                                                              max_validations,
-                                                              result,
-                                                              split_line,
-                                                              options);
-            for (const auto& waypoint : split_line) {
-                obb_append_centerline_waypoint(out_centerline, waypoint);
-            }
-            if (!split_ok) {
-                for (std::size_t index = begin + 1U; index <= last; ++index) {
-                    obb_append_centerline_waypoint(out_centerline, path[index]);
-                }
-                result.success = false;
+            if (!obb_apply_greedy_window_split_fallback(robot,
+                                                        scene,
+                                                        domain,
+                                                        path,
+                                                        begin,
+                                                        last,
+                                                        segment_split_depth,
+                                                        lateral_radius,
+                                                        longitudinal_margin,
+                                                        safety_epsilon,
+                                                        grow_iterations,
+                                                        binary_iterations,
+                                                        max_validations,
+                                                        result,
+                                                        out_centerline,
+                                                        options)) {
                 return result;
             }
             begin += 1U;
