@@ -480,6 +480,53 @@ QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
     return stats;
 }
 
+QueryBridgeDirectCorridorAssimilationResult query_bridge_assimilate_direct_corridor_box(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    int box_index,
+    int transition_hint,
+    double tolerance,
+    QueryBridgeLocalDsu& dsu,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered,
+    const std::vector<int>& repair_indices,
+    const AdaptiveGridPartition* partition,
+    bool use_partition_neighbor_candidates,
+    const std::unordered_map<int, int>& box_id_to_index,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<bool(int, int)>& on_adjacent_pair) {
+    QueryBridgeDirectCorridorAssimilationResult result;
+    const auto& box = boxes[static_cast<std::size_t>(box_index)];
+    result.sample_assimilation =
+        query_bridge_assimilate_box_samples(box.joint_intervals,
+                                            samples,
+                                            box_index,
+                                            transition_hint,
+                                            tolerance,
+                                            dsu,
+                                            sample_layers,
+                                            covered);
+    result.candidate_set =
+        query_bridge_collect_adjacency_candidates(
+            sample_layers,
+            transition_hint,
+            result.sample_assimilation,
+            repair_indices,
+            use_partition_neighbor_candidates ? partition : nullptr,
+            use_partition_neighbor_candidates ? &box : nullptr,
+            tolerance,
+            box_id_to_index);
+    result.adjacency_stats =
+        query_bridge_connect_adjacency_candidates(
+            box_index,
+            static_cast<int>(boxes.size()),
+            result.candidate_set.candidates,
+            dsu,
+            boxes_adjacent,
+            on_adjacent_pair);
+    return result;
+}
+
 bool query_bridge_direct_corridor_boxes_adjacent(
     const std::vector<BoxNode>& boxes,
     const AdaptiveGridPartition* partition,

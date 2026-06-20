@@ -158,39 +158,20 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         if (!graphless_direct_corridor) {
             adjacency_[box_id];
         }
-        const auto& box_intervals = boxes_[static_cast<std::size_t>(box_index)].joint_intervals;
-        const QueryBridgeSampleAssimilationResult sample_assimilation =
-            query_bridge_assimilate_box_samples(
-                box_intervals,
+        const QueryBridgeDirectCorridorAssimilationResult assimilation =
+            query_bridge_assimilate_direct_corridor_box(
+                boxes_,
                 samples,
                 box_index,
                 transition_hint,
                 config_.query.adjacency_tolerance,
                 dsu,
                 sample_layers,
-                covered);
-        query_bridge_record_assimilation_result(context,
-                                                runtime_stats,
-                                                sample_assimilation);
-        const QueryBridgeAdjacencyCandidateSet candidate_set =
-            query_bridge_collect_adjacency_candidates(
-                sample_layers,
-                transition_hint,
-                sample_assimilation,
+                covered,
                 repair_indices,
-                use_partition_neighbor_candidates ? adaptive_partition_.get() : nullptr,
-                use_partition_neighbor_candidates
-                    ? &boxes_[static_cast<std::size_t>(box_index)]
-                    : nullptr,
-                config_.query.adjacency_tolerance,
-                box_id_to_index);
-        const std::vector<int>& candidates = candidate_set.candidates;
-        const QueryBridgeIncrementalAdjacencyStats adjacency_stats =
-            query_bridge_connect_adjacency_candidates(
-                box_index,
-                static_cast<int>(boxes_.size()),
-                candidates,
-                dsu,
+                adaptive_partition_.get(),
+                use_partition_neighbor_candidates,
+                box_id_to_index,
                 direct_boxes_adjacent,
                 [&](int, int candidate) {
                     if (graphless_direct_corridor) {
@@ -202,14 +183,17 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                       boxes_[static_cast<std::size_t>(candidate)].id);
                     return adjacency_[box_id].size() > before;
                 });
+        query_bridge_record_assimilation_result(context,
+                                                runtime_stats,
+                                                assimilation.sample_assimilation);
         query_bridge_record_direct_corridor_incremental_adjacency(
             context,
-            static_cast<int>(candidates.size()),
-            adjacency_stats.adjacency_edges,
-            candidate_set.partition_neighbor_raw_count,
+            static_cast<int>(assimilation.candidate_set.candidates.size()),
+            assimilation.adjacency_stats.adjacency_edges,
+            assimilation.candidate_set.partition_neighbor_raw_count,
             use_partition_neighbor_candidates,
             std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
-        return sample_assimilation.covered_sample_count;
+        return assimilation.sample_assimilation.covered_sample_count;
     };
     bool adopt_certified_subchain_attempted = false;
     auto commit_and_assimilate_box = [&](FindFreeBoxResult result,

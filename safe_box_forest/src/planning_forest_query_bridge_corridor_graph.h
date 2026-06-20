@@ -70,6 +70,12 @@ struct QueryBridgeIncrementalAdjacencyStats {
     int adjacency_edges = 0;
 };
 
+struct QueryBridgeDirectCorridorAssimilationResult {
+    QueryBridgeSampleAssimilationResult sample_assimilation;
+    QueryBridgeAdjacencyCandidateSet candidate_set;
+    QueryBridgeIncrementalAdjacencyStats adjacency_stats;
+};
+
 struct QueryBridgeDirectCorridorCommitState {
     std::unordered_map<OracleNodeId, int>* node_to_box_index = nullptr;
     std::vector<int>* corridor_new_box_indices = nullptr;
@@ -192,6 +198,22 @@ QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
     int box_count,
     const std::vector<int>& candidates,
     QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<bool(int, int)>& on_adjacent_pair);
+
+QueryBridgeDirectCorridorAssimilationResult query_bridge_assimilate_direct_corridor_box(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    int box_index,
+    int transition_hint,
+    double tolerance,
+    QueryBridgeLocalDsu& dsu,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered,
+    const std::vector<int>& repair_indices,
+    const AdaptiveGridPartition* partition,
+    bool use_partition_neighbor_candidates,
+    const std::unordered_map<int, int>& box_id_to_index,
     const std::function<bool(int, int)>& boxes_adjacent,
     const std::function<bool(int, int)>& on_adjacent_pair);
 
