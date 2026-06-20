@@ -261,6 +261,8 @@ src/leaf_sweep_grower_compose.cpp  final leaf-sweep free/collision set
                                    composition across obstacle groups
 src/leaf_sweep_grower_frontier.cpp start-frontier materialization for leaf
                                    sweep
+src/leaf_sweep_grower_group.cpp    per-obstacle-group sweep loop, checkpoint
+                                   advancement, validation, and split dispatch
 src/leaf_sweep_grower_virtual.cpp  heap-style virtual topology depth and split
                                    helpers for cache-light leaf sweep
 src/leaf_sweep_grower_internal.h   leaf-sweep internal diagnostics, interval,
