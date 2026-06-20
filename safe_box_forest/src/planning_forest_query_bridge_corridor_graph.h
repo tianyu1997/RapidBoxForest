@@ -2,6 +2,7 @@
 
 #include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
 
 #include <Eigen/Core>
 
@@ -91,6 +92,11 @@ QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
 
 std::unordered_map<int, int> query_bridge_build_box_id_index(
     const std::vector<BoxNode>& boxes);
+
+BoxNode query_bridge_box_from_ffb_result(
+    const FindFreeBoxResult& result,
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    int box_id);
 
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,

@@ -269,16 +269,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
             return -1;
         }
-        BoxNode box;
-        box.id = next_id++;
-        box.joint_intervals = result.intervals;
-        box.seed_config = seed;
-        box.tree_id = result.node;
-        box.parent_box_id = -1;
-        box.root_id = box.id;
-        box.safety_status = result.validation_detail.safety_status;
-        box.strict_audit_required = result.validation_detail.strict_audit_required;
-        box.compute_volume();
+        BoxNode box = query_bridge_box_from_ffb_result(result, seed, next_id++);
         if (box.tree_id != kInvalidOracleNodeId) {
             oracle_->reserve_node(box.tree_id, box.id);
         }

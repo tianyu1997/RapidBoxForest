@@ -151,6 +151,23 @@ std::unordered_map<int, int> query_bridge_build_box_id_index(
     return box_id_to_index;
 }
 
+BoxNode query_bridge_box_from_ffb_result(
+    const FindFreeBoxResult& result,
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    int box_id) {
+    BoxNode box;
+    box.id = box_id;
+    box.joint_intervals = result.intervals;
+    box.seed_config = seed;
+    box.tree_id = result.node;
+    box.parent_box_id = -1;
+    box.root_id = box.id;
+    box.safety_status = result.validation_detail.safety_status;
+    box.strict_audit_required = result.validation_detail.strict_audit_required;
+    box.compute_volume();
+    return box;
+}
+
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,
     const BoxNode& box,
