@@ -72,6 +72,56 @@ void RrtGrower::record_component_connect_result(int source_root_id,
     }
 }
 
+void RrtGrower::record_component_connect_success(int parent_box_id,
+                                                 int source_root_id,
+                                                 int target_root_id,
+                                                 StageContext& context) {
+    context.diagnostics().add_counter("grower.component_connect_successes");
+    component_parent_failures_.erase(parent_box_id);
+    record_component_connect_result(source_root_id,
+                                    target_root_id,
+                                    true,
+                                    nullptr,
+                                    context);
+}
+
+void RrtGrower::record_component_connect_failure(int parent_box_id,
+                                                 int source_root_id,
+                                                 int target_root_id,
+                                                 const FindFreeBoxResult* ffb_result,
+                                                 StageContext& context) {
+    context.diagnostics().add_counter("grower.component_connect_failures");
+    const int failures = ++component_parent_failures_[parent_box_id];
+    set_max_diagnostic(context,
+                       "grower.component_connect_parent_failure_max",
+                       static_cast<double>(failures));
+    record_component_connect_result(source_root_id,
+                                    target_root_id,
+                                    false,
+                                    ffb_result,
+                                    context);
+}
+
+int RrtGrower::record_component_connect_success_and_extend(std::vector<BoxNode>& boxes,
+                                                           FindFreeBoxService& ffb,
+                                                           const FindFreeBoxOptions& base_options,
+                                                           int depth_stage_index,
+                                                           int parent_box_id,
+                                                           int source_root_id,
+                                                           int target_root_id,
+                                                           StageContext& context) {
+    record_component_connect_success(parent_box_id,
+                                     source_root_id,
+                                     target_root_id,
+                                     context);
+    return grow_component_connect_chain(boxes,
+                                        ffb,
+                                        base_options,
+                                        depth_stage_index,
+                                        source_root_id,
+                                        context);
+}
+
 int RrtGrower::grow_component_connect_chain(std::vector<BoxNode>& boxes,
                                             FindFreeBoxService& ffb,
                                             const FindFreeBoxOptions& base_options,
@@ -166,27 +216,20 @@ int RrtGrower::grow_component_connect_chain(std::vector<BoxNode>& boxes,
             failures = 0;
             source_root_id = root_id;
             context.diagnostics().add_counter("grower.component_connect_chain_added");
-            context.diagnostics().add_counter("grower.component_connect_successes");
-            component_parent_failures_.erase(parent_box_id);
-            record_component_connect_result(source_root_id,
-                                            target_root_id,
-                                            true,
-                                            nullptr,
-                                            context);
+            record_component_connect_success(parent_box_id,
+                                             source_root_id,
+                                             target_root_id,
+                                             context);
             continue;
         }
 
         failures += 1;
         context.diagnostics().add_counter("grower.component_connect_chain_failures");
-        const int parent_failures = ++component_parent_failures_[parent_box_id];
-        set_max_diagnostic(context,
-                           "grower.component_connect_parent_failure_max",
-                           static_cast<double>(parent_failures));
-        record_component_connect_result(source_root_id,
-                                        target_root_id,
-                                        false,
-                                        observed_result.found || observed_result.fail_code != 0 ? &observed_result : nullptr,
-                                        context);
+        record_component_connect_failure(parent_box_id,
+                                         source_root_id,
+                                         target_root_id,
+                                         observed_result.found || observed_result.fail_code != 0 ? &observed_result : nullptr,
+                                         context);
         if (failures >= 2) {
             context.diagnostics().add_counter("grower.component_connect_chain_failure_stop");
             break;

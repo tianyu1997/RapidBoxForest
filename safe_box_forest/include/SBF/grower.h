@@ -345,6 +345,23 @@ private:
 										 bool success,
 										 const FindFreeBoxResult* ffb_result,
 										 StageContext& context);
+	void record_component_connect_success(int parent_box_id,
+										  int source_root_id,
+										  int target_root_id,
+										  StageContext& context);
+	void record_component_connect_failure(int parent_box_id,
+										  int source_root_id,
+										  int target_root_id,
+										  const FindFreeBoxResult* ffb_result,
+										  StageContext& context);
+	int record_component_connect_success_and_extend(std::vector<BoxNode>& boxes,
+													FindFreeBoxService& ffb,
+													const FindFreeBoxOptions& base_options,
+													int depth_stage_index,
+													int parent_box_id,
+													int source_root_id,
+													int target_root_id,
+													StageContext& context);
 	int grow_component_connect_chain(std::vector<BoxNode>& boxes,
 									 FindFreeBoxService& ffb,
 									 const FindFreeBoxOptions& base_options,

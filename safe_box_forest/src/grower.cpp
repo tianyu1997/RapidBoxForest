@@ -226,19 +226,15 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                         result.n_ffb_success += 1;
                         batch_success = true;
                         if (worker_result.component_connect_target) {
-                            context.diagnostics().add_counter("grower.component_connect_successes");
-                            component_parent_failures_.erase(worker_result.parent_box_id);
-                            record_component_connect_result(worker_result.source_root_id,
-                                                            worker_result.target_root_id,
-                                                            true,
-                                                            nullptr,
-                                                            context);
-                            const int chain_added = grow_component_connect_chain(result.boxes,
-                                                                                 ffb,
-                                                                                 active_ffb_options,
-                                                                                 active_depth_stage_index,
-                                                                                 worker_result.source_root_id,
-                                                                                 context);
+                            const int chain_added = record_component_connect_success_and_extend(
+                                result.boxes,
+                                ffb,
+                                active_ffb_options,
+                                active_depth_stage_index,
+                                worker_result.parent_box_id,
+                                worker_result.source_root_id,
+                                worker_result.target_root_id,
+                                context);
                             result.n_ffb_success += chain_added;
                         }
                     } else {
@@ -253,16 +249,11 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                         result.n_ffb_fail += 1;
                         batch_fail += 1;
                         if (worker_result.component_connect_target) {
-                            context.diagnostics().add_counter("grower.component_connect_failures");
-                            const int failures = ++component_parent_failures_[worker_result.parent_box_id];
-                            set_max_diagnostic(context,
-                                               "grower.component_connect_parent_failure_max",
-                                               static_cast<double>(failures));
-                            record_component_connect_result(worker_result.source_root_id,
-                                                            worker_result.target_root_id,
-                                                            false,
-                                                            &worker_result.free_box,
-                                                            context);
+                            record_component_connect_failure(worker_result.parent_box_id,
+                                                             worker_result.source_root_id,
+                                                             worker_result.target_root_id,
+                                                             &worker_result.free_box,
+                                                             context);
                         }
                     }
                 }
@@ -298,35 +289,26 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
                         result.n_ffb_success += 1;
                         batch_success = true;
                         if (task.component_connect_target) {
-                            context.diagnostics().add_counter("grower.component_connect_successes");
-                            component_parent_failures_.erase(task.parent_box_id);
-                            record_component_connect_result(task.source_root_id,
-                                                            task.target_root_id,
-                                                            true,
-                                                            nullptr,
-                                                            context);
-                            const int chain_added = grow_component_connect_chain(result.boxes,
-                                                                                 ffb,
-                                                                                 active_ffb_options,
-                                                                                 active_depth_stage_index,
-                                                                                 task.source_root_id,
-                                                                                 context);
+                            const int chain_added = record_component_connect_success_and_extend(
+                                result.boxes,
+                                ffb,
+                                active_ffb_options,
+                                active_depth_stage_index,
+                                task.parent_box_id,
+                                task.source_root_id,
+                                task.target_root_id,
+                                context);
                             result.n_ffb_success += chain_added;
                         }
                     } else {
                         result.n_ffb_fail += 1;
                         batch_fail += 1;
                         if (task.component_connect_target) {
-                            context.diagnostics().add_counter("grower.component_connect_failures");
-                            const int failures = ++component_parent_failures_[task.parent_box_id];
-                            set_max_diagnostic(context,
-                                               "grower.component_connect_parent_failure_max",
-                                               static_cast<double>(failures));
-                            record_component_connect_result(task.source_root_id,
-                                                            task.target_root_id,
-                                                            false,
-                                                            observed_result.found || observed_result.fail_code != 0 ? &observed_result : nullptr,
-                                                            context);
+                            record_component_connect_failure(task.parent_box_id,
+                                                             task.source_root_id,
+                                                             task.target_root_id,
+                                                             observed_result.found || observed_result.fail_code != 0 ? &observed_result : nullptr,
+                                                             context);
                         }
                     }
                 }
@@ -429,35 +411,32 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         if (id >= 0) {
             result.n_ffb_success += 1;
             if (component_connect_attempt) {
-                context.diagnostics().add_counter("grower.component_connect_successes");
-                component_parent_failures_.erase(parent_box_id);
-                record_component_connect_result(trace_task.source_root_id >= 0 ? trace_task.source_root_id : trace_task.root_id,
-                                                trace_task.target_root_id,
-                                                true,
-                                                nullptr,
-                                                context);
-                const int chain_added = grow_component_connect_chain(result.boxes,
-                                                                     ffb,
-                                                                     active_ffb_options,
-                                                                     active_depth_stage_index,
-                                                                     trace_task.source_root_id >= 0 ? trace_task.source_root_id : trace_task.root_id,
-                                                                     context);
+                const int source_root_id = trace_task.source_root_id >= 0
+                    ? trace_task.source_root_id
+                    : trace_task.root_id;
+                const int chain_added = record_component_connect_success_and_extend(
+                    result.boxes,
+                    ffb,
+                    active_ffb_options,
+                    active_depth_stage_index,
+                    parent_box_id,
+                    source_root_id,
+                    trace_task.target_root_id,
+                    context);
                 result.n_ffb_success += chain_added;
             }
             consecutive_miss = 0;
         } else {
             result.n_ffb_fail += 1;
             if (component_connect_attempt) {
-                context.diagnostics().add_counter("grower.component_connect_failures");
-                const int failures = ++component_parent_failures_[parent_box_id];
-                set_max_diagnostic(context,
-                                   "grower.component_connect_parent_failure_max",
-                                   static_cast<double>(failures));
-                record_component_connect_result(trace_task.source_root_id >= 0 ? trace_task.source_root_id : trace_task.root_id,
-                                                trace_task.target_root_id,
-                                                false,
-                                                ffb_result_for_pair.found || ffb_result_for_pair.fail_code != 0 ? &ffb_result_for_pair : nullptr,
-                                                context);
+                const int source_root_id = trace_task.source_root_id >= 0
+                    ? trace_task.source_root_id
+                    : trace_task.root_id;
+                record_component_connect_failure(parent_box_id,
+                                                 source_root_id,
+                                                 trace_task.target_root_id,
+                                                 ffb_result_for_pair.found || ffb_result_for_pair.fail_code != 0 ? &ffb_result_for_pair : nullptr,
+                                                 context);
             }
             consecutive_miss += 1;
         }
