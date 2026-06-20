@@ -53,12 +53,27 @@ struct QueryBridgeInitialDsuStats {
     int adjacency_edges = 0;
 };
 
+struct QueryBridgeInitialSampleCoverageStats {
+    int covered_samples = 0;
+};
+
+using QueryBridgeSampleCandidateProvider =
+    std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
+
 bool query_bridge_mark_sample_coverage_from_candidates(
     const std::vector<BoxNode>& boxes,
     const std::vector<Eigen::VectorXd>& samples,
     std::size_t sample_index,
     const std::vector<int>& candidates,
     double tolerance,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered);
+
+QueryBridgeInitialSampleCoverageStats query_bridge_mark_initial_sample_coverage(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    double tolerance,
+    const QueryBridgeSampleCandidateProvider& candidates_for_sample,
     std::vector<std::vector<int>>& sample_layers,
     std::vector<bool>& covered);
 

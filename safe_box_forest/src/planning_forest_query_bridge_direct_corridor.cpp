@@ -84,37 +84,28 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     std::size_t direct_partition_append_base = boxes_.size();
     std::vector<std::vector<int>> sample_layers(samples.size());
     std::vector<bool> covered(samples.size(), false);
-    auto mark_initial_coverage = [&]() {
-        const auto mark_t0 = Clock::now();
-        int initial_covered = 0;
-        for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-            std::vector<int> candidates;
-            if (use_partition_cover_index) {
-                candidates = adaptive_partition_->covering_box_indices(
-                    samples[sample_index],
-                    config_.query.adjacency_tolerance);
-            } else {
-                candidates = direct_box_index.point_candidates(samples[sample_index]);
-            }
-            if (query_bridge_mark_sample_coverage_from_candidates(
-                    boxes_,
-                    samples,
-                    sample_index,
-                    candidates,
-                    config_.query.adjacency_tolerance,
-                    sample_layers,
-                    covered)) {
-                initial_covered += 1;
-            }
-        }
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_initial_covered_samples",
-            static_cast<double>(initial_covered));
-        context.diagnostics().record_timing(
-            "query_bridge.direct_corridor_mark_initial_ms",
-            std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
-    };
-    mark_initial_coverage();
+    const auto mark_t0 = Clock::now();
+    const QueryBridgeInitialSampleCoverageStats initial_coverage_stats =
+        query_bridge_mark_initial_sample_coverage(
+            boxes_,
+            samples,
+            config_.query.adjacency_tolerance,
+            [&](const Eigen::VectorXd& sample) {
+                if (use_partition_cover_index) {
+                    return adaptive_partition_->covering_box_indices(
+                        sample,
+                        config_.query.adjacency_tolerance);
+                }
+                return direct_box_index.point_candidates(sample);
+            },
+            sample_layers,
+            covered);
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_initial_covered_samples",
+        static_cast<double>(initial_coverage_stats.covered_samples));
+    context.diagnostics().record_timing(
+        "query_bridge.direct_corridor_mark_initial_ms",
+        std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
 
     QueryBridgeLocalDsu dsu(boxes_.size());
     QueryBridgeDirectCorridorRuntimeStats runtime_stats;

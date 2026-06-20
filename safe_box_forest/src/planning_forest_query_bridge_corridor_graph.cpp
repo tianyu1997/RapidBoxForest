@@ -85,6 +85,29 @@ bool query_bridge_mark_sample_coverage_from_candidates(
     return newly_covered;
 }
 
+QueryBridgeInitialSampleCoverageStats query_bridge_mark_initial_sample_coverage(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    double tolerance,
+    const QueryBridgeSampleCandidateProvider& candidates_for_sample,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered) {
+    QueryBridgeInitialSampleCoverageStats stats;
+    for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+        if (query_bridge_mark_sample_coverage_from_candidates(
+                boxes,
+                samples,
+                sample_index,
+                candidates_for_sample(samples[sample_index]),
+                tolerance,
+                sample_layers,
+                covered)) {
+            stats.covered_samples += 1;
+        }
+    }
+    return stats;
+}
+
 QueryBridgeInitialDsuStats query_bridge_initialize_sample_dsu(
     const std::vector<std::vector<int>>& sample_layers,
     QueryBridgeLocalDsu& dsu,
