@@ -96,6 +96,31 @@ void obb_accumulate_stats(ObbPortalValidationStats& dst,
     dst.region_volume_count += src.region_volume_count;
 }
 
+void obb_append_centerline_waypoint(std::vector<Eigen::VectorXd>& centerline,
+                                    const Eigen::VectorXd& waypoint) {
+    if (centerline.empty() || (centerline.back() - waypoint).norm() > 1e-12) {
+        centerline.push_back(waypoint);
+    }
+}
+
+void obb_commit_segment_region(ObbPathCoverResult& result,
+                               std::vector<Eigen::VectorXd>& centerline,
+                               const Eigen::VectorXd& a,
+                               const Eigen::VectorXd& b,
+                               Eigen::VectorXd center,
+                               Eigen::MatrixXd generators) {
+    ObbPathCoverRegion region;
+    region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
+    region.end = region.begin + 1U;
+    region.center = std::move(center);
+    region.generators = std::move(generators);
+    obb_record_region_volume(result.stats, region.generators);
+    result.regions.push_back(std::move(region));
+    result.covered_length += (b - a).norm();
+    obb_append_centerline_waypoint(centerline, a);
+    obb_append_centerline_waypoint(centerline, b);
+}
+
 std::vector<Eigen::VectorXd> obb_path_slice(const std::vector<Eigen::VectorXd>& path,
                                             std::size_t begin,
                                             std::size_t end) {
@@ -184,20 +209,12 @@ bool obb_cover_segment_recursive(const Robot& robot,
                                  center,
                                  generators,
                                  options)) {
-        ObbPathCoverRegion region;
-        region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
-        region.end = region.begin + 1U;
-        region.center = std::move(center);
-        region.generators = std::move(generators);
-        obb_record_region_volume(result.stats, region.generators);
-        result.regions.push_back(std::move(region));
-        result.covered_length += (b - a).norm();
-        if (centerline.empty()) {
-            centerline.push_back(a);
-        }
-        if ((centerline.back() - b).norm() > 1e-12) {
-            centerline.push_back(b);
-        }
+        obb_commit_segment_region(result,
+                                  centerline,
+                                  a,
+                                  b,
+                                  std::move(center),
+                                  std::move(generators));
         return true;
     }
     if (depth_remaining <= 0) {
@@ -252,20 +269,12 @@ bool obb_cover_segment_recursive(const Robot& robot,
                     hi = mid;
                 }
             }
-            ObbPathCoverRegion region;
-            region.begin = centerline.empty() ? 0U : centerline.size() - 1U;
-            region.end = region.begin + 1U;
-            region.center = std::move(best_center);
-            region.generators = std::move(best_generators);
-            obb_record_region_volume(result.stats, region.generators);
-            result.regions.push_back(std::move(region));
-            result.covered_length += (b - a).norm();
-            if (centerline.empty()) {
-                centerline.push_back(a);
-            }
-            if ((centerline.back() - b).norm() > 1e-12) {
-                centerline.push_back(b);
-            }
+            obb_commit_segment_region(result,
+                                      centerline,
+                                      a,
+                                      b,
+                                      std::move(best_center),
+                                      std::move(best_generators));
             return true;
         }
         ++result.failed_leaf_windows;
@@ -277,12 +286,8 @@ bool obb_cover_segment_recursive(const Robot& robot,
             result.first_failed_leaf_a = a;
             result.first_failed_leaf_b = b;
         }
-        if (centerline.empty()) {
-            centerline.push_back(a);
-        }
-        if ((centerline.back() - b).norm() > 1e-12) {
-            centerline.push_back(b);
-        }
+        obb_append_centerline_waypoint(centerline, a);
+        obb_append_centerline_waypoint(centerline, b);
         return false;
     }
     ++result.recursive_splits;
