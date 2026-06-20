@@ -299,27 +299,12 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 "query_bridge.direct_corridor_assimilate_covered_samples",
                 static_cast<double>(sample_assimilation.covered_sample_count));
         }
-        std::vector<int> candidates;
-        auto add_layer = [&](int layer_index) {
-            if (layer_index < 0 || layer_index >= static_cast<int>(sample_layers.size())) {
-                return;
-            }
-            const auto& layer = sample_layers[static_cast<std::size_t>(layer_index)];
-            candidates.insert(candidates.end(), layer.begin(), layer.end());
-        };
-        add_layer(transition_hint - 1);
-        add_layer(transition_hint);
-        add_layer(transition_hint + 1);
-        add_layer(transition_hint + 2);
-        if (sample_assimilation.covered_sample_count > 0) {
-            add_layer(sample_assimilation.first_covered_sample - 1);
-            add_layer(sample_assimilation.first_covered_sample);
-            add_layer(sample_assimilation.first_covered_sample + 1);
-            add_layer(sample_assimilation.last_covered_sample - 1);
-            add_layer(sample_assimilation.last_covered_sample);
-            add_layer(sample_assimilation.last_covered_sample + 1);
-        }
-        candidates.insert(candidates.end(), repair_indices.begin(), repair_indices.end());
+        std::vector<int> candidates =
+            query_bridge_sample_layer_adjacency_candidates(
+                sample_layers,
+                transition_hint,
+                sample_assimilation,
+                repair_indices);
         if (use_partition_neighbor_candidates && adaptive_partition_) {
             const auto partition_neighbor_ids =
                 adaptive_partition_->adjacent_box_ids(

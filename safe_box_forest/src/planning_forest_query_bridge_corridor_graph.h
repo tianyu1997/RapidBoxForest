@@ -58,6 +58,12 @@ QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     std::vector<std::vector<int>>& sample_layers,
     std::vector<bool>& covered);
 
+std::vector<int> query_bridge_sample_layer_adjacency_candidates(
+    const std::vector<std::vector<int>>& sample_layers,
+    int transition_hint,
+    const QueryBridgeSampleAssimilationResult& sample_assimilation,
+    const std::vector<int>& repair_indices);
+
 bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,
                                               QueryBridgeLocalDsu& dsu,
                                               int transition);
