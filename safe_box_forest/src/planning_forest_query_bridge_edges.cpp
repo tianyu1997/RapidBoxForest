@@ -196,9 +196,8 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     bool fast_direct_segment_after_rrt,
     int fast_direct_random_shortcut_iters,
     const std::function<double()>& task_elapsed_ms) {
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "waypoint_length"),
-        best_length);
+    const QueryBridgeTaskDiagnostics task_diag(context, task.index);
+    task_diag.set_value("waypoint_length", best_length);
     const auto second_probe_t0 = QueryBridgeEdgeClock::now();
     const bool should_check =
         query_bridge_should_check_current_query(
@@ -252,15 +251,9 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
             static_cast<int>(task.index));
     if (fast_direct_added > 0) {
         added_for_task += fast_direct_added;
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "fast_direct_segment_after_rrt"),
-            1.0);
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "added"),
-            static_cast<double>(added_for_task));
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "total_ms"),
-            task_elapsed_ms());
+        task_diag.set_value("fast_direct_segment_after_rrt", 1.0);
+        task_diag.set_value("added", static_cast<double>(added_for_task));
+        task_diag.set_value("total_ms", task_elapsed_ms());
         return;
     }
 
@@ -272,14 +265,9 @@ void RBFPlanningForest::finish_query_bridge_ready_waypoint_task(
     const double pave_ms = query_bridge_edge_elapsed_ms_since(pave_t0);
     context.diagnostics().record_timing("query_bridge.batch_pave_ms_total",
                                         pave_ms);
-    context.diagnostics().set_value(query_bridge_task_key(task.index, "pave_ms"),
-                                    pave_ms);
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "added"),
-        static_cast<double>(added_for_task));
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "total_ms"),
-        task_elapsed_ms());
+    task_diag.set_value("pave_ms", pave_ms);
+    task_diag.set_value("added", static_cast<double>(added_for_task));
+    task_diag.set_value("total_ms", task_elapsed_ms());
 }
 
 int RBFPlanningForest::try_add_query_residual_segment_edge(
