@@ -318,6 +318,9 @@ src/planning_forest_adaptive_build.cpp
 src/planning_forest_adaptive_fast_checkpoint.cpp
                                    fast virtual checkpoint materialization,
                                    coverage probe, and profile selection
+src/planning_forest_adaptive_connectivity.cpp
+                                   adaptive largest-island lookup, local
+                                   adjacency checks, and frontier score terms
 src/planning_forest_adaptive_depth.cpp
                                    adaptive depth checkpoints, readiness gates,
                                    snapshot JSON, and final depth projection
@@ -329,8 +332,8 @@ src/planning_forest_adaptive_fixed.cpp
                                    merge, partition rebuild, coverage probe,
                                    and build-profile finalization
 src/planning_forest_adaptive_cover_utils.cpp
-                                   adaptive cover frontier, probe, and
-                                   connectivity scoring utilities
+                                   adaptive cover frontier, probe, split, and
+                                   scoped oracle-overlap utilities
 src/planning_forest_adaptive_merge.cpp
                                    budgeted merge orchestration, containment
                                    pruning, and exact-face merge helpers
