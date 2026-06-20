@@ -10,7 +10,6 @@
 #include "planning_forest_query_bridge_corridor_repair.h"
 #include "planning_forest_query_bridge_corridor_tasks.h"
 #include "planning_forest_query_bridge_path_utils.h"
-#include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_utils.h"
 
@@ -469,6 +468,11 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             local_segment_gap_samples_max,
             local_corridor_connected);
     query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
+    auto finish_with_committed_count = [&](int extra_edges) {
+        return finish_query_bridge_direct_corridor(
+            boxes_before_direct_corridor,
+            direct_added + repair_added + local_segment_edges_added + extra_edges);
+    };
 
     if (final_bad.empty() &&
         source_box_id >= 0 &&
@@ -491,13 +495,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             bridge_rrt.segment_resolution,
             bridge_edge_query_index);
         if (edge_added > 0) {
-            return finish_query_bridge_direct_corridor(
-                boxes_before_direct_corridor,
-                direct_added + repair_added + local_segment_edges_added + 1);
+            return finish_with_committed_count(1);
         }
-        return finish_query_bridge_direct_corridor(
-            boxes_before_direct_corridor,
-            direct_added + repair_added + local_segment_edges_added);
+        return finish_with_committed_count(0);
     }
     if (!final_bad.empty() &&
         allow_residual_segments &&
@@ -507,13 +507,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         refresh_query_bridge_direct_corridor_partition(boxes_before_direct_corridor);
         const bool locally_overlay_connected =
             overlay_path_connected_partition_first(source_box_id, target_box_id);
-        context.diagnostics().set_value(
-            "query_bridge.direct_corridor_local_residual_overlay_connected",
-            locally_overlay_connected ? 1.0 : 0.0);
-        query_bridge_set_task_value(context,
-                                    query_index,
-                                    "direct_corridor_local_residual_overlay_connected",
-                                    locally_overlay_connected ? 1.0 : 0.0);
+        query_bridge_record_direct_corridor_local_residual_overlay(
+            context,
+            query_index,
+            locally_overlay_connected);
         if (locally_overlay_connected) {
             const bool add_full_residual_overlay_when_connected =
                 direct_corridor_options.full_residual_overlay_when_connected;
@@ -542,10 +539,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                                        "local_residual_overlay",
                                                        adopt_certified_subchain_attempted);
             invalidate_query_cache();
-            return finish_query_bridge_direct_corridor(
-                boxes_before_direct_corridor,
-                direct_added + repair_added + local_segment_edges_added +
-                    (full_edge_id >= 0 ? 1 : 0));
+            return finish_with_committed_count(full_edge_id >= 0 ? 1 : 0);
         }
         const int edge_id = try_add_query_direct_corridor_full_residual_edge(
             source_box_id,
@@ -560,9 +554,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             true);
         if (edge_id == -2) {
             invalidate_query_cache();
-            return finish_query_bridge_direct_corridor(
-                boxes_before_direct_corridor,
-                direct_added + repair_added + local_segment_edges_added);
+            return finish_with_committed_count(0);
         }
         try_promote_query_bridge_direct_transition(source_box_id,
                                                    target_box_id,
@@ -574,10 +566,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                                    "full_residual",
                                                    adopt_certified_subchain_attempted);
         invalidate_query_cache();
-        return finish_query_bridge_direct_corridor(
-            boxes_before_direct_corridor,
-            direct_added + repair_added + local_segment_edges_added +
-                (edge_id >= 0 ? 1 : 0));
+        return finish_with_committed_count(edge_id >= 0 ? 1 : 0);
     }
     return finish_query_bridge_direct_corridor(boxes_before_direct_corridor, 0);
 

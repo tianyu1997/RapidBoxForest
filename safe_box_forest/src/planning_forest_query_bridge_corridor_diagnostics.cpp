@@ -258,4 +258,20 @@ void query_bridge_record_direct_corridor_summary(
     set_ffb_task("linear_descent_calls", "ffb_linear_descent_calls");
 }
 
+void query_bridge_record_direct_corridor_local_residual_overlay(
+    StageContext& context,
+    int query_index,
+    bool connected) {
+    const double value = connected ? 1.0 : 0.0;
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_local_residual_overlay_connected",
+        value);
+    if (query_index >= 0) {
+        context.diagnostics().set_value(
+            "query_bridge.batch_task." + std::to_string(query_index) +
+                ".direct_corridor_local_residual_overlay_connected",
+            value);
+    }
+}
+
 }  // namespace rbf

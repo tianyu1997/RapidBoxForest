@@ -94,4 +94,9 @@ void query_bridge_record_direct_corridor_summary(
     int query_index,
     const QueryBridgeDirectCorridorSummaryStats& stats);
 
+void query_bridge_record_direct_corridor_local_residual_overlay(
+    StageContext& context,
+    int query_index,
+    bool connected);
+
 }  // namespace rbf
