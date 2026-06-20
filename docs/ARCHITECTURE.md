@@ -232,6 +232,11 @@ src/grower_options.cpp             RRT grower depth-stage, component-connect
 src/grower_task_builder.cpp        RRT grower batched target sampling, task
                                    generation, frontier seed selection, and
                                    worker-domain filtering
+src/grower_component_connect.cpp   component-connect seed candidate ranking
+                                   and target selection
+src/grower_component_connect_chain.cpp
+                                   component-connect chain execution, staged
+                                   targets, and pair-failure bookkeeping
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/grower_workers.cpp             worker-local FFB sessions, parallel task
                                    execution, and master-node remapping
