@@ -359,6 +359,12 @@ src/planning_forest_dynamic_cache.cpp
                                    dirty-region checks, collision-cache promotion,
                                    dynamic segment fallback, and removed-box refill
                                    helpers
+src/planning_forest_subtractive.cpp
+                                   subtractive scene build, obstacle carving,
+                                   certified regrow commit, and finalization
+src/planning_forest_subtractive_seeds.cpp
+                                   subtractive dirty-domain regrow seed
+                                   generation and domain lookup helpers
 src/planning_forest_overlay.cpp    partition box/portal overlay corridor helpers
 src/planning_forest_overlay_edges.cpp
                                    partition-first segment edge insertion,

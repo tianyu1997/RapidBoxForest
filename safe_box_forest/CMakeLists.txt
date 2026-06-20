@@ -219,6 +219,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_utils_shortcut.cpp
     src/planning_forest_shortcut.cpp
     src/planning_forest_subtractive.cpp
+    src/planning_forest_subtractive_seeds.cpp
     src/query.cpp
     src/runtime.cpp
 )
