@@ -40,6 +40,28 @@ struct QueryBridgeDirectCorridorSummaryStats {
     bool local_corridor_connected = false;
 };
 
+QueryBridgeDirectCorridorSummaryStats query_bridge_make_direct_corridor_summary(
+    double elapsed_ms,
+    double direct_ffb_ms,
+    double repair_ffb_ms,
+    double adaptive_repair_ffb_ms,
+    double residual_segment_audit_ms,
+    const QueryBridgeDirectCorridorRuntimeStats& runtime_stats,
+    std::size_t sample_count,
+    int direct_calls,
+    int repair_calls,
+    int adaptive_repair_calls,
+    int direct_added,
+    int repair_added,
+    int adaptive_repair_added,
+    int adaptive_repair_max_subdivisions_used,
+    int repair_subdivisions,
+    int initial_bad_count,
+    int final_bad_count,
+    int local_segment_edges_added,
+    int local_segment_gap_samples_max,
+    bool local_corridor_connected);
+
 void query_bridge_record_direct_corridor_summary(
     StageContext& context,
     int query_index,

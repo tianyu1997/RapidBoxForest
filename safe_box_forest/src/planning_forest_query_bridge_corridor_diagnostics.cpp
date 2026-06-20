@@ -6,6 +6,57 @@
 
 namespace rbf {
 
+QueryBridgeDirectCorridorSummaryStats query_bridge_make_direct_corridor_summary(
+    double elapsed_ms,
+    double direct_ffb_ms,
+    double repair_ffb_ms,
+    double adaptive_repair_ffb_ms,
+    double residual_segment_audit_ms,
+    const QueryBridgeDirectCorridorRuntimeStats& runtime_stats,
+    std::size_t sample_count,
+    int direct_calls,
+    int repair_calls,
+    int adaptive_repair_calls,
+    int direct_added,
+    int repair_added,
+    int adaptive_repair_added,
+    int adaptive_repair_max_subdivisions_used,
+    int repair_subdivisions,
+    int initial_bad_count,
+    int final_bad_count,
+    int local_segment_edges_added,
+    int local_segment_gap_samples_max,
+    bool local_corridor_connected) {
+    QueryBridgeDirectCorridorSummaryStats stats;
+    stats.elapsed_ms = elapsed_ms;
+    stats.direct_ffb_ms = direct_ffb_ms;
+    stats.repair_ffb_ms = repair_ffb_ms;
+    stats.adaptive_repair_ffb_ms = adaptive_repair_ffb_ms;
+    stats.residual_segment_audit_ms = residual_segment_audit_ms;
+    stats.assimilate_coverage_span_sum =
+        runtime_stats.assimilate_coverage_span_sum;
+    stats.sample_count = sample_count;
+    stats.direct_calls = direct_calls;
+    stats.repair_calls = repair_calls;
+    stats.adaptive_repair_calls = adaptive_repair_calls;
+    stats.direct_added = direct_added;
+    stats.repair_added = repair_added;
+    stats.adaptive_repair_added = adaptive_repair_added;
+    stats.adaptive_repair_max_subdivisions_used =
+        adaptive_repair_max_subdivisions_used;
+    stats.repair_subdivisions = repair_subdivisions;
+    stats.initial_bad_count = initial_bad_count;
+    stats.final_bad_count = final_bad_count;
+    stats.local_segment_edges_added = local_segment_edges_added;
+    stats.local_segment_gap_samples_max = local_segment_gap_samples_max;
+    stats.assimilate_coverage_boxes =
+        runtime_stats.assimilate_coverage_boxes;
+    stats.assimilate_coverage_span_max =
+        runtime_stats.assimilate_coverage_span_max;
+    stats.local_corridor_connected = local_corridor_connected;
+    return stats;
+}
+
 void query_bridge_record_direct_corridor_summary(
     StageContext& context,
     int query_index,

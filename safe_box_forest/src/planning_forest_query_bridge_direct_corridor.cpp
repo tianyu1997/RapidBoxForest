@@ -565,33 +565,28 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         final_bad.empty() &&
         query_bridge_endpoint_layers_connected(sample_layers, dsu);
 
-    QueryBridgeDirectCorridorSummaryStats summary_stats;
-    summary_stats.elapsed_ms = direct_corridor_elapsed_ms;
-    summary_stats.direct_ffb_ms = direct_ffb_ms;
-    summary_stats.repair_ffb_ms = repair_ffb_ms;
-    summary_stats.adaptive_repair_ffb_ms = adaptive_repair_ffb_ms;
-    summary_stats.residual_segment_audit_ms = residual_segment_audit_ms;
-    summary_stats.assimilate_coverage_span_sum =
-        runtime_stats.assimilate_coverage_span_sum;
-    summary_stats.sample_count = samples.size();
-    summary_stats.direct_calls = direct_calls;
-    summary_stats.repair_calls = repair_calls;
-    summary_stats.adaptive_repair_calls = adaptive_repair_calls;
-    summary_stats.direct_added = direct_added;
-    summary_stats.repair_added = repair_added;
-    summary_stats.adaptive_repair_added = adaptive_repair_added;
-    summary_stats.adaptive_repair_max_subdivisions_used =
-        adaptive_repair_max_subdivisions_used;
-    summary_stats.repair_subdivisions = subdivisions;
-    summary_stats.initial_bad_count = static_cast<int>(initial_bad.size());
-    summary_stats.final_bad_count = static_cast<int>(final_bad.size());
-    summary_stats.local_segment_edges_added = local_segment_edges_added;
-    summary_stats.local_segment_gap_samples_max = local_segment_gap_samples_max;
-    summary_stats.assimilate_coverage_boxes =
-        runtime_stats.assimilate_coverage_boxes;
-    summary_stats.assimilate_coverage_span_max =
-        runtime_stats.assimilate_coverage_span_max;
-    summary_stats.local_corridor_connected = local_corridor_connected;
+    const QueryBridgeDirectCorridorSummaryStats summary_stats =
+        query_bridge_make_direct_corridor_summary(
+            direct_corridor_elapsed_ms,
+            direct_ffb_ms,
+            repair_ffb_ms,
+            adaptive_repair_ffb_ms,
+            residual_segment_audit_ms,
+            runtime_stats,
+            samples.size(),
+            direct_calls,
+            repair_calls,
+            adaptive_repair_calls,
+            direct_added,
+            repair_added,
+            adaptive_repair_added,
+            adaptive_repair_max_subdivisions_used,
+            subdivisions,
+            static_cast<int>(initial_bad.size()),
+            static_cast<int>(final_bad.size()),
+            local_segment_edges_added,
+            local_segment_gap_samples_max,
+            local_corridor_connected);
     query_bridge_record_direct_corridor_summary(context, query_index, summary_stats);
 
     if (final_bad.empty() &&
