@@ -146,6 +146,7 @@ add_library(sbf_core STATIC
     src/planning_forest_ffb_binary.cpp
     src/planning_forest_obb.cpp
     src/planning_forest_obb_diagnostics.cpp
+    src/planning_forest_obb_geometry.cpp
     src/planning_forest_obb_path_cover.cpp
     src/planning_forest_obb_sampled.cpp
     src/planning_forest_obb_zonotope.cpp
