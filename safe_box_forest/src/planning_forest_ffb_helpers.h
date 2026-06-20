@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/box_graph.h>
+
+#include <Eigen/Core>
 
 #include <algorithm>
 #include <vector>

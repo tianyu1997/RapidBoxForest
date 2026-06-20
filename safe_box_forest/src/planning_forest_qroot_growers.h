@@ -1,7 +1,10 @@
 #pragma once
 
 #include <SBF/box_graph.h>
-#include <SBF/safe_box_forest.h>
+#include <SBF/build_config.h>
+#include <SBF/find_free_box_types.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include "planning_forest_qroot_helpers.h"
 
