@@ -394,15 +394,14 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
 
         for (std::size_t task_offset = 0; task_offset < tasks.size(); ++task_offset) {
             auto& task = tasks[task_offset];
+            const QueryBridgeTaskDiagnostics task_diag(batch_context, task.index);
             if (prepared[task_offset].skipped) {
-                batch_context.diagnostics().set_value(
-                    query_bridge_task_key(task.index, "total_ms"),
-                    query_bridge_elapsed_ms_since(batch_t0) -
-                    prepared[task_offset].task_start_ms);
+                task_diag.set_value("total_ms",
+                                    query_bridge_elapsed_ms_since(batch_t0) -
+                                    prepared[task_offset].task_start_ms);
                 continue;
             }
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "rrt_ms"),
-                                                  rrt_ms);
+            task_diag.set_value("rrt_ms", rrt_ms);
             double best_length = std::numeric_limits<double>::infinity();
             adopt_query_bridge_waypoint_after_rrt(task,
                                                   attempt_paths[task_offset],
@@ -459,8 +458,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 batch_context,
                 task,
                 query_bridge_elapsed_ms_since(probe_t0));
-            batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "total_ms"),
-                                                  query_bridge_elapsed_ms_since(task_t0));
+            const QueryBridgeTaskDiagnostics task_diag(batch_context, task.index);
+            task_diag.set_value("total_ms", query_bridge_elapsed_ms_since(task_t0));
             continue;
         }
         batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
@@ -486,8 +485,8 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
         const double rrt_ms = query_bridge_elapsed_ms_since(rrt_t0);
         batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
                                                   rrt_ms);
-        batch_context.diagnostics().set_value(query_bridge_task_key(task.index, "rrt_ms"),
-                                              rrt_ms);
+        const QueryBridgeTaskDiagnostics task_diag(batch_context, task.index);
+        task_diag.set_value("rrt_ms", rrt_ms);
         double best_length = std::numeric_limits<double>::infinity();
         adopt_query_bridge_waypoint_after_rrt(task,
                                               attempt_paths,
