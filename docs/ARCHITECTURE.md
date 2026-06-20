@@ -288,11 +288,14 @@ src/grower_components.cpp          root/component grouping and distance
 src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
 src/planning_forest_adaptive_build.cpp
-                                   adaptive deep leaf sweep orchestration and
-                                   query-root refinement backend
+                                   adaptive deep leaf sweep orchestration,
+                                   frontier validation, and depth checkpoints
 src/planning_forest_adaptive_fast_checkpoint.cpp
                                    fast virtual checkpoint materialization,
                                    coverage probe, and profile selection
+src/planning_forest_adaptive_finalize.cpp
+                                   adaptive deep leaf sweep result/profile
+                                   finalization and diagnostics collation
 src/planning_forest_adaptive_fixed.cpp
                                    fixed virtual leaf-sweep materialization,
                                    merge, partition rebuild, coverage probe,

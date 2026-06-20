@@ -35,6 +35,8 @@ struct QueryBridgeLocalDsu;
 struct QueryBridgeSearchTask;
 struct ObbPathCoverResult;
 struct ObbValidationOptions;
+struct AdaptiveDepthSnapshot;
+struct BudgetedMergeStats;
 
 class RBFPlanningForest {
 public:
@@ -330,6 +332,23 @@ private:
 		LeafSweepConfig leaf_config,
 		const AdaptiveLeafSweepConfig& partition_config,
 		std::chrono::steady_clock::time_point total_start);
+	void finalize_adaptive_deep_leaf_sweep_cover_result(
+		AdaptiveLeafSweepResult& out,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		bool adaptive_depth_enabled,
+		int initial_leaf_depth,
+		int adaptive_depth_min,
+		int target_leaf_depth,
+		double merge_ms,
+		const BudgetedMergeStats& merge_stats,
+		const AdjacencyBuildStats& initial_adjacency_stats,
+		const AdjacencyBuildStats& final_adjacency_stats,
+		std::vector<AdaptiveDepthSnapshot>& depth_snapshots,
+		double initial_probe_ms,
+		double checkpoint_probe_ms_total,
+		std::chrono::steady_clock::time_point total_start,
+		bool use_partition_backend);
 	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
 												  const Eigen::Ref<const Eigen::VectorXd>& goal,
 												  StageContext& context);
