@@ -381,6 +381,27 @@ bool intervals_equal_local(const std::vector<Interval>& lhs,
     return true;
 }
 
+int find_box_index_by_node_or_intervals(
+    const std::vector<BoxNode>& boxes,
+    const std::unordered_map<OracleNodeId, int>& node_to_box_index,
+    OracleNodeId node,
+    const std::vector<Interval>& intervals,
+    double tolerance) {
+    if (node != kInvalidOracleNodeId) {
+        const auto node_it = node_to_box_index.find(node);
+        if (node_it != node_to_box_index.end()) {
+            return node_it->second;
+        }
+        return -1;
+    }
+    for (std::size_t box_index = 0; box_index < boxes.size(); ++box_index) {
+        if (intervals_equal_local(boxes[box_index].joint_intervals, intervals, tolerance)) {
+            return static_cast<int>(box_index);
+        }
+    }
+    return -1;
+}
+
 Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals) {
     Eigen::VectorXd center(static_cast<int>(intervals.size()));
     for (int dim = 0; dim < center.size(); ++dim) {

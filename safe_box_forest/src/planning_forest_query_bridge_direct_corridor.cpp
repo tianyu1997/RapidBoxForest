@@ -244,23 +244,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             node_to_box_index[node] = static_cast<int>(box_index);
         }
     }
-    auto find_duplicate_box_index = [&](OracleNodeId node,
-                                        const std::vector<Interval>& intervals) {
-        if (node != kInvalidOracleNodeId) {
-            const auto node_it = node_to_box_index.find(node);
-            if (node_it != node_to_box_index.end()) {
-                return node_it->second;
-            }
-            return -1;
-        }
-        for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
-            const auto& box = boxes_[box_index];
-            if (intervals_equal_local(box.joint_intervals, intervals, 1e-12)) {
-                return static_cast<int>(box_index);
-            }
-        }
-        return -1;
-    };
     std::vector<int> repair_indices;
     auto assimilate_box = [&](int box_index, int transition_hint) {
         const auto assimilate_t0 = Clock::now();
@@ -367,8 +350,12 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                            config_.query.adjacency_tolerance)) {
             return -1;
         }
-        const int duplicate_index = find_duplicate_box_index(result.node,
-                                                             result.intervals);
+        const int duplicate_index =
+            find_box_index_by_node_or_intervals(boxes_,
+                                                node_to_box_index,
+                                                result.node,
+                                                result.intervals,
+                                                1e-12);
         if (duplicate_index >= 0) {
             assimilate_box(duplicate_index, transition_hint);
             return duplicate_index;

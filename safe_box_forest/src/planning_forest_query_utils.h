@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -113,6 +114,13 @@ bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals
 bool intervals_equal_local(const std::vector<Interval>& lhs,
                            const std::vector<Interval>& rhs,
                            double tolerance = 0.0);
+
+int find_box_index_by_node_or_intervals(
+    const std::vector<BoxNode>& boxes,
+    const std::unordered_map<OracleNodeId, int>& node_to_box_index,
+    OracleNodeId node,
+    const std::vector<Interval>& intervals,
+    double tolerance);
 
 Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals);
 
