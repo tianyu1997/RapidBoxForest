@@ -1120,6 +1120,22 @@ def query_rows(
     return rows
 
 
+def make_endpoint_main_box_corridor_config(options: RBFLeafRRTOptions) -> Any:
+    corridor_cfg = sbf.EndpointMainBoxCorridorConfig()
+    corridor_cfg.target_k = int(getattr(options, "endpoint_main_target_k", 8))
+    corridor_cfg.coarse_step = float(getattr(options, "endpoint_main_coarse_step", 0.08))
+    corridor_cfg.fine_step = float(getattr(options, "endpoint_main_fine_step", 0.02))
+    corridor_cfg.max_ffb_calls = int(getattr(options, "endpoint_main_max_ffb_calls", 48))
+    corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
+    corridor_cfg.residual_segment_max_length = float(
+        getattr(options, "endpoint_main_residual_segment_max_length", 0.25)
+    )
+    corridor_cfg.lateral_offset = float(getattr(options, "endpoint_main_lateral_offset", 0.03))
+    corridor_cfg.lateral_rounds = int(getattr(options, "endpoint_main_lateral_rounds", 2))
+    corridor_cfg.face_epsilon = float(getattr(options, "endpoint_main_face_epsilon", 1e-6))
+    return corridor_cfg
+
+
 def bridge_all_queries(
     forest: Any,
     robot: Any,
@@ -1237,19 +1253,10 @@ def bridge_all_queries(
                 hasattr(forest, "connect_query_endpoint_to_main_box_corridor") and
                 hasattr(sbf, "EndpointMainBoxCorridorConfig")
             ):
-                corridor_cfg = sbf.EndpointMainBoxCorridorConfig()
-                corridor_cfg.target_k = int(getattr(options, "endpoint_main_target_k", 8))
-                corridor_cfg.coarse_step = float(getattr(options, "endpoint_main_coarse_step", 0.08))
-                corridor_cfg.fine_step = float(getattr(options, "endpoint_main_fine_step", 0.02))
-                corridor_cfg.max_ffb_calls = int(getattr(options, "endpoint_main_max_ffb_calls", 48))
-                corridor_cfg.max_boxes = int(getattr(options, "endpoint_main_max_boxes", 64))
-                corridor_cfg.residual_segment_max_length = float(
-                    getattr(options, "endpoint_main_residual_segment_max_length", 0.25)
-                )
-                corridor_cfg.lateral_offset = float(getattr(options, "endpoint_main_lateral_offset", 0.03))
-                corridor_cfg.lateral_rounds = int(getattr(options, "endpoint_main_lateral_rounds", 2))
-                corridor_cfg.face_epsilon = float(getattr(options, "endpoint_main_face_epsilon", 1e-6))
-                added = int(forest.connect_query_endpoint_to_main_box_corridor(point, corridor_cfg))
+                added = int(forest.connect_query_endpoint_to_main_box_corridor(
+                    point,
+                    make_endpoint_main_box_corridor_config(options),
+                ))
             direct_max_length = float(getattr(
                 options,
                 "query_bridge_to_main_direct_segment_max_length",
