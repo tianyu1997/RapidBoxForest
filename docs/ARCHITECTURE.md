@@ -185,8 +185,22 @@ python/bindings.cpp                pybind11 module registration only
 python/binding_adaptive_types.h    adaptive leaf-sweep/refine config and
                                    result registration
 python/binding_baseline_planner_functions.h
-                                   OMPL/RRT/PRM/BIT* baseline and collision
-                                   utility module function registration
+                                   baseline planner registration aggregator only
+python/binding_baseline_bitstar_functions.h
+                                   robot and C-space BIT* baseline/trace
+                                   function registration
+python/binding_baseline_cspace_functions.h
+                                   C-space RRTConnect and PRM baseline
+                                   function registration
+python/binding_baseline_prm_functions.h
+                                   robot-space PRM, PRM*, and LazyPRM
+                                   multi-query function registration
+python/binding_baseline_rrt_functions.h
+                                   path length, in-tree RRTConnect, and OMPL
+                                   RRTConnect function registration
+python/binding_baseline_utility_functions.h
+                                   OMPL path simplification and direct
+                                   configuration-collision utility registration
 python/binding_basic_types.h       robot, interval, canonical helper, and
                                    common enum registration
 python/binding_planner_core_types.h
