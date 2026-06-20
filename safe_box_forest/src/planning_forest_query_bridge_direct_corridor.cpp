@@ -173,46 +173,10 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         return appended;
     };
     auto transition_connected = [&](int transition) {
-        if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
-            return false;
-        }
-        const auto& lhs_layer = sample_layers[static_cast<std::size_t>(transition)];
-        const auto& rhs_layer = sample_layers[static_cast<std::size_t>(transition + 1)];
-        if (lhs_layer.empty() || rhs_layer.empty()) {
-            return false;
-        }
-        for (int lhs : lhs_layer) {
-            const int root = dsu.find(lhs);
-            for (int rhs : rhs_layer) {
-                if (root == dsu.find(rhs)) {
-                    return true;
-                }
-            }
-        }
-        return false;
+        return query_bridge_sample_transition_connected(sample_layers, dsu, transition);
     };
     auto bad_transitions = [&]() {
-        std::vector<int> bad;
-        for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
-            if (!transition_connected(static_cast<int>(sample_index))) {
-                bad.push_back(static_cast<int>(sample_index));
-            }
-        }
-        return bad;
-    };
-    auto endpoint_layers_connected = [&]() {
-        if (sample_layers.empty() ||
-            sample_layers.front().empty() ||
-            sample_layers.back().empty()) {
-            return false;
-        }
-        const int root = dsu.find(sample_layers.front().front());
-        for (int index : sample_layers.back()) {
-            if (root == dsu.find(index)) {
-                return true;
-            }
-        }
-        return false;
+        return query_bridge_bad_sample_transitions(sample_layers, dsu);
     };
     auto direct_boxes_adjacent = [&](int lhs, int rhs) {
         if (lhs < 0 || rhs < 0 ||
@@ -732,7 +696,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     auto [source_box_id, target_box_id] =
         locate_query_bridge_boxes(start, goal, context);
     const bool local_corridor_connected =
-        final_bad.empty() && endpoint_layers_connected();
+        final_bad.empty() &&
+        query_bridge_endpoint_layers_connected(sample_layers, dsu);
 
     QueryBridgeDirectCorridorSummaryStats summary_stats;
     summary_stats.elapsed_ms = direct_corridor_elapsed_ms;

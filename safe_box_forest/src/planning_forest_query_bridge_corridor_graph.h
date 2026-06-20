@@ -36,6 +36,16 @@ struct QueryBridgeLocalDsu {
     void unite(int lhs, int rhs);
 };
 
+bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,
+                                              QueryBridgeLocalDsu& dsu,
+                                              int transition);
+
+std::vector<int> query_bridge_bad_sample_transitions(const std::vector<std::vector<int>>& sample_layers,
+                                                     QueryBridgeLocalDsu& dsu);
+
+bool query_bridge_endpoint_layers_connected(const std::vector<std::vector<int>>& sample_layers,
+                                            QueryBridgeLocalDsu& dsu);
+
 double query_bridge_transition_length(const std::vector<Eigen::VectorXd>& samples,
                                       int transition);
 

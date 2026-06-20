@@ -50,6 +50,57 @@ void QueryBridgeLocalDsu::unite(int lhs, int rhs) {
     }
 }
 
+bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,
+                                              QueryBridgeLocalDsu& dsu,
+                                              int transition) {
+    if (transition < 0 || transition + 1 >= static_cast<int>(sample_layers.size())) {
+        return false;
+    }
+    const auto& lhs_layer = sample_layers[static_cast<std::size_t>(transition)];
+    const auto& rhs_layer = sample_layers[static_cast<std::size_t>(transition + 1)];
+    if (lhs_layer.empty() || rhs_layer.empty()) {
+        return false;
+    }
+    for (int lhs : lhs_layer) {
+        const int root = dsu.find(lhs);
+        for (int rhs : rhs_layer) {
+            if (root == dsu.find(rhs)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+std::vector<int> query_bridge_bad_sample_transitions(const std::vector<std::vector<int>>& sample_layers,
+                                                     QueryBridgeLocalDsu& dsu) {
+    std::vector<int> bad;
+    for (std::size_t sample_index = 0; sample_index + 1 < sample_layers.size(); ++sample_index) {
+        if (!query_bridge_sample_transition_connected(sample_layers,
+                                                      dsu,
+                                                      static_cast<int>(sample_index))) {
+            bad.push_back(static_cast<int>(sample_index));
+        }
+    }
+    return bad;
+}
+
+bool query_bridge_endpoint_layers_connected(const std::vector<std::vector<int>>& sample_layers,
+                                            QueryBridgeLocalDsu& dsu) {
+    if (sample_layers.empty() ||
+        sample_layers.front().empty() ||
+        sample_layers.back().empty()) {
+        return false;
+    }
+    const int root = dsu.find(sample_layers.front().front());
+    for (int index : sample_layers.back()) {
+        if (root == dsu.find(index)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 double query_bridge_transition_length(const std::vector<Eigen::VectorXd>& samples,
                                       int transition) {
     if (transition < 0 ||
