@@ -134,6 +134,8 @@ src/sbf/                           planner adapter implementation
                                    schedule replay helpers
   oracle_canonical.cpp             canonical-sector and native/canonical
                                    interval mapping helpers for the oracle
+  oracle_classify.cpp              endpoint-payload envelope construction,
+                                   collision classification, and blockers
   oracle_endpoint_materialization.cpp
                                    endpoint materialization config helpers for
                                    database-backed oracle validation

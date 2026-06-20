@@ -83,6 +83,7 @@ add_library(lect_database_sbf_adapter STATIC
     src/sbf/oracle.cpp
     src/sbf/oracle_best_tighten.cpp
     src/sbf/oracle_canonical.cpp
+    src/sbf/oracle_classify.cpp
     src/sbf/oracle_endpoint_materialization.cpp
     src/sbf/oracle_material_point.cpp
     src/sbf/oracle_node.cpp
