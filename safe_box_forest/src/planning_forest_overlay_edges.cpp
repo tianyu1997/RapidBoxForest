@@ -2,9 +2,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <cstdlib>
-#include <limits>
 #include <optional>
 #include <string>
 #include <vector>
@@ -12,6 +9,7 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_obb.h"
+#include "planning_forest_obb_diagnostics.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_utils.h"
 
@@ -125,103 +123,7 @@ int RBFPlanningForest::add_segment_edge_partition_first(
                 last_adaptive_partition_config_.obb_max_validations_per_window,
                 obb_centerline,
                 obb_validation_options);
-            const ObbPortalValidationStats& obb_stats = cover.stats;
-            diagnostics[prefix + "." + obb_diag + "_windows_attempted"] +=
-                static_cast<double>(cover.windows_attempted);
-            diagnostics[prefix + "." + obb_diag + "_windows_success"] +=
-                static_cast<double>(cover.windows_success);
-            diagnostics[prefix + "." + obb_diag + "_regions"] +=
-                static_cast<double>(cover.regions.size());
-            diagnostics[prefix + "." + obb_diag + "_recursive_splits"] +=
-                static_cast<double>(cover.recursive_splits);
-            diagnostics[prefix + "." + obb_diag + "_failed_leaf_windows"] +=
-                static_cast<double>(cover.failed_leaf_windows);
-            diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_sum"] +=
-                cover.failed_leaf_length_sum;
-            diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_max"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_failed_leaf_length_max"],
-                         cover.failed_leaf_length_max);
-            if ((cover.has_first_failed_leaf || cover.failed_leaf_windows > 0) &&
-                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_recorded"] <= 0.0) {
-                const Eigen::VectorXd& failed_a =
-                    cover.has_first_failed_leaf ? cover.first_failed_leaf_a : waypoints.front();
-                const Eigen::VectorXd& failed_b =
-                    cover.has_first_failed_leaf ? cover.first_failed_leaf_b : waypoints.back();
-                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_recorded"] = 1.0;
-                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_length"] =
-                    (failed_b - failed_a).norm();
-                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_exact"] =
-                    cover.has_first_failed_leaf ? 1.0 : 0.0;
-                const int dims = static_cast<int>(failed_a.size());
-                diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_dims"] =
-                    static_cast<double>(dims);
-                for (int dim = 0; dim < dims; ++dim) {
-                    diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_a_" + std::to_string(dim)] =
-                        failed_a[dim];
-                    diagnostics[prefix + "." + obb_diag + "_first_failed_leaf_b_" + std::to_string(dim)] =
-                        failed_b[dim];
-                }
-            }
-            diagnostics[prefix + "." + obb_diag + "_candidates"] +=
-                static_cast<double>(obb_stats.candidates);
-            diagnostics[prefix + "." + obb_diag + "_validations"] +=
-                static_cast<double>(obb_stats.validations);
-            diagnostics[prefix + "." + obb_diag + "_valid_candidates"] +=
-                static_cast<double>(obb_stats.valid_candidates);
-            diagnostics[prefix + "." + obb_diag + "_grow_attempts"] +=
-                static_cast<double>(obb_stats.grow_attempts);
-            diagnostics[prefix + "." + obb_diag + "_joint_limit_rejects"] +=
-                static_cast<double>(obb_stats.joint_limit_rejects);
-            diagnostics[prefix + "." + obb_diag + "_gjk_tests"] +=
-                static_cast<double>(obb_stats.gjk_tests);
-            diagnostics[prefix + "." + obb_diag + "_maybe_pairs"] +=
-                static_cast<double>(obb_stats.maybe_pairs);
-            diagnostics[prefix + "." + obb_diag + "_sampled_support_attempts"] +=
-                static_cast<double>(obb_stats.sampled_support_attempts);
-            diagnostics[prefix + "." + obb_diag + "_sampled_support_success"] +=
-                static_cast<double>(obb_stats.sampled_support_success);
-            diagnostics[prefix + "." + obb_diag + "_sampled_support_fail"] +=
-                static_cast<double>(obb_stats.sampled_support_fail);
-            diagnostics[prefix + "." + obb_diag + "_sampled_support_samples"] +=
-                static_cast<double>(obb_stats.sampled_support_samples);
-            diagnostics[prefix + "." + obb_diag + "_sampled_support_error_radius"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_sampled_support_error_radius"],
-                         obb_stats.sampled_support_error_radius);
-            diagnostics[prefix + "." + obb_diag + "_clearance_support_attempts"] +=
-                static_cast<double>(obb_stats.clearance_support_attempts);
-            diagnostics[prefix + "." + obb_diag + "_clearance_support_success"] +=
-                static_cast<double>(obb_stats.clearance_support_success);
-            diagnostics[prefix + "." + obb_diag + "_clearance_support_fail"] +=
-                static_cast<double>(obb_stats.clearance_support_fail);
-            diagnostics[prefix + "." + obb_diag + "_clearance_support_samples"] +=
-                static_cast<double>(obb_stats.clearance_support_samples);
-            diagnostics[prefix + "." + obb_diag + "_clearance_support_error_radius"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_clearance_support_error_radius"],
-                         obb_stats.clearance_support_error_radius);
-            if (std::isfinite(obb_stats.clearance_support_min_margin)) {
-                const std::string margin_key =
-                    prefix + "." + obb_diag + "_clearance_support_min_margin";
-                const auto margin_it = diagnostics.find(margin_key);
-                diagnostics[margin_key] =
-                    margin_it == diagnostics.end()
-                        ? obb_stats.clearance_support_min_margin
-                        : std::min(margin_it->second, obb_stats.clearance_support_min_margin);
-            }
-            diagnostics[prefix + "." + obb_diag + "_longitudinal_radius"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_longitudinal_radius"],
-                         obb_stats.longitudinal_radius);
-            diagnostics[prefix + "." + obb_diag + "_lateral_radius"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_lateral_radius"],
-                         obb_stats.lateral_radius);
-            diagnostics[prefix + "." + obb_diag + "_region_volume_sum"] +=
-                obb_stats.region_volume_sum;
-            diagnostics[prefix + "." + obb_diag + "_region_volume_max"] =
-                std::max(diagnostics[prefix + "." + obb_diag + "_region_volume_max"],
-                         obb_stats.region_volume_max);
-            diagnostics[prefix + "." + obb_diag + "_region_log_volume_sum"] +=
-                obb_stats.region_log_volume_sum;
-            diagnostics[prefix + "." + obb_diag + "_region_volume_count"] +=
-                static_cast<double>(obb_stats.region_volume_count);
+            record_obb_path_cover_diagnostics(diagnostics, prefix + "." + obb_diag, cover, waypoints);
             diagnostics[prefix + "." + obb_diag + "_ms"] +=
                 std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - obb_t0).count();

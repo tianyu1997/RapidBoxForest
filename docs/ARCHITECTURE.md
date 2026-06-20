@@ -312,6 +312,9 @@ src/planning_forest_overlay.cpp    partition box/portal overlay corridor helpers
 src/planning_forest_overlay_edges.cpp
                                    partition-first segment edge insertion,
                                    OBB bridge/segment cover, and edge sync
+src/planning_forest_obb_diagnostics.cpp
+                                   OBB cover/portal validation diagnostic
+                                   emission shared by overlay stages
 src/planning_forest_query.cpp      online query entry point, strict audit,
                                    final simplify, and local repair
 src/planning_forest_query_utils.cpp
