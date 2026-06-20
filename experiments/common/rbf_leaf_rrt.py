@@ -1397,6 +1397,36 @@ def make_query_bridge_failure_fallback_options(
     return fallback_options
 
 
+def accumulate_query_bridge_result(
+    query_bridge_s: float,
+    query_bridge_added: int,
+    query_bridge_attempts: int,
+    query_bridge_by_label_s: dict[str, float],
+    query_bridge_added_by_label: dict[str, int],
+    bridge_s: float,
+    added: int,
+    attempts: int,
+    by_label_s: dict[str, float],
+    added_by_label: dict[str, int],
+    *,
+    prefix: str = "",
+) -> tuple[float, int, int]:
+    query_bridge_s += float(bridge_s)
+    query_bridge_added += int(added)
+    query_bridge_attempts += int(attempts)
+    for key, value in by_label_s.items():
+        out_key = f"{prefix}:{key}" if prefix else key
+        query_bridge_by_label_s[out_key] = (
+            query_bridge_by_label_s.get(out_key, 0.0) + float(value)
+        )
+    for key, value in added_by_label.items():
+        out_key = f"{prefix}:{key}" if prefix else key
+        query_bridge_added_by_label[out_key] = (
+            query_bridge_added_by_label.get(out_key, 0) + int(value)
+        )
+    return query_bridge_s, query_bridge_added, query_bridge_attempts
+
+
 def forest_adjacency_island_count(forest: Any) -> int:
     boxes = list(forest.boxes())
     if not boxes:
@@ -1539,13 +1569,18 @@ def run_leaf_rrt(
                 [raw_query],
                 options,
             )
-            query_bridge_s += float(step_bridge_s)
-            query_bridge_added += int(step_bridge_added)
-            query_bridge_attempts += int(step_bridge_attempts)
-            for key, value in step_bridge_by_label_s.items():
-                query_bridge_by_label_s[key] = query_bridge_by_label_s.get(key, 0.0) + float(value)
-            for key, value in step_bridge_added_by_label.items():
-                query_bridge_added_by_label[key] = query_bridge_added_by_label.get(key, 0) + int(value)
+            query_bridge_s, query_bridge_added, query_bridge_attempts = accumulate_query_bridge_result(
+                query_bridge_s,
+                query_bridge_added,
+                query_bridge_attempts,
+                query_bridge_by_label_s,
+                query_bridge_added_by_label,
+                step_bridge_s,
+                step_bridge_added,
+                step_bridge_attempts,
+                step_bridge_by_label_s,
+                step_bridge_added_by_label,
+            )
             step_qrows = query_rows(
                 forest,
                 robot,
@@ -1573,17 +1608,19 @@ def run_leaf_rrt(
                     [raw_query],
                     retry_options,
                 )
-                query_bridge_s += float(retry_bridge_s)
-                query_bridge_added += int(retry_added)
-                query_bridge_attempts += int(retry_attempts)
-                for key, value in retry_by_label_s.items():
-                    query_bridge_by_label_s[f"serial_retry:{key}"] = (
-                        query_bridge_by_label_s.get(f"serial_retry:{key}", 0.0) + float(value)
-                    )
-                for key, value in retry_added_by_label.items():
-                    query_bridge_added_by_label[f"serial_retry:{key}"] = (
-                        query_bridge_added_by_label.get(f"serial_retry:{key}", 0) + int(value)
-                    )
+                query_bridge_s, query_bridge_added, query_bridge_attempts = accumulate_query_bridge_result(
+                    query_bridge_s,
+                    query_bridge_added,
+                    query_bridge_attempts,
+                    query_bridge_by_label_s,
+                    query_bridge_added_by_label,
+                    retry_bridge_s,
+                    retry_added,
+                    retry_attempts,
+                    retry_by_label_s,
+                    retry_added_by_label,
+                    prefix="serial_retry",
+                )
                 step_qrows = query_rows(
                     forest,
                     robot,
@@ -1610,17 +1647,19 @@ def run_leaf_rrt(
                     [raw_query],
                     fallback_options,
                 )
-                query_bridge_s += float(fallback_bridge_s)
-                query_bridge_added += int(fallback_added)
-                query_bridge_attempts += int(fallback_attempts)
-                for key, value in fallback_by_label_s.items():
-                    query_bridge_by_label_s[f"fallback:{key}"] = (
-                        query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
-                    )
-                for key, value in fallback_added_by_label.items():
-                    query_bridge_added_by_label[f"fallback:{key}"] = (
-                        query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
-                    )
+                query_bridge_s, query_bridge_added, query_bridge_attempts = accumulate_query_bridge_result(
+                    query_bridge_s,
+                    query_bridge_added,
+                    query_bridge_attempts,
+                    query_bridge_by_label_s,
+                    query_bridge_added_by_label,
+                    fallback_bridge_s,
+                    fallback_added,
+                    fallback_attempts,
+                    fallback_by_label_s,
+                    fallback_added_by_label,
+                    prefix="fallback",
+                )
                 step_qrows = query_rows(
                     forest,
                     robot,
@@ -1685,17 +1724,19 @@ def run_leaf_rrt(
                     failed_queries,
                     fallback_options,
                 )
-                query_bridge_s += float(fallback_bridge_s)
-                query_bridge_added += int(fallback_added)
-                query_bridge_attempts += int(fallback_attempts)
-                for key, value in fallback_by_label_s.items():
-                    query_bridge_by_label_s[f"fallback:{key}"] = (
-                        query_bridge_by_label_s.get(f"fallback:{key}", 0.0) + float(value)
-                    )
-                for key, value in fallback_added_by_label.items():
-                    query_bridge_added_by_label[f"fallback:{key}"] = (
-                        query_bridge_added_by_label.get(f"fallback:{key}", 0) + int(value)
-                    )
+                query_bridge_s, query_bridge_added, query_bridge_attempts = accumulate_query_bridge_result(
+                    query_bridge_s,
+                    query_bridge_added,
+                    query_bridge_attempts,
+                    query_bridge_by_label_s,
+                    query_bridge_added_by_label,
+                    fallback_bridge_s,
+                    fallback_added,
+                    fallback_attempts,
+                    fallback_by_label_s,
+                    fallback_added_by_label,
+                    prefix="fallback",
+                )
                 qrows = query_rows(
                     forest,
                     robot,
