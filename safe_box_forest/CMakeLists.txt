@@ -179,6 +179,7 @@ add_library(sbf_core STATIC
     src/planning_forest_partition_diagnostics.cpp
     src/planning_forest_qroot_helpers.cpp
     src/planning_forest_qroot_growers.cpp
+    src/planning_forest_qroot_offline.cpp
     src/planning_forest_query.cpp
     src/planning_forest_query_bridge_acceptance_options.cpp
     src/planning_forest_query_bridge_anchor.cpp

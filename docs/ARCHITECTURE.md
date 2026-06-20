@@ -428,6 +428,9 @@ src/planning_forest_query_utils_rrt.cpp
                                    parallel attempt diagnostics
 src/planning_forest_qroot_helpers.cpp
                                    query-root growth DSU/index/commit helpers
+src/planning_forest_qroot_offline.cpp
+                                   offline anchor root growth and associated
+                                   query-independent box commits
 src/planning_forest_query_bridge_acceptance_options.cpp
                                    query bridge acceptance-threshold option
                                    parsing, diagnostics, and acceptance checks
