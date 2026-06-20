@@ -349,6 +349,20 @@ private:
 		double checkpoint_probe_ms_total,
 		std::chrono::steady_clock::time_point total_start,
 		bool use_partition_backend);
+	AdaptiveDepthSnapshot evaluate_adaptive_depth_snapshot(
+		int depth,
+		bool allow_anchor_probe,
+		bool adaptive_depth_enabled,
+		int target_leaf_depth,
+		const LeafSweepResult& leaf_sweep,
+		const std::vector<Eigen::VectorXd>& free_probes,
+		const std::vector<Interval>& planning_domain,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		bool use_partition_backend,
+		std::unordered_set<int>& main_ids,
+		std::size_t& first_unconnected_new_index,
+		int& pending_adjacency_boxes,
+		double adjacency_tolerance);
 	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
 												  const Eigen::Ref<const Eigen::VectorXd>& goal,
 												  StageContext& context);

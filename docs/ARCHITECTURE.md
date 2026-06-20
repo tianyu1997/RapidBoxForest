@@ -301,7 +301,7 @@ src/merger.cpp                     box containment and merge helpers
 src/query.cpp                      query result/path utility helpers
 src/planning_forest_adaptive_build.cpp
                                    adaptive deep leaf sweep orchestration,
-                                   frontier validation, and depth checkpoints
+                                   frontier validation, and checkpoint flow
 src/planning_forest_adaptive_fast_checkpoint.cpp
                                    fast virtual checkpoint materialization,
                                    coverage probe, and profile selection
@@ -321,6 +321,9 @@ src/planning_forest_adaptive_merge.cpp
 src/planning_forest_adaptive_merge_grid.cpp
                                    LECT-grid line merge and tree-sibling merge
                                    helpers for adaptive build backends
+src/planning_forest_adaptive_snapshot.cpp
+                                   adaptive depth checkpoint coverage and
+                                   anchor-probe snapshot evaluation
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
