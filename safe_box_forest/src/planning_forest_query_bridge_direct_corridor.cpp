@@ -17,8 +17,6 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
-#include <cmath>
-#include <limits>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -294,18 +292,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         }
         for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
             const auto& box = boxes_[box_index];
-            if (box.joint_intervals.size() != intervals.size()) {
-                continue;
-            }
-            bool same = true;
-            for (std::size_t dim = 0; dim < intervals.size(); ++dim) {
-                if (std::abs(box.joint_intervals[dim].lo - intervals[dim].lo) > 1e-12 ||
-                    std::abs(box.joint_intervals[dim].hi - intervals[dim].hi) > 1e-12) {
-                    same = false;
-                    break;
-                }
-            }
-            if (same) {
+            if (intervals_equal_local(box.joint_intervals, intervals, 1e-12)) {
                 return static_cast<int>(box_index);
             }
         }

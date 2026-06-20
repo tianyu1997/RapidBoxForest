@@ -110,6 +110,10 @@ bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals
                                           const Eigen::Ref<const Eigen::VectorXd>& point,
                                           double tolerance = 0.0);
 
+bool intervals_equal_local(const std::vector<Interval>& lhs,
+                           const std::vector<Interval>& rhs,
+                           double tolerance = 0.0);
+
 Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals);
 
 BoxNode adaptive_make_box_from_intervals(const std::vector<Interval>& intervals,

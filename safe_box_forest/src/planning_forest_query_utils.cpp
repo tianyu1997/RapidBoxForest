@@ -366,6 +366,21 @@ bool intervals_contain_point_strict_local(const std::vector<Interval>& intervals
     return true;
 }
 
+bool intervals_equal_local(const std::vector<Interval>& lhs,
+                           const std::vector<Interval>& rhs,
+                           double tolerance) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
+        if (std::abs(lhs[dim].lo - rhs[dim].lo) > tolerance ||
+            std::abs(lhs[dim].hi - rhs[dim].hi) > tolerance) {
+            return false;
+        }
+    }
+    return true;
+}
+
 Eigen::VectorXd adaptive_center_of_intervals(const std::vector<Interval>& intervals) {
     Eigen::VectorXd center(static_cast<int>(intervals.size()));
     for (int dim = 0; dim < center.size(); ++dim) {

@@ -175,23 +175,12 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
             return -1;
         }
         context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_success");
-        auto same_intervals = [](const std::vector<Interval>& lhs,
-                                 const std::vector<Interval>& rhs) {
-            if (lhs.size() != rhs.size()) {
-                return false;
-            }
-            for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
-                if (std::abs(lhs[dim].lo - rhs[dim].lo) > 1e-12 ||
-                    std::abs(lhs[dim].hi - rhs[dim].hi) > 1e-12) {
-                    return false;
-                }
-            }
-            return true;
-        };
         for (const auto& existing_box : boxes_) {
             if ((result.node != kInvalidOracleNodeId &&
                  existing_box.tree_id == result.node) ||
-                same_intervals(existing_box.joint_intervals, result.intervals)) {
+                intervals_equal_local(existing_box.joint_intervals,
+                                      result.intervals,
+                                      1e-12)) {
                 context.diagnostics().add_counter("query_bridge.endpoint_anchor_duplicate_reuse");
                 return existing_box.id;
             }
