@@ -157,6 +157,8 @@ Python binding ownership:
 
 ```text
 python/bindings.cpp                pybind11 module registration only
+python/binding_adaptive_types.h    adaptive leaf-sweep/refine config and
+                                   result registration
 python/binding_basic_types.h       robot, interval, canonical helper, and
                                    common enum registration
 python/binding_planner_core_types.h
