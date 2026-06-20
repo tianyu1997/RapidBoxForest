@@ -178,6 +178,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_corridor_tasks.cpp
     src/planning_forest_query_bridge_direct_corridor.cpp
     src/planning_forest_query_bridge_direct_promotion.cpp
+    src/planning_forest_query_bridge_direct_residual.cpp
     src/planning_forest_query_bridge_direct_segments.cpp
     src/planning_forest_query_bridge_path_utils.cpp
     src/planning_forest_query_bridge_repair_options.cpp

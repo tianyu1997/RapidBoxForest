@@ -31,6 +31,7 @@ struct QueryBridgeEdgeRuntimeOptions;
 struct QueryBridgeHybridizeAttemptOptions;
 struct QueryBridgeParallelRrtOptions;
 struct QueryBridgeRetryOptions;
+struct QueryBridgeLocalDsu;
 struct QueryBridgeSearchTask;
 struct ObbPathCoverResult;
 struct ObbValidationOptions;
@@ -209,6 +210,18 @@ private:
 											 double audited_bridge_length,
 											 bool allow_residual_segments,
 											 int& next_id);
+	void run_query_bridge_direct_corridor_residual_segments(
+		const std::vector<Eigen::VectorXd>& samples,
+		const std::vector<std::vector<int>>& sample_layers,
+		const std::vector<int>& final_bad,
+		const RRTConnectConfig& bridge_rrt,
+		CollisionChecker& checker,
+		StageContext& context,
+		int bridge_edge_query_index,
+		QueryBridgeLocalDsu& dsu,
+		int& local_segment_edges_added,
+		int& local_segment_gap_samples_max,
+		double& residual_segment_audit_ms);
 	int try_promote_query_bridge_direct_transition(
 		int source_box_id,
 		int target_box_id,
