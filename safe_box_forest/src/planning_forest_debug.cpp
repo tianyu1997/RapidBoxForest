@@ -4,103 +4,16 @@
 #include <SBF/connector.h>
 
 #include <algorithm>
-#include <chrono>
 #include <limits>
 #include <vector>
 
 #include "planning_forest_audit.h"
+#include "planning_forest_query_bridge_rrt_utils.h"
+#include "planning_forest_query_utils.h"
 
 namespace rbf {
 
 namespace {
-
-constexpr int kSeedAttemptStride = 7919;
-constexpr int kSeedDebugBridgeOffset = 701;
-constexpr int kSeedCorridorRefineOffset = 809;
-
-int derived_planner_seed(int base_seed, int offset, int attempt = 0) {
-    constexpr long long modulus = 2147483647LL;
-    long long value = static_cast<long long>(base_seed);
-    value += static_cast<long long>(offset);
-    value += static_cast<long long>(attempt) * kSeedAttemptStride;
-    value %= modulus;
-    if (value < 0) {
-        value += modulus;
-    }
-    return static_cast<int>(value);
-}
-
-RRTConnectConfig with_query_root_hull_domain(const RRTConnectConfig& config,
-                                             const BoxOracle& oracle,
-                                             const Eigen::Ref<const Eigen::VectorXd>& start,
-                                             const Eigen::Ref<const Eigen::VectorXd>& goal) {
-    RRTConnectConfig out = config;
-    auto lhs = oracle.planning_intervals();
-    auto rhs = oracle.planning_intervals();
-    (void)start;
-    (void)goal;
-    if (lhs.size() == rhs.size()) {
-        for (std::size_t index = 0; index < lhs.size(); ++index) {
-            lhs[index] = lhs[index].hull(rhs[index]);
-        }
-    }
-    out.domain_intervals = std::move(lhs);
-    return out;
-}
-
-std::vector<Eigen::VectorXd> best_audited_rrt_bridge_path(
-    const Eigen::Ref<const Eigen::VectorXd>& start,
-    const Eigen::Ref<const Eigen::VectorXd>& goal,
-    const CollisionChecker& checker,
-    const Robot& robot,
-    StageContext& context,
-    const RRTConnectConfig& base_config,
-    int attempts,
-    double total_timeout_ms,
-    int seed_base,
-    int audit_resolution,
-    double audit_segment_step) {
-    using Clock = std::chrono::steady_clock;
-    std::vector<Eigen::VectorXd> best;
-    double best_length = std::numeric_limits<double>::infinity();
-    const int safe_attempts = std::max(1, attempts);
-    const double safe_total_ms = total_timeout_ms > 0.0 ? total_timeout_ms : base_config.timeout_ms;
-    const auto t0 = Clock::now();
-    auto elapsed_ms = [&]() {
-        return std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-    };
-    for (int attempt = 0; attempt < safe_attempts; ++attempt) {
-        if (context.should_stop()) {
-            break;
-        }
-        RRTConnectConfig config = base_config;
-        if (safe_total_ms > 0.0) {
-            const double remaining_ms = safe_total_ms - elapsed_ms();
-            if (remaining_ms <= 0.0) {
-                break;
-            }
-            const int attempts_left = safe_attempts - attempt;
-            config.timeout_ms = std::max(1.0, remaining_ms / static_cast<double>(attempts_left));
-        }
-        std::vector<Eigen::VectorXd> path =
-            rrt_connect(start, goal, checker, robot, context, config,
-                        seed_base + attempt * kSeedAttemptStride);
-        if (path.empty()) {
-            continue;
-        }
-        const PathAuditCheck audit =
-            audit_waypoint_path(path, checker, audit_resolution, audit_segment_step);
-        if (!audit.passed) {
-            continue;
-        }
-        const double length = path_length(path);
-        if (length < best_length) {
-            best_length = length;
-            best = std::move(path);
-        }
-    }
-    return best;
-}
 
 void fill_debug_chain_pave_endpoint_boxes(DebugChainPaveResult& out,
                                           const std::vector<BoxNode>& boxes,
@@ -385,7 +298,8 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
                                                                           kSeedCorridorRefineOffset,
                                                                           0),
                                                      config_.query.audit_resolution,
-                                                     config_.query.audit_segment_step);
+                                                     config_.query.audit_segment_step,
+                                                     QueryBridgeParallelRrtOptions{});
         if (waypoint_path.empty()) {
             waypoint_path = probe.path;
         }
@@ -415,7 +329,8 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
                                                                               kSeedCorridorRefineOffset,
                                                                               1),
                                                          config_.query.audit_resolution,
-                                                         config_.query.audit_segment_step);
+                                                         config_.query.audit_segment_step,
+                                                         QueryBridgeParallelRrtOptions{});
             if (waypoint_path.empty()) {
                 waypoint_path = probe.path;
             }
@@ -440,7 +355,8 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
                                                                           kSeedCorridorRefineOffset,
                                                                           2),
                                                      config_.query.audit_resolution,
-                                                     config_.query.audit_segment_step);
+                                                     config_.query.audit_segment_step,
+                                                     QueryBridgeParallelRrtOptions{});
         add_query_segment_edge = mode != CorridorRefineMode::BoxOnlyLongPath;
     }
     if (waypoint_path.empty()) {
