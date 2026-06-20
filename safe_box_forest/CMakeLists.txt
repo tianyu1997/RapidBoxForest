@@ -135,6 +135,7 @@ add_library(sbf_core STATIC
     src/planning_forest_audit.cpp
     src/planning_forest_build.cpp
     src/planning_forest_core.cpp
+    src/planning_forest_corridor_refine.cpp
     src/planning_forest_database.cpp
     src/planning_forest_debug.cpp
     src/planning_forest_diagnostics.cpp
