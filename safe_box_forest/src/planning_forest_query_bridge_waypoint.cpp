@@ -104,7 +104,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                     direct_segment_after_rrt_candidate ? 1.0 : 0.0);
     int direct_segment_edges_added = 0;
     int box_corridor_edges_added = 0;
-    const bool defer_query_segment_edge = true;
     const double query_bridge_depth_failures_before =
         boundary_max_depth_failure_count_local(context);
     int next_id = next_box_id();
@@ -168,7 +167,6 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                      direct_corridor_audit_step);
     const double dense_box_corridor_max_length = direct_corridor_options.max_length;
     const bool dense_box_corridor_candidate =
-        defer_query_segment_edge &&
         audited_bridge_length > 0.0 &&
         audited_bridge_length <= dense_box_corridor_max_length;
     if (dense_box_corridor_candidate) {
@@ -228,11 +226,9 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         }
     }
     ChainPaveConfig pave_config =
-        defer_query_segment_edge
-            ? make_deferred_query_bridge_pave_config(config_.connector.pave,
-                                                     query_bridge_ffb_depth,
-                                                     short_local_bridge)
-            : config_.connector.pave;
+        make_deferred_query_bridge_pave_config(config_.connector.pave,
+                                               query_bridge_ffb_depth,
+                                               short_local_bridge);
     int added = 0;
     if (!skip_graph_query_bridge_pave_if_partition_native(
             context,
@@ -330,7 +326,7 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                             context,
                                             query_bridge_depth_failures_before,
                                             bridge_edge_query_index,
-                                            defer_query_segment_edge);
+                                            true);
     return finish_bridge(added + dense_repair_added + box_corridor_edges_added + direct_segment_edges_added);
 }
 

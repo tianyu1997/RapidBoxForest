@@ -84,68 +84,41 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     std::size_t direct_partition_append_base = boxes_.size();
     std::vector<std::vector<int>> sample_layers(samples.size());
     std::vector<bool> covered(samples.size(), false);
-    auto mark_from_index = [&](std::size_t from_index) {
+    auto mark_initial_coverage = [&]() {
         const auto mark_t0 = Clock::now();
-        int changed = 0;
         for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-            if (from_index == 0) {
-                std::vector<int> candidates;
-                if (use_partition_cover_index) {
-                    candidates = adaptive_partition_->covering_box_indices(
-                        samples[sample_index],
-                        config_.query.adjacency_tolerance);
-                } else {
-                    candidates = direct_box_index.point_candidates(samples[sample_index]);
-                }
-                for (int box_index : candidates) {
-                    if (box_index < 0 || box_index >= static_cast<int>(boxes_.size())) {
-                        continue;
-                    }
-                    if (!intervals_contain_point_local(
-                            boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
-                            samples[sample_index],
-                            config_.query.adjacency_tolerance)) {
-                        continue;
-                    }
-                    auto& layer = sample_layers[sample_index];
-                    if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
-                        layer.push_back(box_index);
-                    }
-                    if (!covered[sample_index]) {
-                        covered[sample_index] = true;
-                        changed += 1;
-                    }
-                }
-                continue;
+            std::vector<int> candidates;
+            if (use_partition_cover_index) {
+                candidates = adaptive_partition_->covering_box_indices(
+                    samples[sample_index],
+                    config_.query.adjacency_tolerance);
+            } else {
+                candidates = direct_box_index.point_candidates(samples[sample_index]);
             }
-            for (std::size_t box_index = from_index; box_index < boxes_.size(); ++box_index) {
-                if (!intervals_contain_point_local(boxes_[box_index].joint_intervals,
-                                                   samples[sample_index],
-                                                   config_.query.adjacency_tolerance)) {
+            for (int box_index : candidates) {
+                if (box_index < 0 || box_index >= static_cast<int>(boxes_.size())) {
+                    continue;
+                }
+                if (!intervals_contain_point_local(
+                        boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
+                        samples[sample_index],
+                        config_.query.adjacency_tolerance)) {
                     continue;
                 }
                 auto& layer = sample_layers[sample_index];
-                const int index_value = static_cast<int>(box_index);
-                if (std::find(layer.begin(), layer.end(), index_value) == layer.end()) {
-                    layer.push_back(index_value);
+                if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
+                    layer.push_back(box_index);
                 }
                 if (!covered[sample_index]) {
                     covered[sample_index] = true;
-                    changed += 1;
-                }
-                if (from_index == 0) {
-                    break;
                 }
             }
         }
         context.diagnostics().record_timing(
-            from_index == 0
-                ? "query_bridge.direct_corridor_mark_initial_ms"
-                : "query_bridge.direct_corridor_mark_incremental_ms",
+            "query_bridge.direct_corridor_mark_initial_ms",
             std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
-        return changed;
     };
-    mark_from_index(0);
+    mark_initial_coverage();
 
     QueryBridgeLocalDsu dsu(boxes_.size());
     QueryBridgeDirectCorridorRuntimeStats runtime_stats;
