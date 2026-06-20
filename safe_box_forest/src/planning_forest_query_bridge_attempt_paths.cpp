@@ -39,6 +39,7 @@ void select_query_bridge_attempt_paths(
         return;
     }
     if (hybrid_options.enabled && valid_paths.size() >= 2U) {
+        const QueryBridgeTaskDiagnostics task_diag(context, task.index);
         CollisionChecker checker = make_audit_checker(audit_robot, scene, config.query);
         const double best_input_length =
             std::min(best_length,
@@ -61,9 +62,7 @@ void select_query_bridge_attempt_paths(
             const double hybrid_length = path_length(hybrid);
             context.diagnostics().add_counter(
                 "query_bridge.hybridize_attempt_paths_candidates");
-            context.diagnostics().add_counter(
-                query_bridge_task_key(task.index,
-                                      "hybridize_attempt_paths_candidates"));
+            task_diag.add_counter("hybridize_attempt_paths_candidates");
             if (hybrid_length + 1e-12 < best_input_length) {
                 const PathAuditCheck audit =
                     audit_waypoint_path(hybrid,
@@ -79,9 +78,7 @@ void select_query_bridge_attempt_paths(
                     context.diagnostics().add_counter(
                         "query_bridge.hybridize_attempt_paths_delta",
                         best_input_length - hybrid_length);
-                    context.diagnostics().add_counter(
-                        query_bridge_task_key(task.index,
-                                              "hybridize_attempt_paths_accepts"));
+                    task_diag.add_counter("hybridize_attempt_paths_accepts");
                 } else {
                     context.diagnostics().add_counter(
                         "query_bridge.hybridize_attempt_paths_audit_rejects");
