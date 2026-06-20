@@ -198,6 +198,29 @@ int query_bridge_append_direct_corridor_box(
     return box_index;
 }
 
+int query_bridge_append_direct_partition_batch(
+    AdaptiveGridPartition* partition,
+    std::vector<BoxNode>& boxes,
+    QueryBridgePartitionAppendBatchState& state,
+    double tolerance,
+    StageContext& context,
+    bool force) {
+    if (!state.enabled || partition == nullptr || state.base >= boxes.size()) {
+        return 0;
+    }
+    const std::size_t pending = boxes.size() - state.base;
+    if (!force && pending < static_cast<std::size_t>(std::max(1, state.batch_size))) {
+        return 0;
+    }
+    const int appended = partition->append_boxes(boxes, state.base, tolerance);
+    context.diagnostics().add_counter(
+        appended > 0
+            ? "query_bridge.direct_corridor_batched_partition_appends"
+            : "query_bridge.direct_corridor_batched_partition_append_rejects");
+    state.base = boxes.size();
+    return appended;
+}
+
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,
     const BoxNode& box,

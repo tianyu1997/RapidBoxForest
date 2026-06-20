@@ -80,6 +80,12 @@ struct QueryBridgeDirectCorridorCommitState {
     double adjacency_tolerance = 0.0;
 };
 
+struct QueryBridgePartitionAppendBatchState {
+    std::size_t base = 0;
+    int batch_size = 1;
+    bool enabled = false;
+};
+
 using QueryBridgeSampleCandidateProvider =
     std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
 
@@ -119,6 +125,14 @@ int query_bridge_append_direct_corridor_box(
     std::vector<BoxNode>& boxes,
     std::vector<BoxNode>& raw_boxes,
     QueryBridgeDirectCorridorCommitState& state);
+
+int query_bridge_append_direct_partition_batch(
+    AdaptiveGridPartition* partition,
+    std::vector<BoxNode>& boxes,
+    QueryBridgePartitionAppendBatchState& state,
+    double tolerance,
+    StageContext& context,
+    bool force);
 
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,

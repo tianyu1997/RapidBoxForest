@@ -62,13 +62,13 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         adaptive_partition_;
     const bool use_partition_neighbor_candidates =
         use_partition_cover_index;
-    const bool immediate_partition_append =
-        use_partition_cover_index;
-    const int partition_append_batch_size =
+    QueryBridgePartitionAppendBatchState partition_append_state;
+    partition_append_state.enabled = use_partition_cover_index;
+    partition_append_state.batch_size =
         std::max(1, direct_corridor_options.partition_append_batch_size);
     context.diagnostics().set_value(
         "query_bridge.direct_corridor_partition_append_batch_size",
-        static_cast<double>(partition_append_batch_size));
+        static_cast<double>(partition_append_state.batch_size));
     BoxSpatialIndex direct_box_index;
     if (!use_partition_cover_index) {
         direct_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
@@ -78,7 +78,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         box_id_to_index = query_bridge_build_box_id_index(boxes_);
     }
     std::vector<int> corridor_new_box_indices;
-    std::size_t direct_partition_append_base = boxes_.size();
+    partition_append_state.base = boxes_.size();
     std::vector<std::vector<int>> sample_layers(samples.size());
     std::vector<bool> covered(samples.size(), false);
     const auto mark_t0 = Clock::now();
@@ -104,27 +104,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
 
     QueryBridgeLocalDsu dsu(boxes_.size());
     QueryBridgeDirectCorridorRuntimeStats runtime_stats;
-    auto append_direct_partition_batch = [&](bool force) {
-        if (!immediate_partition_append ||
-            !adaptive_partition_ ||
-            direct_partition_append_base >= boxes_.size()) {
-            return 0;
-        }
-        const std::size_t pending = boxes_.size() - direct_partition_append_base;
-        if (!force && pending < static_cast<std::size_t>(partition_append_batch_size)) {
-            return 0;
-        }
-        const int appended = adaptive_partition_->append_boxes(
-            boxes_,
-            direct_partition_append_base,
-            config_.query.adjacency_tolerance);
-        context.diagnostics().add_counter(
-            appended > 0
-                ? "query_bridge.direct_corridor_batched_partition_appends"
-                : "query_bridge.direct_corridor_batched_partition_append_rejects");
-        direct_partition_append_base = boxes_.size();
-        return appended;
-    };
     auto transition_connected = [&](int transition) {
         return query_bridge_sample_transition_connected(sample_layers, dsu, transition);
     };
@@ -265,7 +244,13 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             raw_boxes_,
             commit_state);
         if (use_partition_cover_index) {
-            append_direct_partition_batch(false);
+            query_bridge_append_direct_partition_batch(
+                adaptive_partition_.get(),
+                boxes_,
+                partition_append_state,
+                config_.query.adjacency_tolerance,
+                context,
+                false);
         }
         dsu.add();
         assimilate_box(box_index, transition_hint);
