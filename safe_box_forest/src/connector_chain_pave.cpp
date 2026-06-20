@@ -242,6 +242,72 @@ std::vector<Eigen::VectorXd> chain_pave_boundary_seed_candidates(const BoxNode& 
     return seeds;
 }
 
+Eigen::VectorXd chain_pave_closest_point_in_box(const BoxNode& box,
+                                                const Eigen::VectorXd& point) {
+    Eigen::VectorXd out(point.size());
+    for (int dim = 0; dim < point.size(); ++dim) {
+        const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
+        out[dim] = std::clamp(point[dim], interval.lo, interval.hi);
+    }
+    return out;
+}
+
+std::uint64_t chain_pave_mix_u64(std::uint64_t value) {
+    value ^= value >> 33;
+    value *= 0xff51afd7ed558ccdULL;
+    value ^= value >> 33;
+    value *= 0xc4ceb9fe1a85ec53ULL;
+    value ^= value >> 33;
+    return value;
+}
+
+std::uint64_t chain_pave_boundary_seed_key(int parent_id,
+                                           std::size_t segment_index,
+                                           const BoxNode& parent_box,
+                                           const Eigen::VectorXd& cursor,
+                                           const Eigen::VectorXd& seed,
+                                           double adjacency_tolerance,
+                                           double gap_fill_min_step) {
+    int face_dim = 0;
+    int side = 1;
+    double best_gap = -1.0;
+    for (int dim = 0; dim < seed.size(); ++dim) {
+        const auto& interval = parent_box.joint_intervals[static_cast<std::size_t>(dim)];
+        double gap = 0.0;
+        int candidate_side = seed[dim] >= cursor[dim] ? 1 : 0;
+        if (seed[dim] > interval.hi + adjacency_tolerance) {
+            gap = seed[dim] - interval.hi;
+            candidate_side = 1;
+        } else if (seed[dim] < interval.lo - adjacency_tolerance) {
+            gap = interval.lo - seed[dim];
+            candidate_side = 0;
+        } else {
+            gap = std::abs(seed[dim] - cursor[dim]) * 1e-3;
+        }
+        if (gap > best_gap) {
+            best_gap = gap;
+            face_dim = dim;
+            side = candidate_side;
+        }
+    }
+    std::uint64_t key = chain_pave_mix_u64(
+        static_cast<std::uint64_t>(static_cast<std::uint32_t>(parent_id)));
+    key ^= chain_pave_mix_u64(static_cast<std::uint64_t>(
+        segment_index + 0x9e3779b97f4a7c15ULL));
+    key ^= chain_pave_mix_u64(static_cast<std::uint64_t>(
+        (face_dim & 0xff) | ((side & 0x1) << 8)));
+    const double bucket =
+        std::max(1e-6, std::max(gap_fill_min_step, 1e-9) * 0.25);
+    for (int dim = 0; dim < seed.size(); ++dim) {
+        const auto quantized =
+            static_cast<std::int64_t>(std::llround(seed[dim] / bucket));
+        key ^= chain_pave_mix_u64(static_cast<std::uint64_t>(
+            quantized + 0x9e3779b97f4a7c15LL +
+            static_cast<std::int64_t>(dim) * 0x100000001b3LL));
+    }
+    return key;
+}
+
 }  // namespace
 
 int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
@@ -599,66 +665,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return cover(via, mid, to_pt, budget - 1);
     };
 
-    auto closest_point_in_box = [&](const BoxNode& box,
-                                    const Eigen::VectorXd& point) -> Eigen::VectorXd {
-        Eigen::VectorXd out(point.size());
-        for (int dim = 0; dim < point.size(); ++dim) {
-            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
-            out[dim] = std::clamp(point[dim], interval.lo, interval.hi);
-        }
-        return out;
-    };
     std::unordered_set<std::uint64_t> failed_boundary_seed_keys;
-    auto boundary_seed_key = [&](int parent_id,
-                                 std::size_t segment_index,
-                                 const BoxNode& parent_box,
-                                 const Eigen::VectorXd& cursor,
-                                 const Eigen::VectorXd& seed) {
-        int face_dim = 0;
-        int side = 1;
-        double best_gap = -1.0;
-        for (int dim = 0; dim < seed.size(); ++dim) {
-            const auto& interval = parent_box.joint_intervals[static_cast<std::size_t>(dim)];
-            double gap = 0.0;
-            int candidate_side = seed[dim] >= cursor[dim] ? 1 : 0;
-            if (seed[dim] > interval.hi + config.adjacency_tolerance) {
-                gap = seed[dim] - interval.hi;
-                candidate_side = 1;
-            } else if (seed[dim] < interval.lo - config.adjacency_tolerance) {
-                gap = interval.lo - seed[dim];
-                candidate_side = 0;
-            } else {
-                gap = std::abs(seed[dim] - cursor[dim]) * 1e-3;
-            }
-            if (gap > best_gap) {
-                best_gap = gap;
-                face_dim = dim;
-                side = candidate_side;
-            }
-        }
-        auto mix = [](std::uint64_t value) {
-            value ^= value >> 33;
-            value *= 0xff51afd7ed558ccdULL;
-            value ^= value >> 33;
-            value *= 0xc4ceb9fe1a85ec53ULL;
-            value ^= value >> 33;
-            return value;
-        };
-        std::uint64_t key = mix(static_cast<std::uint64_t>(static_cast<std::uint32_t>(parent_id)));
-        key ^= mix(static_cast<std::uint64_t>(segment_index + 0x9e3779b97f4a7c15ULL));
-        key ^= mix(static_cast<std::uint64_t>((face_dim & 0xff) |
-                                             ((side & 0x1) << 8)));
-        const double bucket =
-            std::max(1e-6, std::max(config.gap_fill_min_step, 1e-9) * 0.25);
-        for (int dim = 0; dim < seed.size(); ++dim) {
-            const auto quantized =
-                static_cast<std::int64_t>(std::llround(seed[dim] / bucket));
-            key ^= mix(static_cast<std::uint64_t>(
-                quantized + 0x9e3779b97f4a7c15LL +
-                static_cast<std::int64_t>(dim) * 0x100000001b3LL));
-        }
-        return key;
-    };
 
     if (waypoint_path.size() >= 2) {
         int connected_segments = 0;
@@ -681,7 +688,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 break;
             }
             Eigen::VectorXd cursor =
-                current_box->contains(a) ? a : closest_point_in_box(*current_box, a);
+                current_box->contains(a) ? a : chain_pave_closest_point_in_box(*current_box, a);
             const double front_step = std::max(
                 config.gap_fill_sample_step > 0.0 ? config.gap_fill_sample_step
                                                   : config.gap_fill_min_step,
@@ -702,7 +709,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 }
                 connected_steps += 1;
                 if (!current_box->contains(cursor)) {
-                    cursor = closest_point_in_box(*current_box, cursor);
+                    cursor = chain_pave_closest_point_in_box(*current_box, cursor);
                 }
                 int reached = current_box_id;
                 double attempt_step = front_step;
@@ -723,11 +730,13 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                     }
                     for (std::size_t seed_rank = 0; seed_rank < seeds.size(); ++seed_rank) {
                         const auto& seed = seeds[seed_rank];
-                        const auto key = boundary_seed_key(current_box_id,
-                                                           seg,
-                                                           *current_box,
-                                                           cursor,
-                                                           seed);
+                        const auto key = chain_pave_boundary_seed_key(current_box_id,
+                                                                      seg,
+                                                                      *current_box,
+                                                                      cursor,
+                                                                      seed,
+                                                                      config.adjacency_tolerance,
+                                                                      config.gap_fill_min_step);
                         if (failed_boundary_seed_keys.find(key) != failed_boundary_seed_keys.end()) {
                             context.diagnostics().add_counter("connector.chain_pave_boundary_skip_failed_seed");
                             continue;
@@ -751,7 +760,7 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
                 }
                 current_box_id = reached;
                 if (BoxNode* reached_box = box_by_id(current_box_id)) {
-                    cursor = closest_point_in_box(*reached_box, b);
+                    cursor = chain_pave_closest_point_in_box(*reached_box, b);
                 }
             }
         }
