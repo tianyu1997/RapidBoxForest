@@ -33,6 +33,37 @@ ObbValidationOptions obb_validation_options_from_config(const AdaptiveLeafSweepC
     return options;
 }
 
+bool obb_affine_zonotope_candidate_separates_scene(
+    const Robot& robot,
+    const Scene& scene,
+    const ObbPortalCandidate& candidate,
+    double safety_epsilon,
+    ObbPortalValidationStats& stats) {
+    const Eigen::MatrixXd compressed_generators =
+        obb_compress_generator_columns(candidate.generators_q);
+    stats.variables = std::max(stats.variables, static_cast<int>(compressed_generators.cols()));
+    std::vector<ObbLinkZonotopeHull> links =
+        obb_compute_link_zonotopes(robot,
+                                   candidate.center_q,
+                                   compressed_generators,
+                                   compressed_generators.cols());
+    stats.active_links = static_cast<int>(links.size());
+    for (auto& link : links) {
+        obb_compute_link_aabb(link, safety_epsilon);
+    }
+
+    const auto& obstacles = scene.obstacles();
+    for (const auto& obstacle : obstacles) {
+        const float* bounds = obstacle.bounds;
+        for (const auto& link : links) {
+            if (!obb_zonotope_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 bool validate_obb_zonotope_candidate(const Robot& robot,
                                      const Scene& scene,
                                      const ObbPortalCandidate& candidate,
@@ -53,34 +84,11 @@ bool validate_obb_zonotope_candidate(const Robot& robot,
             return true;
         }
     }
-    const Eigen::MatrixXd compressed_generators =
-        obb_compress_generator_columns(candidate.generators_q);
-    stats.variables = std::max(stats.variables, static_cast<int>(compressed_generators.cols()));
-    std::vector<ObbLinkZonotopeHull> links =
-        obb_compute_link_zonotopes(robot,
-                                   candidate.center_q,
-                                   compressed_generators,
-                                   compressed_generators.cols());
-    stats.active_links = static_cast<int>(links.size());
-    for (auto& link : links) {
-        obb_compute_link_aabb(link, safety_epsilon);
-    }
-
-    const auto& obstacles = scene.obstacles();
-    bool affine_maybe = false;
-    for (const auto& obstacle : obstacles) {
-        const float* bounds = obstacle.bounds;
-        for (const auto& link : links) {
-            if (!obb_zonotope_link_separates_obstacle(link, bounds, safety_epsilon, stats)) {
-                affine_maybe = true;
-                break;
-            }
-        }
-        if (affine_maybe) {
-            break;
-        }
-    }
-    if (!affine_maybe) {
+    if (obb_affine_zonotope_candidate_separates_scene(robot,
+                                                      scene,
+                                                      candidate,
+                                                      safety_epsilon,
+                                                      stats)) {
         return true;
     }
     if (!clearance_attempted &&
