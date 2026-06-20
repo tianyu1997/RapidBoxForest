@@ -38,26 +38,19 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
         "query_bridge.direct_start_goal_segment_attempts");
     add_task_counter("direct_start_goal_segment_attempts");
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
-    const PathAuditCheck audit =
-        audit_waypoint_path(direct_path,
-                            checker,
-                            config_.query.audit_resolution,
-                            config_.query.audit_segment_step);
-    if (!audit.passed) {
+    const int edge_id = add_audited_query_bridge_segment_edge(
+        source_box_id,
+        target_box_id,
+        direct_path,
+        checker,
+        config_.query.audit_resolution,
+        query_index);
+    if (edge_id == -2) {
         context.diagnostics().add_counter(
             "query_bridge.direct_start_goal_segment_audit_rejects");
         add_task_counter("direct_start_goal_segment_audit_rejects");
         return 0;
     }
-    const int edge_id = add_segment_edge_partition_first(
-        source_box_id,
-        target_box_id,
-        direct_path,
-        SegmentEdgeType::QueryBridge,
-        config_.query.audit_resolution,
-        SegmentEdgeValidation::CollisionChecked,
-        true,
-        query_index);
     if (edge_id < 0) {
         context.diagnostics().add_counter(
             "query_bridge.direct_start_goal_segment_add_fail");
@@ -153,26 +146,19 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
         const auto& candidate_path = candidate_paths[candidate_index];
         context.diagnostics().add_counter(
             "query_bridge.fast_direct_segment_after_rrt_add_candidates");
-        const PathAuditCheck candidate_audit =
-            audit_waypoint_path(candidate_path,
-                                strict_checker,
-                                config_.query.audit_resolution,
-                                config_.query.audit_segment_step);
-        if (!candidate_audit.passed) {
+        edge_id = add_audited_query_bridge_segment_edge(
+            source_box_id,
+            target_box_id,
+            candidate_path,
+            strict_checker,
+            bridge_rrt.segment_resolution,
+            query_index);
+        if (edge_id == -2) {
             context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_candidate_audit_rejects");
             add_task_counter("fast_direct_segment_after_rrt_candidate_audit_rejects");
             continue;
         }
-        edge_id = add_segment_edge_partition_first(
-            source_box_id,
-            target_box_id,
-            candidate_path,
-            SegmentEdgeType::QueryBridge,
-            bridge_rrt.segment_resolution,
-            SegmentEdgeValidation::CollisionChecked,
-            true,
-            query_index);
         if (edge_id >= 0) {
             added_length = path_length(candidate_path);
             if (candidate_index > 0) {

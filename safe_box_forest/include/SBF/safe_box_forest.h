@@ -236,6 +236,13 @@ private:
 													double audited_path_length,
 													int query_index,
 													bool enabled);
+	int add_audited_query_bridge_segment_edge(
+		int source_box_id,
+		int target_box_id,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const CollisionChecker& checker,
+		int segment_resolution,
+		int query_index);
 	int try_add_query_direct_start_goal_segment_edge(
 		int source_box_id,
 		int target_box_id,

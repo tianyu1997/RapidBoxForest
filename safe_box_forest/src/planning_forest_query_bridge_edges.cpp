@@ -93,25 +93,18 @@ int RBFPlanningForest::try_add_query_direct_segment_after_rrt_edge(
     context.diagnostics().add_counter(
         "query_bridge.direct_segment_after_rrt_shortening_delta",
         std::max(0.0, original_path_length - audited_path_length));
-    const PathAuditCheck segment_audit =
-        audit_waypoint_path(waypoint_path,
-                            checker,
-                            config_.query.audit_resolution,
-                            config_.query.audit_segment_step);
-    if (!segment_audit.passed) {
+    const int edge_id = add_audited_query_bridge_segment_edge(
+        source_box_id,
+        target_box_id,
+        waypoint_path,
+        checker,
+        bridge_rrt.segment_resolution,
+        query_index);
+    if (edge_id == -2) {
         context.diagnostics().add_counter(
             "query_bridge.direct_segment_after_rrt_audit_rejects");
         return 0;
     }
-    const int edge_id = add_segment_edge_partition_first(
-        source_box_id,
-        target_box_id,
-        waypoint_path,
-        SegmentEdgeType::QueryBridge,
-        bridge_rrt.segment_resolution,
-        SegmentEdgeValidation::CollisionChecked,
-        true,
-        query_index);
     if (edge_id >= 0) {
         context.diagnostics().add_counter(
             "query_bridge.direct_segment_after_rrt_edges");
@@ -125,6 +118,34 @@ int RBFPlanningForest::try_add_query_direct_segment_after_rrt_edge(
     context.diagnostics().add_counter(
         "query_bridge.direct_segment_after_rrt_add_fail");
     return 0;
+}
+
+int RBFPlanningForest::add_audited_query_bridge_segment_edge(
+    int source_box_id,
+    int target_box_id,
+    const std::vector<Eigen::VectorXd>& waypoint_path,
+    const CollisionChecker& checker,
+    int segment_resolution,
+    int query_index) {
+    if (source_box_id < 0 || target_box_id < 0) {
+        return -1;
+    }
+    const PathAuditCheck segment_audit =
+        audit_waypoint_path(waypoint_path,
+                            checker,
+                            config_.query.audit_resolution,
+                            config_.query.audit_segment_step);
+    if (!segment_audit.passed) {
+        return -2;
+    }
+    return add_segment_edge_partition_first(source_box_id,
+                                            target_box_id,
+                                            waypoint_path,
+                                            SegmentEdgeType::QueryBridge,
+                                            segment_resolution,
+                                            SegmentEdgeValidation::CollisionChecked,
+                                            true,
+                                            query_index);
 }
 
 int RBFPlanningForest::run_query_bridge_waypoint_path(
@@ -287,23 +308,17 @@ int RBFPlanningForest::try_add_query_residual_segment_edge(
     if (source_box_id < 0 || target_box_id < 0) {
         return 0;
     }
-    const PathAuditCheck segment_audit =
-        audit_waypoint_path(waypoint_path,
-                            checker,
-                            config_.query.audit_resolution,
-                            config_.query.audit_segment_step);
-    if (!segment_audit.passed) {
+    const int edge_id = add_audited_query_bridge_segment_edge(
+        source_box_id,
+        target_box_id,
+        waypoint_path,
+        checker,
+        bridge_rrt.segment_resolution,
+        query_index);
+    if (edge_id == -2) {
         context.diagnostics().add_counter("query_bridge.segment_edge_audit_rejects");
         return 0;
     }
-    const int edge_id = add_segment_edge_partition_first(source_box_id,
-                                                         target_box_id,
-                                                         waypoint_path,
-                                                         SegmentEdgeType::QueryBridge,
-                                                         bridge_rrt.segment_resolution,
-                                                         SegmentEdgeValidation::CollisionChecked,
-                                                         true,
-                                                         query_index);
     if (edge_id >= 0) {
         invalidate_query_cache();
         return 1;
@@ -329,25 +344,18 @@ int RBFPlanningForest::try_add_query_direct_corridor_full_residual_edge(
         context.diagnostics().add_counter(
             "query_bridge.direct_corridor_full_residual_without_local_overlay");
     }
-    const PathAuditCheck full_residual_audit =
-        audit_waypoint_path(waypoint_path,
-                            checker,
-                            config_.query.audit_resolution,
-                            config_.query.audit_segment_step);
-    if (!full_residual_audit.passed) {
+    const int edge_id = add_audited_query_bridge_segment_edge(
+        source_box_id,
+        target_box_id,
+        waypoint_path,
+        checker,
+        bridge_rrt.segment_resolution,
+        edge_query_index);
+    if (edge_id == -2) {
         context.diagnostics().add_counter(
             "query_bridge.direct_corridor_full_residual_audit_rejects");
         return -2;
     }
-    const int edge_id = add_segment_edge_partition_first(
-        source_box_id,
-        target_box_id,
-        waypoint_path,
-        SegmentEdgeType::QueryBridge,
-        bridge_rrt.segment_resolution,
-        SegmentEdgeValidation::CollisionChecked,
-        true,
-        edge_query_index);
     if (edge_id < 0) {
         return -1;
     }
