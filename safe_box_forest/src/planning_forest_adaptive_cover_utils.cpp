@@ -148,6 +148,17 @@ AdaptiveLeafBuildSetup make_adaptive_leaf_build_setup(
     return setup;
 }
 
+void initialize_adaptive_leaf_sweep_result(AdaptiveLeafSweepResult& result,
+                                           const AdaptiveLeafSweepConfig& config) {
+    result.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
+    result.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
+    result.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
+    result.diagnostics["adaptive.fast_virtual_checkpoint_mode"] =
+        config.fast_virtual_checkpoint_mode ? 1.0 : 0.0;
+    result.diagnostics["adaptive.terminal_controller_enabled"] =
+        config.fast_virtual_checkpoint_mode ? 0.0 : 1.0;
+}
+
 bool adaptive_depth_snapshot_readiness_met(const AdaptiveDepthSnapshot& snapshot,
                                            const AdaptiveLeafSweepConfig& config) {
     const int min_covered_probes = std::max(0, config.adaptive_depth_min_covered_probes);
@@ -242,6 +253,56 @@ std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnap
     }
     out << ']';
     return out.str();
+}
+
+int adaptive_next_depth_checkpoint(int depth, int target_leaf_depth) {
+    const int step = depth < 16 ? 1 : 2;
+    return std::min(target_leaf_depth, depth + step);
+}
+
+void apply_adaptive_final_depth_snapshot(AdaptiveLeafSweepResult& result,
+                                         const AdaptiveDepthSnapshot& snapshot) {
+    result.selected_leaf_depth = snapshot.depth;
+    result.adaptive_depth_readiness_met = snapshot.readiness_met;
+    result.adaptive_depth_stop_reason = snapshot.stop_reason;
+    result.seed_probe_box_covered = snapshot.covered_count;
+    result.seed_probe_anchor_success = snapshot.anchor_success_count;
+    result.seed_probe_main_accessible =
+        snapshot.main_accessible_count + snapshot.anchor_to_main_count;
+    result.p_box_covered = snapshot.p_box_covered;
+    const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
+    result.p_anchor_success = static_cast<double>(snapshot.anchor_success_count) / free_den;
+    result.p_main_accessible = static_cast<double>(result.seed_probe_main_accessible) / free_den;
+    result.p_anchor_to_main_uncovered = snapshot.p_anchor_to_main_uncovered;
+}
+
+double adaptive_active_overlap_depth_threshold(const AdaptiveLeafSweepConfig& config,
+                                               int depth) {
+    double threshold = config.overlap_depth_threshold;
+    if (config.overlap_depth_decay_per_depth > 0.0 &&
+        depth > config.defer_min_depth) {
+        threshold =
+            threshold /
+            (1.0 + config.overlap_depth_decay_per_depth *
+                       static_cast<double>(depth - config.defer_min_depth));
+    }
+    if (config.overlap_depth_min_threshold > 0.0) {
+        threshold = std::max(config.overlap_depth_min_threshold, threshold);
+    }
+    return threshold;
+}
+
+bool adaptive_item_high_overlap(const AdaptiveLeafSweepConfig& config,
+                                const AdaptiveFrontierItem& item,
+                                int depth) {
+    if (depth < config.defer_min_depth) {
+        return false;
+    }
+    const double depth_threshold = adaptive_active_overlap_depth_threshold(config, depth);
+    return (config.overlap_depth_threshold > 0.0 &&
+            item.overlap_depth >= depth_threshold) ||
+           (config.overlap_ratio_threshold > 0.0 &&
+            item.overlap_ratio >= config.overlap_ratio_threshold);
 }
 
 bool adaptive_virtual_split_node(const lect_database::SplitPolicyDescriptor& descriptor,

@@ -59,13 +59,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     using Clock = std::chrono::steady_clock;
     const auto total_start = Clock::now();
     AdaptiveLeafSweepResult out;
-    out.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
-    out.diagnostics["adaptive.qroot_pairs_total"] = 0.0;
-    out.diagnostics["adaptive.qroot_uncovered_endpoints"] = 0.0;
-    out.diagnostics["adaptive.fast_virtual_checkpoint_mode"] =
-        adaptive_config.fast_virtual_checkpoint_mode ? 1.0 : 0.0;
-    out.diagnostics["adaptive.terminal_controller_enabled"] =
-        adaptive_config.fast_virtual_checkpoint_mode ? 0.0 : 1.0;
+    initialize_adaptive_leaf_sweep_result(out, adaptive_config);
 
     const AdaptiveLeafBuildSetup build_setup =
         make_adaptive_leaf_build_setup(adaptive_config);
@@ -436,26 +430,9 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             adaptive_depth_snapshot_readiness_met(snapshot, adaptive_config);
         return snapshot;
     };
-    auto apply_final_depth_snapshot = [&](const AdaptiveDepthSnapshot& snapshot) {
-        out.selected_leaf_depth = snapshot.depth;
-        out.adaptive_depth_readiness_met = snapshot.readiness_met;
-        out.adaptive_depth_stop_reason = snapshot.stop_reason;
-        out.seed_probe_box_covered = snapshot.covered_count;
-        out.seed_probe_anchor_success = snapshot.anchor_success_count;
-        out.seed_probe_main_accessible = snapshot.main_accessible_count + snapshot.anchor_to_main_count;
-        out.p_box_covered = snapshot.p_box_covered;
-        const double free_den = static_cast<double>(std::max(1, snapshot.free_probe_count));
-        out.p_anchor_success = static_cast<double>(snapshot.anchor_success_count) / free_den;
-        out.p_main_accessible = static_cast<double>(out.seed_probe_main_accessible) / free_den;
-        out.p_anchor_to_main_uncovered = snapshot.p_anchor_to_main_uncovered;
-    };
     auto record_depth_snapshot = [&](AdaptiveDepthSnapshot snapshot) {
         checkpoint_probe_ms_total += snapshot.probe_ms;
         depth_snapshots.push_back(std::move(snapshot));
-    };
-    auto next_depth_checkpoint = [&](int depth) {
-        const int step = depth < 16 ? 1 : 2;
-        return std::min(target_leaf_depth, depth + step);
     };
     bool adaptive_depth_stop = false;
     int next_checkpoint_depth = initial_leaf_depth;
@@ -469,7 +446,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             adaptive_depth_stop = true;
         } else {
             initial_snapshot.stop_reason = "checkpoint";
-            next_checkpoint_depth = next_depth_checkpoint(initial_leaf_depth);
+            next_checkpoint_depth = adaptive_next_depth_checkpoint(initial_leaf_depth, target_leaf_depth);
         }
         record_depth_snapshot(std::move(initial_snapshot));
     }
@@ -506,7 +483,8 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                         adaptive_depth_stop = true;
                     } else {
                         snapshot.stop_reason = "checkpoint";
-                        next_checkpoint_depth = next_depth_checkpoint(next_checkpoint_depth);
+                        next_checkpoint_depth =
+                            adaptive_next_depth_checkpoint(next_checkpoint_depth, target_leaf_depth);
                     }
                     record_depth_snapshot(std::move(snapshot));
                 }
@@ -587,25 +565,8 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
                 continue;
             }
 
-            double active_overlap_depth_threshold = adaptive_config.overlap_depth_threshold;
-            if (adaptive_config.overlap_depth_decay_per_depth > 0.0 &&
-                depth > adaptive_config.defer_min_depth) {
-                active_overlap_depth_threshold =
-                    active_overlap_depth_threshold /
-                    (1.0 + adaptive_config.overlap_depth_decay_per_depth *
-                               static_cast<double>(depth - adaptive_config.defer_min_depth));
-            }
-            if (adaptive_config.overlap_depth_min_threshold > 0.0) {
-                active_overlap_depth_threshold =
-                    std::max(adaptive_config.overlap_depth_min_threshold,
-                             active_overlap_depth_threshold);
-            }
             const bool high_overlap =
-                depth >= adaptive_config.defer_min_depth &&
-                ((adaptive_config.overlap_depth_threshold > 0.0 &&
-                  item.overlap_depth >= active_overlap_depth_threshold) ||
-                 (adaptive_config.overlap_ratio_threshold > 0.0 &&
-                  item.overlap_ratio >= adaptive_config.overlap_ratio_threshold));
+                adaptive_item_high_overlap(adaptive_config, item, depth);
             const bool protected_by_seed = item_has_seed_hit;
             const AdaptiveConnectivityDominance connectivity =
                 adaptive_connectivity_dominance(scoring_boxes, item, main_ids, adjacency_tolerance);
@@ -730,7 +691,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         snapshot.stop_reason = adaptive_depth_enabled ? "max_depth" : "fixed_depth";
         record_depth_snapshot(std::move(snapshot));
     }
-    apply_final_depth_snapshot(depth_snapshots.back());
+    apply_adaptive_final_depth_snapshot(out, depth_snapshots.back());
     out.adaptive_depth_snapshots_json = adaptive_depth_snapshots_to_json(depth_snapshots);
     out.coverage_probe_ms = initial_probe_ms + checkpoint_probe_ms_total;
 

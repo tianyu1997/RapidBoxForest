@@ -73,12 +73,22 @@ struct AdaptiveLeafBuildSetup {
 AdaptiveLeafBuildSetup make_adaptive_leaf_build_setup(
     const AdaptiveLeafSweepConfig& adaptive_config);
 
+void initialize_adaptive_leaf_sweep_result(AdaptiveLeafSweepResult& result,
+                                           const AdaptiveLeafSweepConfig& config);
 bool adaptive_depth_snapshot_readiness_met(const AdaptiveDepthSnapshot& snapshot,
                                            const AdaptiveLeafSweepConfig& config);
 AdaptiveDepthSnapshot adaptive_snapshot_from_fast_candidate(const AdaptiveLeafSweepResult& candidate,
                                                             int depth,
                                                             const AdaptiveLeafSweepConfig& config);
 std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnapshot>& snapshots);
+int adaptive_next_depth_checkpoint(int depth, int target_leaf_depth);
+void apply_adaptive_final_depth_snapshot(AdaptiveLeafSweepResult& result,
+                                         const AdaptiveDepthSnapshot& snapshot);
+double adaptive_active_overlap_depth_threshold(const AdaptiveLeafSweepConfig& config,
+                                               int depth);
+bool adaptive_item_high_overlap(const AdaptiveLeafSweepConfig& config,
+                                const AdaptiveFrontierItem& item,
+                                int depth);
 
 bool adaptive_virtual_split_node(const lect_database::SplitPolicyDescriptor& descriptor,
                                  const AdaptiveFrontierItem& item,
