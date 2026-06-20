@@ -103,6 +103,9 @@ bool validate_obb_zonotope_portal(const Robot& robot,
 void obb_accumulate_stats(ObbPortalValidationStats& dst,
                           const ObbPortalValidationStats& src);
 
+void obb_record_region_volume(ObbPortalValidationStats& stats,
+                              const Eigen::MatrixXd& generators);
+
 ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
     const Robot& robot,
     const Scene& scene,

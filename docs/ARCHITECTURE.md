@@ -367,6 +367,20 @@ src/planning_forest_overlay_portal_resolvers.cpp
 src/planning_forest_obb_diagnostics.cpp
                                    OBB cover/portal validation diagnostic
                                    emission shared by overlay stages
+src/planning_forest_obb_geometry.cpp
+                                   OBB candidate basis construction and
+                                   joint-space orientation helpers
+src/planning_forest_obb_path_cover.cpp
+                                   greedy/recursive path-window covering with
+                                   certified OBB regions
+src/planning_forest_obb_sampled.cpp
+                                   sampled-support and clearance-sampled OBB
+                                   validation backends
+src/planning_forest_obb_stats.cpp  OBB validation-stat accumulation and
+                                   certified region volume accounting
+src/planning_forest_obb_zonotope.cpp
+                                   Taylor/zonotope OBB endpoint-envelope
+                                   validation
 src/planning_forest_query.cpp      online query entry point, strict audit
                                    flow, and final simplify orchestration
 src/planning_forest_query_geometry.cpp

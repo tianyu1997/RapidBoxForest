@@ -163,6 +163,7 @@ add_library(sbf_core STATIC
     src/planning_forest_obb_geometry.cpp
     src/planning_forest_obb_path_cover.cpp
     src/planning_forest_obb_sampled.cpp
+    src/planning_forest_obb_stats.cpp
     src/planning_forest_obb_zonotope.cpp
     src/planning_forest_overlay.cpp
     src/planning_forest_overlay_edges.cpp
