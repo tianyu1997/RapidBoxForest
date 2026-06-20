@@ -2,9 +2,9 @@
 
 #include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
-#include <SBF/connector.h>
+#include <SBF/connector_types.h>
 #include <SBF/debug.h>
-#include <SBF/grower.h>
+#include <SBF/grower_types.h>
 #include <SBF/leaf_sweep_grower.h>
 #include <SBF/merger.h>
 #include <SBF/oracle.h>

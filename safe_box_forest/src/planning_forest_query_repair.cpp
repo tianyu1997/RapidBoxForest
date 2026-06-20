@@ -2,6 +2,8 @@
 
 #include "planning_forest_query_utils.h"
 
+#include <SBF/connector.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>

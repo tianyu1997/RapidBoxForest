@@ -3,6 +3,8 @@
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
 
+#include <SBF/connector.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>

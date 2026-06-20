@@ -1,5 +1,6 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/connector.h>
 #include <SBF/query.h>
 
 #include <algorithm>

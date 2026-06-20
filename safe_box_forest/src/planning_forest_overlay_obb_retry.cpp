@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/connector.h>
+
 #include <algorithm>
 #include <chrono>
 #include <string>

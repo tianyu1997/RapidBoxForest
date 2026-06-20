@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/connector.h>
 #include <SBF/sbf.h>
 
 #include "binding_utils.h"

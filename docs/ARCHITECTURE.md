@@ -547,7 +547,11 @@ monolithic facade implementation file.
 
 Public planner header ownership follows the same rule. `SBF/safe_box_forest.h`
 is the facade for `RBFPlanningForest` and should not accumulate unrelated data
-models. `SBF/planning_config.h` is the compatibility aggregate for planner
+models or pull concrete grower/connector algorithms into every consumer.
+Facade-visible signatures depend on type records (`connector_types.h`,
+`grower_types.h`); implementation files that construct `IslandConnector`,
+`RrtGrower`, or call connector entry points include the full algorithm headers
+directly. `SBF/planning_config.h` is the compatibility aggregate for planner
 options; build/offline options live in `SBF/build_config.h`, query bridge and
 runtime query options live in `SBF/query_bridge_config.h`, build/update/coverage
 result payloads live in `SBF/planning_result.h`, and isolated diagnostic types
