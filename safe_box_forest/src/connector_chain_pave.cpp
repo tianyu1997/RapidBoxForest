@@ -131,6 +131,47 @@ void record_chain_pave_boundary_ffb_failure(const FindFreeBoxResult& result,
     }
 }
 
+double chain_pave_segment_exit_param(const BoxNode& box,
+                                     const Eigen::VectorXd& a,
+                                     const Eigen::VectorXd& b,
+                                     double u0) {
+    double u_hi = 1.0;
+    const Eigen::VectorXd v = b - a;
+    for (int d = 0; d < a.size(); ++d) {
+        const double lo = box.joint_intervals[d].lo;
+        const double hi = box.joint_intervals[d].hi;
+        if (std::abs(v[d]) < 1e-15) {
+            continue;
+        }
+        const double t1 = (lo - a[d]) / v[d];
+        const double t2 = (hi - a[d]) / v[d];
+        u_hi = std::min(u_hi, std::max(t1, t2));
+    }
+    return std::max(u0, std::min(1.0, u_hi));
+}
+
+Eigen::VectorXd chain_pave_boundary_seed_from_box(const BoxNode& box,
+                                                  const Eigen::VectorXd& from,
+                                                  const Eigen::VectorXd& target,
+                                                  double adjacency_tolerance,
+                                                  double gap_fill_min_step) {
+    const double seg_len = (target - from).norm();
+    if (seg_len < 1e-12) {
+        return target;
+    }
+    const double u_exit = chain_pave_segment_exit_param(box, from, target, 0.0);
+    // The FFB seed should step just outside the current box face; otherwise FFB
+    // can certify a free box beyond a tiny gap and return a free but non-adjacent
+    // result.
+    const double face_epsilon =
+        std::max(16.0 * std::max(0.0, adjacency_tolerance),
+                 std::min(1e-6, std::max(gap_fill_min_step, 1e-12)));
+    const double u_step =
+        std::max(1e-12, face_epsilon / std::max(seg_len, 1e-12));
+    const double u_seed = std::min(1.0, u_exit + u_step);
+    return (from + u_seed * (target - from)).eval();
+}
+
 }  // namespace
 
 int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
@@ -488,52 +529,18 @@ int chain_pave_along_path(const std::vector<Eigen::VectorXd>& waypoint_path,
         return cover(via, mid, to_pt, budget - 1);
     };
 
-    // Max parameter u in [u0, 1] such that a + u*(b - a) stays inside `box`.
-    auto segment_exit_param = [](const BoxNode& box, const Eigen::VectorXd& a,
-                                 const Eigen::VectorXd& b, double u0) -> double {
-        double u_hi = 1.0;
-        const Eigen::VectorXd v = b - a;
-        for (int d = 0; d < a.size(); ++d) {
-            const double lo = box.joint_intervals[d].lo;
-            const double hi = box.joint_intervals[d].hi;
-            if (std::abs(v[d]) < 1e-15) {
-                continue;  // parallel to this slab; no constraint from it
-            }
-            const double t1 = (lo - a[d]) / v[d];
-            const double t2 = (hi - a[d]) / v[d];
-            u_hi = std::min(u_hi, std::max(t1, t2));
-        }
-        return std::max(u0, std::min(1.0, u_hi));
-    };
-
-    auto boundary_seed_from_box = [&](const BoxNode& box,
-                                      const Eigen::VectorXd& from,
-                                      const Eigen::VectorXd& target) -> Eigen::VectorXd {
-        const double seg_len = (target - from).norm();
-        if (seg_len < 1e-12) {
-            return target;
-        }
-        const double u_exit = segment_exit_param(box, from, target, 0.0);
-        // `requested_step` controls how far the front tries to advance along the
-        // corridor. The FFB seed itself should only step just outside the current
-        // box face; otherwise FFB often certifies a free box beyond a tiny gap and
-        // the result is free but non-adjacent to `box`.
-        const double face_epsilon =
-            std::max(16.0 * std::max(0.0, config.adjacency_tolerance),
-                     std::min(1e-6, std::max(config.gap_fill_min_step, 1e-12)));
-        const double u_step =
-            std::max(1e-12, face_epsilon / std::max(seg_len, 1e-12));
-        const double u_seed = std::min(1.0, u_exit + u_step);
-        return (from + u_seed * (target - from)).eval();
-    };
-
     auto boundary_seed_candidates = [&](const BoxNode& box,
                                         const Eigen::VectorXd& from,
                                         const Eigen::VectorXd& target,
                                         double requested_step)
         -> std::vector<Eigen::VectorXd> {
         std::vector<Eigen::VectorXd> seeds;
-        const Eigen::VectorXd forward_seed = boundary_seed_from_box(box, from, target);
+        const Eigen::VectorXd forward_seed =
+            chain_pave_boundary_seed_from_box(box,
+                                              from,
+                                              target,
+                                              config.adjacency_tolerance,
+                                              config.gap_fill_min_step);
         seeds.push_back(forward_seed);
         if (from.size() != target.size() || box.n_dims() != from.size()) {
             return seeds;
