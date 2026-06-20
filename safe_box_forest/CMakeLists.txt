@@ -122,6 +122,7 @@ add_library(sbf_core STATIC
     src/grower_options.cpp
     src/grower_roots.cpp
     src/grower_task_builder.cpp
+    src/grower_task_filter.cpp
     src/grower_trace.cpp
     src/grower_workers.cpp
     src/leaf_sweep_grower.cpp

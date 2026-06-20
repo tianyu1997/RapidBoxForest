@@ -299,6 +299,10 @@ private:
 											int n_tasks,
 											const FindFreeBoxOptions& base_options,
 											StageContext& context);
+	std::vector<GrowTask> filter_growth_tasks(const std::vector<BoxNode>& boxes,
+											  std::vector<GrowTask> tasks,
+											  const FindFreeBoxOptions& base_options,
+											  StageContext& context);
 	bool seed_covered_by_frontier_cache(const std::vector<BoxNode>& boxes,
 										const Eigen::Ref<const Eigen::VectorXd>& seed,
 										StageContext* context = nullptr) const;
