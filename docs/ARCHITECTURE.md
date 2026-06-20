@@ -379,8 +379,15 @@ src/planning_forest_query_bridge_corridor_diagnostics.cpp
                                    direct-corridor summary and detailed timing
                                    diagnostic emission
 src/planning_forest_query_bridge_corridor_graph.cpp
-                                   direct-corridor local DSU, transition
-                                   metrics, and internal local-graph helpers
+                                   direct-corridor box commit, sample
+                                   assimilation adjacency candidates, and
+                                   partition cover-index helpers
+src/planning_forest_query_bridge_corridor_samples.cpp
+                                   direct-corridor sample coverage, local DSU,
+                                   transition metrics, and gap ordering
+src/planning_forest_query_bridge_corridor_local_graph.cpp
+                                   direct-corridor internal local-graph search,
+                                   component slicing, and HiPaC promotion gates
 src/planning_forest_query_bridge_corridor_tasks.cpp
                                    direct-corridor uncovered-sample FFB task
                                    generation and task execution loop
