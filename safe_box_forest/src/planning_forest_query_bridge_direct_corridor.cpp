@@ -212,9 +212,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         return sample_assimilation.covered_sample_count;
     };
     bool adopt_certified_subchain_attempted = false;
-    auto commit_result = [&](FindFreeBoxResult result,
-                             const Eigen::VectorXd& seed,
-                             int transition_hint) -> int {
+    auto commit_and_assimilate_box = [&](FindFreeBoxResult result,
+                                         const Eigen::VectorXd& seed,
+                                         int transition_hint) -> int {
         const QueryBridgeDirectCorridorCommitResult commit =
             query_bridge_commit_ffb_result_to_direct_corridor(
                 std::move(result),
@@ -264,10 +264,11 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                        context,
                                        direct_options);
     };
-    auto commit_direct_corridor_box =
+    auto commit_direct_corridor_task_box =
         [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
             const std::size_t before_boxes = boxes_.size();
-            const int box_index = commit_result(std::move(result), seed, transition);
+            const int box_index =
+                commit_and_assimilate_box(std::move(result), seed, transition);
             return QueryBridgeFfbTaskCommitResult{box_index,
                                                   boxes_.size() > before_boxes};
         };
@@ -293,9 +294,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 return find_direct_corridor_box(task.seed);
             },
             [&](FindFreeBoxResult&& result, const QueryBridgeDirectFfbTask& task) {
-                return commit_direct_corridor_box(std::move(result),
-                                                  task.seed,
-                                                  task.transition_hint);
+                return commit_direct_corridor_task_box(std::move(result),
+                                                       task.seed,
+                                                       task.transition_hint);
             });
     direct_calls = direct_task_stats.calls;
     direct_added = direct_task_stats.added;
@@ -320,9 +321,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                     return find_direct_corridor_box(seed);
                 },
                 [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
-                    return commit_direct_corridor_box(std::move(result),
-                                                      seed,
-                                                      transition);
+                    return commit_direct_corridor_task_box(std::move(result),
+                                                           seed,
+                                                           transition);
                 });
         repair_calls = repair_stats.calls;
         repair_added = repair_stats.added;
@@ -362,9 +363,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 return find_direct_corridor_box(seed);
             },
             [&](FindFreeBoxResult&& result, const Eigen::VectorXd& seed, int transition) {
-                return commit_direct_corridor_box(std::move(result),
-                                                  seed,
-                                                  transition);
+                return commit_direct_corridor_task_box(std::move(result),
+                                                       seed,
+                                                       transition);
             });
     adaptive_repair_calls = adaptive_stats.calls;
     adaptive_repair_added = adaptive_stats.added;
