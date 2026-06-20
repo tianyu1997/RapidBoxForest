@@ -15,7 +15,6 @@
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <string>
 #include <unordered_map>
@@ -269,88 +268,36 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         if (!graphless_direct_corridor) {
             adjacency_[box_id];
         }
-        int first_covered_sample = static_cast<int>(samples.size());
-        int last_covered_sample = -1;
-        int covered_sample_count = 0;
         const auto& box_intervals = boxes_[static_cast<std::size_t>(box_index)].joint_intervals;
-        auto record_sample_coverage = [&](std::size_t sample_index) {
-            const int sample_index_int = static_cast<int>(sample_index);
-            first_covered_sample = std::min(first_covered_sample, sample_index_int);
-            last_covered_sample = std::max(last_covered_sample, sample_index_int);
-            covered_sample_count += 1;
-            auto& layer = sample_layers[sample_index];
-            if (!layer.empty()) {
-                dsu.unite(box_index, layer.front());
-            }
-            if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
-                layer.push_back(box_index);
-            }
-            covered[sample_index] = true;
-        };
-        auto sample_in_box = [&](int sample_index) {
-            if (sample_index < 0 || sample_index >= static_cast<int>(samples.size())) {
-                return false;
-            }
-            runtime_stats.assimilate_local_sample_tests += 1;
-            return intervals_contain_point_local(
+        const QueryBridgeSampleAssimilationResult sample_assimilation =
+            query_bridge_assimilate_box_samples(
                 box_intervals,
-                samples[static_cast<std::size_t>(sample_index)],
-                config_.query.adjacency_tolerance);
-        };
-        bool used_full_sample_scan = true;
-        if (local_assimilate_sample_scan && !samples.empty()) {
-            used_full_sample_scan = false;
-            int anchor = -1;
-            const std::array<int, 5> anchors = {
+                samples,
+                box_index,
                 transition_hint,
-                transition_hint + 1,
-                transition_hint - 1,
-                transition_hint + 2,
-                transition_hint - 2,
-            };
-            for (int candidate_anchor : anchors) {
-                if (sample_in_box(candidate_anchor)) {
-                    anchor = candidate_anchor;
-                    break;
-                }
-            }
-            if (anchor >= 0) {
-                int left = anchor;
-                int right = anchor;
-                while (left > 0 && sample_in_box(left - 1)) {
-                    --left;
-                }
-                while (right + 1 < static_cast<int>(samples.size()) &&
-                       sample_in_box(right + 1)) {
-                    ++right;
-                }
-                for (int sample_index = left; sample_index <= right; ++sample_index) {
-                    record_sample_coverage(static_cast<std::size_t>(sample_index));
-                }
-                runtime_stats.assimilate_local_hits += 1;
-            } else {
-                used_full_sample_scan = true;
-                runtime_stats.assimilate_full_scan_fallbacks += 1;
-            }
+                config_.query.adjacency_tolerance,
+                local_assimilate_sample_scan,
+                dsu,
+                sample_layers,
+                covered);
+        runtime_stats.assimilate_local_sample_tests +=
+            sample_assimilation.local_sample_tests;
+        if (sample_assimilation.local_hit) {
+            runtime_stats.assimilate_local_hits += 1;
         }
-        if (used_full_sample_scan) {
-            for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
-                if (!intervals_contain_point_local(box_intervals,
-                                                   samples[sample_index],
-                                                   config_.query.adjacency_tolerance)) {
-                    continue;
-                }
-                record_sample_coverage(sample_index);
-            }
+        if (sample_assimilation.full_scan_fallback) {
+            runtime_stats.assimilate_full_scan_fallbacks += 1;
         }
-        if (covered_sample_count > 0) {
-            const int span = last_covered_sample - first_covered_sample + 1;
+        if (sample_assimilation.covered_sample_count > 0) {
+            const int span = sample_assimilation.last_covered_sample -
+                             sample_assimilation.first_covered_sample + 1;
             runtime_stats.assimilate_coverage_boxes += 1;
             runtime_stats.assimilate_coverage_span_sum += static_cast<double>(span);
-            runtime_stats.assimilate_coverage_span_max = std::max(runtime_stats.assimilate_coverage_span_max, span);
+            runtime_stats.assimilate_coverage_span_max =
+                std::max(runtime_stats.assimilate_coverage_span_max, span);
             context.diagnostics().add_counter(
                 "query_bridge.direct_corridor_assimilate_covered_samples",
-                static_cast<double>(covered_sample_count));
+                static_cast<double>(sample_assimilation.covered_sample_count));
         }
         std::vector<int> candidates;
         auto add_layer = [&](int layer_index) {
@@ -364,13 +311,13 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         add_layer(transition_hint);
         add_layer(transition_hint + 1);
         add_layer(transition_hint + 2);
-        if (covered_sample_count > 0) {
-            add_layer(first_covered_sample - 1);
-            add_layer(first_covered_sample);
-            add_layer(first_covered_sample + 1);
-            add_layer(last_covered_sample - 1);
-            add_layer(last_covered_sample);
-            add_layer(last_covered_sample + 1);
+        if (sample_assimilation.covered_sample_count > 0) {
+            add_layer(sample_assimilation.first_covered_sample - 1);
+            add_layer(sample_assimilation.first_covered_sample);
+            add_layer(sample_assimilation.first_covered_sample + 1);
+            add_layer(sample_assimilation.last_covered_sample - 1);
+            add_layer(sample_assimilation.last_covered_sample);
+            add_layer(sample_assimilation.last_covered_sample + 1);
         }
         candidates.insert(candidates.end(), repair_indices.begin(), repair_indices.end());
         if (use_partition_neighbor_candidates && adaptive_partition_) {
@@ -423,7 +370,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         context.diagnostics().record_timing(
             "query_bridge.direct_corridor_assimilate_ms",
             std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
-        return covered_sample_count;
+        return sample_assimilation.covered_sample_count;
     };
     bool adopt_certified_subchain_attempted = false;
     auto commit_result = [&](FindFreeBoxResult result,

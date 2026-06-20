@@ -5,6 +5,7 @@
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <queue>
@@ -48,6 +49,98 @@ void QueryBridgeLocalDsu::unite(int lhs, int rhs) {
     if (left != right) {
         parent[static_cast<std::size_t>(right)] = left;
     }
+}
+
+QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
+    const std::vector<Interval>& box_intervals,
+    const std::vector<Eigen::VectorXd>& samples,
+    int box_index,
+    int transition_hint,
+    double tolerance,
+    bool local_sample_scan,
+    QueryBridgeLocalDsu& dsu,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered) {
+    QueryBridgeSampleAssimilationResult result;
+    result.first_covered_sample = static_cast<int>(samples.size());
+
+    auto record_sample_coverage = [&](std::size_t sample_index) {
+        const int sample_index_int = static_cast<int>(sample_index);
+        result.first_covered_sample = std::min(result.first_covered_sample,
+                                               sample_index_int);
+        result.last_covered_sample = std::max(result.last_covered_sample,
+                                              sample_index_int);
+        result.covered_sample_count += 1;
+        auto& layer = sample_layers[sample_index];
+        if (!layer.empty()) {
+            dsu.unite(box_index, layer.front());
+        }
+        if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
+            layer.push_back(box_index);
+        }
+        if (sample_index < covered.size()) {
+            covered[sample_index] = true;
+        }
+    };
+
+    auto sample_in_box = [&](int sample_index) {
+        if (sample_index < 0 || sample_index >= static_cast<int>(samples.size())) {
+            return false;
+        }
+        result.local_sample_tests += 1;
+        return intervals_contain_point_local(
+            box_intervals,
+            samples[static_cast<std::size_t>(sample_index)],
+            tolerance);
+    };
+
+    bool used_full_sample_scan = true;
+    if (local_sample_scan && !samples.empty()) {
+        used_full_sample_scan = false;
+        int anchor = -1;
+        const std::array<int, 5> anchors = {
+            transition_hint,
+            transition_hint + 1,
+            transition_hint - 1,
+            transition_hint + 2,
+            transition_hint - 2,
+        };
+        for (int candidate_anchor : anchors) {
+            if (sample_in_box(candidate_anchor)) {
+                anchor = candidate_anchor;
+                break;
+            }
+        }
+        if (anchor >= 0) {
+            int left = anchor;
+            int right = anchor;
+            while (left > 0 && sample_in_box(left - 1)) {
+                --left;
+            }
+            while (right + 1 < static_cast<int>(samples.size()) &&
+                   sample_in_box(right + 1)) {
+                ++right;
+            }
+            for (int sample_index = left; sample_index <= right; ++sample_index) {
+                record_sample_coverage(static_cast<std::size_t>(sample_index));
+            }
+            result.local_hit = true;
+        } else {
+            used_full_sample_scan = true;
+            result.full_scan_fallback = true;
+        }
+    }
+    if (used_full_sample_scan) {
+        for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
+            if (!intervals_contain_point_local(box_intervals,
+                                               samples[sample_index],
+                                               tolerance)) {
+                continue;
+            }
+            record_sample_coverage(sample_index);
+        }
+    }
+    return result;
 }
 
 bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,

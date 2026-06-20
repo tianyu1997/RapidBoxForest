@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SBF/box_graph.h>
+
 #include <Eigen/Core>
 
 #include <cstddef>
@@ -35,6 +37,26 @@ struct QueryBridgeLocalDsu {
     int find(int value);
     void unite(int lhs, int rhs);
 };
+
+struct QueryBridgeSampleAssimilationResult {
+    int first_covered_sample = 0;
+    int last_covered_sample = -1;
+    int covered_sample_count = 0;
+    int local_sample_tests = 0;
+    bool local_hit = false;
+    bool full_scan_fallback = false;
+};
+
+QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
+    const std::vector<Interval>& box_intervals,
+    const std::vector<Eigen::VectorXd>& samples,
+    int box_index,
+    int transition_hint,
+    double tolerance,
+    bool local_sample_scan,
+    QueryBridgeLocalDsu& dsu,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered);
 
 bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,
                                               QueryBridgeLocalDsu& dsu,
