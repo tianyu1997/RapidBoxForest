@@ -244,6 +244,85 @@ Eigen::VectorXd closest_point_in_box(const BoxNode& box,
     return out;
 }
 
+double segment_exit_parameter_from_intervals(const std::vector<Interval>& intervals,
+                                             const Eigen::Ref<const Eigen::VectorXd>& from,
+                                             const Eigen::Ref<const Eigen::VectorXd>& to) {
+    if (intervals.size() != static_cast<std::size_t>(from.size()) ||
+        to.size() != from.size()) {
+        return 0.0;
+    }
+    const Eigen::VectorXd delta = to - from;
+    double exit_param = 1.0;
+    for (int dim = 0; dim < from.size(); ++dim) {
+        const double d = delta[dim];
+        if (std::abs(d) < 1e-15) {
+            continue;
+        }
+        const auto& interval = intervals[static_cast<std::size_t>(dim)];
+        const double boundary = d > 0.0 ? interval.hi : interval.lo;
+        const double t = (boundary - from[dim]) / d;
+        if (t > 1e-12 && t < exit_param) {
+            exit_param = t;
+        }
+    }
+    return std::clamp(exit_param, 0.0, 1.0);
+}
+
+Eigen::VectorXd boundary_seed_from_intervals(const std::vector<Interval>& intervals,
+                                             const Eigen::Ref<const Eigen::VectorXd>& from,
+                                             const Eigen::Ref<const Eigen::VectorXd>& to,
+                                             const std::vector<Interval>& domain,
+                                             double face_epsilon) {
+    const Eigen::VectorXd delta = to - from;
+    const double norm = delta.norm();
+    if (norm <= 1e-12) {
+        return from;
+    }
+    const double u = segment_exit_parameter_from_intervals(intervals, from, to);
+    Eigen::VectorXd seed = from + u * delta + face_epsilon * (delta / norm);
+    for (int dim = 0; dim < seed.size() &&
+                      dim < static_cast<int>(domain.size()); ++dim) {
+        seed[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
+                             std::max(domain[static_cast<std::size_t>(dim)].lo,
+                                      seed[dim]));
+    }
+    return seed;
+}
+
+std::vector<Eigen::VectorXd> lateral_offset_seeds_local(
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    const Eigen::Ref<const Eigen::VectorXd>& direction,
+    const std::vector<Interval>& domain,
+    int lateral_rounds,
+    double lateral_offset) {
+    std::vector<int> dims;
+    dims.reserve(static_cast<std::size_t>(seed.size()));
+    for (int dim = 0; dim < seed.size(); ++dim) {
+        dims.push_back(dim);
+    }
+    std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
+        return std::abs(direction[lhs]) < std::abs(direction[rhs]);
+    });
+    std::vector<Eigen::VectorXd> out;
+    const int dim_limit = std::min<int>(std::max(0, lateral_rounds),
+                                        static_cast<int>(dims.size()));
+    out.reserve(static_cast<std::size_t>(dim_limit) * 2);
+    for (int item = 0; item < dim_limit; ++item) {
+        const int dim = dims[static_cast<std::size_t>(item)];
+        for (double sign : {1.0, -1.0}) {
+            Eigen::VectorXd candidate = seed;
+            candidate[dim] += sign * lateral_offset;
+            if (dim < static_cast<int>(domain.size())) {
+                candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
+                                          std::max(domain[static_cast<std::size_t>(dim)].lo,
+                                                   candidate[dim]));
+            }
+            out.push_back(std::move(candidate));
+        }
+    }
+    return out;
+}
+
 double interval_point_gap_local(const Interval& interval, double value) {
     if (value < interval.lo) {
         return interval.lo - value;

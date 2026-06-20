@@ -80,6 +80,23 @@ std::vector<Eigen::VectorXd> extract_partition_waypoints_local(
 Eigen::VectorXd closest_point_in_box(const BoxNode& box,
                                      const Eigen::Ref<const Eigen::VectorXd>& point);
 
+double segment_exit_parameter_from_intervals(const std::vector<Interval>& intervals,
+                                             const Eigen::Ref<const Eigen::VectorXd>& from,
+                                             const Eigen::Ref<const Eigen::VectorXd>& to);
+
+Eigen::VectorXd boundary_seed_from_intervals(const std::vector<Interval>& intervals,
+                                             const Eigen::Ref<const Eigen::VectorXd>& from,
+                                             const Eigen::Ref<const Eigen::VectorXd>& to,
+                                             const std::vector<Interval>& domain,
+                                             double face_epsilon);
+
+std::vector<Eigen::VectorXd> lateral_offset_seeds_local(
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    const Eigen::Ref<const Eigen::VectorXd>& direction,
+    const std::vector<Interval>& domain,
+    int lateral_rounds,
+    double lateral_offset);
+
 double interval_point_gap_local(const Interval& interval, double value);
 
 double intervals_point_gap_local(const std::vector<Interval>& intervals,

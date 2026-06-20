@@ -10,7 +10,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <limits>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -321,80 +320,23 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         }
         return -1;
     };
-    auto segment_exit_param = [&](const BoxNode& box,
-                                  const Eigen::VectorXd& from,
-                                  const Eigen::VectorXd& to) {
-        if (box.n_dims() != from.size() || to.size() != from.size()) {
-            return 0.0;
-        }
-        const Eigen::VectorXd delta = to - from;
-        double exit_param = 1.0;
-        for (int dim = 0; dim < from.size(); ++dim) {
-            const double d = delta[dim];
-            if (std::abs(d) < 1e-15) {
-                continue;
-            }
-            const auto& interval = box.joint_intervals[static_cast<std::size_t>(dim)];
-            const double boundary = d > 0.0 ? interval.hi : interval.lo;
-            const double t = (boundary - from[dim]) / d;
-            if (t > 1e-12 && t < exit_param) {
-                exit_param = t;
-            }
-        }
-        return std::clamp(exit_param, 0.0, 1.0);
-    };
-    auto segment_exit_param_intervals = [&](const std::vector<Interval>& intervals,
-                                            const Eigen::VectorXd& from,
-                                            const Eigen::VectorXd& to) {
-        if (intervals.size() != static_cast<std::size_t>(from.size()) ||
-            to.size() != from.size()) {
-            return 0.0;
-        }
-        const Eigen::VectorXd delta = to - from;
-        double exit_param = 1.0;
-        for (int dim = 0; dim < from.size(); ++dim) {
-            const double d = delta[dim];
-            if (std::abs(d) < 1e-15) {
-                continue;
-            }
-            const auto& interval = intervals[static_cast<std::size_t>(dim)];
-            const double boundary = d > 0.0 ? interval.hi : interval.lo;
-            const double t = (boundary - from[dim]) / d;
-            if (t > 1e-12 && t < exit_param) {
-                exit_param = t;
-            }
-        }
-        return std::clamp(exit_param, 0.0, 1.0);
-    };
     auto make_seed_from_face = [&](int box_id,
                                    const Eigen::VectorXd& from,
                                    const Eigen::VectorXd& to) {
-        const Eigen::VectorXd delta = to - from;
-        const double norm = delta.norm();
-        if (norm <= 1e-12) {
-            return from;
-        }
-        double u = 0.0;
         std::vector<Interval> intervals;
-        if (use_partition_endpoint_index &&
-            adaptive_partition_->intervals_for_box(box_id, intervals)) {
-            u = segment_exit_param_intervals(intervals, from, to);
-        } else {
+        if (!(use_partition_endpoint_index &&
+              adaptive_partition_->intervals_for_box(box_id, intervals))) {
             const BoxNode* box = find_box_by_id(boxes_, box_id);
             if (box == nullptr) {
                 return from;
             }
-            u = segment_exit_param(*box, from, to);
+            intervals = box->joint_intervals;
         }
-        Eigen::VectorXd seed = from + u * delta + corridor_config.face_epsilon * (delta / norm);
-        const auto domain = oracle_->planning_intervals();
-        for (int dim = 0; dim < seed.size() &&
-                          dim < static_cast<int>(domain.size()); ++dim) {
-            seed[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
-                                 std::max(domain[static_cast<std::size_t>(dim)].lo,
-                                          seed[dim]));
-        }
-        return seed;
+        return boundary_seed_from_intervals(intervals,
+                                            from,
+                                            to,
+                                            oracle_->planning_intervals(),
+                                            corridor_config.face_epsilon);
     };
     auto furthest_sample = [&](int box_id,
                                const std::vector<Eigen::VectorXd>& samples,
@@ -528,35 +470,6 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             return std::pair<int, bool>{reached_box_id, reached_main};
         }
         return std::pair<int, bool>{-1, false};
-    };
-    auto lateral_seeds = [&](const Eigen::VectorXd& seed,
-                             const Eigen::VectorXd& direction) {
-        std::vector<int> dims;
-        dims.reserve(static_cast<std::size_t>(seed.size()));
-        for (int dim = 0; dim < seed.size(); ++dim) {
-            dims.push_back(dim);
-        }
-        std::sort(dims.begin(), dims.end(), [&](int lhs, int rhs) {
-            return std::abs(direction[lhs]) < std::abs(direction[rhs]);
-        });
-        std::vector<Eigen::VectorXd> out;
-        const auto domain = oracle_->planning_intervals();
-        const int dim_limit = std::min<int>(std::max(0, corridor_config.lateral_rounds),
-                                            static_cast<int>(dims.size()));
-        for (int item = 0; item < dim_limit; ++item) {
-            const int dim = dims[static_cast<std::size_t>(item)];
-            for (double sign : {1.0, -1.0}) {
-                Eigen::VectorXd candidate = seed;
-                candidate[dim] += sign * corridor_config.lateral_offset;
-                if (dim < static_cast<int>(domain.size())) {
-                    candidate[dim] = std::min(domain[static_cast<std::size_t>(dim)].hi,
-                                              std::max(domain[static_cast<std::size_t>(dim)].lo,
-                                                       candidate[dim]));
-                }
-                out.push_back(std::move(candidate));
-            }
-        }
-        return out;
     };
     auto try_residual_segment = [&](int front_box_id, int target_box_id, const Eigen::VectorXd& target_point) {
         if (!max_depth_ffb_failed || corridor_config.residual_segment_max_length <= 0.0) {
@@ -719,7 +632,13 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 const Eigen::VectorXd direction =
                     samples[static_cast<std::size_t>(target_sample_index)] - seed;
                 bool lateral_progress = false;
-                for (const auto& lateral_seed : lateral_seeds(seed, direction)) {
+                const auto lateral_seeds = lateral_offset_seeds_local(
+                    seed,
+                    direction,
+                    oracle_->planning_intervals(),
+                    corridor_config.lateral_rounds,
+                    corridor_config.lateral_offset);
+                for (const auto& lateral_seed : lateral_seeds) {
                     if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls) ||
                         boxes_added >= std::max(1, corridor_config.max_boxes)) {
                         break;
