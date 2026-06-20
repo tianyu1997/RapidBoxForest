@@ -139,6 +139,8 @@ src/sbf/                           planner adapter implementation
   oracle_endpoint_materialization.cpp
                                    endpoint materialization config helpers for
                                    database-backed oracle validation
+  oracle_endpoint_payload.cpp      endpoint evidence lookup, external replay,
+                                   shared cache reuse, and live materialization
   oracle_material_point.cpp        material-point occupied-certificate helper
                                    for oracle validation
   oracle_node.cpp                  node topology, canonical query intervals,
