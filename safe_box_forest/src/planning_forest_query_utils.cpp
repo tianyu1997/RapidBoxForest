@@ -1,5 +1,7 @@
 #include "planning_forest_query_utils.h"
 
+#include <SBF/oracle.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cmath>

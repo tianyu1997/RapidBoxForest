@@ -1,5 +1,7 @@
 #include "grower_components.h"
 
+#include <SBF/oracle.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>

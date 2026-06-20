@@ -1,5 +1,7 @@
 #include "connector_birrt.h"
 
+#include <LECTDatabase/sbf/scene.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
 
 #include <rbf/lect_database/split_policy.h>
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 
 #include <Eigen/Core>
 

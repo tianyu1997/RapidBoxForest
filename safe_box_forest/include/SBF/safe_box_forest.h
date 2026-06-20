@@ -5,13 +5,13 @@
 #include <SBF/debug.h>
 #include <SBF/grower_types.h>
 #include <SBF/leaf_sweep_types.h>
-#include <SBF/oracle.h>
 #include <SBF/planning_config.h>
 #include <SBF/planning_result.h>
 #include <SBF/query.h>
 #include <SBF/runtime.h>
 #include <SBF/scene.h>
 
+#include <LECTDatabase/sbf/oracle_types.h>
 #include <LECTDatabase/online_cache.h>
 #include <rbf/lect_database.h>
 
@@ -36,6 +36,7 @@ struct AdaptiveDepthSnapshot;
 struct BudgetedMergeStats;
 struct DynamicCollisionCacheState;
 class AdaptiveGridPartition;
+class DatabaseBoxOracle;
 
 class RBFPlanningForest {
 public:

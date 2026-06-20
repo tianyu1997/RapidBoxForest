@@ -3,6 +3,7 @@
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 
 #include <algorithm>
 #include <cmath>

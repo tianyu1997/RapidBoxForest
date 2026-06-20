@@ -84,6 +84,10 @@ Important directories:
 include/rbf/lect_database/         core database API
 include/LECTDatabase/              compatibility and package-facing headers
 include/LECTDatabase/sbf/          planner adapter API
+  oracle_types.h                   SBF oracle ids, validation configs,
+                                   counters, session configs, and detail records
+  oracle.h                         concrete BoxOracle/DatabaseBoxOracle
+                                   interfaces and database-backed adapter
 src/lect_database/                 core persistence implementation
   database.cpp                     database open/create state machine,
                                    manifests, evidence, journal, checkpoint,
@@ -572,7 +576,10 @@ the compatibility aggregate for planner options; build/offline options live in
 `SBF/planning_result.h`, leaf-sweep config/result records live in
 `SBF/leaf_sweep_types.h`, FFB config/result records live in
 `SBF/find_free_box_types.h`, and isolated diagnostic types live in
-`SBF/debug.h`. If a new option or result is specific to adaptive coverage, query
+`SBF/debug.h`. Oracle-facing type records live in
+`LECTDatabase/sbf/oracle_types.h`; only implementation files or algorithm
+headers that call `BoxOracle` or `DatabaseBoxOracle` methods include full
+`SBF/oracle.h`. If a new option or result is specific to adaptive coverage, query
 bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the matching typed
 header rather than extending the facade header directly.
 

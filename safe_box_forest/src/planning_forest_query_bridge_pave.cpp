@@ -1,6 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 
 #include "planning_forest_query_utils.h"
 

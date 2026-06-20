@@ -2,6 +2,7 @@
 
 #include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
+#include <SBF/oracle.h>
 
 #include <algorithm>
 #include <memory>

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SBF/oracle.h>
 #include <SBF/sbf.h>
 
 #include "binding_utils.h"

@@ -4,10 +4,13 @@
 #include <SBF/connector_types.h>
 #include <SBF/grower_types.h>
 #include <SBF/merger_types.h>
-#include <SBF/oracle.h>
 #include <SBF/query_bridge_config.h>
 #include <SBF/query.h>
 #include <SBF/runtime.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
+#include <rbf/envelope/endpoint_source.h>
+#include <rbf/envelope/envelope_type.h>
 
 #include <cstddef>
 #include <cstdint>

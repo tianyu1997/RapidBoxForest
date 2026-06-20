@@ -2,6 +2,7 @@
 
 #include <SBF/adaptive_grid_partition.h>
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 #include <SBF/query.h>
 
 #include <algorithm>

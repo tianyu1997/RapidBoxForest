@@ -3,6 +3,7 @@
 #include "planning_forest_dynamic_collision_cache_state.h"
 
 #include <SBF/box_graph.h>
+#include <SBF/oracle.h>
 
 #include <algorithm>
 #include <chrono>

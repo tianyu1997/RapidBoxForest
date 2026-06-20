@@ -2,6 +2,7 @@
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"

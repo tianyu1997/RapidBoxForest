@@ -1,5 +1,7 @@
 #include "planning_forest_adaptive_merge.h"
 
+#include <SBF/oracle.h>
+
 #include "planning_forest_adaptive_merge_grid.h"
 #include "planning_forest_adaptive_merge_internal.h"
 #include "planning_forest_qroot_helpers.h"

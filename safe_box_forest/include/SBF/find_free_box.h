@@ -3,6 +3,8 @@
 #include <SBF/find_free_box_types.h>
 #include <SBF/runtime.h>
 
+#include <Eigen/Core>
+
 #include <chrono>
 #include <functional>
 

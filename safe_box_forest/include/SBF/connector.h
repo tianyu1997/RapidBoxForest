@@ -12,6 +12,8 @@
 
 namespace rbf {
 
+class CollisionChecker;
+
 std::vector<Eigen::VectorXd> rrt_connect(const Eigen::Ref<const Eigen::VectorXd>& start,
 										 const Eigen::Ref<const Eigen::VectorXd>& goal,
 										 const CollisionChecker& checker,

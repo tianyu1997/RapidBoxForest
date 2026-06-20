@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/oracle.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <vector>
 

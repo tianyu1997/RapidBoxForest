@@ -1,6 +1,7 @@
 #pragma once
 
 #include <SBF/grower.h>
+#include <SBF/oracle.h>
 
 #include <algorithm>
 #include <limits>

@@ -2,6 +2,7 @@
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
 
 #include "planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_diagnostics.h"
