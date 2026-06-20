@@ -3,6 +3,7 @@
 #include <SBF/safe_box_forest.h>
 
 #include "planning_forest_query_utils.h"
+#include "planning_forest_qroot_helpers.h"
 
 #include <algorithm>
 #include <array>
@@ -341,6 +342,35 @@ QueryBridgeAdjacencyCandidateSet query_bridge_collect_adjacency_candidates(
                                         result.candidates.end()),
                             result.candidates.end());
     return result;
+}
+
+bool query_bridge_current_corridor_boxes_cover_point(
+    const AdaptiveGridPartition* partition,
+    bool use_partition_cover_index,
+    const std::vector<int>& corridor_new_box_indices,
+    const BoxSpatialIndex& direct_box_index,
+    const std::vector<BoxNode>& boxes,
+    const Eigen::Ref<const Eigen::VectorXd>& point,
+    double tolerance) {
+    if (use_partition_cover_index && partition != nullptr) {
+        const bool partition_covered =
+            !partition->covering_box_ids(point, tolerance).empty();
+        if (partition_covered) {
+            return true;
+        }
+        for (int box_index : corridor_new_box_indices) {
+            if (box_index >= 0 &&
+                box_index < static_cast<int>(boxes.size()) &&
+                intervals_contain_point_local(
+                    boxes[static_cast<std::size_t>(box_index)].joint_intervals,
+                    point,
+                    tolerance)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    return direct_box_index.covering_box(boxes, point, tolerance) >= 0;
 }
 
 bool query_bridge_sample_transition_connected(const std::vector<std::vector<int>>& sample_layers,

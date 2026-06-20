@@ -295,29 +295,14 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         return box_index;
     };
     auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
-        if (use_partition_cover_index) {
-            const bool partition_covered =
-                !adaptive_partition_->covering_box_ids(point,
-                                                       config_.query.adjacency_tolerance).empty();
-            if (partition_covered) {
-                return true;
-            }
-        }
-        if (use_partition_cover_index) {
-            for (int box_index : corridor_new_box_indices) {
-                if (box_index >= 0 &&
-                    box_index < static_cast<int>(boxes_.size()) &&
-                    intervals_contain_point_local(boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
-                                                   point,
-                                                   config_.query.adjacency_tolerance)) {
-                    return true;
-                }
-            }
-            return false;
-        }
-        return direct_box_index.covering_box(boxes_,
-                                             point,
-                                             config_.query.adjacency_tolerance) >= 0;
+        return query_bridge_current_corridor_boxes_cover_point(
+            adaptive_partition_.get(),
+            use_partition_cover_index,
+            corridor_new_box_indices,
+            direct_box_index,
+            boxes_,
+            point,
+            config_.query.adjacency_tolerance);
     };
     const FindFreeBoxOptions direct_options =
         query_bridge_direct_ffb_options(config_, query_bridge_ffb_depth);
