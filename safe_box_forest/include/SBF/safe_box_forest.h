@@ -374,6 +374,13 @@ private:
 		std::size_t segment_edges_before_partition_refresh,
 		bool oracle_counters_before_valid,
 		const OracleCounters& oracle_counters_before);
+	std::vector<QueryBridgeSearchTask> prepare_query_bridge_batch_tasks(
+		const std::vector<Eigen::VectorXd>& starts,
+		const std::vector<Eigen::VectorXd>& goals,
+		const QueryBridgeBatchOptions& options,
+		const std::unordered_set<int>& forced_query_indices,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		std::size_t& partition_refresh_base);
 	void run_query_bridge_direct_start_goal_segments(
 		std::vector<QueryBridgeSearchTask>& tasks,
 		std::vector<int>& added_by_query,
