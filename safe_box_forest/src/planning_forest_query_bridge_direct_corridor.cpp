@@ -224,32 +224,27 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 config_.query.adjacency_tolerance,
                 box_id_to_index);
         const std::vector<int>& candidates = candidate_set.candidates;
-        int local_edges = 0;
-        for (int candidate : candidates) {
-            if (candidate == box_index ||
-                candidate < 0 ||
-                candidate >= static_cast<int>(boxes_.size())) {
-                continue;
-            }
-            if (direct_boxes_adjacent(box_index, candidate)) {
-                dsu.unite(box_index, candidate);
-                bool edge_counted = true;
-                if (!graphless_direct_corridor) {
+        const QueryBridgeIncrementalAdjacencyStats adjacency_stats =
+            query_bridge_connect_adjacency_candidates(
+                box_index,
+                static_cast<int>(boxes_.size()),
+                candidates,
+                dsu,
+                direct_boxes_adjacent,
+                [&](int, int candidate) {
+                    if (graphless_direct_corridor) {
+                        return true;
+                    }
                     const std::size_t before = adjacency_[box_id].size();
                     append_local_edge(adjacency_,
                                       box_id,
                                       boxes_[static_cast<std::size_t>(candidate)].id);
-                    edge_counted = adjacency_[box_id].size() > before;
-                }
-                if (edge_counted) {
-                    local_edges += 1;
-                }
-            }
-        }
+                    return adjacency_[box_id].size() > before;
+                });
         query_bridge_record_direct_corridor_incremental_adjacency(
             context,
             static_cast<int>(candidates.size()),
-            local_edges,
+            adjacency_stats.adjacency_edges,
             candidate_set.partition_neighbor_raw_count,
             use_partition_neighbor_candidates,
             std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());

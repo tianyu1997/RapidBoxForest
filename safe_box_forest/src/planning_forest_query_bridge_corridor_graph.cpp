@@ -372,6 +372,33 @@ QueryBridgeAdjacencyCandidateSet query_bridge_collect_adjacency_candidates(
     return result;
 }
 
+QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
+    int box_index,
+    int box_count,
+    const std::vector<int>& candidates,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<bool(int, int)>& on_adjacent_pair) {
+    QueryBridgeIncrementalAdjacencyStats stats;
+    for (int candidate : candidates) {
+        if (candidate == box_index || candidate < 0 || candidate >= box_count) {
+            continue;
+        }
+        if (!boxes_adjacent(box_index, candidate)) {
+            continue;
+        }
+        dsu.unite(box_index, candidate);
+        bool edge_counted = true;
+        if (on_adjacent_pair) {
+            edge_counted = on_adjacent_pair(box_index, candidate);
+        }
+        if (edge_counted) {
+            stats.adjacency_edges += 1;
+        }
+    }
+    return stats;
+}
+
 bool query_bridge_current_corridor_boxes_cover_point(
     const AdaptiveGridPartition* partition,
     bool use_partition_cover_index,

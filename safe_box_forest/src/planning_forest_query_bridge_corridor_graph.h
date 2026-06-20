@@ -65,6 +65,10 @@ struct QueryBridgeAdjacencyCandidateSet {
     int partition_neighbor_raw_count = 0;
 };
 
+struct QueryBridgeIncrementalAdjacencyStats {
+    int adjacency_edges = 0;
+};
+
 struct QueryBridgeDirectCorridorCommitState {
     std::unordered_map<OracleNodeId, int>* node_to_box_index = nullptr;
     std::vector<int>* corridor_new_box_indices = nullptr;
@@ -147,6 +151,14 @@ QueryBridgeAdjacencyCandidateSet query_bridge_collect_adjacency_candidates(
     const BoxNode* partition_box,
     double tolerance,
     const std::unordered_map<int, int>& box_id_to_index);
+
+QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
+    int box_index,
+    int box_count,
+    const std::vector<int>& candidates,
+    QueryBridgeLocalDsu& dsu,
+    const std::function<bool(int, int)>& boxes_adjacent,
+    const std::function<bool(int, int)>& on_adjacent_pair);
 
 bool query_bridge_current_corridor_boxes_cover_point(
     const AdaptiveGridPartition* partition,
