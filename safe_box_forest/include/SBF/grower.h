@@ -82,6 +82,25 @@ struct GrowTask {
 	GrowTraceFace selected_face;
 };
 
+struct GrowTaskRequest {
+	Eigen::VectorXd target;
+	Eigen::VectorXd seed;
+	GrowTargetType target_type = GrowTargetType::Unknown;
+	int parent_box_id = -1;
+	int source_root_id = -1;
+	int root_id = -1;
+	int target_root_id = -1;
+	int iteration = -1;
+	bool has_seed = false;
+	bool intertree = false;
+	bool component_connect = false;
+	int component_pair_unknown_failures = 0;
+	bool component_connect_staged_target = false;
+	double component_connect_gap_sq = 0.0;
+	GrowTraceFace selected_face;
+	std::vector<GrowTraceFace> face_candidates;
+};
+
 struct GrowWorkerResult : GrowTask {
 	int worker_id = -1;
 	bool accepted_by_worker = false;
@@ -299,6 +318,11 @@ private:
 											int n_tasks,
 											const FindFreeBoxOptions& base_options,
 											StageContext& context);
+	std::vector<GrowTaskRequest> make_growth_task_requests(const std::vector<BoxNode>& boxes,
+														   const std::vector<Eigen::VectorXd>& roots,
+														   int first_task_id,
+														   int n_tasks,
+														   StageContext& context);
 	std::vector<GrowTask> filter_growth_tasks(const std::vector<BoxNode>& boxes,
 											  std::vector<GrowTask> tasks,
 											  const FindFreeBoxOptions& base_options,

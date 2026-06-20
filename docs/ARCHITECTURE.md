@@ -234,10 +234,12 @@ src/grower_internal.h              grower-local shared commit, lookup, and
 src/grower_options.cpp             RRT grower depth-stage, component-connect
                                    FFB option selection, and FFB/oracle
                                    diagnostics helpers
-src/grower_task_builder.cpp        RRT grower batched target sampling, task
-                                   generation, and frontier seed selection
+src/grower_task_builder.cpp        RRT grower task assembly and frontier seed
+                                   selection
 src/grower_task_filter.cpp         RRT grower task-domain filtering, failure
                                    cooling skips, and task trace emission
+src/grower_task_requests.cpp       RRT grower batched target sampling,
+                                   request generation, and anchor waves
 src/grower_component_connect.cpp   source-root component-connect target
                                    ranking, refinement, and lateral seed
                                    selection
