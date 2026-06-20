@@ -85,9 +85,9 @@ include/rbf/lect_database/         core database API
 include/LECTDatabase/              compatibility and package-facing headers
 include/LECTDatabase/sbf/          planner adapter API
 src/lect_database/                 core persistence implementation
-  database.cpp                     database open/create state machine, split
-                                   mutation, manifests, evidence, journal,
-                                   checkpoint, and parent-hull materialization
+  database.cpp                     database open/create state machine,
+                                   manifests, evidence, journal, checkpoint,
+                                   and parent-hull materialization
   database_evidence_index.cpp      in-memory open-addressed evidence index
                                    reserve/find/upsert operations
   database_evidence_codec.cpp      evidence binary/text codec, sidecar layout,
@@ -100,6 +100,9 @@ src/lect_database/                 core persistence implementation
                                    accounting, and node-row flush/read/write
   database_query.cpp               tree topology navigation, node box lookup,
                                    exact box lookup, and interval range query
+  database_tree.cpp                LECT tree split/build mutation, node-id
+                                   allocation, layer/page index maintenance,
+                                   and interval geometry helpers
   read_snapshot_mapped_file.cpp    read-snapshot mmap RAII wrapper shared by
                                    snapshot open/load paths
   read_snapshot_builder.cpp        legacy LECT database to read-snapshot
