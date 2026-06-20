@@ -49,6 +49,14 @@ void query_bridge_record_assimilation_result(
     QueryBridgeDirectCorridorRuntimeStats& runtime_stats,
     const QueryBridgeSampleAssimilationResult& sample_assimilation);
 
+void query_bridge_record_direct_corridor_incremental_adjacency(
+    StageContext& context,
+    int candidate_count,
+    int local_edges,
+    int partition_neighbor_raw_count,
+    bool used_partition_neighbors,
+    double assimilate_ms);
+
 void query_bridge_record_direct_corridor_initial_coverage(
     StageContext& context,
     const QueryBridgeInitialSampleCoverageStats& stats,

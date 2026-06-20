@@ -215,11 +215,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 config_.query.adjacency_tolerance,
                 box_id_to_index);
         const std::vector<int>& candidates = candidate_set.candidates;
-        if (use_partition_neighbor_candidates) {
-            context.diagnostics().add_counter(
-                "query_bridge.direct_corridor_partition_neighbor_candidates",
-                static_cast<double>(candidate_set.partition_neighbor_raw_count));
-        }
         int local_edges = 0;
         for (int candidate : candidates) {
             if (candidate == box_index ||
@@ -242,16 +237,12 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 }
             }
         }
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_incremental_adjacency_checks",
-            static_cast<double>(candidates.size()));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_incremental_adjacency_edges",
-            static_cast<double>(local_edges));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_full_adjacency_scans_avoided");
-        context.diagnostics().record_timing(
-            "query_bridge.direct_corridor_assimilate_ms",
+        query_bridge_record_direct_corridor_incremental_adjacency(
+            context,
+            static_cast<int>(candidates.size()),
+            local_edges,
+            candidate_set.partition_neighbor_raw_count,
+            use_partition_neighbor_candidates,
             std::chrono::duration<double, std::milli>(Clock::now() - assimilate_t0).count());
         return sample_assimilation.covered_sample_count;
     };

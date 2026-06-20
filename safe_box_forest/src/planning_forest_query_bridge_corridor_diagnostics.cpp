@@ -34,6 +34,31 @@ void query_bridge_record_assimilation_result(
     }
 }
 
+void query_bridge_record_direct_corridor_incremental_adjacency(
+    StageContext& context,
+    int candidate_count,
+    int local_edges,
+    int partition_neighbor_raw_count,
+    bool used_partition_neighbors,
+    double assimilate_ms) {
+    if (used_partition_neighbors) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_partition_neighbor_candidates",
+            static_cast<double>(partition_neighbor_raw_count));
+    }
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_incremental_adjacency_checks",
+        static_cast<double>(candidate_count));
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_incremental_adjacency_edges",
+        static_cast<double>(local_edges));
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_full_adjacency_scans_avoided");
+    context.diagnostics().record_timing(
+        "query_bridge.direct_corridor_assimilate_ms",
+        assimilate_ms);
+}
+
 void query_bridge_record_direct_corridor_initial_coverage(
     StageContext& context,
     const QueryBridgeInitialSampleCoverageStats& stats,
