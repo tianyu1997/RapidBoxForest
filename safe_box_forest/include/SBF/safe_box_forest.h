@@ -27,6 +27,9 @@
 namespace rbf {
 
 struct QueryBridgeAcceptanceThresholds;
+struct QueryBridgeEdgeRuntimeOptions;
+struct QueryBridgeHybridizeAttemptOptions;
+struct QueryBridgeParallelRrtOptions;
 struct QueryBridgeRetryOptions;
 struct QueryBridgeSearchTask;
 struct ObbPathCoverResult;
@@ -381,6 +384,18 @@ private:
 		const std::unordered_set<int>& forced_query_indices,
 		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
 		std::size_t& partition_refresh_base);
+	void run_query_bridge_batch_parallel_rrt(
+		std::vector<QueryBridgeSearchTask>& tasks,
+		std::vector<int>& added_by_query,
+		const std::unordered_set<int>& forced_query_indices,
+		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
+		const QueryBridgeRetryOptions& retry_options,
+		const QueryBridgeParallelRrtOptions& parallel_rrt_options,
+		const QueryBridgeHybridizeAttemptOptions& hybrid_options,
+		const QueryBridgeEdgeRuntimeOptions& edge_options,
+		bool scene_reusable_edges,
+		StageContext& batch_context,
+		std::chrono::steady_clock::time_point batch_t0);
 	void run_query_bridge_direct_start_goal_segments(
 		std::vector<QueryBridgeSearchTask>& tasks,
 		std::vector<int>& added_by_query,
