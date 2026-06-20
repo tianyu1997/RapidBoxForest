@@ -208,6 +208,7 @@ add_library(sbf_core STATIC
     src/planning_forest_query_bridge_task_key.cpp
     src/planning_forest_query_bridge_waypoint.cpp
     src/planning_forest_query_geometry.cpp
+    src/planning_forest_query_repair.cpp
     src/planning_forest_query_utils.cpp
     src/planning_forest_query_utils_rrt.cpp
     src/planning_forest_query_utils_shortcut.cpp

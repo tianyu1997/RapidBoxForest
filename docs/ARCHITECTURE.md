@@ -362,11 +362,14 @@ src/planning_forest_overlay_portal_resolvers.cpp
 src/planning_forest_obb_diagnostics.cpp
                                    OBB cover/portal validation diagnostic
                                    emission shared by overlay stages
-src/planning_forest_query.cpp      online query entry point, strict audit,
-                                   final simplify, and local repair
+src/planning_forest_query.cpp      online query entry point, strict audit
+                                   flow, and final simplify orchestration
 src/planning_forest_query_geometry.cpp
                                    query-local interval, box, boundary-seed,
                                    and segment-coverage geometry helpers
+src/planning_forest_query_repair.cpp
+                                   query path statistics, graph cost options,
+                                   and local BiRRT audit repair helpers
 src/planning_forest_query_utils.cpp
                                    query/path orchestration utilities shared by
                                    graph, partition, OBB, and bridge stages
