@@ -309,6 +309,7 @@ void query_bridge_run_no_path_retries(
     int retry_attempts_total = 0;
     int retry_successes_total = 0;
     double retry_ms_total = 0.0;
+    const QueryBridgeTaskDiagnostics task_diag(context, task.index);
     auto run_stage = [&](int stage_index,
                          int stage_attempts,
                          int stage_fixed_iters,
@@ -340,25 +341,19 @@ void query_bridge_run_no_path_retries(
                 std::chrono::steady_clock::now() - retry_t0)
                 .count();
         retry_ms_total += retry_ms;
-        const std::string key_prefix =
+        const std::string suffix_prefix =
             stage_index == 0
-                ? query_bridge_task_key(task.index, "no_path_retry_")
-                : query_bridge_task_key(
-                      task.index,
-                      "no_path_retry_stage." + std::to_string(stage_index) + ".");
-        context.diagnostics().set_value(
-            key_prefix + "attempts",
-            static_cast<double>(effective_stage_attempts));
-        context.diagnostics().set_value(
-            key_prefix + "attempts_run",
-            static_cast<double>(retry_attempts_run));
-        context.diagnostics().set_value(
-            key_prefix + "successes",
-            static_cast<double>(retry_successes));
-        context.diagnostics().set_value(
-            key_prefix + "fixed_iters",
-            static_cast<double>(stage_fixed_iters));
-        context.diagnostics().set_value(key_prefix + "ms", retry_ms);
+                ? "no_path_retry_"
+                : "no_path_retry_stage." + std::to_string(stage_index) + ".";
+        task_diag.set_value(suffix_prefix + "attempts",
+                            static_cast<double>(effective_stage_attempts));
+        task_diag.set_value(suffix_prefix + "attempts_run",
+                            static_cast<double>(retry_attempts_run));
+        task_diag.set_value(suffix_prefix + "successes",
+                            static_cast<double>(retry_successes));
+        task_diag.set_value(suffix_prefix + "fixed_iters",
+                            static_cast<double>(stage_fixed_iters));
+        task_diag.set_value(suffix_prefix + "ms", retry_ms);
         if (adaptive_stage) {
             context.diagnostics().add_counter(
                 "query_bridge.batch_no_path_retry_adaptive_attempts",
@@ -389,15 +384,11 @@ void query_bridge_run_no_path_retries(
     context.diagnostics().add_counter(
         "query_bridge.batch_no_path_retry_successes",
         static_cast<double>(retry_successes_total));
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "no_path_retry_attempts"),
-        static_cast<double>(retry_attempts_total));
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "no_path_retry_ms"),
-        retry_ms_total);
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "no_path_retry_successes"),
-        static_cast<double>(retry_successes_total));
+    task_diag.set_value("no_path_retry_attempts",
+                        static_cast<double>(retry_attempts_total));
+    task_diag.set_value("no_path_retry_ms", retry_ms_total);
+    task_diag.set_value("no_path_retry_successes",
+                        static_cast<double>(retry_successes_total));
 }
 
 QueryBridgeAttemptPlan query_bridge_attempt_plan(
