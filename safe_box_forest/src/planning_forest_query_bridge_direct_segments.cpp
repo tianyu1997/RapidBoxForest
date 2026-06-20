@@ -22,12 +22,7 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     StageContext& context,
     int query_index,
     int batch_task_index) {
-    const auto add_task_counter = [&](const std::string& suffix) {
-        if (batch_task_index >= 0) {
-            context.diagnostics().add_counter(
-                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix));
-        }
-    };
+    const QueryBridgeTaskDiagnostics task_diag(context, batch_task_index);
     if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
         context.diagnostics().add_counter(
             "query_bridge.direct_start_goal_segment_missing_endpoint");
@@ -36,7 +31,7 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     std::vector<Eigen::VectorXd> direct_path{start, goal};
     context.diagnostics().add_counter(
         "query_bridge.direct_start_goal_segment_attempts");
-    add_task_counter("direct_start_goal_segment_attempts");
+    task_diag.add_counter("direct_start_goal_segment_attempts");
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     const int edge_id = add_audited_query_bridge_segment_edge(
         source_box_id,
@@ -48,18 +43,18 @@ int RBFPlanningForest::try_add_query_direct_start_goal_segment_edge(
     if (edge_id == -2) {
         context.diagnostics().add_counter(
             "query_bridge.direct_start_goal_segment_audit_rejects");
-        add_task_counter("direct_start_goal_segment_audit_rejects");
+        task_diag.add_counter("direct_start_goal_segment_audit_rejects");
         return 0;
     }
     if (edge_id < 0) {
         context.diagnostics().add_counter(
             "query_bridge.direct_start_goal_segment_add_fail");
-        add_task_counter("direct_start_goal_segment_add_fail");
+        task_diag.add_counter("direct_start_goal_segment_add_fail");
         return 0;
     }
     context.diagnostics().add_counter(
         "query_bridge.direct_start_goal_segment_edges");
-    add_task_counter("direct_start_goal_segment_edges");
+    task_diag.add_counter("direct_start_goal_segment_edges");
     invalidate_query_cache();
     sync_adaptive_partition_segment_edges(&last_build_,
                                           "query_bridge.direct_start_goal_segment");
@@ -114,27 +109,14 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     StageContext& context,
     int query_index,
     int batch_task_index) {
-    const auto add_task_counter = [&](const std::string& suffix, double value = 1.0) {
-        if (batch_task_index >= 0) {
-            context.diagnostics().add_counter(
-                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
-                value);
-        }
-    };
-    const auto set_task_value = [&](const std::string& suffix, double value) {
-        if (batch_task_index >= 0) {
-            context.diagnostics().set_value(
-                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
-                value);
-        }
-    };
+    const QueryBridgeTaskDiagnostics task_diag(context, batch_task_index);
     if (candidate_paths.empty()) {
         return 0;
     }
     if (source_box_id < 0 || target_box_id < 0 || source_box_id == target_box_id) {
         context.diagnostics().add_counter(
             "query_bridge.fast_direct_segment_after_rrt_missing_endpoint");
-        add_task_counter("fast_direct_segment_after_rrt_missing_endpoint");
+        task_diag.add_counter("fast_direct_segment_after_rrt_missing_endpoint");
         return 0;
     }
     CollisionChecker strict_checker = make_audit_checker(audit_robot_, scene_, config_.query);
@@ -156,7 +138,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
         if (edge_id == -2) {
             context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_candidate_audit_rejects");
-            add_task_counter("fast_direct_segment_after_rrt_candidate_audit_rejects");
+            task_diag.add_counter("fast_direct_segment_after_rrt_candidate_audit_rejects");
             continue;
         }
         if (edge_id >= 0) {
@@ -173,14 +155,14 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_edge(
     if (edge_id < 0) {
         context.diagnostics().add_counter(
             "query_bridge.fast_direct_segment_after_rrt_add_fail");
-        add_task_counter("fast_direct_segment_after_rrt_add_fail");
+        task_diag.add_counter("fast_direct_segment_after_rrt_add_fail");
         return 0;
     }
     invalidate_query_cache();
     context.diagnostics().add_counter(
         "query_bridge.fast_direct_segment_after_rrt_edges");
-    add_task_counter("fast_direct_segment_after_rrt_edges");
-    set_task_value("fast_direct_segment_after_rrt_length", added_length);
+    task_diag.add_counter("fast_direct_segment_after_rrt_edges");
+    task_diag.set_value("fast_direct_segment_after_rrt_length", added_length);
     return 1;
 }
 
@@ -198,13 +180,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
     if (!enabled || waypoint_path.empty()) {
         return 0;
     }
-    const auto add_task_counter = [&](const std::string& suffix, double value = 1.0) {
-        if (batch_task_index >= 0) {
-            context.diagnostics().add_counter(
-                query_bridge_task_key(static_cast<std::size_t>(batch_task_index), suffix),
-                value);
-        }
-    };
+    const QueryBridgeTaskDiagnostics task_diag(context, batch_task_index);
 
     std::vector<std::vector<Eigen::VectorXd>> candidate_paths;
     candidate_paths.push_back(waypoint_path);
@@ -218,7 +194,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
         const double after_length = path_length(shortened);
         context.diagnostics().add_counter(
             "query_bridge.fast_direct_segment_after_rrt_shortcut_attempts");
-        add_task_counter("fast_direct_segment_after_rrt_shortcut_attempts");
+        task_diag.add_counter("fast_direct_segment_after_rrt_shortcut_attempts");
         if (!shortened.empty() && after_length + 1e-12 < before_length) {
             candidate_paths.push_back(std::move(shortened));
             context.diagnostics().add_counter(
@@ -226,9 +202,9 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
             context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_shortcut_delta",
                 before_length - after_length);
-            add_task_counter("fast_direct_segment_after_rrt_shortcut_accepts");
-            add_task_counter("fast_direct_segment_after_rrt_shortcut_delta",
-                             before_length - after_length);
+            task_diag.add_counter("fast_direct_segment_after_rrt_shortcut_accepts");
+            task_diag.add_counter("fast_direct_segment_after_rrt_shortcut_delta",
+                                  before_length - after_length);
         }
         const auto& random_source = candidate_paths.back();
         if (random_shortcut_iters > 0 && random_source.size() > 2U) {
@@ -249,7 +225,7 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
             const double random_after_length = path_length(random_shortened);
             context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_random_shortcut_attempts");
-            add_task_counter("fast_direct_segment_after_rrt_random_shortcut_attempts");
+            task_diag.add_counter("fast_direct_segment_after_rrt_random_shortcut_attempts");
             context.diagnostics().add_counter(
                 "query_bridge.fast_direct_segment_after_rrt_random_shortcut_iters",
                 static_cast<double>(random_shortcut_iters));
@@ -261,9 +237,9 @@ int RBFPlanningForest::try_add_query_fast_direct_segment_after_rrt_path(
                 context.diagnostics().add_counter(
                     "query_bridge.fast_direct_segment_after_rrt_random_shortcut_delta",
                     random_before_length - random_after_length);
-                add_task_counter("fast_direct_segment_after_rrt_random_shortcut_accepts");
-                add_task_counter("fast_direct_segment_after_rrt_random_shortcut_delta",
-                                 random_before_length - random_after_length);
+                task_diag.add_counter("fast_direct_segment_after_rrt_random_shortcut_accepts");
+                task_diag.add_counter("fast_direct_segment_after_rrt_random_shortcut_delta",
+                                      random_before_length - random_after_length);
             }
         }
     }

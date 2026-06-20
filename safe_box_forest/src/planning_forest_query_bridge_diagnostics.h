@@ -16,6 +16,18 @@ void add_query_bridge_oracle_counter_delta(BuildProfile& profile,
 
 std::string query_bridge_task_key(std::size_t index, const std::string& suffix);
 
+class QueryBridgeTaskDiagnostics {
+public:
+    QueryBridgeTaskDiagnostics(StageContext& context, int task_index);
+
+    void add_counter(const std::string& suffix, double value = 1.0) const;
+    void set_value(const std::string& suffix, double value) const;
+
+private:
+    StageContext& context_;
+    int task_index_ = -1;
+};
+
 void query_bridge_mark_task_skip(BuildProfile& profile,
                                  std::size_t index,
                                  double code,
