@@ -211,6 +211,10 @@ python/ompl_binding_utils.h        OMPL baseline sampler, seeding, C-space,
                                    planner, and path extraction helpers
 ```
 
+Public grower types are split by responsibility:
+`include/SBF/grower_types.h` contains target/task/config/result records, while
+`include/SBF/grower.h` contains grower interfaces and concrete grower classes.
+
 Current source-file boundaries:
 
 ```text
