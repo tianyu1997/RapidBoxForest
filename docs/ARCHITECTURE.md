@@ -375,6 +375,9 @@ src/planning_forest_dynamic_cache.cpp
                                    dirty-region checks, collision-cache promotion,
                                    dynamic segment fallback, and removed-box refill
                                    helpers
+src/planning_forest_dynamic_collision_cache_state.h
+                                   internal dynamic collision-cache entries,
+                                   blocker index, and active-count state
 src/planning_forest_subtractive.cpp
                                    subtractive scene build, obstacle carving,
                                    certified regrow commit, and finalization

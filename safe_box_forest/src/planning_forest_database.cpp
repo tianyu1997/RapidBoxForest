@@ -10,6 +10,8 @@
 #include <sstream>
 #include <stdexcept>
 
+#include "planning_forest_dynamic_collision_cache_state.h"
+
 namespace rbf {
 namespace {
 
@@ -285,7 +287,10 @@ RBFPlanningConfig::RBFPlanningConfig() {
 }
 
 RBFPlanningForest::RBFPlanningForest(Robot robot, RBFPlanningConfig config)
-    : robot_(std::move(robot)), audit_robot_(robot_), config_(std::move(config)) {
+    : robot_(std::move(robot)),
+      audit_robot_(robot_),
+      config_(std::move(config)),
+      dynamic_collision_cache_(std::make_unique<DynamicCollisionCacheState>()) {
     if (config_.envelope_type.n_subdivisions <= 0) {
         config_.envelope_type.n_subdivisions = 4;
     }

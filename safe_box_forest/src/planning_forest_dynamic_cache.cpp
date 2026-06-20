@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
+#include "planning_forest_dynamic_collision_cache_state.h"
+
 #include <SBF/box_graph.h>
 
 #include <algorithm>
@@ -74,7 +76,7 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
     profile.boxes_before = static_cast<int>(boxes_.size());
     profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
     profile.obstacles_before = scene_.n_obstacles();
-    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_cache_->boxes.size());
 
     Scene added_scene(std::vector<Obstacle>{obstacle});
     CollisionChecker added_checker(robot_, added_scene);
@@ -203,7 +205,7 @@ RebuildProfile RBFPlanningForest::add_obstacle_and_rebuild(const Obstacle& obsta
         profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     }
     profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
-    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_cache_->boxes.size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
     return profile;
@@ -216,7 +218,7 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
     profile.boxes_before = static_cast<int>(boxes_.size());
     profile.raw_boxes_before = static_cast<int>(raw_boxes_.size());
     profile.obstacles_before = scene_.n_obstacles();
-    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_before = static_cast<int>(dynamic_collision_cache_->boxes.size());
     if (obstacles.empty()) {
         profile.boxes_after = profile.boxes_before;
         profile.raw_boxes_after = profile.raw_boxes_before;
@@ -369,7 +371,7 @@ RebuildProfile RBFPlanningForest::add_obstacles_and_rebuild(const std::vector<Ob
         profile.adjacency_islands = static_cast<int>(find_islands(adjacency_).size());
     }
     profile.adjacency_ms = std::chrono::duration<double, std::milli>(Clock::now() - adj_t0).count();
-    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_box_cache_.size());
+    profile.collision_cache_boxes_after = static_cast<int>(dynamic_collision_cache_->boxes.size());
     profile.total_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     invalidate_query_cache();
     return profile;

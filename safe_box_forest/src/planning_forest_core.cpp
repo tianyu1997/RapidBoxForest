@@ -8,8 +8,11 @@
 #include <utility>
 
 #include "adaptive_grid_partition_options.h"
+#include "planning_forest_dynamic_collision_cache_state.h"
 
 namespace rbf {
+
+RBFPlanningForest::~RBFPlanningForest() = default;
 
 void RBFPlanningForest::clear_forest() {
     boxes_.clear();

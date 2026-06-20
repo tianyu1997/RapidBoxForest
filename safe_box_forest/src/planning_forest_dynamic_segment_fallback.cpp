@@ -11,6 +11,7 @@
 
 #include "adaptive_grid_partition_options.h"
 #include "planning_forest_audit.h"
+#include "planning_forest_dynamic_collision_cache_state.h"
 #include "planning_forest_dynamic_helpers.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_utils.h"
@@ -75,7 +76,7 @@ RebuildProfile RBFPlanningForest::connect_update_endpoint_segment_fallback(
                                         static_cast<int>(boxes_.size()),
                                         static_cast<int>(raw_boxes_.size()),
                                         scene_.n_obstacles(),
-                                        static_cast<int>(dynamic_collision_box_cache_.size()),
+                                        static_cast<int>(dynamic_collision_cache_->boxes.size()),
                                         static_cast<int>(segment_edges_.size()));
     const bool use_partition_backend =
         partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;
@@ -287,7 +288,7 @@ RebuildProfile RBFPlanningForest::connect_update_segment_fallback() {
                                         static_cast<int>(boxes_.size()),
                                         static_cast<int>(raw_boxes_.size()),
                                         scene_.n_obstacles(),
-                                        static_cast<int>(dynamic_collision_box_cache_.size()),
+                                        static_cast<int>(dynamic_collision_cache_->boxes.size()),
                                         static_cast<int>(segment_edges_.size()));
     const bool use_partition_backend =
         partition_native_mode() && adaptive_partition_query_enabled_ && adaptive_partition_;

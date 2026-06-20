@@ -8,6 +8,7 @@
 #include "planning_forest_adaptive_cover_utils.h"
 #include "planning_forest_adaptive_merge.h"
 #include "planning_forest_diagnostics.h"
+#include "planning_forest_dynamic_collision_cache_state.h"
 #include "planning_forest_qroot_growers.h"
 
 namespace rbf {
@@ -228,7 +229,7 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
     out.profile.diagnostics["leaf_refine.leaf_merge_pruned"] =
         static_cast<double>(leaf_merge_result.pruned_boxes);
     out.profile.diagnostics["leaf_refine.collision_cache_boxes"] =
-        static_cast<double>(dynamic_collision_box_cache_.size());
+        static_cast<double>(dynamic_collision_cache_->boxes.size());
     out.profile.diagnostics["leaf_refine.deep_refine_ms"] = out.deep_refine_ms;
     out.profile.diagnostics["leaf_refine.offline_anchor_ms"] = offline_anchors.total_ms;
     out.profile.diagnostics["leaf_refine.offline_anchor_candidates"] =

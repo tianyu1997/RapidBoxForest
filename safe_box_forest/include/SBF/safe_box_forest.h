@@ -20,7 +20,6 @@
 #include <chrono>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -37,10 +36,12 @@ struct ObbPathCoverResult;
 struct ObbValidationOptions;
 struct AdaptiveDepthSnapshot;
 struct BudgetedMergeStats;
+struct DynamicCollisionCacheState;
 
 class RBFPlanningForest {
 public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
+	~RBFPlanningForest();
 
 	BuildProfile build(const Eigen::Ref<const Eigen::VectorXd>& start,
 					   const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -152,12 +153,6 @@ public:
 	const lect_database::OnlineEnvelopeCacheTree& online_cache() const { return *online_cache_; }
 
 private:
-	struct CachedCollisionBox {
-		BoxNode box;
-		std::vector<int> blocking_obstacle_indices;
-		bool active = true;
-	};
-
 	FindFreeBoxResult find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
 											  const std::vector<Interval>& domain,
 											  StageContext& context,
@@ -613,9 +608,7 @@ private:
 	bool adaptive_partition_query_enabled_ = false;
 	bool has_adaptive_partition_config_ = false;
 	AdaptiveLeafSweepConfig last_adaptive_partition_config_;
-	std::vector<CachedCollisionBox> dynamic_collision_box_cache_;
-	std::unordered_map<int, std::vector<std::size_t>> dynamic_collision_cache_blocker_index_;
-	int dynamic_collision_cache_active_count_ = 0;
+	std::unique_ptr<DynamicCollisionCacheState> dynamic_collision_cache_;
 	BuildProfile last_build_;
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;

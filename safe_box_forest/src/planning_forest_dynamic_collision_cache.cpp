@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "planning_forest_dynamic_helpers.h"
+#include "planning_forest_dynamic_collision_cache_state.h"
 #include "planning_forest_qroot_helpers.h"
 #include "planning_forest_query_utils.h"
 
@@ -16,7 +17,7 @@ namespace rbf {
 void RBFPlanningForest::populate_dynamic_collision_cache(const LeafSweepResult& result,
                                                          int obstacle_count) {
     clear_dynamic_collision_cache();
-    dynamic_collision_box_cache_.reserve(result.collision_boxes.size());
+    dynamic_collision_cache_->boxes.reserve(result.collision_boxes.size());
     std::vector<int> all_obstacles;
     all_obstacles.reserve(static_cast<std::size_t>(std::max(0, obstacle_count)));
     for (int index = 0; index < obstacle_count; ++index) {
@@ -33,22 +34,22 @@ void RBFPlanningForest::populate_dynamic_collision_cache(const LeafSweepResult& 
 }
 
 void RBFPlanningForest::clear_dynamic_collision_cache() {
-    dynamic_collision_box_cache_.clear();
-    dynamic_collision_cache_blocker_index_.clear();
-    dynamic_collision_cache_active_count_ = 0;
+    dynamic_collision_cache_->boxes.clear();
+    dynamic_collision_cache_->blocker_index.clear();
+    dynamic_collision_cache_->active_count = 0;
 }
 
 void RBFPlanningForest::rebuild_dynamic_collision_cache_index() {
-    dynamic_collision_cache_blocker_index_.clear();
-    dynamic_collision_cache_active_count_ = 0;
-    for (std::size_t index = 0; index < dynamic_collision_box_cache_.size(); ++index) {
-        const auto& cached = dynamic_collision_box_cache_[index];
+    dynamic_collision_cache_->blocker_index.clear();
+    dynamic_collision_cache_->active_count = 0;
+    for (std::size_t index = 0; index < dynamic_collision_cache_->boxes.size(); ++index) {
+        const auto& cached = dynamic_collision_cache_->boxes[index];
         if (!cached.active || cached.blocking_obstacle_indices.empty()) {
             continue;
         }
-        dynamic_collision_cache_active_count_ += 1;
+        dynamic_collision_cache_->active_count += 1;
         for (int obstacle_index : cached.blocking_obstacle_indices) {
-            dynamic_collision_cache_blocker_index_[obstacle_index].push_back(index);
+            dynamic_collision_cache_->blocker_index[obstacle_index].push_back(index);
         }
     }
 }
@@ -67,26 +68,26 @@ void RBFPlanningForest::add_dynamic_collision_cache_box(const BoxNode& box,
     if (blocking_obstacle_indices.empty()) {
         return;
     }
-    CachedCollisionBox cached;
+    DynamicCollisionCacheEntry cached;
     cached.box = box;
     cached.blocking_obstacle_indices = std::move(blocking_obstacle_indices);
     cached.active = true;
-    const std::size_t cache_index = dynamic_collision_box_cache_.size();
-    dynamic_collision_box_cache_.push_back(std::move(cached));
-    dynamic_collision_cache_active_count_ += 1;
-    for (int obstacle_index : dynamic_collision_box_cache_.back().blocking_obstacle_indices) {
-        dynamic_collision_cache_blocker_index_[obstacle_index].push_back(cache_index);
+    const std::size_t cache_index = dynamic_collision_cache_->boxes.size();
+    dynamic_collision_cache_->boxes.push_back(std::move(cached));
+    dynamic_collision_cache_->active_count += 1;
+    for (int obstacle_index : dynamic_collision_cache_->boxes.back().blocking_obstacle_indices) {
+        dynamic_collision_cache_->blocker_index[obstacle_index].push_back(cache_index);
     }
 }
 
 int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_set<int>& removed_obstacle_indices,
                                                          RebuildProfile& profile) {
-    if (dynamic_collision_cache_active_count_ <= 0 && !dynamic_collision_box_cache_.empty()) {
+    if (dynamic_collision_cache_->active_count <= 0 && !dynamic_collision_cache_->boxes.empty()) {
         rebuild_dynamic_collision_cache_index();
     }
-    profile.collision_cache_boxes_before = dynamic_collision_cache_active_count_;
-    if (removed_obstacle_indices.empty() || dynamic_collision_cache_active_count_ <= 0) {
-        profile.collision_cache_boxes_after = dynamic_collision_cache_active_count_;
+    profile.collision_cache_boxes_before = dynamic_collision_cache_->active_count;
+    if (removed_obstacle_indices.empty() || dynamic_collision_cache_->active_count <= 0) {
+        profile.collision_cache_boxes_after = dynamic_collision_cache_->active_count;
         return 0;
     }
 
@@ -116,16 +117,16 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
     const double adjacency_tolerance = config_.query.adjacency_tolerance;
     const auto cache_scan_t0 = std::chrono::steady_clock::now();
 
-    auto deactivate_cached = [&](CachedCollisionBox& cached) {
+    auto deactivate_cached = [&](DynamicCollisionCacheEntry& cached) {
         if (cached.active) {
             cached.active = false;
             cached.blocking_obstacle_indices.clear();
-            dynamic_collision_cache_active_count_ =
-                std::max(0, dynamic_collision_cache_active_count_ - 1);
+            dynamic_collision_cache_->active_count =
+                std::max(0, dynamic_collision_cache_->active_count - 1);
         }
     };
 
-    auto try_promote_touched_cached = [&](CachedCollisionBox& cached) {
+    auto try_promote_touched_cached = [&](DynamicCollisionCacheEntry& cached) {
         bool touched = false;
         std::vector<int> remaining_blockers;
         remaining_blockers.reserve(cached.blocking_obstacle_indices.size());
@@ -204,16 +205,16 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
     };
 
     const bool suffix_remove = min_removed >= scene_.n_obstacles();
-    if (suffix_remove && !dynamic_collision_cache_blocker_index_.empty()) {
+    if (suffix_remove && !dynamic_collision_cache_->blocker_index.empty()) {
         std::vector<std::size_t> candidate_indices;
         std::unordered_set<std::size_t> seen;
         for (int removed_index : sorted_removed) {
-            const auto it = dynamic_collision_cache_blocker_index_.find(removed_index);
-            if (it == dynamic_collision_cache_blocker_index_.end()) {
+            const auto it = dynamic_collision_cache_->blocker_index.find(removed_index);
+            if (it == dynamic_collision_cache_->blocker_index.end()) {
                 continue;
             }
             for (std::size_t index : it->second) {
-                if (index < dynamic_collision_box_cache_.size() && seen.insert(index).second) {
+                if (index < dynamic_collision_cache_->boxes.size() && seen.insert(index).second) {
                     candidate_indices.push_back(index);
                 }
             }
@@ -223,11 +224,11 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
         profile.diagnostics["delete.cache_index_candidate_entries"] =
             static_cast<double>(candidate_indices.size());
         for (std::size_t index : candidate_indices) {
-            if (index >= dynamic_collision_box_cache_.size()) {
+            if (index >= dynamic_collision_cache_->boxes.size()) {
                 profile.diagnostics["delete.cache_index_stale_out_of_range"] += 1.0;
                 continue;
             }
-            CachedCollisionBox& cached = dynamic_collision_box_cache_[index];
+            DynamicCollisionCacheEntry& cached = dynamic_collision_cache_->boxes[index];
             if (!cached.active) {
                 profile.diagnostics["delete.cache_index_stale_inactive"] += 1.0;
                 continue;
@@ -237,7 +238,7 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
         }
         profile.diagnostics["delete.cache_scan_ms"] +=
             std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cache_scan_t0).count();
-        profile.collision_cache_boxes_after = dynamic_collision_cache_active_count_;
+        profile.collision_cache_boxes_after = dynamic_collision_cache_->active_count;
         return promoted;
     }
 
@@ -245,13 +246,13 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
     std::size_t write_index = 0;
     auto keep_cached_at = [&](std::size_t read_index) {
         if (write_index != read_index) {
-            dynamic_collision_box_cache_[write_index] =
-                std::move(dynamic_collision_box_cache_[read_index]);
+            dynamic_collision_cache_->boxes[write_index] =
+                std::move(dynamic_collision_cache_->boxes[read_index]);
         }
         ++write_index;
     };
-    for (std::size_t read_index = 0; read_index < dynamic_collision_box_cache_.size(); ++read_index) {
-        auto& cached = dynamic_collision_box_cache_[read_index];
+    for (std::size_t read_index = 0; read_index < dynamic_collision_cache_->boxes.size(); ++read_index) {
+        auto& cached = dynamic_collision_cache_->boxes[read_index];
         if (!cached.active) {
             continue;
         }
@@ -368,9 +369,9 @@ int RBFPlanningForest::promote_unblocked_collision_cache(const std::unordered_se
     }
     profile.diagnostics["delete.cache_scan_ms"] +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - cache_scan_t0).count();
-    dynamic_collision_box_cache_.resize(write_index);
+    dynamic_collision_cache_->boxes.resize(write_index);
     rebuild_dynamic_collision_cache_index();
-    profile.collision_cache_boxes_after = dynamic_collision_cache_active_count_;
+    profile.collision_cache_boxes_after = dynamic_collision_cache_->active_count;
     return promoted;
 }
 
