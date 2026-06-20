@@ -121,6 +121,26 @@ void obb_commit_segment_region(ObbPathCoverResult& result,
     obb_append_centerline_waypoint(centerline, b);
 }
 
+void obb_commit_path_window_region(ObbPathCoverResult& result,
+                                   const std::vector<Eigen::VectorXd>& path,
+                                   std::size_t begin,
+                                   std::size_t end,
+                                   Eigen::VectorXd center,
+                                   Eigen::MatrixXd generators,
+                                   std::vector<Eigen::VectorXd>& centerline) {
+    ObbPathCoverRegion region;
+    region.begin = begin;
+    region.end = end;
+    region.center = std::move(center);
+    region.generators = std::move(generators);
+    obb_record_region_volume(result.stats, region.generators);
+    result.regions.push_back(std::move(region));
+    for (std::size_t index = begin + 1U; index <= end; ++index) {
+        result.covered_length += (path[index] - path[index - 1U]).norm();
+    }
+    obb_append_centerline_waypoint(centerline, path[end]);
+}
+
 std::vector<Eigen::VectorXd> obb_path_slice(const std::vector<Eigen::VectorXd>& path,
                                             std::size_t begin,
                                             std::size_t end) {
@@ -465,15 +485,11 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
                                                               split_line,
                                                               options);
             for (const auto& waypoint : split_line) {
-                if (out_centerline.empty() || (out_centerline.back() - waypoint).norm() > 1e-12) {
-                    out_centerline.push_back(waypoint);
-                }
+                obb_append_centerline_waypoint(out_centerline, waypoint);
             }
             if (!split_ok) {
                 for (std::size_t index = begin + 1U; index <= last; ++index) {
-                    if ((out_centerline.back() - path[index]).norm() > 1e-12) {
-                        out_centerline.push_back(path[index]);
-                    }
+                    obb_append_centerline_waypoint(out_centerline, path[index]);
                 }
                 result.success = false;
                 return result;
@@ -481,19 +497,13 @@ ObbPathCoverResult cover_segment_or_bridge_path_with_obbs(
             begin += 1U;
             continue;
         }
-        ObbPathCoverRegion region;
-        region.begin = begin;
-        region.end = good_end;
-        region.center = std::move(good_center);
-        region.generators = std::move(good_generators);
-        obb_record_region_volume(result.stats, region.generators);
-        result.regions.push_back(std::move(region));
-        for (std::size_t index = begin + 1U; index <= good_end; ++index) {
-            result.covered_length += (path[index] - path[index - 1U]).norm();
-        }
-        if ((out_centerline.back() - path[good_end]).norm() > 1e-12) {
-            out_centerline.push_back(path[good_end]);
-        }
+        obb_commit_path_window_region(result,
+                                      path,
+                                      begin,
+                                      good_end,
+                                      std::move(good_center),
+                                      std::move(good_generators),
+                                      out_centerline);
         begin = good_end;
     }
     result.success = !result.regions.empty() &&
