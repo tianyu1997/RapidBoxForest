@@ -132,31 +132,14 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
         return query_bridge_bad_sample_transitions(sample_layers, dsu);
     };
     auto direct_boxes_adjacent = [&](int lhs, int rhs) {
-        if (lhs < 0 || rhs < 0 ||
-            lhs >= static_cast<int>(boxes_.size()) ||
-            rhs >= static_cast<int>(boxes_.size())) {
-            return false;
-        }
-        const int lhs_box_id = boxes_[static_cast<std::size_t>(lhs)].id;
-        const int rhs_box_id = boxes_[static_cast<std::size_t>(rhs)].id;
-        if (graphless_direct_corridor &&
-            use_partition_cover_index &&
-            adaptive_partition_ &&
-            adaptive_partition_->contains_box_id(lhs_box_id) &&
-            adaptive_partition_->contains_box_id(rhs_box_id)) {
-            context.diagnostics().add_counter(
-                "query_bridge.direct_corridor_partition_neighbor_tests");
-            const bool adjacent = adaptive_partition_->boxes_are_neighbors(lhs_box_id,
-                                                                           rhs_box_id);
-            if (adjacent) {
-                context.diagnostics().add_counter(
-                    "query_bridge.direct_corridor_partition_neighbor_hits");
-            }
-            return adjacent;
-        }
-        return boxes_connected(boxes_[static_cast<std::size_t>(lhs)],
-                               boxes_[static_cast<std::size_t>(rhs)],
-                               config_.query.adjacency_tolerance);
+        return query_bridge_direct_corridor_boxes_adjacent(
+            boxes_,
+            adaptive_partition_.get(),
+            graphless_direct_corridor && use_partition_cover_index,
+            config_.query.adjacency_tolerance,
+            context,
+            lhs,
+            rhs);
     };
     auto initialize_dsu = [&]() {
         const auto dsu_t0 = Clock::now();

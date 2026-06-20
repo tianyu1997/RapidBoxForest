@@ -16,6 +16,7 @@ namespace rbf {
 
 struct AdaptiveLeafSweepConfig;
 struct BoxSpatialIndex;
+class StageContext;
 
 struct QueryBridgeLocalSliceCandidate {
     int first = -1;
@@ -159,6 +160,15 @@ QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
     QueryBridgeLocalDsu& dsu,
     const std::function<bool(int, int)>& boxes_adjacent,
     const std::function<bool(int, int)>& on_adjacent_pair);
+
+bool query_bridge_direct_corridor_boxes_adjacent(
+    const std::vector<BoxNode>& boxes,
+    const AdaptiveGridPartition* partition,
+    bool use_partition_neighbor_adjacency,
+    double tolerance,
+    StageContext& context,
+    int lhs,
+    int rhs);
 
 bool query_bridge_current_corridor_boxes_cover_point(
     const AdaptiveGridPartition* partition,

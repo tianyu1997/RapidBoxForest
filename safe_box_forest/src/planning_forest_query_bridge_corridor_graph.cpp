@@ -1,5 +1,6 @@
 #include "planning_forest_query_bridge_corridor_graph.h"
 
+#include <SBF/runtime.h>
 #include <SBF/safe_box_forest.h>
 
 #include "planning_forest_query_utils.h"
@@ -397,6 +398,39 @@ QueryBridgeIncrementalAdjacencyStats query_bridge_connect_adjacency_candidates(
         }
     }
     return stats;
+}
+
+bool query_bridge_direct_corridor_boxes_adjacent(
+    const std::vector<BoxNode>& boxes,
+    const AdaptiveGridPartition* partition,
+    bool use_partition_neighbor_adjacency,
+    double tolerance,
+    StageContext& context,
+    int lhs,
+    int rhs) {
+    if (lhs < 0 || rhs < 0 ||
+        lhs >= static_cast<int>(boxes.size()) ||
+        rhs >= static_cast<int>(boxes.size())) {
+        return false;
+    }
+    const int lhs_box_id = boxes[static_cast<std::size_t>(lhs)].id;
+    const int rhs_box_id = boxes[static_cast<std::size_t>(rhs)].id;
+    if (use_partition_neighbor_adjacency &&
+        partition != nullptr &&
+        partition->contains_box_id(lhs_box_id) &&
+        partition->contains_box_id(rhs_box_id)) {
+        context.diagnostics().add_counter(
+            "query_bridge.direct_corridor_partition_neighbor_tests");
+        const bool adjacent = partition->boxes_are_neighbors(lhs_box_id, rhs_box_id);
+        if (adjacent) {
+            context.diagnostics().add_counter(
+                "query_bridge.direct_corridor_partition_neighbor_hits");
+        }
+        return adjacent;
+    }
+    return boxes_connected(boxes[static_cast<std::size_t>(lhs)],
+                           boxes[static_cast<std::size_t>(rhs)],
+                           tolerance);
 }
 
 bool query_bridge_current_corridor_boxes_cover_point(
