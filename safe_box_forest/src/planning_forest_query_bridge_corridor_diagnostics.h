@@ -6,6 +6,8 @@
 
 namespace rbf {
 
+struct QueryBridgeSampleAssimilationResult;
+
 struct QueryBridgeDirectCorridorRuntimeStats {
     double assimilate_coverage_span_sum = 0.0;
     int assimilate_coverage_boxes = 0;
@@ -39,6 +41,11 @@ struct QueryBridgeDirectCorridorSummaryStats {
     int assimilate_coverage_span_max = 0;
     bool local_corridor_connected = false;
 };
+
+void query_bridge_record_assimilation_result(
+    StageContext& context,
+    QueryBridgeDirectCorridorRuntimeStats& runtime_stats,
+    const QueryBridgeSampleAssimilationResult& sample_assimilation);
 
 QueryBridgeDirectCorridorSummaryStats query_bridge_make_direct_corridor_summary(
     double elapsed_ms,

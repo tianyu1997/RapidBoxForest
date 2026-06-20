@@ -218,25 +218,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 dsu,
                 sample_layers,
                 covered);
-        runtime_stats.assimilate_local_sample_tests +=
-            sample_assimilation.local_sample_tests;
-        if (sample_assimilation.local_hit) {
-            runtime_stats.assimilate_local_hits += 1;
-        }
-        if (sample_assimilation.full_scan_fallback) {
-            runtime_stats.assimilate_full_scan_fallbacks += 1;
-        }
-        if (sample_assimilation.covered_sample_count > 0) {
-            const int span = sample_assimilation.last_covered_sample -
-                             sample_assimilation.first_covered_sample + 1;
-            runtime_stats.assimilate_coverage_boxes += 1;
-            runtime_stats.assimilate_coverage_span_sum += static_cast<double>(span);
-            runtime_stats.assimilate_coverage_span_max =
-                std::max(runtime_stats.assimilate_coverage_span_max, span);
-            context.diagnostics().add_counter(
-                "query_bridge.direct_corridor_assimilate_covered_samples",
-                static_cast<double>(sample_assimilation.covered_sample_count));
-        }
+        query_bridge_record_assimilation_result(context,
+                                                runtime_stats,
+                                                sample_assimilation);
         std::vector<int> candidates =
             query_bridge_sample_layer_adjacency_candidates(
                 sample_layers,
