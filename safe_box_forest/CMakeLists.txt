@@ -116,6 +116,7 @@ add_library(sbf_core STATIC
     src/grower_components.cpp
     src/grower_failure_cooling.cpp
     src/grower_frontier.cpp
+    src/grower_frontier_helpers.cpp
     src/grower_options.cpp
     src/grower_roots.cpp
     src/grower_task_builder.cpp
