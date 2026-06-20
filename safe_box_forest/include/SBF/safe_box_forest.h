@@ -156,6 +156,14 @@ private:
 											  const std::vector<Interval>& domain,
 											  StageContext& context,
 											  const FindFreeBoxOptions& options);
+	FindFreeBoxResult find_free_box_binary_in_domain(
+		const Eigen::Ref<const Eigen::VectorXd>& seed,
+		const std::vector<Interval>& domain,
+		StageContext& context,
+		const FindFreeBoxOptions& options,
+		const OracleSplitOptions& split_options,
+		int effective_max_depth,
+		std::chrono::steady_clock::time_point start);
 	QueryResult run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
 								   const Eigen::Ref<const Eigen::VectorXd>& goal,
 								   bool allow_collision_shortcut,

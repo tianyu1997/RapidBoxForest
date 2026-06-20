@@ -302,6 +302,9 @@ src/planning_forest_debug.cpp      debug chain-pave entry points and explicit
 src/planning_forest_audit.cpp      path audit, audit checker, and segment-edge
                                    survival helpers shared by forest modules
 src/planning_forest_core.cpp       `RBFPlanningForest` state reset/cache/core methods
+src/planning_forest_ffb.cpp        forest/domain-aware FFB entry point,
+                                   prechecks, and linear descent fallback
+src/planning_forest_ffb_binary.cpp forest/domain-aware BinaryDepth FFB search
 src/planning_forest_partition.cpp  adaptive-partition maintenance/query helpers
 src/planning_forest_shortcut.cpp   offline shortcut-edge selection and audited
                                    shortcut/corridor insertion
