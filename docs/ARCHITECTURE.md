@@ -214,6 +214,10 @@ python/ompl_binding_utils.h        OMPL baseline sampler, seeding, C-space,
 Public grower types are split by responsibility:
 `include/SBF/grower_types.h` contains target/task/config/result records, while
 `include/SBF/grower.h` contains grower interfaces and concrete grower classes.
+Connector public types follow the same pattern:
+`include/SBF/connector_types.h` contains RRT, chain-paving, and island-connector
+configuration/result records, while `include/SBF/connector.h` contains connector
+algorithm entry points and the `IslandConnector` class.
 
 Current source-file boundaries:
 
