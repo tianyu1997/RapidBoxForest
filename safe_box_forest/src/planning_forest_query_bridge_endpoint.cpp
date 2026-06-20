@@ -17,6 +17,80 @@
 
 namespace rbf {
 
+namespace {
+
+struct EndpointMainTargetCandidate {
+    int box_id = -1;
+    Eigen::VectorXd point;
+    double dist2 = 0.0;
+};
+
+std::vector<EndpointMainTargetCandidate> endpoint_main_partition_targets(
+    const AdaptiveGridPartition& partition,
+    const Eigen::VectorXd& point,
+    const std::vector<int>& main_island,
+    int target_k) {
+    const auto nearest = partition.nearest_boxes(
+        point,
+        main_island,
+        std::max(1, target_k));
+    std::vector<EndpointMainTargetCandidate> targets;
+    targets.reserve(nearest.size());
+    for (const auto& item : nearest) {
+        Eigen::VectorXd target_point = item.closest_point;
+        double dist2 = item.distance_sq;
+        if (dist2 <= 1e-18) {
+            Eigen::VectorXd center;
+            if (partition.center_for_box(item.box_id, center) &&
+                center.size() == point.size()) {
+                target_point = std::move(center);
+                dist2 = (target_point - point).squaredNorm();
+            }
+        }
+        targets.push_back({item.box_id, std::move(target_point), dist2});
+    }
+    return targets;
+}
+
+std::vector<EndpointMainTargetCandidate> endpoint_main_graph_targets(
+    const std::vector<BoxNode>& boxes,
+    const std::unordered_map<int, std::size_t>& box_index_by_id,
+    const Eigen::VectorXd& point,
+    const std::vector<int>& main_island) {
+    std::vector<EndpointMainTargetCandidate> targets;
+    targets.reserve(main_island.size());
+    for (int box_id : main_island) {
+        const auto box_it = box_index_by_id.find(box_id);
+        if (box_it == box_index_by_id.end() ||
+            box_it->second >= boxes.size()) {
+            continue;
+        }
+        const BoxNode& box = boxes[box_it->second];
+        if (box.n_dims() != point.size()) {
+            continue;
+        }
+        Eigen::VectorXd target_point = closest_point_in_box(box, point);
+        double dist2 = (target_point - point).squaredNorm();
+        if (dist2 <= 1e-18) {
+            target_point = box.center();
+            dist2 = (target_point - point).squaredNorm();
+        }
+        targets.push_back({box_id, std::move(target_point), dist2});
+    }
+    return targets;
+}
+
+void sort_endpoint_main_targets(std::vector<EndpointMainTargetCandidate>& targets) {
+    std::sort(targets.begin(),
+              targets.end(),
+              [](const EndpointMainTargetCandidate& lhs,
+                 const EndpointMainTargetCandidate& rhs) {
+                  return lhs.dist2 < rhs.dist2;
+              });
+}
+
+}  // namespace
+
 int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     const Eigen::Ref<const Eigen::VectorXd>& point,
     const EndpointMainBoxCorridorConfig& corridor_config) {
@@ -111,62 +185,26 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         adaptive_partition_query_enabled_ &&
         adaptive_partition_;
 
-    struct TargetCandidate {
-        int box_id = -1;
-        Eigen::VectorXd point;
-        double dist2 = 0.0;
-    };
-    std::vector<TargetCandidate> targets;
+    std::vector<EndpointMainTargetCandidate> targets;
     if (use_partition_endpoint_index) {
-        const auto nearest = adaptive_partition_->nearest_boxes(
+        targets = endpoint_main_partition_targets(
+            *adaptive_partition_,
             point,
             main_island,
-            std::max(1, corridor_config.target_k));
-        targets.reserve(nearest.size());
-        for (const auto& item : nearest) {
-            Eigen::VectorXd target_point = item.closest_point;
-            double dist2 = item.distance_sq;
-            if (dist2 <= 1e-18) {
-                Eigen::VectorXd center;
-                if (adaptive_partition_->center_for_box(item.box_id, center) &&
-                    center.size() == point.size()) {
-                    target_point = std::move(center);
-                    dist2 = (target_point - point).squaredNorm();
-                }
-            }
-            targets.push_back({item.box_id, std::move(target_point), dist2});
-        }
+            corridor_config.target_k);
         add_diag("partition_nearest_target_queries");
     } else {
-        targets.reserve(main_island.size());
-        for (int box_id : main_island) {
-            const auto box_it = box_index_by_id.find(box_id);
-            if (box_it == box_index_by_id.end() ||
-                box_it->second >= boxes_.size()) {
-                continue;
-            }
-            const BoxNode& box = boxes_[box_it->second];
-            if (box.n_dims() != point.size()) {
-                continue;
-            }
-            Eigen::VectorXd target_point = closest_point_in_box(box, point);
-            double dist2 = (target_point - point).squaredNorm();
-            if (dist2 <= 1e-18) {
-                target_point = box.center();
-                dist2 = (target_point - point).squaredNorm();
-            }
-            targets.push_back({box_id, std::move(target_point), dist2});
-        }
+        targets = endpoint_main_graph_targets(boxes_,
+                                              box_index_by_id,
+                                              point,
+                                              main_island);
     }
     if (targets.empty()) {
         add_diag("missing_target");
         add_diag("fallback_to_e2e");
         return 0;
     }
-    std::sort(targets.begin(), targets.end(), [](const TargetCandidate& lhs,
-                                                 const TargetCandidate& rhs) {
-        return lhs.dist2 < rhs.dist2;
-    });
+    sort_endpoint_main_targets(targets);
     const int target_limit = std::min<int>(
         std::max(1, corridor_config.target_k),
         static_cast<int>(targets.size()));
@@ -539,7 +577,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             break;
         }
         add_diag("targets_tested");
-        const TargetCandidate& target = targets[static_cast<std::size_t>(target_index)];
+        const EndpointMainTargetCandidate& target = targets[static_cast<std::size_t>(target_index)];
         std::vector<Eigen::VectorXd> samples =
             densify_waypoint_path_local({point, target.point},
                                         std::max(1e-4, corridor_config.coarse_step));
