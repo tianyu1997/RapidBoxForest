@@ -394,8 +394,10 @@ src/planning_forest_obb_path_windows.cpp
                                    OBB path-window validation and greedy
                                    window-size search
 src/planning_forest_obb_sampled.cpp
-                                   sampled-support and clearance-sampled OBB
-                                   validation backends
+                                   sampled-support OBB validation backend and
+                                   shared sampled FK helpers
+src/planning_forest_obb_sampled_clearance.cpp
+                                   clearance-sampled OBB validation backend
 src/planning_forest_obb_stats.cpp  OBB validation-stat accumulation and
                                    certified region volume accounting
 src/planning_forest_obb_zonotope.cpp
