@@ -88,6 +88,8 @@ src/lect_database/                 core persistence implementation
   database.cpp                     database open/create state machine,
                                    manifests, evidence, journal, checkpoint,
                                    and parent-hull materialization
+  database_evidence_api.cpp        public evidence read/write/delete entry
+                                   points and endpoint exact-box evidence API
   database_evidence_index.cpp      in-memory open-addressed evidence index
                                    reserve/find/upsert operations
   database_evidence_codec.cpp      evidence binary/text codec, sidecar layout,
