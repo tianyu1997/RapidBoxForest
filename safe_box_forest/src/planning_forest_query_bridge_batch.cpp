@@ -1,28 +1,16 @@
 #include <SBF/safe_box_forest.h>
 
-#include <SBF/box_graph.h>
-#include <SBF/connector.h>
-
-#include "planning_forest_audit.h"
 #include "planning_forest_diagnostics.h"
-#include "planning_forest_query_bridge_attempt_paths.h"
 #include "planning_forest_query_bridge_corridor_options.h"
 #include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_policy.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_bridge_task.h"
-#include "planning_forest_query_utils.h"
-#include "virtual_sparse_ffb.h"
 
 #include <algorithm>
-#include <atomic>
 #include <chrono>
-#include <cmath>
-#include <cstdint>
-#include <limits>
-#include <memory>
-#include <string>
+#include <stdexcept>
 #include <unordered_set>
 #include <vector>
 
@@ -35,21 +23,6 @@ using QueryBridgeClock = std::chrono::steady_clock;
 double query_bridge_elapsed_ms_since(QueryBridgeClock::time_point t0) {
     return std::chrono::duration<double, std::milli>(
         QueryBridgeClock::now() - t0).count();
-}
-
-bool query_bridge_current_query_good(
-    const RBFPlanningForest& forest,
-    const QueryBridgeSearchTask& task,
-    const std::unordered_set<int>& forced_query_indices,
-    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
-    if (forced_query_indices.find(static_cast<int>(task.index)) !=
-        forced_query_indices.end()) {
-        return false;
-    }
-    return query_bridge_result_acceptable(forest.query(task.start, task.goal),
-                                          task.start,
-                                          task.goal,
-                                          bridge_acceptance);
 }
 
 }  // namespace
@@ -185,91 +158,16 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             oracle_counters_before);
     }
 
-    for (auto& task : tasks) {
-        const auto task_t0 = QueryBridgeClock::now();
-        const auto probe_t0 = QueryBridgeClock::now();
-        if (query_bridge_task_has_explicit_satisfaction(task) ||
-            query_bridge_current_query_good(*this,
-                                            task,
-                                            forced_query_indices,
-                                            bridge_acceptance)) {
-            record_query_bridge_batch_task_already_satisfied(
-                batch_context,
-                task,
-                query_bridge_elapsed_ms_since(probe_t0));
-            const QueryBridgeTaskDiagnostics task_diag(batch_context, task.index);
-            task_diag.set_value("total_ms", query_bridge_elapsed_ms_since(task_t0));
-            continue;
-        }
-        batch_context.diagnostics().record_timing("query_bridge.batch_probe_ms_total",
-                                                  query_bridge_elapsed_ms_since(probe_t0));
-        batch_context.diagnostics().add_counter("query_bridge.batch_tasks_attempted");
-        const QueryBridgeAttemptPlan attempt_plan =
-            query_bridge_prepare_attempt_plan(task,
-                                              forced_query_indices,
-                                              retry_options,
-                                              batch_context);
-        std::vector<std::vector<Eigen::VectorXd>> attempt_paths(
-            static_cast<std::size_t>(attempt_plan.effective_attempts));
-        const auto rrt_t0 = QueryBridgeClock::now();
-        run_query_bridge_task_attempts(task,
-                                       attempt_plan.effective_attempts,
-                                       attempt_paths,
-                                       retry_options,
-                                       parallel_rrt_options,
-                                       audit_robot_,
-                                       scene_,
-                                       config_,
-                                       batch_context);
-        const double rrt_ms = query_bridge_elapsed_ms_since(rrt_t0);
-        batch_context.diagnostics().record_timing("query_bridge.batch_rrt_ms_total",
-                                                  rrt_ms);
-        const QueryBridgeTaskDiagnostics task_diag(batch_context, task.index);
-        task_diag.set_value("rrt_ms", rrt_ms);
-        double best_length = std::numeric_limits<double>::infinity();
-        adopt_query_bridge_waypoint_after_rrt(task,
-                                              attempt_paths,
-                                              best_length,
-                                              hybrid_options,
-                                              audit_robot_,
-                                              scene_,
-                                              config_,
-                                              batch_context);
-        query_bridge_run_no_path_retries(
-            task,
-            attempt_plan.base_attempts,
-            best_length,
-            retry_options,
-            [&](int attempt, int fixed_iters) {
-                return run_query_bridge_task_rrt_attempt(task,
-                                                         attempt,
-                                                         fixed_iters,
-                                                         retry_options,
-                                                         audit_robot_,
-                                                         scene_,
-                                                         config_,
-                                                         batch_context);
-            },
-            batch_context);
-        if (task.waypoint_path.empty()) {
-            record_query_bridge_batch_task_no_path(batch_context,
-                                                   task.index,
-                                                   query_bridge_elapsed_ms_since(task_t0));
-            continue;
-        }
-        finish_query_bridge_ready_waypoint_task(
-            task,
-            added_by_query[task.index],
-            attempt_plan.forced,
-            best_length,
-            batch_context,
-            scene_reusable_edges,
-            forced_query_indices,
-            bridge_acceptance,
-            edge_options.fast_direct_segment_after_rrt_enabled,
-            edge_options.fast_direct_random_shortcut_iters,
-            [&]() { return query_bridge_elapsed_ms_since(task_t0); });
-    }
+    run_query_bridge_batch_serial_rrt(tasks,
+                                      added_by_query,
+                                      forced_query_indices,
+                                      bridge_acceptance,
+                                      retry_options,
+                                      parallel_rrt_options,
+                                      hybrid_options,
+                                      edge_options,
+                                      scene_reusable_edges,
+                                      batch_context);
 
     batch_context.diagnostics().set_value("query_bridge.batch_total_ms",
                                           query_bridge_elapsed_ms_since(batch_t0));

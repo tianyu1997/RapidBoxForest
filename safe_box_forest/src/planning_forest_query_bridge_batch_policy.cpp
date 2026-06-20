@@ -14,6 +14,21 @@ bool query_bridge_should_check_current_query(
     return true;
 }
 
+bool query_bridge_current_query_good(
+    const RBFPlanningForest& forest,
+    const QueryBridgeSearchTask& task,
+    const std::unordered_set<int>& forced_query_indices,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
+    if (forced_query_indices.find(static_cast<int>(task.index)) !=
+        forced_query_indices.end()) {
+        return false;
+    }
+    return query_bridge_result_acceptable(forest.query(task.start, task.goal),
+                                          task.start,
+                                          task.goal,
+                                          bridge_acceptance);
+}
+
 bool query_bridge_parallel_task_rrt_enabled(
     const QueryBridgeRetryOptions& retry_options) {
     return retry_options.no_path_retry_attempts == 0 &&

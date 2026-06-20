@@ -11,10 +11,18 @@
 
 namespace rbf {
 
+class RBFPlanningForest;
+
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
     const std::unordered_set<int>& forced_query_indices);
+
+bool query_bridge_current_query_good(
+    const RBFPlanningForest& forest,
+    const QueryBridgeSearchTask& task,
+    const std::unordered_set<int>& forced_query_indices,
+    const QueryBridgeAcceptanceThresholds& bridge_acceptance);
 
 bool query_bridge_parallel_task_rrt_enabled(
     const QueryBridgeRetryOptions& retry_options);

@@ -30,21 +30,6 @@ double query_bridge_batch_parallel_elapsed_ms_since(
         QueryBridgeBatchParallelClock::now() - t0).count();
 }
 
-bool query_bridge_batch_parallel_current_query_good(
-    const RBFPlanningForest& forest,
-    const QueryBridgeSearchTask& task,
-    const std::unordered_set<int>& forced_query_indices,
-    const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
-    if (forced_query_indices.find(static_cast<int>(task.index)) !=
-        forced_query_indices.end()) {
-        return false;
-    }
-    return query_bridge_result_acceptable(forest.query(task.start, task.goal),
-                                          task.start,
-                                          task.goal,
-                                          bridge_acceptance);
-}
-
 struct QueryBridgePreparedParallelTask {
     bool skipped = false;
     bool forced = false;
@@ -74,10 +59,10 @@ void RBFPlanningForest::run_query_bridge_batch_parallel_rrt(
             query_bridge_batch_parallel_elapsed_ms_since(batch_t0);
         const auto probe_t0 = QueryBridgeBatchParallelClock::now();
         if (query_bridge_task_has_explicit_satisfaction(task) ||
-            query_bridge_batch_parallel_current_query_good(*this,
-                                                           task,
-                                                           forced_query_indices,
-                                                           bridge_acceptance)) {
+            query_bridge_current_query_good(*this,
+                                            task,
+                                            forced_query_indices,
+                                            bridge_acceptance)) {
             prepared[task_offset].skipped = true;
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,
