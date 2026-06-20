@@ -97,11 +97,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             },
             sample_layers,
             covered);
-    context.diagnostics().set_value(
-        "query_bridge.direct_corridor_initial_covered_samples",
-        static_cast<double>(initial_coverage_stats.covered_samples));
-    context.diagnostics().record_timing(
-        "query_bridge.direct_corridor_mark_initial_ms",
+    query_bridge_record_direct_corridor_initial_coverage(
+        context,
+        initial_coverage_stats,
         std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
 
     QueryBridgeLocalDsu dsu(boxes_.size());
@@ -174,14 +172,9 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                                           boxes_[static_cast<std::size_t>(rhs)].id);
                     }
                 });
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_initial_dsu_adjacency_tests",
-            static_cast<double>(stats.adjacency_tests));
-        context.diagnostics().add_counter(
-            "query_bridge.direct_corridor_initial_dsu_adjacency_edges",
-            static_cast<double>(stats.adjacency_edges));
-        context.diagnostics().record_timing(
-            "query_bridge.direct_corridor_initialize_dsu_ms",
+        query_bridge_record_direct_corridor_initial_dsu(
+            context,
+            stats,
             std::chrono::duration<double, std::milli>(Clock::now() - dsu_t0).count());
     };
     initialize_dsu();

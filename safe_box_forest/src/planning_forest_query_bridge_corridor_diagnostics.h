@@ -6,6 +6,8 @@
 
 namespace rbf {
 
+struct QueryBridgeInitialDsuStats;
+struct QueryBridgeInitialSampleCoverageStats;
 struct QueryBridgeSampleAssimilationResult;
 
 struct QueryBridgeDirectCorridorRuntimeStats {
@@ -46,6 +48,16 @@ void query_bridge_record_assimilation_result(
     StageContext& context,
     QueryBridgeDirectCorridorRuntimeStats& runtime_stats,
     const QueryBridgeSampleAssimilationResult& sample_assimilation);
+
+void query_bridge_record_direct_corridor_initial_coverage(
+    StageContext& context,
+    const QueryBridgeInitialSampleCoverageStats& stats,
+    double mark_initial_ms);
+
+void query_bridge_record_direct_corridor_initial_dsu(
+    StageContext& context,
+    const QueryBridgeInitialDsuStats& stats,
+    double initialize_dsu_ms);
 
 QueryBridgeDirectCorridorSummaryStats query_bridge_make_direct_corridor_summary(
     double elapsed_ms,

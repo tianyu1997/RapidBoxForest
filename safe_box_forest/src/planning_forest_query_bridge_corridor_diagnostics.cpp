@@ -34,6 +34,33 @@ void query_bridge_record_assimilation_result(
     }
 }
 
+void query_bridge_record_direct_corridor_initial_coverage(
+    StageContext& context,
+    const QueryBridgeInitialSampleCoverageStats& stats,
+    double mark_initial_ms) {
+    context.diagnostics().set_value(
+        "query_bridge.direct_corridor_initial_covered_samples",
+        static_cast<double>(stats.covered_samples));
+    context.diagnostics().record_timing(
+        "query_bridge.direct_corridor_mark_initial_ms",
+        mark_initial_ms);
+}
+
+void query_bridge_record_direct_corridor_initial_dsu(
+    StageContext& context,
+    const QueryBridgeInitialDsuStats& stats,
+    double initialize_dsu_ms) {
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_initial_dsu_adjacency_tests",
+        static_cast<double>(stats.adjacency_tests));
+    context.diagnostics().add_counter(
+        "query_bridge.direct_corridor_initial_dsu_adjacency_edges",
+        static_cast<double>(stats.adjacency_edges));
+    context.diagnostics().record_timing(
+        "query_bridge.direct_corridor_initialize_dsu_ms",
+        initialize_dsu_ms);
+}
+
 QueryBridgeDirectCorridorSummaryStats query_bridge_make_direct_corridor_summary(
     double elapsed_ms,
     double direct_ffb_ms,
