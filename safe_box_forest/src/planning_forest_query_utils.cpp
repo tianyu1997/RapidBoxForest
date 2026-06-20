@@ -381,6 +381,21 @@ bool intervals_equal_local(const std::vector<Interval>& lhs,
     return true;
 }
 
+std::unordered_map<OracleNodeId, int> build_box_node_index(
+    const std::vector<BoxNode>& boxes,
+    std::size_t reserve_extra) {
+    std::unordered_map<OracleNodeId, int> node_to_box_index;
+    node_to_box_index.reserve(boxes.size() + reserve_extra);
+    for (std::size_t box_index = 0; box_index < boxes.size(); ++box_index) {
+        const auto node = static_cast<OracleNodeId>(boxes[box_index].tree_id);
+        if (node != kInvalidOracleNodeId &&
+            node_to_box_index.find(node) == node_to_box_index.end()) {
+            node_to_box_index[node] = static_cast<int>(box_index);
+        }
+    }
+    return node_to_box_index;
+}
+
 int find_box_index_by_node_or_intervals(
     const std::vector<BoxNode>& boxes,
     const std::unordered_map<OracleNodeId, int>& node_to_box_index,

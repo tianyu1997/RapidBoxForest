@@ -115,6 +115,10 @@ bool intervals_equal_local(const std::vector<Interval>& lhs,
                            const std::vector<Interval>& rhs,
                            double tolerance = 0.0);
 
+std::unordered_map<OracleNodeId, int> build_box_node_index(
+    const std::vector<BoxNode>& boxes,
+    std::size_t reserve_extra = 0);
+
 int find_box_index_by_node_or_intervals(
     const std::vector<BoxNode>& boxes,
     const std::unordered_map<OracleNodeId, int>& node_to_box_index,

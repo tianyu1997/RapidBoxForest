@@ -198,15 +198,8 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     };
     initialize_dsu();
 
-    std::unordered_map<OracleNodeId, int> node_to_box_index;
-    node_to_box_index.reserve(boxes_.size() + samples.size());
-    for (std::size_t box_index = 0; box_index < boxes_.size(); ++box_index) {
-        const auto node = static_cast<OracleNodeId>(boxes_[box_index].tree_id);
-        if (node != kInvalidOracleNodeId &&
-            node_to_box_index.find(node) == node_to_box_index.end()) {
-            node_to_box_index[node] = static_cast<int>(box_index);
-        }
-    }
+    std::unordered_map<OracleNodeId, int> node_to_box_index =
+        build_box_node_index(boxes_, samples.size());
     std::vector<int> repair_indices;
     auto assimilate_box = [&](int box_index, int transition_hint) {
         const auto assimilate_t0 = Clock::now();
