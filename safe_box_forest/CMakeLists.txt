@@ -135,6 +135,7 @@ add_library(sbf_core STATIC
     src/planning_forest_adaptive_fixed.cpp
     src/planning_forest_adaptive_cover_utils.cpp
     src/planning_forest_adaptive_merge.cpp
+    src/planning_forest_adaptive_merge_grid.cpp
     src/planning_forest_audit.cpp
     src/planning_forest_build.cpp
     src/planning_forest_core.cpp

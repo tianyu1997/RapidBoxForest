@@ -311,8 +311,11 @@ src/planning_forest_adaptive_cover_utils.cpp
                                    adaptive cover frontier, depth, probe, and
                                    connectivity scoring helpers
 src/planning_forest_adaptive_merge.cpp
-                                   budgeted/grid/tree/exact merge helpers for
-                                   adaptive build backends
+                                   budgeted merge orchestration, containment
+                                   pruning, and exact-face merge helpers
+src/planning_forest_adaptive_merge_grid.cpp
+                                   LECT-grid line merge and tree-sibling merge
+                                   helpers for adaptive build backends
 src/planning_forest_build.cpp      build and leaf-sweep build entry points
 src/planning_forest_database.cpp   default config, LECT database identity/root
                                    setup, external evidence, and forest
