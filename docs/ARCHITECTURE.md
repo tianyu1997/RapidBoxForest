@@ -206,6 +206,8 @@ Current source-file boundaries:
 ```text
 src/runtime.cpp                    runtime budget, deadline, and diagnostics helpers
 src/find_free_box.cpp              seed-to-certified-box search service
+src/find_free_box_binary.cpp       BinaryDepth and virtual sparse FFB search
+                                   implementation
 src/grower.cpp                     RRT-style forest grower implementation
 src/frontwave_grower.cpp           frontwave coverage grower implementation
 src/grower_failure_cooling.cpp     RRT grower failure-cooling and hard-frontier
@@ -438,8 +440,9 @@ and implementations should not depend on a parallel workspace.
 Integrated mechanisms that previously lived in prototype workspace form now
 belong to the main source tree:
 
-- sparse/binary FFB execution belongs in `safe_box_forest/src/find_free_box.cpp`
-  and `safe_box_forest/src/virtual_sparse_ffb.*`;
+- sparse/binary FFB execution belongs in
+  `safe_box_forest/src/find_free_box_binary.cpp` and
+  `safe_box_forest/src/virtual_sparse_ffb.*`;
 - adaptive-grid sparse indexing belongs in
   `safe_box_forest/src/adaptive_grid_partition_sparse.cpp` and related
   partition modules;

@@ -3,6 +3,7 @@
 #include <SBF/oracle.h>
 #include <SBF/runtime.h>
 
+#include <chrono>
 #include <functional>
 #include <vector>
 
@@ -77,6 +78,12 @@ public:
 										const AcceptCandidate& accept);
 
 private:
+	FindFreeBoxResult find_binary_depth(const Eigen::Ref<const Eigen::VectorXd>& seed,
+										StageContext& context,
+										const FindFreeBoxOptions& options,
+										const OracleSplitOptions& split_options,
+										int effective_max_depth,
+										std::chrono::steady_clock::time_point start);
 	BoxOracle& oracle_;
 };
 

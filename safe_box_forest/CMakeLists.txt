@@ -106,6 +106,7 @@ add_library(sbf_core STATIC
     src/connector_internal.cpp
     src/connector_chain_pave.cpp
     src/find_free_box.cpp
+    src/find_free_box_binary.cpp
     src/frontwave_grower.cpp
     src/grower.cpp
     src/grower_bootstrap.cpp
