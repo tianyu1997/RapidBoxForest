@@ -202,21 +202,27 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         main_box_index.rebuild(main_boxes, config_.query.adjacency_tolerance);
     }
 
-	int next_id = next_box_id();
-	auto finish_endpoint_main = [&](int value) {
-		if (boxes_.size() > boxes_before_endpoint_main) {
-			append_adaptive_partition_boxes(boxes_before_endpoint_main,
-											&last_build_,
-											"endpoint_main");
-		}
-		sync_adaptive_partition_segment_edges(&last_build_, "endpoint_main");
-		return value;
-	};
-	int added_total = 0;
+    int next_id = next_box_id();
+    auto finish_endpoint_main = [&](int value) {
+        if (boxes_.size() > boxes_before_endpoint_main) {
+            append_adaptive_partition_boxes(boxes_before_endpoint_main,
+                                            &last_build_,
+                                            "endpoint_main");
+        }
+        sync_adaptive_partition_segment_edges(&last_build_, "endpoint_main");
+        return value;
+    };
+    int added_total = 0;
     int boxes_added = 0;
     int ffb_calls = 0;
     int local_adj_checks = 0;
     bool max_depth_ffb_failed = false;
+    auto finish_main_contact = [&](int value) {
+        add_diag("main_contact_success");
+        set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+        invalidate_query_cache();
+        return finish_endpoint_main(value);
+    };
     const int requested_final_depth = config_.query_bridge_pave_depth > 0
         ? config_.query_bridge_pave_depth
         : config_.connector.pave.find_free_box.max_depth;
@@ -506,14 +512,14 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         if (!audit.passed) {
             return false;
         }
-        const int edge_id = add_segment_edge_partition_first(                                             front_box_id,
-                                             target_box_id,
-                                             std::move(waypoints),
-                                             SegmentEdgeType::QueryBridge,
-                                             config_.query.audit_resolution,
-                                             SegmentEdgeValidation::CollisionChecked,
-                                             true,
-                                             -1);
+        const int edge_id = add_segment_edge_partition_first(front_box_id,
+                                                             target_box_id,
+                                                             std::move(waypoints),
+                                                             SegmentEdgeType::QueryBridge,
+                                                             config_.query.audit_resolution,
+                                                             SegmentEdgeValidation::CollisionChecked,
+                                                             true,
+                                                             -1);
         if (edge_id < 0) {
             return false;
         }
@@ -522,10 +528,10 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return true;
     };
 
-	    std::vector<int> depth_schedule{
-	        std::min(std::max(1, config_.database.max_tree_depth),
-	                 std::max(1, final_ffb_depth))
-	    };
+    std::vector<int> depth_schedule{
+        std::min(std::max(1, config_.database.max_tree_depth),
+                 std::max(1, final_ffb_depth))
+    };
 
     for (int target_index = 0; target_index < target_limit; ++target_index) {
         if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls) ||
@@ -572,12 +578,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         while (current_sample_index < target_sample_index &&
                ffb_calls < std::max(1, corridor_config.max_ffb_calls) &&
                boxes_added < std::max(1, corridor_config.max_boxes)) {
-		if (append_edge_if_connected(current_box_id, target_owner)) {
-			add_diag("main_contact_success");
-			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-			invalidate_query_cache();
-			return finish_endpoint_main(std::max(1, added_total));
-		}
+            if (append_edge_if_connected(current_box_id, target_owner)) {
+                return finish_main_contact(std::max(1, added_total));
+            }
             const Eigen::VectorXd current_sample =
                 samples[static_cast<std::size_t>(current_sample_index)];
             Eigen::VectorXd from = current_sample;
@@ -608,12 +611,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 local_candidates,
                 target_box_ids,
                 depth_schedule);
-			if (reached_main) {
-				add_diag("main_contact_success");
-				set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-				invalidate_query_cache();
-				return finish_endpoint_main(std::max(1, added_total));
-			}
+            if (reached_main) {
+                return finish_main_contact(std::max(1, added_total));
+            }
             if (new_box_id >= 0) {
                 const int next_sample_index =
                     furthest_sample(new_box_id, samples, current_sample_index, target_sample_index);
@@ -649,12 +649,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                         local_candidates,
                         target_box_ids,
                         depth_schedule);
-					if (lat_main) {
-						add_diag("main_contact_success");
-						set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-						invalidate_query_cache();
-						return finish_endpoint_main(std::max(1, added_total));
-					}
+                    if (lat_main) {
+                        return finish_main_contact(std::max(1, added_total));
+                    }
                     if (lat_box_id >= 0) {
                         const int next_sample_index =
                             furthest_sample(lat_box_id, samples, current_sample_index, target_sample_index);
@@ -672,34 +669,25 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                     continue;
                 }
             }
-			if (try_residual_segment(current_box_id, target_owner, target.point)) {
-				add_diag("main_contact_success");
-				set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-				invalidate_query_cache();
-				return finish_endpoint_main(added_total);
-			}
+            if (try_residual_segment(current_box_id, target_owner, target.point)) {
+                return finish_main_contact(added_total);
+            }
             break;
         }
-		if (append_edge_if_connected(current_box_id, target_owner) ||
-			box_only_path_connected_partition_first(current_box_id, target_owner)) {
-			add_diag("main_contact_success");
-			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-			invalidate_query_cache();
-			return finish_endpoint_main(std::max(1, added_total));
-		}
-		if (try_residual_segment(current_box_id, target_owner, target.point)) {
-			add_diag("main_contact_success");
-			set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-			invalidate_query_cache();
-			return finish_endpoint_main(added_total);
-		}
+        if (append_edge_if_connected(current_box_id, target_owner) ||
+            box_only_path_connected_partition_first(current_box_id, target_owner)) {
+            return finish_main_contact(std::max(1, added_total));
+        }
+        if (try_residual_segment(current_box_id, target_owner, target.point)) {
+            return finish_main_contact(added_total);
+        }
     }
 
     merge_diagnostic_snapshot(last_build_.diagnostics, context.diagnostics().snapshot());
-	set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
-	add_diag("fallback_to_e2e");
-	invalidate_query_cache();
-	return finish_endpoint_main(0);
+    set_diag("local_adj_checks", static_cast<double>(local_adj_checks));
+    add_diag("fallback_to_e2e");
+    invalidate_query_cache();
+    return finish_endpoint_main(0);
 }
 
 } // namespace rbf
