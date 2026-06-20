@@ -45,12 +45,11 @@ int RBFPlanningForest::try_hipac_online_bridge_task(
     if (!hipac_online_gate.enabled) {
         return 0;
     }
+    const QueryBridgeTaskDiagnostics task_diag(context, task.index);
     task.hipac_online_resolves_used += 1;
     const auto hipac_t0 = QueryBridgeHipacClock::now();
     context.diagnostics().add_counter("query_bridge.hipac_online_attempts");
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_online_attempt"),
-        1.0);
+    task_diag.set_value("hipac_online_attempt", 1.0);
     std::vector<Eigen::VectorXd> hipac_path = task.hipac_candidate_path;
     if (hipac_path.size() > 2U) {
         CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
@@ -86,17 +85,13 @@ int RBFPlanningForest::try_hipac_online_bridge_task(
         hipac_candidate_length > hipac_online_gate.candidate_max_length + 1e-12) {
         context.diagnostics().add_counter(
             "query_bridge.hipac_online_candidate_length_rejects");
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "hipac_online_length_reject"),
-            1.0);
+        task_diag.set_value("hipac_online_length_reject", 1.0);
         const double hipac_ms = query_bridge_hipac_elapsed_ms_since(hipac_t0);
         context.diagnostics().record_timing("query_bridge.hipac_online_ms_total",
                                             hipac_ms);
         context.diagnostics().add_counter("query_bridge.hipac_online_ms_total",
                                           hipac_ms);
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "hipac_online_ms"),
-            hipac_ms);
+        task_diag.set_value("hipac_online_ms", hipac_ms);
         context.diagnostics().add_counter("query_bridge.hipac_online_failures");
         return 0;
     }
@@ -113,16 +108,14 @@ int RBFPlanningForest::try_hipac_online_bridge_task(
                                         hipac_ms);
     context.diagnostics().add_counter("query_bridge.hipac_online_ms_total",
                                       hipac_ms);
-    context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_ms"),
-                                    hipac_ms);
+    task_diag.set_value("hipac_online_ms", hipac_ms);
     if (added <= 0) {
         context.diagnostics().add_counter("query_bridge.hipac_online_failures");
         return 0;
     }
     context.diagnostics().add_counter("query_bridge.hipac_online_added",
                                       static_cast<double>(added));
-    context.diagnostics().set_value(query_bridge_task_key(task.index, "hipac_online_added"),
-                                    static_cast<double>(added));
+    task_diag.set_value("hipac_online_added", static_cast<double>(added));
     const QueryResult probe_after_hipac = query(task.start, task.goal);
     if (query_bridge_result_acceptable(probe_after_hipac,
                                        task.start,
@@ -130,9 +123,7 @@ int RBFPlanningForest::try_hipac_online_bridge_task(
                                        bridge_acceptance)) {
         task.hipac_online_satisfied = true;
         context.diagnostics().add_counter("query_bridge.hipac_online_satisfied");
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "hipac_online_satisfied"),
-            1.0);
+        task_diag.set_value("hipac_online_satisfied", 1.0);
     } else {
         context.diagnostics().add_counter("query_bridge.hipac_online_not_sufficient");
     }
@@ -162,11 +153,10 @@ int RBFPlanningForest::try_hipac_prebridge_portal_task(
     if (coarse_route.size() < 2U) {
         return 0;
     }
+    const QueryBridgeTaskDiagnostics task_diag(context, task.index);
     const auto prebridge_t0 = QueryBridgeHipacClock::now();
     context.diagnostics().add_counter("query_bridge.hipac_prebridge_attempts");
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_prebridge_attempt"),
-        1.0);
+    task_diag.set_value("hipac_prebridge_attempt", 1.0);
     const auto candidate_pairs =
         adaptive_partition_->nearest_component_pairs_to_largest(
             1,
@@ -215,12 +205,9 @@ int RBFPlanningForest::try_hipac_prebridge_portal_task(
     task.hipac_prebridge_resolves_used += 1;
     context.diagnostics().add_counter(
         "query_bridge.hipac_prebridge_portal_attempts");
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_prebridge_score"),
-        prebridge_selection.score);
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_prebridge_pair_distance"),
-        std::sqrt(std::max(0.0, best_pair.distance_sq)));
+    task_diag.set_value("hipac_prebridge_score", prebridge_selection.score);
+    task_diag.set_value("hipac_prebridge_pair_distance",
+                        std::sqrt(std::max(0.0, best_pair.distance_sq)));
     std::vector<Eigen::VectorXd> local_path{
         best_pair.source_point,
         best_pair.target_point};
@@ -239,9 +226,7 @@ int RBFPlanningForest::try_hipac_prebridge_portal_task(
                                         prebridge_ms);
     context.diagnostics().add_counter("query_bridge.hipac_prebridge_ms_total",
                                       prebridge_ms);
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_prebridge_ms"),
-        prebridge_ms);
+    task_diag.set_value("hipac_prebridge_ms", prebridge_ms);
     if (added <= 0) {
         context.diagnostics().add_counter(
             "query_bridge.hipac_prebridge_failures");
@@ -249,9 +234,7 @@ int RBFPlanningForest::try_hipac_prebridge_portal_task(
     }
     context.diagnostics().add_counter("query_bridge.hipac_prebridge_added",
                                       static_cast<double>(added));
-    context.diagnostics().set_value(
-        query_bridge_task_key(task.index, "hipac_prebridge_added"),
-        static_cast<double>(added));
+    task_diag.set_value("hipac_prebridge_added", static_cast<double>(added));
     const QueryResult probe_after_prebridge = query(task.start, task.goal);
     if (query_bridge_result_acceptable(probe_after_prebridge,
                                        task.start,
@@ -260,9 +243,7 @@ int RBFPlanningForest::try_hipac_prebridge_portal_task(
         task.hipac_online_satisfied = true;
         context.diagnostics().add_counter(
             "query_bridge.hipac_prebridge_satisfied");
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "hipac_prebridge_satisfied"),
-            1.0);
+        task_diag.set_value("hipac_prebridge_satisfied", 1.0);
     } else {
         context.diagnostics().add_counter(
             "query_bridge.hipac_prebridge_not_sufficient");
@@ -286,6 +267,7 @@ int RBFPlanningForest::try_promote_query_repair_to_hipac(
         return 0;
     }
     const auto promote_t0 = QueryBridgeHipacClock::now();
+    const QueryBridgeTaskDiagnostics task_diag(context, batch_task_index);
     context.diagnostics().add_counter("query_bridge.hipac_promote_attempts");
     const int promoted = add_partition_portal_corridor_overlay(start,
                                                                goal,
@@ -300,21 +282,11 @@ int RBFPlanningForest::try_promote_query_repair_to_hipac(
                                         promote_ms);
     context.diagnostics().add_counter("query_bridge.hipac_promote_ms_total",
                                       promote_ms);
-    if (batch_task_index >= 0) {
-        context.diagnostics().set_value(
-            query_bridge_task_key(static_cast<std::size_t>(batch_task_index),
-                                  "hipac_promote_ms"),
-            promote_ms);
-    }
+    task_diag.set_value("hipac_promote_ms", promote_ms);
     if (promoted > 0) {
         context.diagnostics().add_counter("query_bridge.hipac_promote_added",
                                           static_cast<double>(promoted));
-        if (batch_task_index >= 0) {
-            context.diagnostics().set_value(
-                query_bridge_task_key(static_cast<std::size_t>(batch_task_index),
-                                      "hipac_promote_added"),
-                static_cast<double>(promoted));
-        }
+        task_diag.set_value("hipac_promote_added", static_cast<double>(promoted));
     } else {
         context.diagnostics().add_counter("query_bridge.hipac_promote_failures");
     }
