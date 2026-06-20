@@ -221,6 +221,63 @@ int query_bridge_append_direct_partition_batch(
     return appended;
 }
 
+QueryBridgeDirectCorridorCommitResult query_bridge_commit_ffb_result_to_direct_corridor(
+    FindFreeBoxResult result,
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    std::vector<BoxNode>& boxes,
+    std::vector<BoxNode>& raw_boxes,
+    QueryBridgeDirectCorridorCommitState& commit_state,
+    AdaptiveGridPartition* partition,
+    QueryBridgePartitionAppendBatchState& partition_append_state,
+    double tolerance,
+    int& next_id,
+    StageContext& context,
+    const std::function<bool(FindFreeBoxResult&)>& allow_commit,
+    const std::function<void(OracleNodeId, int)>& reserve_node) {
+    QueryBridgeDirectCorridorCommitResult commit;
+    if (!result.found ||
+        !intervals_contain_point_local(result.intervals, seed, tolerance)) {
+        return commit;
+    }
+    const std::unordered_map<OracleNodeId, int> empty_node_index;
+    const auto& node_to_box_index = commit_state.node_to_box_index != nullptr
+        ? *commit_state.node_to_box_index
+        : empty_node_index;
+    const int duplicate_index =
+        find_box_index_by_node_or_intervals(boxes,
+                                            node_to_box_index,
+                                            result.node,
+                                            result.intervals,
+                                            1e-12);
+    if (duplicate_index >= 0) {
+        commit.box_index = duplicate_index;
+        commit.duplicate = true;
+        return commit;
+    }
+    if (allow_commit && !allow_commit(result)) {
+        return commit;
+    }
+    BoxNode box = query_bridge_box_from_ffb_result(result, seed, next_id++);
+    if (box.tree_id != kInvalidOracleNodeId && reserve_node) {
+        reserve_node(box.tree_id, box.id);
+    }
+    commit.box_index = query_bridge_append_direct_corridor_box(
+        std::move(box),
+        boxes,
+        raw_boxes,
+        commit_state);
+    commit.appended = true;
+    if (commit_state.use_partition_cover_index) {
+        query_bridge_append_direct_partition_batch(partition,
+                                                   boxes,
+                                                   partition_append_state,
+                                                   tolerance,
+                                                   context,
+                                                   false);
+    }
+    return commit;
+}
+
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,
     const BoxNode& box,

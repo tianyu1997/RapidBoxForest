@@ -215,46 +215,34 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     auto commit_result = [&](FindFreeBoxResult result,
                              const Eigen::VectorXd& seed,
                              int transition_hint) -> int {
-        if (!result.found ||
-            !intervals_contain_point_local(result.intervals,
-                                           seed,
-                                           config_.query.adjacency_tolerance)) {
-            return -1;
-        }
-        const int duplicate_index =
-            find_box_index_by_node_or_intervals(boxes_,
-                                                node_to_box_index,
-                                                result.node,
-                                                result.intervals,
-                                                1e-12);
-        if (duplicate_index >= 0) {
-            assimilate_box(duplicate_index, transition_hint);
-            return duplicate_index;
-        }
-        if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
-            return -1;
-        }
-        BoxNode box = query_bridge_box_from_ffb_result(result, seed, next_id++);
-        if (box.tree_id != kInvalidOracleNodeId) {
-            oracle_->reserve_node(box.tree_id, box.id);
-        }
-        const int box_index = query_bridge_append_direct_corridor_box(
-            std::move(box),
-            boxes_,
-            raw_boxes_,
-            commit_state);
-        if (use_partition_cover_index) {
-            query_bridge_append_direct_partition_batch(
-                adaptive_partition_.get(),
+        const QueryBridgeDirectCorridorCommitResult commit =
+            query_bridge_commit_ffb_result_to_direct_corridor(
+                std::move(result),
+                seed,
                 boxes_,
+                raw_boxes_,
+                commit_state,
+                adaptive_partition_.get(),
                 partition_append_state,
                 config_.query.adjacency_tolerance,
+                next_id,
                 context,
-                false);
+                [&](FindFreeBoxResult& candidate) {
+                    return allow_dynamic_commit(*oracle_,
+                                                candidate,
+                                                config_.connector.pave.commit_policy);
+                },
+                [&](OracleNodeId node, int box_id) {
+                    oracle_->reserve_node(node, box_id);
+                });
+        if (commit.box_index < 0) {
+            return -1;
         }
-        dsu.add();
-        assimilate_box(box_index, transition_hint);
-        return box_index;
+        if (commit.appended) {
+            dsu.add();
+        }
+        assimilate_box(commit.box_index, transition_hint);
+        return commit.box_index;
     };
     auto current_boxes_cover_point = [&](const Eigen::VectorXd& point) {
         return query_bridge_current_corridor_boxes_cover_point(

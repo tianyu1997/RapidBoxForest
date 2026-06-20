@@ -86,6 +86,12 @@ struct QueryBridgePartitionAppendBatchState {
     bool enabled = false;
 };
 
+struct QueryBridgeDirectCorridorCommitResult {
+    int box_index = -1;
+    bool duplicate = false;
+    bool appended = false;
+};
+
 using QueryBridgeSampleCandidateProvider =
     std::function<std::vector<int>(const Eigen::VectorXd& sample)>;
 
@@ -133,6 +139,20 @@ int query_bridge_append_direct_partition_batch(
     double tolerance,
     StageContext& context,
     bool force);
+
+QueryBridgeDirectCorridorCommitResult query_bridge_commit_ffb_result_to_direct_corridor(
+    FindFreeBoxResult result,
+    const Eigen::Ref<const Eigen::VectorXd>& seed,
+    std::vector<BoxNode>& boxes,
+    std::vector<BoxNode>& raw_boxes,
+    QueryBridgeDirectCorridorCommitState& commit_state,
+    AdaptiveGridPartition* partition,
+    QueryBridgePartitionAppendBatchState& partition_append_state,
+    double tolerance,
+    int& next_id,
+    StageContext& context,
+    const std::function<bool(FindFreeBoxResult&)>& allow_commit,
+    const std::function<void(OracleNodeId, int)>& reserve_node);
 
 std::vector<int> query_bridge_partition_neighbor_index_candidates(
     const AdaptiveGridPartition& partition,
