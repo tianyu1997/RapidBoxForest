@@ -245,7 +245,7 @@ int RBFPlanningForest::anchor_query_endpoint_box(const Eigen::Ref<const Eigen::V
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_success", stats.ffb_success);
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail", stats.ffb_fail);
     if (stats.ffb_fail > 0) {
-        context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail_code.unknown_legacy",
+        context.diagnostics().add_counter("query_bridge.endpoint_anchor_ffb_fail_code.unknown",
                                           stats.ffb_fail);
     }
     context.diagnostics().add_counter("query_bridge.endpoint_anchor_commit_rejects", stats.commit_rejects);
