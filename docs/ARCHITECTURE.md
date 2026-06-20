@@ -159,12 +159,18 @@ Python binding ownership:
 python/bindings.cpp                pybind11 module registration only
 python/binding_adaptive_types.h    adaptive leaf-sweep/refine config and
                                    result registration
+python/binding_baseline_planner_functions.h
+                                   OMPL/RRT/PRM/BIT* baseline and collision
+                                   utility module function registration
 python/binding_basic_types.h       robot, interval, canonical helper, and
                                    common enum registration
 python/binding_planner_core_types.h
                                    envelope, graph node/edge, runtime,
                                    dynamic, subtractive, and leaf-sweep
                                    type registration
+python/binding_planning_forest_methods.h
+                                   RBFPlanningForest build/query/debug/update
+                                   method registration
 python/binding_planning_option_types.h
                                    split, validation, grower, connector,
                                    query, database, planner, profile, and
