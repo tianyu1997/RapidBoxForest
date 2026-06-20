@@ -1367,6 +1367,36 @@ def bridge_all_queries(
     return time.perf_counter() - t0, added_total, attempts, timing_by_label, added_by_label
 
 
+def make_query_bridge_failure_fallback_options(
+    options: RBFLeafRRTOptions,
+    *,
+    strong: bool,
+) -> RBFLeafRRTOptions:
+    fallback_options = copy.copy(options)
+    fallback_options.query_bridge_to_main_island = True
+    fallback_options.query_bridge_force_selected = True
+    fallback_options.query_bridge_forced_attempts = max(
+        int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
+        int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
+    )
+    if strong:
+        fallback_options.query_bridge_sequential_reuse = True
+        fallback_options.query_bridge_direct_segment_after_rrt = True
+        fallback_options.query_bridge_fast_direct_segment_after_rrt = True
+        fallback_options.segment_edge_obb_cover = True
+        fallback_options.rrt_bridge_obb_cover = True
+        fallback_options.strict_obb_bridge_cover = True
+        fallback_options.query_bridge_no_path_retry_attempts = max(
+            int(getattr(options, "query_bridge_no_path_retry_attempts", 0)),
+            2,
+        )
+        if not str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip():
+            fallback_options.query_bridge_no_path_retry_budget_iters = "40000"
+        if not str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip():
+            fallback_options.query_bridge_no_path_retry_budget_attempts = "4"
+    return fallback_options
+
+
 def forest_adjacency_island_count(forest: Any) -> int:
     boxes = list(forest.boxes())
     if not boxes:
@@ -1567,27 +1597,7 @@ def run_leaf_rrt(
                 bool(getattr(options, "query_bridge_failure_fallback_to_main", False)) and
                 not all(bool(row.get("audit_passed", False)) for row in step_qrows)
             ):
-                fallback_options = copy.copy(options)
-                fallback_options.query_bridge_sequential_reuse = True
-                fallback_options.query_bridge_to_main_island = True
-                fallback_options.query_bridge_force_selected = True
-                fallback_options.query_bridge_direct_segment_after_rrt = True
-                fallback_options.query_bridge_fast_direct_segment_after_rrt = True
-                fallback_options.segment_edge_obb_cover = True
-                fallback_options.rrt_bridge_obb_cover = True
-                fallback_options.strict_obb_bridge_cover = True
-                fallback_options.query_bridge_no_path_retry_attempts = max(
-                    int(getattr(options, "query_bridge_no_path_retry_attempts", 0)),
-                    2,
-                )
-                if not str(getattr(options, "query_bridge_no_path_retry_budget_iters", "")).strip():
-                    fallback_options.query_bridge_no_path_retry_budget_iters = "40000"
-                if not str(getattr(options, "query_bridge_no_path_retry_budget_attempts", "")).strip():
-                    fallback_options.query_bridge_no_path_retry_budget_attempts = "4"
-                fallback_options.query_bridge_forced_attempts = max(
-                    int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
-                    int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
-                )
+                fallback_options = make_query_bridge_failure_fallback_options(options, strong=True)
                 (
                     fallback_bridge_s,
                     fallback_added,
@@ -1662,13 +1672,7 @@ def run_leaf_rrt(
                 # an incomplete batch.
                 failed_queries = list(query_list)
             if failed_queries:
-                fallback_options = copy.copy(options)
-                fallback_options.query_bridge_to_main_island = True
-                fallback_options.query_bridge_force_selected = True
-                fallback_options.query_bridge_forced_attempts = max(
-                    int(getattr(options, "query_bridge_forced_attempts", 1)) + 2,
-                    int(getattr(fallback_options, "query_bridge_forced_attempts", 1)),
-                )
+                fallback_options = make_query_bridge_failure_fallback_options(options, strong=False)
                 (
                     fallback_bridge_s,
                     fallback_added,
