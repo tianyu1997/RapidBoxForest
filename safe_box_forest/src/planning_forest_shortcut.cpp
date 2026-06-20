@@ -1,4 +1,5 @@
 #include <SBF/safe_box_forest.h>
+#include <SBF/adaptive_grid_partition.h>
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>

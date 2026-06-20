@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/adaptive_grid_partition.h>
+
 #include <algorithm>
 
 namespace rbf {

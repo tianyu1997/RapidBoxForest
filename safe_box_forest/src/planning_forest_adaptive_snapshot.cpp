@@ -1,4 +1,5 @@
 #include <SBF/safe_box_forest.h>
+#include <SBF/adaptive_grid_partition.h>
 
 #include "planning_forest_adaptive_cover_utils.h"
 #include "planning_forest_qroot_helpers.h"

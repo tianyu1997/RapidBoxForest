@@ -1,6 +1,5 @@
 #pragma once
 
-#include <SBF/adaptive_grid_partition.h>
 #include <SBF/box_graph.h>
 #include <SBF/connector_types.h>
 #include <SBF/debug.h>
@@ -37,6 +36,7 @@ struct ObbValidationOptions;
 struct AdaptiveDepthSnapshot;
 struct BudgetedMergeStats;
 struct DynamicCollisionCacheState;
+class AdaptiveGridPartition;
 
 class RBFPlanningForest {
 public:
