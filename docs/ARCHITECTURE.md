@@ -168,8 +168,11 @@ python/binding_planner_core_types.h
                                    envelope, graph node/edge, runtime,
                                    dynamic, subtractive, and leaf-sweep
                                    type registration
+python/binding_planning_forest_debug_methods.h
+                                   RBFPlanningForest debug, diagnostic, and
+                                   path-cover inspection method registration
 python/binding_planning_forest_methods.h
-                                   RBFPlanningForest build/query/debug/update
+                                   RBFPlanningForest build/query/update
                                    method registration
 python/binding_planning_option_types.h
                                    split, validation, grower, connector,
