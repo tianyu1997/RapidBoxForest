@@ -431,6 +431,34 @@ private:
 		int query_index,
 		BuildProfile* profile,
 		ObbPathCoverResult& cover);
+	bool build_cell_native_portal_corridor_chain(
+		const BoxNode& source_box,
+		const BoxNode& target_box,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const std::vector<Interval>& domain,
+		const std::string& diagnostic_prefix,
+		int requested_depth,
+		int max_internal_boxes,
+		int max_recursion_depth,
+		double adjacency_tolerance,
+		BuildProfile* profile,
+		std::vector<BoxNode>& internal_boxes,
+		int& next_internal_id);
+	bool build_ffb_portal_corridor_chain(
+		const BoxNode& source_box,
+		const BoxNode& target_box,
+		const std::vector<Eigen::VectorXd>& waypoint_path,
+		const std::vector<Interval>& domain,
+		const std::string& diagnostic_prefix,
+		int requested_depth,
+		int max_internal_boxes,
+		int max_recursion_depth,
+		double adjacency_tolerance,
+		bool online_portal,
+		BuildProfile* profile,
+		StageContext& context,
+		std::vector<BoxNode>& internal_boxes,
+		int& next_internal_id);
 	void invalidate_query_cache() const;
 	const QueryGraphCache& query_cache() const;
 	int next_box_id() const;

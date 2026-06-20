@@ -315,6 +315,9 @@ src/planning_forest_overlay_edges.cpp
 src/planning_forest_overlay_obb_retry.cpp
                                    clearance-aware RRT retry path generation
                                    for strict OBB bridge replacement
+src/planning_forest_overlay_portal_resolvers.cpp
+                                   HiPaC portal chain resolvers using
+                                   cell-native validation or legacy FFB
 src/planning_forest_obb_diagnostics.cpp
                                    OBB cover/portal validation diagnostic
                                    emission shared by overlay stages
