@@ -24,7 +24,6 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_fixed_virtual_leaf_sweep_cover(
     const AdaptiveLeafSweepConfig& partition_config,
     std::chrono::steady_clock::time_point total_start) {
     using Clock = std::chrono::steady_clock;
-    constexpr bool adaptive_depth_enabled = false;
 
     AdaptiveLeafSweepResult out;
     out.diagnostics["adaptive.offline_query_agnostic_build"] = 1.0;
@@ -260,7 +259,7 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_fixed_virtual_leaf_sweep_cover(
     out.profile.diagnostics["adaptive.total_ms"] = out.total_ms;
     record_adaptive_depth_gate_diagnostics(out.profile.diagnostics,
                                            adaptive_config,
-                                           adaptive_depth_enabled,
+                                           false,
                                            adaptive_depth_min,
                                            target_leaf_depth);
     out.profile.diagnostics["adaptive.shallow_free_count"] = static_cast<double>(out.shallow_free_count);
