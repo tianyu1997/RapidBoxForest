@@ -12,9 +12,35 @@ QueryBridgeEdgeRuntimeOptions query_bridge_edge_runtime_options_from_config(
     options.scene_reusable_edges = config.query_bridge_scene_reusable_edges;
     options.direct_segment_after_rrt = config.query_bridge_direct_segment_after_rrt;
     options.fast_direct_segment_after_rrt = config.query_bridge_fast_direct_segment_after_rrt;
+    const bool segment_edges_active =
+        config.connector.segment_edges_enabled &&
+        config.connector.rrt_segment_edges;
+    options.direct_segment_edges_enabled =
+        options.direct_segment_after_rrt && segment_edges_active;
+    options.direct_start_goal_segment_enabled =
+        options.direct_segment_edges_enabled;
+    options.fast_direct_segment_after_rrt_enabled =
+        options.direct_segment_edges_enabled &&
+        options.fast_direct_segment_after_rrt;
     options.fast_direct_random_shortcut_iters =
         std::max(0, config.query_bridge_fast_direct_random_shortcut_iters);
     return options;
+}
+
+void record_query_bridge_edge_runtime_diagnostics(
+    StageContext& context,
+    const QueryBridgeEdgeRuntimeOptions& options) {
+    context.diagnostics().set_value("query_bridge.scene_reusable_edges",
+                                    options.scene_reusable_edges ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.direct_segment_after_rrt",
+        options.direct_segment_after_rrt ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.direct_start_goal_segment",
+        options.direct_start_goal_segment_enabled ? 1.0 : 0.0);
+    context.diagnostics().set_value(
+        "query_bridge.fast_direct_segment_after_rrt",
+        options.fast_direct_segment_after_rrt_enabled ? 1.0 : 0.0);
 }
 
 QueryBridgeWaypointShortcutOptions query_bridge_waypoint_shortcut_options(

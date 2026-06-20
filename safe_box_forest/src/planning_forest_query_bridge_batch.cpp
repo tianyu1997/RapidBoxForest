@@ -218,30 +218,11 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
     const QueryBridgeEdgeRuntimeOptions edge_options =
         query_bridge_edge_runtime_options_from_config(config_);
     const bool scene_reusable_edges = edge_options.scene_reusable_edges;
-    batch_context.diagnostics().set_value("query_bridge.scene_reusable_edges",
-                                          scene_reusable_edges ? 1.0 : 0.0);
+    record_query_bridge_edge_runtime_diagnostics(batch_context, edge_options);
     ScopedStageDiagnosticsFlush batch_diagnostics_flush(last_build_, batch_context);
-    const bool direct_start_goal_segment =
-        edge_options.direct_segment_after_rrt &&
-        config_.connector.segment_edges_enabled &&
-        config_.connector.rrt_segment_edges;
-    const bool fast_direct_segment_after_rrt =
-        edge_options.direct_segment_after_rrt &&
-        edge_options.fast_direct_segment_after_rrt &&
-        config_.connector.segment_edges_enabled &&
-        config_.connector.rrt_segment_edges;
-    batch_context.diagnostics().set_value(
-        "query_bridge.direct_segment_after_rrt",
-        edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.direct_start_goal_segment",
-        direct_start_goal_segment ? 1.0 : 0.0);
-    batch_context.diagnostics().set_value(
-        "query_bridge.fast_direct_segment_after_rrt",
-        fast_direct_segment_after_rrt ? 1.0 : 0.0);
     batch_context.diagnostics().set_value("query_bridge.batch_tasks_initial",
                                           static_cast<double>(tasks.size()));
-    if (direct_start_goal_segment) {
+    if (edge_options.direct_start_goal_segment_enabled) {
         run_query_bridge_direct_start_goal_segments(tasks,
                                                     added_by_query,
                                                     batch_context,
@@ -407,7 +388,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
                 scene_reusable_edges,
                 forced_query_indices,
                 bridge_acceptance,
-                fast_direct_segment_after_rrt,
+                edge_options.fast_direct_segment_after_rrt_enabled,
                 edge_options.fast_direct_random_shortcut_iters,
                 [&]() {
                     return query_bridge_elapsed_ms_since(batch_t0) -
@@ -506,7 +487,7 @@ std::vector<int> RBFPlanningForest::bridge_queries(const std::vector<Eigen::Vect
             scene_reusable_edges,
             forced_query_indices,
             bridge_acceptance,
-            fast_direct_segment_after_rrt,
+            edge_options.fast_direct_segment_after_rrt_enabled,
             edge_options.fast_direct_random_shortcut_iters,
             [&]() { return query_bridge_elapsed_ms_since(task_t0); });
     }

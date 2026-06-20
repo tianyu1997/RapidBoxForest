@@ -89,17 +89,12 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
         query_bridge_edge_runtime_options_from_config(config_);
     const int bridge_edge_query_index =
         edge_options.scene_reusable_edges ? -1 : query_index;
-    context.diagnostics().set_value("query_bridge.scene_reusable_edges",
-                                    edge_options.scene_reusable_edges ? 1.0 : 0.0);
-    context.diagnostics().set_value("query_bridge.direct_segment_after_rrt",
-                                    edge_options.direct_segment_after_rrt ? 1.0 : 0.0);
+    record_query_bridge_edge_runtime_diagnostics(context, edge_options);
     ScopedStageDiagnosticsFlush pave_diagnostics_flush(last_build_, context);
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     const double bridge_waypoint_length = query_bridge_waypoint_length(waypoint_path);
     const bool direct_segment_after_rrt_candidate =
-        edge_options.direct_segment_after_rrt &&
-        config_.connector.segment_edges_enabled &&
-        config_.connector.rrt_segment_edges;
+        edge_options.direct_segment_edges_enabled;
     context.diagnostics().set_value("query_bridge.direct_segment_after_rrt_candidate",
                                     direct_segment_after_rrt_candidate ? 1.0 : 0.0);
     int direct_segment_edges_added = 0;

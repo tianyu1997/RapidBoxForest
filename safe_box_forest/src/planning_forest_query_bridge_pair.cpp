@@ -72,13 +72,8 @@ int RBFPlanningForest::bridge_query_known_needed(const Eigen::Ref<const Eigen::V
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     const QueryBridgeEdgeRuntimeOptions edge_options =
         query_bridge_edge_runtime_options_from_config(config_);
-    const bool direct_start_goal_segment =
-        edge_options.direct_segment_after_rrt &&
-        config_.connector.segment_edges_enabled &&
-        config_.connector.rrt_segment_edges;
-    context.diagnostics().set_value("query_bridge.direct_start_goal_segment",
-                                    direct_start_goal_segment ? 1.0 : 0.0);
-    if (direct_start_goal_segment) {
+    record_query_bridge_edge_runtime_diagnostics(context, edge_options);
+    if (edge_options.direct_start_goal_segment_enabled) {
         const int added = try_add_query_direct_start_goal_segment_edge(start_box_id,
                                                                        goal_box_id,
                                                                        start,
