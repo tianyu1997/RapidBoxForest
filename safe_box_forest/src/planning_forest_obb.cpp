@@ -249,6 +249,53 @@ ObbPortalCandidate obb_grow_candidate(const Robot& robot,
     return good;
 }
 
+void obb_try_orientation_candidate_range(
+    const Robot& robot,
+    const Scene& scene,
+    const std::vector<Interval>& domain,
+    const std::vector<Eigen::VectorXd>& path,
+    const std::vector<Eigen::MatrixXd>& orientations,
+    std::size_t begin,
+    std::size_t end,
+    double lateral_radius,
+    double longitudinal_margin,
+    double safety_epsilon,
+    int max_validations,
+    ObbPortalValidationStats& stats,
+    const ObbValidationOptions& options,
+    bool& found,
+    ObbPortalCandidate& best) {
+    for (std::size_t index = begin; index < end && index < orientations.size(); ++index) {
+        if (max_validations > 0 && stats.validations >= max_validations) {
+            break;
+        }
+        const auto& basis_y = orientations[index];
+        ObbPortalCandidate candidate;
+        if (!obb_fit_scaled_path_with_basis(path,
+                                            domain,
+                                            basis_y,
+                                            lateral_radius,
+                                            longitudinal_margin,
+                                            candidate,
+                                            stats)) {
+            continue;
+        }
+        if (!validate_obb_zonotope_candidate(robot,
+                                             scene,
+                                             candidate,
+                                             safety_epsilon,
+                                             stats,
+                                             options)) {
+            continue;
+        }
+        ++stats.valid_candidates;
+        if (!found || candidate.score > best.score) {
+            best = std::move(candidate);
+            found = true;
+        }
+    }
+}
+
 bool validate_obb_zonotope_portal(const Robot& robot,
                                   const Scene& scene,
                                   const std::vector<Interval>& domain,
@@ -292,42 +339,43 @@ bool validate_obb_zonotope_portal(const Robot& robot,
     bool found = false;
     ObbPortalCandidate best;
 
-    auto try_orientation_range = [&](std::size_t begin, std::size_t end) {
-        for (std::size_t index = begin; index < end && index < orientations.size(); ++index) {
-            if (max_validations > 0 && stats.validations >= max_validations) {
-                break;
-            }
-            const auto& basis_y = orientations[index];
-            ObbPortalCandidate candidate;
-            if (!obb_fit_scaled_path_with_basis(path,
-                                                domain,
-                                                basis_y,
-                                                lateral_radius,
-                                                longitudinal_margin,
-                                                candidate,
-                                                stats)) {
-                continue;
-            }
-            if (!validate_obb_zonotope_candidate(robot, scene, candidate, safety_epsilon, stats, options)) {
-                continue;
-            }
-            ++stats.valid_candidates;
-            if (!found || candidate.score > best.score) {
-                best = std::move(candidate);
-                found = true;
-            }
-        }
-    };
-
     const std::size_t primary_end =
         fast_primary_orientation ? std::min<std::size_t>(orientations.size(), 1U) : orientations.size();
-    try_orientation_range(0U, primary_end);
+    obb_try_orientation_candidate_range(robot,
+                                        scene,
+                                        domain,
+                                        path,
+                                        orientations,
+                                        0U,
+                                        primary_end,
+                                        lateral_radius,
+                                        longitudinal_margin,
+                                        safety_epsilon,
+                                        max_validations,
+                                        stats,
+                                        options,
+                                        found,
+                                        best);
     if (!found && fast_primary_orientation && fallback_orientations_on_fail &&
         primary_end < orientations.size()) {
         if (max_validations > 0 && stats.validations >= max_validations) {
             return false;
         }
-        try_orientation_range(primary_end, orientations.size());
+        obb_try_orientation_candidate_range(robot,
+                                            scene,
+                                            domain,
+                                            path,
+                                            orientations,
+                                            primary_end,
+                                            orientations.size(),
+                                            lateral_radius,
+                                            longitudinal_margin,
+                                            safety_epsilon,
+                                            max_validations,
+                                            stats,
+                                            options,
+                                            found,
+                                            best);
     }
     if (!found) {
         return false;
