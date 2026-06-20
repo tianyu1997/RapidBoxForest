@@ -568,10 +568,11 @@ Facade-visible signatures depend on type records (`connector_types.h`,
 directly. `SBF/planning_config.h` is the compatibility aggregate for planner
 options; build/offline options live in `SBF/build_config.h`, query bridge and
 runtime query options live in `SBF/query_bridge_config.h`, build/update/coverage
-result payloads live in `SBF/planning_result.h`, and isolated diagnostic types
-live in `SBF/debug.h`. If a new option or result is specific to adaptive
-coverage, query bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the
-matching typed header rather than extending the facade header directly.
+result payloads live in `SBF/planning_result.h`, leaf-sweep config/result
+records live in `SBF/leaf_sweep_types.h`, and isolated diagnostic types live in
+`SBF/debug.h`. If a new option or result is specific to adaptive coverage, query
+bridge, HiPaC, OBB, dynamic updates, or debugging, add it to the matching typed
+header rather than extending the facade header directly.
 
 The former sidecar prototype tree has been retired. Its useful mechanisms are
 now production code in `lect_database` and `safe_box_forest`; new experiments

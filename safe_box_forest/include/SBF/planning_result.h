@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/leaf_sweep_grower.h>
+#include <SBF/leaf_sweep_types.h>
 #include <SBF/runtime.h>
 
 #include <string>

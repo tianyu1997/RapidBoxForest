@@ -4,7 +4,7 @@
 #include <SBF/connector_types.h>
 #include <SBF/debug.h>
 #include <SBF/grower_types.h>
-#include <SBF/leaf_sweep_grower.h>
+#include <SBF/leaf_sweep_types.h>
 #include <SBF/merger.h>
 #include <SBF/oracle.h>
 #include <SBF/planning_config.h>
