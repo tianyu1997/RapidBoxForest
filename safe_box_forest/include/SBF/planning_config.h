@@ -1,8 +1,8 @@
 #pragma once
 
 #include <SBF/build_config.h>
-#include <SBF/connector.h>
-#include <SBF/grower.h>
+#include <SBF/connector_types.h>
+#include <SBF/grower_types.h>
 #include <SBF/merger.h>
 #include <SBF/oracle.h>
 #include <SBF/query_bridge_config.h>
