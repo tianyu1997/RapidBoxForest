@@ -101,6 +101,7 @@ add_library(sbf_core STATIC
     src/box_graph_sequence.cpp
     src/box_graph_topology.cpp
     src/connector.cpp
+    src/connector_broadphase.cpp
     src/connector_birrt.cpp
     src/connector_frontier_bridge.cpp
     src/connector_internal.cpp
