@@ -15,6 +15,10 @@ namespace rbf {
 
 RBFPlanningForest::~RBFPlanningForest() = default;
 
+const OracleCounters* RBFPlanningForest::oracle_counters() const {
+    return oracle_ ? &oracle_->counters() : nullptr;
+}
+
 void RBFPlanningForest::clear_forest() {
     boxes_.clear();
     raw_boxes_.clear();

@@ -82,9 +82,7 @@ public:
 	                            const std::vector<Eigen::VectorXd>& seeds);
 	/// Access oracle counters from the most recent build/run_pure_ffb call.
 	/// Returns nullptr if the oracle hasn't been initialised yet.
-	const OracleCounters* oracle_counters() const {
-		return oracle_ ? &oracle_->counters() : nullptr;
-	}
+	const OracleCounters* oracle_counters() const;
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					  const Eigen::Ref<const Eigen::VectorXd>& goal) const;
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
