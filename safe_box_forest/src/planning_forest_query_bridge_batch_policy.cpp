@@ -1,5 +1,7 @@
 #include "planning_forest_query_bridge_policy.h"
 
+#include <SBF/safe_box_forest.h>
+
 namespace rbf {
 
 bool query_bridge_should_check_current_query(

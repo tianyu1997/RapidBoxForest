@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/api.h>
+#include <SBF/runtime.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_task.h"
