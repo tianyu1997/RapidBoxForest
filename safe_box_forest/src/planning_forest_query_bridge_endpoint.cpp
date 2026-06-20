@@ -208,6 +208,11 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     const int target_limit = std::min<int>(
         std::max(1, corridor_config.target_k),
         static_cast<int>(targets.size()));
+    std::vector<int> target_box_ids;
+    target_box_ids.reserve(static_cast<std::size_t>(target_limit));
+    for (int item = 0; item < target_limit; ++item) {
+        target_box_ids.push_back(targets[static_cast<std::size_t>(item)].box_id);
+    }
 
     std::unordered_map<int, int> node_owner;
     node_owner.reserve(boxes_.size());
@@ -398,7 +403,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                             int parent_box_id,
                             const std::vector<int>& local_candidates,
                             const std::vector<int>& target_box_ids,
-                            const std::vector<int>& depths) {
+                            int depth) {
         int reached_box_id = -1;
         bool reached_main = false;
         const int existing_cover = first_existing_cover(seed);
@@ -408,112 +413,100 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             reached_main = main_ids.find(existing_cover) != main_ids.end();
             return std::pair<int, bool>{reached_box_id, reached_main};
         }
-        for (int depth : depths) {
-            FindFreeBoxOptions options = config_.connector.pave.find_free_box;
-            options.reject_seed_collision = false;
-            options.max_depth = std::min(std::max(1, config_.database.max_tree_depth),
-                                         std::max(1, depth));
-            const bool is_max_depth_attempt = options.max_depth >= final_ffb_depth;
-            ffb_calls += 1;
-            add_diag("ffb_calls");
-            FindFreeBoxResult result = find_free_box_in_domain(
-                seed,
-                oracle_->planning_intervals(),
-                context,
-                options);
-            if (!result.found ||
-                !intervals_contain_point_local(result.intervals,
-                                               seed,
-                                               config_.query.adjacency_tolerance)) {
-                if (is_max_depth_attempt) {
-                    max_depth_ffb_failed = true;
-                }
-                if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
-                    break;
-                }
-                continue;
+        FindFreeBoxOptions options = config_.connector.pave.find_free_box;
+        options.reject_seed_collision = false;
+        options.max_depth = std::min(std::max(1, config_.database.max_tree_depth),
+                                     std::max(1, depth));
+        const bool is_max_depth_attempt = options.max_depth >= final_ffb_depth;
+        ffb_calls += 1;
+        add_diag("ffb_calls");
+        FindFreeBoxResult result = find_free_box_in_domain(
+            seed,
+            oracle_->planning_intervals(),
+            context,
+            options);
+        if (!result.found ||
+            !intervals_contain_point_local(result.intervals,
+                                           seed,
+                                           config_.query.adjacency_tolerance)) {
+            if (is_max_depth_attempt) {
+                max_depth_ffb_failed = true;
             }
-            if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
-                if (is_max_depth_attempt) {
-                    max_depth_ffb_failed = true;
-                }
-                if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
-                    break;
-                }
-                continue;
-            }
-            BoxNode candidate;
-            candidate.joint_intervals = result.intervals;
-            candidate.seed_config = seed;
-            candidate.tree_id = result.node;
-            candidate.parent_box_id = parent_box_id;
-            candidate.safety_status = result.validation_detail.safety_status;
-            candidate.strict_audit_required = result.validation_detail.strict_audit_required;
-            candidate.compute_volume();
-            BoxNode* parent_box = box_by_id(parent_box_id);
-            bool parent_adjacent = false;
-            if (use_partition_endpoint_index &&
-                adaptive_partition_->contains_box_id(parent_box_id)) {
-                local_adj_checks += 1;
-                parent_adjacent = adaptive_partition_->box_adjacent_to_box(
-                    parent_box_id,
-                    candidate,
-                    config_.query.adjacency_tolerance);
-            } else if (parent_box != nullptr) {
-                local_adj_checks += 1;
-                parent_adjacent = boxes_connected(*parent_box,
-                                                  candidate,
-                                                  config_.query.adjacency_tolerance);
-            }
-            if (!parent_adjacent) {
-                if (is_max_depth_attempt) {
-                    max_depth_ffb_failed = true;
-                }
-                if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls)) {
-                    break;
-                }
-                continue;
-            }
-            candidate.root_id =
-                parent_box != nullptr && parent_box->root_id >= 0 ? parent_box->root_id : parent_box_id;
-            candidate.id = next_id++;
-            const int new_id = candidate.id;
-            if (node_owner.find(candidate.tree_id) == node_owner.end()) {
-                oracle_->reserve_node(candidate.tree_id, new_id);
-                node_owner[candidate.tree_id] = new_id;
-            }
-            boxes_.push_back(candidate);
-            raw_boxes_.push_back(candidate);
-            const std::size_t new_index = boxes_.size() - 1;
-            box_index_by_id[new_id] = new_index;
-            if (!use_partition_endpoint_index) {
-                all_box_index.add_box(boxes_.back(),
-                                      static_cast<int>(new_index),
-                                      config_.query.adjacency_tolerance);
-            } else {
-                adaptive_partition_->append_box(boxes_.back(),
-                                                config_.query.adjacency_tolerance);
-            }
-            if (!graphless_endpoint_main) {
-                adjacency_[new_id] = {};
-                append_local_edge(adjacency_, parent_box_id, new_id);
-            }
-            boxes_added += 1;
-            added_total += 1;
-            add_diag("boxes_added");
-
-            for (int candidate_id : local_candidates) {
-                append_edge_if_connected(new_id, candidate_id);
-            }
-            for (int target_id : target_box_ids) {
-                if (append_edge_if_connected(new_id, target_id)) {
-                    reached_main = true;
-                }
-            }
-            reached_box_id = new_id;
-            return std::pair<int, bool>{reached_box_id, reached_main};
+            return std::pair<int, bool>{-1, false};
         }
-        return std::pair<int, bool>{-1, false};
+        if (!allow_dynamic_commit(*oracle_, result, config_.connector.pave.commit_policy)) {
+            if (is_max_depth_attempt) {
+                max_depth_ffb_failed = true;
+            }
+            return std::pair<int, bool>{-1, false};
+        }
+        BoxNode candidate;
+        candidate.joint_intervals = result.intervals;
+        candidate.seed_config = seed;
+        candidate.tree_id = result.node;
+        candidate.parent_box_id = parent_box_id;
+        candidate.safety_status = result.validation_detail.safety_status;
+        candidate.strict_audit_required = result.validation_detail.strict_audit_required;
+        candidate.compute_volume();
+        BoxNode* parent_box = box_by_id(parent_box_id);
+        bool parent_adjacent = false;
+        if (use_partition_endpoint_index &&
+            adaptive_partition_->contains_box_id(parent_box_id)) {
+            local_adj_checks += 1;
+            parent_adjacent = adaptive_partition_->box_adjacent_to_box(
+                parent_box_id,
+                candidate,
+                config_.query.adjacency_tolerance);
+        } else if (parent_box != nullptr) {
+            local_adj_checks += 1;
+            parent_adjacent = boxes_connected(*parent_box,
+                                              candidate,
+                                              config_.query.adjacency_tolerance);
+        }
+        if (!parent_adjacent) {
+            if (is_max_depth_attempt) {
+                max_depth_ffb_failed = true;
+            }
+            return std::pair<int, bool>{-1, false};
+        }
+        candidate.root_id =
+            parent_box != nullptr && parent_box->root_id >= 0 ? parent_box->root_id : parent_box_id;
+        candidate.id = next_id++;
+        const int new_id = candidate.id;
+        if (node_owner.find(candidate.tree_id) == node_owner.end()) {
+            oracle_->reserve_node(candidate.tree_id, new_id);
+            node_owner[candidate.tree_id] = new_id;
+        }
+        boxes_.push_back(candidate);
+        raw_boxes_.push_back(candidate);
+        const std::size_t new_index = boxes_.size() - 1;
+        box_index_by_id[new_id] = new_index;
+        if (!use_partition_endpoint_index) {
+            all_box_index.add_box(boxes_.back(),
+                                  static_cast<int>(new_index),
+                                  config_.query.adjacency_tolerance);
+        } else {
+            adaptive_partition_->append_box(boxes_.back(),
+                                            config_.query.adjacency_tolerance);
+        }
+        if (!graphless_endpoint_main) {
+            adjacency_[new_id] = {};
+            append_local_edge(adjacency_, parent_box_id, new_id);
+        }
+        boxes_added += 1;
+        added_total += 1;
+        add_diag("boxes_added");
+
+        for (int candidate_id : local_candidates) {
+            append_edge_if_connected(new_id, candidate_id);
+        }
+        for (int target_id : target_box_ids) {
+            if (append_edge_if_connected(new_id, target_id)) {
+                reached_main = true;
+            }
+        }
+        reached_box_id = new_id;
+        return std::pair<int, bool>{reached_box_id, reached_main};
     };
     auto try_residual_segment = [&](int front_box_id, int target_box_id, const Eigen::VectorXd& target_point) {
         if (!max_depth_ffb_failed || corridor_config.residual_segment_max_length <= 0.0) {
@@ -566,10 +559,9 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return true;
     };
 
-    std::vector<int> depth_schedule{
+    const int endpoint_main_ffb_depth =
         std::min(std::max(1, config_.database.max_tree_depth),
-                 std::max(1, final_ffb_depth))
-    };
+                 std::max(1, final_ffb_depth));
 
     for (int target_index = 0; target_index < target_limit; ++target_index) {
         if (ffb_calls >= std::max(1, corridor_config.max_ffb_calls) ||
@@ -603,11 +595,6 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 samples = std::move(fine);
                 target_sample_index = static_cast<int>(samples.size()) - 1;
             }
-        }
-        std::vector<int> target_box_ids;
-        target_box_ids.reserve(static_cast<std::size_t>(target_limit));
-        for (int item = 0; item < target_limit; ++item) {
-            target_box_ids.push_back(targets[static_cast<std::size_t>(item)].box_id);
         }
         std::vector<int> chain_ids{source_box_id};
         int current_box_id = source_box_id;
@@ -648,7 +635,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                 current_box_id,
                 local_candidates,
                 target_box_ids,
-                depth_schedule);
+                endpoint_main_ffb_depth);
             if (reached_main) {
                 return finish_main_contact(std::max(1, added_total));
             }
@@ -686,7 +673,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                         current_box_id,
                         local_candidates,
                         target_box_ids,
-                        depth_schedule);
+                        endpoint_main_ffb_depth);
                     if (lat_main) {
                         return finish_main_contact(std::max(1, added_total));
                     }
