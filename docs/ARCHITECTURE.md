@@ -238,11 +238,15 @@ src/grower_task_builder.cpp        RRT grower batched target sampling, task
                                    generation, and frontier seed selection
 src/grower_task_filter.cpp         RRT grower task-domain filtering, failure
                                    cooling skips, and task trace emission
-src/grower_component_connect.cpp   component-connect seed candidate ranking
-                                   and target selection
+src/grower_component_connect.cpp   source-root component-connect target
+                                   ranking, refinement, and lateral seed
+                                   selection
 src/grower_component_connect_chain.cpp
                                    component-connect chain execution, staged
                                    targets, and pair-failure bookkeeping
+src/grower_component_connect_global.cpp
+                                   global component-connect seed candidate
+                                   ranking and target selection
 src/grower_trace.cpp               optional RRT grower JSON trace output
 src/grower_workers.cpp             worker-local FFB sessions, parallel task
                                    execution, and master-node remapping

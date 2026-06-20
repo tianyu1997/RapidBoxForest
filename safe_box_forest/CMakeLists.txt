@@ -115,6 +115,7 @@ add_library(sbf_core STATIC
     src/grower_commit.cpp
     src/grower_component_connect.cpp
     src/grower_component_connect_chain.cpp
+    src/grower_component_connect_global.cpp
     src/grower_components.cpp
     src/grower_failure_cooling.cpp
     src/grower_frontier.cpp
