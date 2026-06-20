@@ -265,6 +265,28 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
     }
     CollisionChecker checker = make_audit_checker(audit_robot_, scene_, config_.query);
     QueryResult probe = run_query_internal(start, goal, false);
+    auto best_refine_path = [&](int seed_attempt) {
+        StageContext rrt_context = StageContext::serial();
+        RRTConnectConfig refine_rrt =
+            with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
+        refine_rrt.segment_resolution =
+            std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
+        const int refine_attempts = std::max(1, config_.connector.max_pairs_per_gap);
+        return best_audited_rrt_bridge_path(start,
+                                            goal,
+                                            checker,
+                                            audit_robot_,
+                                            rrt_context,
+                                            refine_rrt,
+                                            refine_attempts,
+                                            config_.connector.per_pair_timeout_ms * refine_attempts,
+                                            derived_planner_seed(config_.grower.rng_seed,
+                                                                 kSeedCorridorRefineOffset,
+                                                                 seed_attempt),
+                                            config_.query.audit_resolution,
+                                            config_.query.audit_segment_step,
+                                            QueryBridgeParallelRrtOptions{});
+    };
 
     std::vector<Eigen::VectorXd> waypoint_path;
     bool add_query_segment_edge = false;
@@ -282,24 +304,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
         if (!ratio_trigger && !delta_trigger) {
             return 0;
         }
-        StageContext rrt_context = StageContext::serial();
-        RRTConnectConfig refine_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
-        refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-        const int refine_attempts = std::max(1, config_.connector.max_pairs_per_gap);
-        waypoint_path = best_audited_rrt_bridge_path(start,
-                                                     goal,
-                                                     checker,
-                                                     audit_robot_,
-                                                     rrt_context,
-                                                     refine_rrt,
-                                                     refine_attempts,
-                                                     config_.connector.per_pair_timeout_ms * refine_attempts,
-                                                     derived_planner_seed(config_.grower.rng_seed,
-                                                                          kSeedCorridorRefineOffset,
-                                                                          0),
-                                                     config_.query.audit_resolution,
-                                                     config_.query.audit_segment_step,
-                                                     QueryBridgeParallelRrtOptions{});
+        waypoint_path = best_refine_path(0);
         if (waypoint_path.empty()) {
             waypoint_path = probe.path;
         }
@@ -313,24 +318,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
             if (!ratio_trigger && !delta_trigger) {
                 return 0;
             }
-            StageContext rrt_context = StageContext::serial();
-            RRTConnectConfig refine_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
-            refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-            const int refine_attempts = std::max(1, config_.connector.max_pairs_per_gap);
-            waypoint_path = best_audited_rrt_bridge_path(start,
-                                                         goal,
-                                                         checker,
-                                                         audit_robot_,
-                                                         rrt_context,
-                                                         refine_rrt,
-                                                         refine_attempts,
-                                                         config_.connector.per_pair_timeout_ms * refine_attempts,
-                                                         derived_planner_seed(config_.grower.rng_seed,
-                                                                              kSeedCorridorRefineOffset,
-                                                                              1),
-                                                         config_.query.audit_resolution,
-                                                         config_.query.audit_segment_step,
-                                                         QueryBridgeParallelRrtOptions{});
+            waypoint_path = best_refine_path(1);
             if (waypoint_path.empty()) {
                 waypoint_path = probe.path;
             }
@@ -339,24 +327,7 @@ int RBFPlanningForest::refine_query_corridor(const Eigen::Ref<const Eigen::Vecto
             add_query_segment_edge = true;
         }
     } else {
-        StageContext rrt_context = StageContext::serial();
-        RRTConnectConfig refine_rrt = with_query_root_hull_domain(config_.connector.rrt, *oracle_, start, goal);
-        refine_rrt.segment_resolution = std::max(refine_rrt.segment_resolution, config_.query.audit_resolution);
-        const int refine_attempts = std::max(1, config_.connector.max_pairs_per_gap);
-        waypoint_path = best_audited_rrt_bridge_path(start,
-                                                     goal,
-                                                     checker,
-                                                     audit_robot_,
-                                                     rrt_context,
-                                                     refine_rrt,
-                                                     refine_attempts,
-                                                     config_.connector.per_pair_timeout_ms * refine_attempts,
-                                                     derived_planner_seed(config_.grower.rng_seed,
-                                                                          kSeedCorridorRefineOffset,
-                                                                          2),
-                                                     config_.query.audit_resolution,
-                                                     config_.query.audit_segment_step,
-                                                     QueryBridgeParallelRrtOptions{});
+        waypoint_path = best_refine_path(2);
         add_query_segment_edge = mode != CorridorRefineMode::BoxOnlyLongPath;
     }
     if (waypoint_path.empty()) {
