@@ -51,6 +51,40 @@ void QueryBridgeLocalDsu::unite(int lhs, int rhs) {
     }
 }
 
+bool query_bridge_mark_sample_coverage_from_candidates(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    std::size_t sample_index,
+    const std::vector<int>& candidates,
+    double tolerance,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered) {
+    if (sample_index >= samples.size() || sample_index >= sample_layers.size()) {
+        return false;
+    }
+    bool newly_covered = false;
+    for (int box_index : candidates) {
+        if (box_index < 0 || box_index >= static_cast<int>(boxes.size())) {
+            continue;
+        }
+        if (!intervals_contain_point_local(
+                boxes[static_cast<std::size_t>(box_index)].joint_intervals,
+                samples[sample_index],
+                tolerance)) {
+            continue;
+        }
+        auto& layer = sample_layers[sample_index];
+        if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
+            layer.push_back(box_index);
+        }
+        if (sample_index < covered.size() && !covered[sample_index]) {
+            covered[sample_index] = true;
+            newly_covered = true;
+        }
+    }
+    return newly_covered;
+}
+
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,
     const std::vector<Eigen::VectorXd>& samples,

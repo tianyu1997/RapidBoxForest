@@ -47,6 +47,15 @@ struct QueryBridgeSampleAssimilationResult {
     bool full_scan_fallback = false;
 };
 
+bool query_bridge_mark_sample_coverage_from_candidates(
+    const std::vector<BoxNode>& boxes,
+    const std::vector<Eigen::VectorXd>& samples,
+    std::size_t sample_index,
+    const std::vector<int>& candidates,
+    double tolerance,
+    std::vector<std::vector<int>>& sample_layers,
+    std::vector<bool>& covered);
+
 QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     const std::vector<Interval>& box_intervals,
     const std::vector<Eigen::VectorXd>& samples,

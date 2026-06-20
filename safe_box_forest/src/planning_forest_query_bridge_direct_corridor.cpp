@@ -86,6 +86,7 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
     std::vector<bool> covered(samples.size(), false);
     auto mark_initial_coverage = [&]() {
         const auto mark_t0 = Clock::now();
+        int initial_covered = 0;
         for (std::size_t sample_index = 0; sample_index < samples.size(); ++sample_index) {
             std::vector<int> candidates;
             if (use_partition_cover_index) {
@@ -95,25 +96,20 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
             } else {
                 candidates = direct_box_index.point_candidates(samples[sample_index]);
             }
-            for (int box_index : candidates) {
-                if (box_index < 0 || box_index >= static_cast<int>(boxes_.size())) {
-                    continue;
-                }
-                if (!intervals_contain_point_local(
-                        boxes_[static_cast<std::size_t>(box_index)].joint_intervals,
-                        samples[sample_index],
-                        config_.query.adjacency_tolerance)) {
-                    continue;
-                }
-                auto& layer = sample_layers[sample_index];
-                if (std::find(layer.begin(), layer.end(), box_index) == layer.end()) {
-                    layer.push_back(box_index);
-                }
-                if (!covered[sample_index]) {
-                    covered[sample_index] = true;
-                }
+            if (query_bridge_mark_sample_coverage_from_candidates(
+                    boxes_,
+                    samples,
+                    sample_index,
+                    candidates,
+                    config_.query.adjacency_tolerance,
+                    sample_layers,
+                    covered)) {
+                initial_covered += 1;
             }
         }
+        context.diagnostics().set_value(
+            "query_bridge.direct_corridor_initial_covered_samples",
+            static_cast<double>(initial_covered));
         context.diagnostics().record_timing(
             "query_bridge.direct_corridor_mark_initial_ms",
             std::chrono::duration<double, std::milli>(Clock::now() - mark_t0).count());
