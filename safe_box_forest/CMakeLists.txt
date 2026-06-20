@@ -122,6 +122,7 @@ add_library(sbf_core STATIC
     src/leaf_sweep_grower.cpp
     src/leaf_sweep_grower_cluster.cpp
     src/leaf_sweep_grower_compose.cpp
+    src/leaf_sweep_grower_diagnostics.cpp
     src/leaf_sweep_grower_frontier.cpp
     src/merger.cpp
     src/planning_forest_adaptive_build.cpp
