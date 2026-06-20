@@ -82,27 +82,25 @@ void query_bridge_mark_task_skip(BuildProfile& profile,
 void record_query_bridge_batch_task_no_path(StageContext& context,
                                             std::size_t index,
                                             double total_ms) {
+    const QueryBridgeTaskDiagnostics task_diag(context, index);
     context.diagnostics().add_counter("query_bridge.batch_tasks_no_path");
-    context.diagnostics().set_value(query_bridge_task_key(index, "no_path"), 1.0);
-    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
+    task_diag.set_value("no_path", 1.0);
+    task_diag.set_value("total_ms", total_ms);
 }
 
 void record_query_bridge_batch_task_already_satisfied(
     StageContext& context,
     const QueryBridgeSearchTask& task,
     double probe_ms) {
+    const QueryBridgeTaskDiagnostics task_diag(context, task.index);
     context.diagnostics().add_counter("query_bridge.batch_tasks_skipped");
     context.diagnostics().record_timing("query_bridge.batch_probe_ms_total", probe_ms);
-    context.diagnostics().set_value(query_bridge_task_key(task.index, "skipped"), 1.0);
+    task_diag.set_value("skipped", 1.0);
     if (task.hipac_online_satisfied) {
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "skipped_by_hipac_online"),
-            1.0);
+        task_diag.set_value("skipped_by_hipac_online", 1.0);
     }
     if (task.direct_start_goal_satisfied) {
-        context.diagnostics().set_value(
-            query_bridge_task_key(task.index, "skipped_by_direct_start_goal_segment"),
-            1.0);
+        task_diag.set_value("skipped_by_direct_start_goal_segment", 1.0);
     }
 }
 
@@ -111,37 +109,36 @@ void record_query_bridge_batch_task_skipped_after_rrt(StageContext& context,
                                                       bool forced_task,
                                                       double probe_ms,
                                                       double total_ms) {
+    const QueryBridgeTaskDiagnostics task_diag(context, index);
     context.diagnostics().add_counter("query_bridge.batch_tasks_skipped_after_rrt");
     if (forced_task) {
         context.diagnostics().add_counter("query_bridge.batch_forced_tasks_skipped_after_rrt");
     }
     context.diagnostics().record_timing("query_bridge.batch_probe_ms_total", probe_ms);
-    context.diagnostics().set_value(query_bridge_task_key(index, "skipped_after_rrt"), 1.0);
-    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"), total_ms);
+    task_diag.set_value("skipped_after_rrt", 1.0);
+    task_diag.set_value("total_ms", total_ms);
 }
 
 void record_query_bridge_batch_task_skipped_by_hipac_after_rrt(
     StageContext& context,
     std::size_t index,
     double total_ms) {
+    const QueryBridgeTaskDiagnostics task_diag(context, index);
     context.diagnostics().add_counter(
         "query_bridge.batch_tasks_skipped_by_hipac_after_rrt");
-    context.diagnostics().set_value(
-        query_bridge_task_key(index, "skipped_by_hipac_after_rrt"),
-        1.0);
-    context.diagnostics().set_value(query_bridge_task_key(index, "total_ms"),
-                                    total_ms);
+    task_diag.set_value("skipped_by_hipac_after_rrt", 1.0);
+    task_diag.set_value("total_ms", total_ms);
 }
 
 void record_query_bridge_forced_attempts(StageContext& context,
                                          std::size_t index,
                                          bool forced_task,
                                          int attempts) {
+    const QueryBridgeTaskDiagnostics task_diag(context, index);
     if (forced_task) {
-        context.diagnostics().set_value(query_bridge_task_key(index, "forced"), 1.0);
+        task_diag.set_value("forced", 1.0);
     }
-    context.diagnostics().set_value(query_bridge_task_key(index, "attempts"),
-                                    static_cast<double>(attempts));
+    task_diag.set_value("attempts", static_cast<double>(attempts));
 }
 
 void accumulate_query_bridge_direct_corridor_totals(const BuildProfile& profile,
