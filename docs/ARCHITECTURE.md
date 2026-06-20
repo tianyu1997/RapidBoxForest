@@ -351,9 +351,12 @@ src/planning_forest_obb_diagnostics.cpp
                                    emission shared by overlay stages
 src/planning_forest_query.cpp      online query entry point, strict audit,
                                    final simplify, and local repair
+src/planning_forest_query_geometry.cpp
+                                   query-local interval, box, boundary-seed,
+                                   and segment-coverage geometry helpers
 src/planning_forest_query_utils.cpp
-                                   query/path utility functions shared by graph,
-                                   partition, OBB, and bridge stages
+                                   query/path orchestration utilities shared by
+                                   graph, partition, OBB, and bridge stages
 src/planning_forest_query_utils_shortcut.cpp
                                    collision-checked shortcut and path
                                    hybridization helpers
