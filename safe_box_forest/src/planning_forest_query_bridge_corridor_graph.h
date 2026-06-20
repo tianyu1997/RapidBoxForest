@@ -53,7 +53,6 @@ QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     int box_index,
     int transition_hint,
     double tolerance,
-    bool local_sample_scan,
     QueryBridgeLocalDsu& dsu,
     std::vector<std::vector<int>>& sample_layers,
     std::vector<bool>& covered);

@@ -122,7 +122,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
 
     QueryBridgeLocalDsu dsu(boxes_.size());
     QueryBridgeDirectCorridorRuntimeStats runtime_stats;
-    constexpr bool local_assimilate_sample_scan = true;
     auto append_direct_partition_batch = [&](bool force) {
         if (!immediate_partition_append ||
             !adaptive_partition_ ||
@@ -232,7 +231,6 @@ int RBFPlanningForest::try_query_bridge_direct_ffb_corridor(
                 box_index,
                 transition_hint,
                 config_.query.adjacency_tolerance,
-                local_assimilate_sample_scan,
                 dsu,
                 sample_layers,
                 covered);

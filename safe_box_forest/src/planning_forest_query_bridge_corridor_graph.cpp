@@ -57,7 +57,6 @@ QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     int box_index,
     int transition_hint,
     double tolerance,
-    bool local_sample_scan,
     QueryBridgeLocalDsu& dsu,
     std::vector<std::vector<int>>& sample_layers,
     std::vector<bool>& covered) {
@@ -95,7 +94,7 @@ QueryBridgeSampleAssimilationResult query_bridge_assimilate_box_samples(
     };
 
     bool used_full_sample_scan = true;
-    if (local_sample_scan && !samples.empty()) {
+    if (!samples.empty()) {
         used_full_sample_scan = false;
         int anchor = -1;
         const std::array<int, 5> anchors = {
