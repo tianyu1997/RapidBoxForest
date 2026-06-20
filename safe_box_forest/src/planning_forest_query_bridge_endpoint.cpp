@@ -5,13 +5,13 @@
 
 #include "planning_forest_diagnostics.h"
 #include "planning_forest_qroot_helpers.h"
+#include "planning_forest_query_bridge_endpoint_index.h"
 #include "planning_forest_query_bridge_endpoint_targets.h"
 #include "planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -89,22 +89,23 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         return 0;
     }
 
-    std::unordered_map<int, std::size_t> box_index_by_id;
-    box_index_by_id.reserve(boxes_.size() * 2);
-    for (std::size_t index = 0; index < boxes_.size(); ++index) {
-        box_index_by_id[boxes_[index].id] = index;
-    }
     const bool graphless_endpoint_main = partition_native_mode();
     const bool use_partition_endpoint_index =
         graphless_endpoint_main &&
         adaptive_partition_query_enabled_ &&
         adaptive_partition_;
+    EndpointMainIndexes indexes = build_endpoint_main_indexes(
+        boxes_,
+        main_island,
+        static_cast<int>(point.size()),
+        config_.query.adjacency_tolerance,
+        !use_partition_endpoint_index);
 
     const EndpointMainTargetSet target_set =
         endpoint_main_targets_partition_first(adaptive_partition_.get(),
                                               use_partition_endpoint_index,
                                               boxes_,
-                                              box_index_by_id,
+                                              indexes.box_index_by_id,
                                               point,
                                               main_island,
                                               corridor_config.target_k);
@@ -119,37 +120,6 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
     const auto& targets = target_set.targets;
     const auto& target_box_ids = target_set.target_box_ids;
     const int target_limit = target_set.target_limit;
-
-    std::unordered_map<int, int> node_owner;
-    node_owner.reserve(boxes_.size());
-    for (const auto& box : boxes_) {
-        if (node_owner.find(box.tree_id) == node_owner.end()) {
-            node_owner[box.tree_id] = box.id;
-        }
-    }
-    BoxSpatialIndex all_box_index;
-
-    std::vector<int> main_box_ids;
-    std::vector<BoxNode> main_boxes;
-    BoxSpatialIndex main_box_index;
-    if (!use_partition_endpoint_index) {
-        all_box_index.rebuild(boxes_, config_.query.adjacency_tolerance);
-        main_box_ids.reserve(main_island.size());
-        main_boxes.reserve(main_island.size());
-        for (int box_id : main_island) {
-            auto it = box_index_by_id.find(box_id);
-            if (it == box_index_by_id.end()) {
-                continue;
-            }
-            const BoxNode& box = boxes_[it->second];
-            if (box.n_dims() != point.size()) {
-                continue;
-            }
-            main_box_ids.push_back(box_id);
-            main_boxes.push_back(box);
-        }
-        main_box_index.rebuild(main_boxes, config_.query.adjacency_tolerance);
-    }
 
     int next_id = next_box_id();
     auto finish_endpoint_main = [&](int value) {
@@ -179,8 +149,8 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
                                          std::max(1, requested_final_depth));
 
     auto box_by_id = [&](int box_id) -> BoxNode* {
-        auto it = box_index_by_id.find(box_id);
-        if (it == box_index_by_id.end() || it->second >= boxes_.size()) {
+        auto it = indexes.box_index_by_id.find(box_id);
+        if (it == indexes.box_index_by_id.end() || it->second >= boxes_.size()) {
             return nullptr;
         }
         return &boxes_[it->second];
@@ -231,20 +201,20 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             }
             return -1;
         }
-        auto candidates = main_box_index.point_candidates(q);
+        auto candidates = indexes.main_box_index.point_candidates(q);
         if (candidates.empty()) {
-            candidates.reserve(main_boxes.size());
-            for (int index = 0; index < static_cast<int>(main_boxes.size()); ++index) {
+            candidates.reserve(indexes.main_boxes.size());
+            for (int index = 0; index < static_cast<int>(indexes.main_boxes.size()); ++index) {
                 candidates.push_back(index);
             }
         }
         for (int index : candidates) {
-            if (index < 0 || index >= static_cast<int>(main_boxes.size())) {
+            if (index < 0 || index >= static_cast<int>(indexes.main_boxes.size())) {
                 continue;
             }
-            const BoxNode& box = main_boxes[static_cast<std::size_t>(index)];
+            const BoxNode& box = indexes.main_boxes[static_cast<std::size_t>(index)];
             if (box.contains(q, config_.query.adjacency_tolerance)) {
-                return main_box_ids[static_cast<std::size_t>(index)];
+                return indexes.main_box_ids[static_cast<std::size_t>(index)];
             }
         }
         return -1;
@@ -266,7 +236,7 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             }
             return -1;
         }
-        const int index = all_box_index.covering_box(
+        const int index = indexes.all_box_index.covering_box(
             boxes_,
             q,
             config_.query.adjacency_tolerance);
@@ -379,18 +349,18 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
             parent_box != nullptr && parent_box->root_id >= 0 ? parent_box->root_id : parent_box_id;
         candidate.id = next_id++;
         const int new_id = candidate.id;
-        if (node_owner.find(candidate.tree_id) == node_owner.end()) {
+        if (indexes.node_owner.find(candidate.tree_id) == indexes.node_owner.end()) {
             oracle_->reserve_node(candidate.tree_id, new_id);
-            node_owner[candidate.tree_id] = new_id;
+            indexes.node_owner[candidate.tree_id] = new_id;
         }
         boxes_.push_back(candidate);
         raw_boxes_.push_back(candidate);
         const std::size_t new_index = boxes_.size() - 1;
-        box_index_by_id[new_id] = new_index;
+        indexes.box_index_by_id[new_id] = new_index;
         if (!use_partition_endpoint_index) {
-            all_box_index.add_box(boxes_.back(),
-                                  static_cast<int>(new_index),
-                                  config_.query.adjacency_tolerance);
+            indexes.all_box_index.add_box(boxes_.back(),
+                                          static_cast<int>(new_index),
+                                          config_.query.adjacency_tolerance);
         } else {
             adaptive_partition_->append_box(boxes_.back(),
                                             config_.query.adjacency_tolerance);
