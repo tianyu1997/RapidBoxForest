@@ -479,6 +479,12 @@ private:
 										 int query_index = -1,
 										 BuildProfile* profile = nullptr,
 										 const char* diagnostic_prefix = nullptr);
+	bool try_add_endpoint_main_residual_segment_edge(
+		int front_box_id,
+		int target_box_id,
+		const Eigen::Ref<const Eigen::VectorXd>& target_point,
+		bool max_depth_ffb_failed,
+		double max_segment_length);
 	int try_add_clearance_retry_obb_edge(
 		int source_box_id,
 		int target_box_id,
