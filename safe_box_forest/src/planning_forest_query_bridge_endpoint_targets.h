@@ -24,6 +24,13 @@ struct EndpointMainSamplePlan {
     int target_owner = -1;
 };
 
+struct EndpointMainTargetSet {
+    std::vector<EndpointMainTargetCandidate> targets;
+    std::vector<int> target_box_ids;
+    int target_limit = 0;
+    bool used_partition_index = false;
+};
+
 std::vector<EndpointMainTargetCandidate> endpoint_main_partition_targets(
     const AdaptiveGridPartition& partition,
     const Eigen::VectorXd& point,
@@ -37,6 +44,15 @@ std::vector<EndpointMainTargetCandidate> endpoint_main_graph_targets(
     const std::vector<int>& main_island);
 
 void sort_endpoint_main_targets(std::vector<EndpointMainTargetCandidate>& targets);
+
+EndpointMainTargetSet endpoint_main_targets_partition_first(
+    const AdaptiveGridPartition* partition,
+    bool use_partition_index,
+    const std::vector<BoxNode>& boxes,
+    const std::unordered_map<int, std::size_t>& box_index_by_id,
+    const Eigen::VectorXd& point,
+    const std::vector<int>& main_island,
+    int target_k);
 
 EndpointMainSamplePlan endpoint_main_sample_plan(
     const Eigen::VectorXd& point,

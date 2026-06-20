@@ -100,34 +100,25 @@ int RBFPlanningForest::connect_query_endpoint_to_main_box_corridor(
         adaptive_partition_query_enabled_ &&
         adaptive_partition_;
 
-    std::vector<EndpointMainTargetCandidate> targets;
-    if (use_partition_endpoint_index) {
-        targets = endpoint_main_partition_targets(
-            *adaptive_partition_,
-            point,
-            main_island,
-            corridor_config.target_k);
-        add_diag("partition_nearest_target_queries");
-    } else {
-        targets = endpoint_main_graph_targets(boxes_,
+    const EndpointMainTargetSet target_set =
+        endpoint_main_targets_partition_first(adaptive_partition_.get(),
+                                              use_partition_endpoint_index,
+                                              boxes_,
                                               box_index_by_id,
                                               point,
-                                              main_island);
+                                              main_island,
+                                              corridor_config.target_k);
+    if (target_set.used_partition_index) {
+        add_diag("partition_nearest_target_queries");
     }
-    if (targets.empty()) {
+    if (target_set.targets.empty()) {
         add_diag("missing_target");
         add_diag("fallback_to_e2e");
         return 0;
     }
-    sort_endpoint_main_targets(targets);
-    const int target_limit = std::min<int>(
-        std::max(1, corridor_config.target_k),
-        static_cast<int>(targets.size()));
-    std::vector<int> target_box_ids;
-    target_box_ids.reserve(static_cast<std::size_t>(target_limit));
-    for (int item = 0; item < target_limit; ++item) {
-        target_box_ids.push_back(targets[static_cast<std::size_t>(item)].box_id);
-    }
+    const auto& targets = target_set.targets;
+    const auto& target_box_ids = target_set.target_box_ids;
+    const int target_limit = target_set.target_limit;
 
     std::unordered_map<int, int> node_owner;
     node_owner.reserve(boxes_.size());

@@ -71,6 +71,43 @@ void sort_endpoint_main_targets(std::vector<EndpointMainTargetCandidate>& target
               });
 }
 
+EndpointMainTargetSet endpoint_main_targets_partition_first(
+    const AdaptiveGridPartition* partition,
+    bool use_partition_index,
+    const std::vector<BoxNode>& boxes,
+    const std::unordered_map<int, std::size_t>& box_index_by_id,
+    const Eigen::VectorXd& point,
+    const std::vector<int>& main_island,
+    int target_k) {
+    EndpointMainTargetSet target_set;
+    if (use_partition_index && partition != nullptr) {
+        target_set.targets = endpoint_main_partition_targets(
+            *partition,
+            point,
+            main_island,
+            target_k);
+        target_set.used_partition_index = true;
+    } else {
+        target_set.targets = endpoint_main_graph_targets(boxes,
+                                                         box_index_by_id,
+                                                         point,
+                                                         main_island);
+    }
+    if (target_set.targets.empty()) {
+        return target_set;
+    }
+    sort_endpoint_main_targets(target_set.targets);
+    target_set.target_limit = std::min<int>(
+        std::max(1, target_k),
+        static_cast<int>(target_set.targets.size()));
+    target_set.target_box_ids.reserve(static_cast<std::size_t>(target_set.target_limit));
+    for (int item = 0; item < target_set.target_limit; ++item) {
+        target_set.target_box_ids.push_back(
+            target_set.targets[static_cast<std::size_t>(item)].box_id);
+    }
+    return target_set;
+}
+
 EndpointMainSamplePlan endpoint_main_sample_plan(
     const Eigen::VectorXd& point,
     const EndpointMainTargetCandidate& target,
