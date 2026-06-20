@@ -98,10 +98,15 @@ src/lect_database/                 core persistence implementation
                                    sidecar load/save, and resident cache trim
   database_file_layout.cpp         manifest, node-page, journal, and evidence
                                    file-path helpers plus node-row text codec
+  database_journal.cpp             write-ahead journal replay, append stream,
+                                   and committed transaction writer
   database_mapped_file.cpp         platform-specific read-only evidence mmap
                                    and prefetch RAII wrapper
   database_node_pages.cpp          LECT node page cache, resident-page
                                    accounting, and node-row flush/read/write
+  database_parent_hull.cpp         parent-hull evidence propagation,
+                                   deferred parent writes, and bottom-up
+                                   internal hull materialization
   database_query.cpp               tree topology navigation, node box lookup,
                                    exact box lookup, and interval range query
   database_tree.cpp                LECT tree split/build mutation, node-id

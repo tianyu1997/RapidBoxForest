@@ -62,8 +62,10 @@ add_library(lect_database_core STATIC
     src/lect_database/database_evidence_store.cpp
     src/lect_database/database_evidence_index.cpp
     src/lect_database/database_file_layout.cpp
+    src/lect_database/database_journal.cpp
     src/lect_database/database_mapped_file.cpp
     src/lect_database/database_node_pages.cpp
+    src/lect_database/database_parent_hull.cpp
     src/lect_database/database_query.cpp
     src/lect_database/database_tree.cpp
     src/lect_database/read_snapshot.cpp
