@@ -1,4 +1,6 @@
 #include <SBF/sbf.h>
+#include <SBF/detail.h>
+#include <SBF/adaptive_grid_partition.h>
 #include <rbf/lect_database/evidence_source.h>
 
 #ifdef NDEBUG

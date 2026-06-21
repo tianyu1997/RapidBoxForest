@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/box_graph.h>
+#include <SBF/merger_types.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <vector>
 

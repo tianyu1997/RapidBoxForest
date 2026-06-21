@@ -288,6 +288,7 @@ struct IntervalEvidenceCompatibility {
 
 class BoxOracle;
 class BoxOracleSession;
+class DatabaseBoxOracle;
 
 struct OracleSessionConfig {
     int worker_id = -1;

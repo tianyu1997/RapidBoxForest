@@ -3,7 +3,8 @@
 #include "planning_forest_adaptive_merge.h"
 
 #include <SBF/box_graph.h>
-#include <SBF/safe_box_forest.h>
+#include <SBF/build_config.h>
+#include <SBF/planning_result.h>
 
 #include <string>
 #include <unordered_map>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/api.h>
 
 #include <algorithm>
 #include <cmath>

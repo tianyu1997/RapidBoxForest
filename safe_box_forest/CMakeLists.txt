@@ -258,7 +258,12 @@ endif()
 
 if(SBF_WITH_PYTHON)
     pybind11_add_module(_sbf_cpp python/bindings.cpp)
-    target_link_libraries(_sbf_cpp PRIVATE sbf_core ${OMPL_LIBRARIES})
+    # Python extension modules must carry all sbf_core objects.  The pybind
+    # translation unit only references part of the public facade directly, while
+    # implementation objects reference other sbf_core objects through archive
+    # members.  Linking the static archive normally leaves some of those
+    # transitive definitions unresolved on ELF linkers.
+    target_link_libraries(_sbf_cpp PRIVATE -Wl,--whole-archive sbf_core -Wl,--no-whole-archive ${OMPL_LIBRARIES})
     target_include_directories(_sbf_cpp PRIVATE ${SBF_INCLUDE_DIR} ${OMPL_INCLUDE_DIRS})
     set_target_properties(_sbf_cpp PROPERTIES
         LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/python/sbf

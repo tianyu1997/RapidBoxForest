@@ -1,7 +1,9 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
 #include <SBF/box_graph.h>
+#include <SBF/build_config.h>
+
+#include <Eigen/Core>
 
 #include <unordered_set>
 #include <vector>

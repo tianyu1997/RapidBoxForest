@@ -1,4 +1,5 @@
 #include <SBF/sbf.h>
+#include <SBF/connector.h>
 
 #include <algorithm>
 #include <chrono>

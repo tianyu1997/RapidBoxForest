@@ -1,6 +1,7 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/box_graph.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <chrono>
 #include <vector>
