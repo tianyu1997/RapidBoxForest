@@ -1831,7 +1831,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Widths are rad. Volume is normalized to Analytical; time is endpoint construction. IFK-AA = affine-arithmetic interval forward kinematics; HIFK = hierarchical interval forward kinematics. IFK-AA/HIFK certify; other rows are references. Gap = sampled-union signed gap (mm); -- = omitted.\par}",
+        r"{\scriptsize\emph{Notes:} Widths are rad. Volume is normalized to Analytical; time is endpoint construction. IFK-AA = affine-arithmetic interval forward kinematics; HIFK = hierarchical interval forward kinematics. IFK-AA/HIFK certify; other rows are references. Gap = sampled-union signed gap; -- = omitted.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1913,7 +1913,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.35ex}",
-        r"{\scriptsize\emph{Notes:} Widths are rad; volume is mean workspace volume. AABB = axis-aligned bounding box; SupportHull = support-function hull. Test time pools far/local probes; build excludes endpoint envelopes.\par}",
+        r"{\scriptsize\emph{Notes:} Widths are rad; volume is mean workspace volume. AABB = axis-aligned bounding box; SupportHull = support-function hull. Test pools far/local probes; build excludes endpoint envelopes.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3337,7 +3337,7 @@ def generate_exp04_table(
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\) (quartiles); times in s. Build = reusable build; Amort.\ 5q = Build/5 + \onlineq{}; \onlineq{} excludes simplification/validation. RBF = RapidBoxForest; AABB = axis-aligned bounding box; HIFK = hierarchical interval forward kinematics; SupportHull = support-function hull. Critical sample is non-certifying. \(L/L^\star\) = same-query empirical 0.01~rad reference ratio.\par}",
+        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Build is reusable; Amort.\ 5q \(=\) Build/5+\onlineq{}; \onlineq{} excludes simplification/validation. AABB = axis-aligned bounding box; HIFK = hierarchical interval forward kinematics; SupportHull = support-function hull. Critical sample is non-certifying; \(L/L^\star\) uses the same-query 0.01~rad reference.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3567,11 +3567,11 @@ def generate_exp05_table(
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
-            r"Median \([Q_1,Q_3]\) (quartiles); times in s. Header Build = reusable build; \(T=\onlineq{}\) excludes simplification/validation. "
-            r"\(L/L^\star\) = same-query empirical 0.01~rad reference ratio. "
-            r"RBF b100 = fixed 100-box Shelf point; IRIS/GCS = Iterative Regional Inflation + Graphs of Convex Sets; "
+            r"Median \([Q_1,Q_3]\), s. Header Build is reusable; \(T=\onlineq{}\) excludes simplification/validation. "
+            r"\(L/L^\star\) uses the same-query 0.01~rad reference. "
+            r"IRIS/GCS = Iterative Regional Inflation/Graphs of Convex Sets; "
             r"PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees. "
-            r"AS/TS/CS/LB/RB = approach/target/center/left/right anchors."
+            r"Anchors as in Fig.~\ref{fig:tro_shelf_scene}."
         ),
         include_segment=False,
         time_unit="s",
@@ -4308,7 +4308,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     caption = r"\captionof{table}{Saved-catalog random-scene operating points.}"
     path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
     notes = (
-        r"Median \([Q_1,Q_3]\) (quartiles); times in s. IIWA/UR5/Panda = KUKA LBR iiwa/Universal Robots UR5/Franka Emika Panda. Direct successes are pruned; catalogs retain ten queries/scene. Build is reusable for \rbf{}/PRM; RRT-Connect/BIT* are single-query. \onlineq{} excludes simplification/validation; \(L/L^\star_{\mathrm{q}}\) = same-query empirical 0.01~rad reference ratio. RBF = RapidBoxForest; PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees."
+        r"Median \([Q_1,Q_3]\), s. IIWA/UR5/Panda = KUKA LBR iiwa/Universal Robots UR5/Franka Emika Panda. Direct successes are pruned; catalogs retain ten queries/scene. Build is reusable for \rbf{}/PRM; RRT-Connect/BIT* are single-query. \onlineq{} excludes simplification/validation; \(L/L^\star_{\mathrm{q}}\) uses the same-query 0.01~rad reference."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"
