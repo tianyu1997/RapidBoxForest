@@ -17,6 +17,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from export_public_release import (  # noqa: E402
     DEFAULT_EXCLUDE_PATTERNS,
+    FORBIDDEN_SOURCE_DIR_NAMES,
     allowed as export_allowed,
     check_forbidden_source_sidecars,
     excluded as export_excluded,
@@ -60,8 +61,21 @@ TRACKED_GENERATED_PATTERNS = (
     "*.fls",
 )
 
+STALE_REFERENCE_TERMS = tuple(
+    sorted(
+        {
+            "sbf_old",
+            "legacy_demos",
+            "SBF_OLD_DIR",
+            "paper/sbf_old",
+            "experiments/archive",
+            "github.com/tianyu1997/SafeBoxForest",
+            *FORBIDDEN_SOURCE_DIR_NAMES,
+        }
+    )
+)
 STALE_REFERENCE_RE = re.compile(
-    r"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|improve_workspace|github\.com/tianyu1997/SafeBoxForest)",
+    "(" + "|".join(re.escape(term) for term in STALE_REFERENCE_TERMS) + ")",
     re.IGNORECASE,
 )
 
@@ -78,6 +92,20 @@ SKIP_SCAN_DIRS = {
     "outputs",
     "tmp",
 }
+CORE_ENV_SCAN_ROOTS = (
+    "safe_box_forest/src",
+    "safe_box_forest/include",
+    "lect_database/src",
+    "lect_database/include",
+    "link_interval_envelope/src",
+    "link_interval_envelope/include",
+)
+CORE_GETENV_ALLOWLIST_REASONS = {
+    "lect_database/src/sbf/oracle_options.h": "centralized oracle debug toggles",
+    "link_interval_envelope/include/sbf/core/log.h": "centralized logging configuration",
+}
+CORE_GETENV_ALLOWLIST = set(CORE_GETENV_ALLOWLIST_REASONS)
+CORE_GETENV_RE = re.compile(r"(?:std::)?getenv\s*\(")
 
 
 def parse_args() -> argparse.Namespace:
@@ -285,6 +313,8 @@ def check_stale_references(root: Path) -> list[str]:
     hits: list[str] = []
     suffixes = {".cff", ".cmake", ".cpp", ".h", ".hpp", ".json", ".md", ".py", ".sh", ".tex", ".txt", ".yaml", ".yml"}
     allowlist = {
+        "docs/ARCHITECTURE.md",
+        "docs/README.md",
         "scripts/check_public_release.py",
         "scripts/check_release_readiness.py",
         "scripts/export_public_release.py",
@@ -310,6 +340,28 @@ def check_stale_references(root: Path) -> list[str]:
         if STALE_REFERENCE_RE.search(text):
             hits.append(rel)
     return [f"stale historical references outside allowlist: {hits[:20]}"] if hits else []
+
+
+def check_core_environment_reads(root: Path) -> list[str]:
+    hits: list[str] = []
+    suffixes = {".c", ".cc", ".cpp", ".h", ".hpp"}
+    for rel_root in CORE_ENV_SCAN_ROOTS:
+        scan_root = root / rel_root
+        if not scan_root.exists():
+            continue
+        for path in scan_root.rglob("*"):
+            if not path.is_file() or path.suffix not in suffixes:
+                continue
+            rel = path.relative_to(root).as_posix()
+            if rel in CORE_GETENV_ALLOWLIST:
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            if CORE_GETENV_RE.search(text):
+                hits.append(rel)
+    return [f"direct core getenv reads outside option/log helpers: {hits[:20]}"] if hits else []
 
 
 def check_cache_manifest(root: Path, manifest: Path | None, *, strict: bool, archive_dir: Path | None) -> list[str]:
@@ -362,6 +414,7 @@ def check_public_tree(root: Path, public_tree: Path | None, *, strict: bool) -> 
         sys.executable,
         str(root / "scripts/check_public_release.py"),
         str(public_tree),
+        "--check-release-tools",
         "--run-smoke-dry-run",
     ]
     if strict:
@@ -437,6 +490,7 @@ def main() -> int:
     errors.extend(check_tracked_generated(root))
     errors.extend(check_citations(root, strict=args.strict))
     errors.extend(check_stale_references(root))
+    errors.extend(check_core_environment_reads(root))
     errors.extend(check_cache_manifest(root, args.cache_manifest, strict=args.strict, archive_dir=args.cache_archive_dir))
     errors.extend(check_paper_manifest(root))
     errors.extend(check_public_tree(root, args.public_tree.resolve() if args.public_tree else None, strict=args.strict))

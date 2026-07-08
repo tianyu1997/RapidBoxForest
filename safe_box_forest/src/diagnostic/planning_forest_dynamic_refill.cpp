@@ -1,5 +1,6 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/diagnostic_result.h>
 #include <SBF/oracle.h>
 
 #include <algorithm>
@@ -7,7 +8,7 @@
 #include <utility>
 #include <vector>
 
-#include "planning_forest_qroot_helpers.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
 
 namespace rbf {
 

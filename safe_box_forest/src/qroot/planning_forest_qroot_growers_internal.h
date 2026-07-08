@@ -1,7 +1,7 @@
 #pragma once
 
 #include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <limits>
 #include <vector>

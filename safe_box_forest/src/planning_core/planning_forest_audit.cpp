@@ -1,5 +1,8 @@
 #include "planning_forest_audit.h"
 
+#include <SBF/scene.h>
+#include <SBF/segment_edge_types.h>
+
 #include <algorithm>
 #include <cmath>
 

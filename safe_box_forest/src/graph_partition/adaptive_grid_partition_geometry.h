@@ -1,6 +1,7 @@
 #pragma once
 
-#include <SBF/adaptive_grid_partition.h>
+#include <SBF/adaptive_grid_partition_types.h>
+#include <SBF/segment_edge_fwd.h>
 
 #include <cstdint>
 #include <vector>

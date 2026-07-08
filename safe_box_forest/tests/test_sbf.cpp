@@ -1,6 +1,11 @@
-#include <SBF/sbf.h>
-#include <SBF/detail.h>
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+#include <SBF/connector.h>
+#include <SBF/merger.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+#include <SBF/safe_box_forest.h>
+#include <SBF/scene.h>
 #include <rbf/lect_database/evidence_source.h>
 
 #ifdef NDEBUG
@@ -1021,6 +1026,7 @@ void test_adaptive_leaf_sweep_empty_scene() {
 	         ++edge_index) {
 	        assert(forest.segment_edges()[edge_index].type == rbf::SegmentEdgeType::BoxCorridor);
 	    }
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
 	    const auto fallback = forest.connect_update_segment_fallback();
 	    const auto fallback_diag = fallback.diagnostics.find("segment_fallback.partition_native");
 	    assert(fallback_diag != fallback.diagnostics.end());
@@ -1032,6 +1038,7 @@ void test_adaptive_leaf_sweep_empty_scene() {
 	    assert(endpoint_diag != endpoint_fallback.diagnostics.end());
 	    assert(endpoint_diag->second >= 1.0);
 	    assert(forest.adjacency().empty());
+#endif
 	}
 
 void test_leaf_sweep_refined_domain_invariant() {
@@ -1145,6 +1152,7 @@ void test_portal_membership_global_only_policy() {
     assert(diagnostic_value(diagnostics, "query_bridge.endpoint_anchor_already_covered") >= 1.0);
 }
 
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
 void test_obstacle_rebuild() {
     auto robot = make_toy_robot();
     auto config = base_config("sbf_obstacle_rebuild");
@@ -1160,6 +1168,7 @@ void test_obstacle_rebuild() {
     assert(rebuild.boxes_before == before);
     assert(rebuild.boxes_after <= rebuild.boxes_before);
 }
+#endif
 
 void test_query_audit_gated_repair_without_graph() {
     auto robot = make_toy_robot();
@@ -1208,7 +1217,9 @@ int main() {
     test_leaf_sweep_refined_domain_invariant();
     test_endpoint_main_corridor_already_main_noop();
     test_portal_membership_global_only_policy();
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
     test_obstacle_rebuild();
+#endif
     test_query_audit_gated_repair_without_graph();
     std::cout << "SBF C++ tests passed.\n";
     return 0;

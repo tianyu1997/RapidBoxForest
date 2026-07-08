@@ -1,7 +1,8 @@
 #pragma once
 
-#include <SBF/box_graph.h>
-#include <SBF/scene.h>
+#include <SBF/scene_types.h>
+
+#include <rbf/core.h>
 
 #include <functional>
 #include <string>

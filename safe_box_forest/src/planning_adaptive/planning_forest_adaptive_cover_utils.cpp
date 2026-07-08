@@ -1,7 +1,10 @@
 #include "planning_forest_adaptive_cover_utils.h"
 
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
+
+#include <SBF/oracle.h>
+#include <SBF/planning_result.h>
 
 #include <algorithm>
 #include <cstdint>

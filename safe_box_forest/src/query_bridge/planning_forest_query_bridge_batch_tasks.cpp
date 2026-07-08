@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/runtime.h>
+
 #include <SBF/oracle.h>
 
 #include "planning_forest_query_bridge_diagnostics.h"
@@ -7,7 +9,7 @@
 #include "planning_forest_query_bridge_policy.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
 #include "planning_forest_query_bridge_task.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <stdexcept>

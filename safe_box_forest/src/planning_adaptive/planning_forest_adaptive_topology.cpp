@@ -1,5 +1,7 @@
 #include <SBF/safe_box_forest.h>
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+#include <SBF/oracle.h>
 
 #include "planning_forest_adaptive_cover_utils.h"
 #include "planning_forest_adaptive_merge.h"

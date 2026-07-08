@@ -1,8 +1,10 @@
 #pragma once
 
-#include <SBF/box_graph.h>
-#include <SBF/build_config.h>
-#include <SBF/scene.h>
+#include <SBF/box_adjacency_types.h>
+#include <SBF/dynamic_update_config.h>
+#include <SBF/scene_types.h>
+
+#include <rbf/core.h>
 
 #include <unordered_set>
 #include <vector>

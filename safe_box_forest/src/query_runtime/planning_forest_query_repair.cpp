@@ -1,8 +1,13 @@
 #include "planning_forest_query_repair.h"
 
+#include <SBF/scene.h>
+
 #include "planning_forest_query_utils.h"
 
+#include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/planning_config.h>
+#include <SBF/segment_edge_types.h>
 
 #include <algorithm>
 #include <cmath>

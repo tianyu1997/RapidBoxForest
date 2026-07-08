@@ -1,4 +1,5 @@
 #include <SBF/leaf_sweep_grower.h>
+#include <SBF/oracle.h>
 
 #include <algorithm>
 #include <cstddef>

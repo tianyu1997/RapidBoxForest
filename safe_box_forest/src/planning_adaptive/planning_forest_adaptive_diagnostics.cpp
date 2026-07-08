@@ -1,6 +1,12 @@
 #include "planning_forest_adaptive_diagnostics.h"
 
-#include "planning_forest_diagnostics.h"
+#include <SBF/runtime.h>
+
+#include "planning_forest_adaptive_merge.h"
+#include "../planning_core/planning_forest_diagnostics.h"
+
+#include <SBF/box_graph.h>
+#include <SBF/planning_result.h>
 
 namespace rbf {
 

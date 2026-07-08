@@ -1,4 +1,4 @@
-#include <SBF/sbf.h>
+#include <SBF/box_graph.h>
 
 #include <algorithm>
 #include <chrono>

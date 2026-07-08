@@ -103,6 +103,9 @@ ARCHIVE_PATTERNS = (
 
 FORBIDDEN_SOURCE_DIR_NAMES = {
     "improve_workspace",
+    "rbf_v2",
+    "sbf-standalone",
+    "sbf_v2",
 }
 
 SOURCE_TREE_SCAN_SKIP_DIRS = {

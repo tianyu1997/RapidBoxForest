@@ -1,7 +1,9 @@
 #pragma once
 
-#include <SBF/leaf_sweep_grower.h>
-#include <SBF/oracle.h>
+#include <SBF/leaf_sweep_types.h>
+#include <SBF/runtime_fwd.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
 
 namespace rbf {
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/connector.h>
+#include <SBF/connector_types.h>
 
 #include <Eigen/Core>
 

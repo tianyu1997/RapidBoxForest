@@ -1,6 +1,8 @@
 #include "planning_forest_query_bridge_endpoint_targets.h"
 
-#include "planning_forest_query_utils.h"
+#include <SBF/adaptive_grid_partition.h>
+
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <utility>

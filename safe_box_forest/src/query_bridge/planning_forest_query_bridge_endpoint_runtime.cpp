@@ -1,7 +1,10 @@
 #include "planning_forest_query_bridge_endpoint_runtime.h"
 
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 

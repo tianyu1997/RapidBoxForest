@@ -1,8 +1,8 @@
 #pragma once
 
-#include <SBF/box_graph.h>
+#include "../qroot/planning_forest_qroot_helpers.h"
 
-#include "planning_forest_qroot_helpers.h"
+#include <rbf/core.h>
 
 #include <cstddef>
 #include <unordered_map>

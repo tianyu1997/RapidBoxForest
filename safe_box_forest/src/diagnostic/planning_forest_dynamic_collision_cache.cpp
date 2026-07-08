@@ -1,5 +1,6 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/diagnostic_result.h>
 #include <SBF/oracle.h>
 
 #include <algorithm>
@@ -11,10 +12,22 @@
 
 #include "planning_forest_dynamic_helpers.h"
 #include "planning_forest_dynamic_collision_cache_state.h"
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 namespace rbf {
+
+void DynamicCollisionCacheStateDeleter::operator()(DynamicCollisionCacheState* state) const {
+    delete state;
+}
+
+void RBFPlanningForest::initialize_dynamic_collision_cache() {
+    dynamic_collision_cache_.reset(new DynamicCollisionCacheState());
+}
+
+int RBFPlanningForest::dynamic_collision_cache_box_count() const {
+    return dynamic_collision_cache_ ? static_cast<int>(dynamic_collision_cache_->boxes.size()) : 0;
+}
 
 void RBFPlanningForest::populate_dynamic_collision_cache(const LeafSweepResult& result,
                                                          int obstacle_count) {

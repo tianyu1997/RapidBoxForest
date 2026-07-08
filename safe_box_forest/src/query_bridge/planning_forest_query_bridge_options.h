@@ -1,8 +1,7 @@
 #pragma once
 
-#include <SBF/api.h>
-#include <SBF/planning_config.h>
-#include <SBF/runtime.h>
+#include <SBF/query_result.h>
+#include <SBF/runtime_fwd.h>
 
 #include "planning_forest_query_bridge_task.h"
 
@@ -11,6 +10,8 @@
 #include <vector>
 
 namespace rbf {
+
+struct RBFPlanningConfig;
 
 struct QueryBridgeAcceptanceThresholds {
     double max_segment_fraction = 0.25;

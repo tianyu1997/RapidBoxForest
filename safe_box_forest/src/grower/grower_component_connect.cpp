@@ -1,8 +1,11 @@
 #include <SBF/grower.h>
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,7 +44,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
         component_graph_ptr = &local_component_graph;
         context.diagnostics().set_value("grower.component_connect_components",
                                         static_cast<double>(component_graph_ptr->components.size()));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_connected_root_pairs_max",
                            static_cast<double>(component_graph_ptr->connected_cross_root_pairs));
     }
@@ -128,7 +131,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
     std::sort(targets.begin(), targets.end(), target_less);
     const int target_limit = std::max(1, std::min(config_.component_connect_candidate_limit,
                                                  static_cast<int>(targets.size())));
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.component_connect_target_roots_considered_max",
                        static_cast<double>(target_limit));
 
@@ -179,7 +182,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                                          (parent_center - target_summary.center).squaredNorm()});
             if (staged) {
                 context.diagnostics().add_counter("grower.component_connect_staged_targets");
-                set_max_diagnostic(context,
+                set_grower_max_diagnostic(context,
                                    "grower.component_connect_stage_distance_max",
                                    staged_distance);
             }
@@ -216,14 +219,14 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
             candidates.push_back(coarse_candidates[static_cast<std::size_t>(coarse_index)]);
         }
         context.diagnostics().add_counter("grower.component_connect_component_target_tasks");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_component_target_limit_max",
                            static_cast<double>(coarse_limit));
     } else {
         const int refine_target = std::max(8, std::max(1, config_.component_connect_candidate_limit) * 4);
         const int refine_limit = std::min(static_cast<int>(coarse_candidates.size()), refine_target);
         context.diagnostics().add_counter("grower.component_connect_actual_target_refine_calls");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_actual_target_refine_limit_max",
                            static_cast<double>(refine_limit));
 
@@ -268,7 +271,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                         found_actual_target = true;
                         if (staged) {
                             context.diagnostics().add_counter("grower.component_connect_staged_targets");
-                            set_max_diagnostic(context,
+                            set_grower_max_diagnostic(context,
                                                "grower.component_connect_stage_distance_max",
                                                staged_distance);
                         }
@@ -280,7 +283,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
             }
             candidates.push_back(std::move(best));
         }
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_actual_target_boxes_scanned_max",
                            static_cast<double>(target_boxes_scanned));
     }
@@ -293,7 +296,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
         std::uniform_real_distribution<double> u01(0.0, 1.0);
         choice_index = std::min(choice_limit - 1,
                                 static_cast<int>(u01(rng_) * u01(rng_) * choice_limit));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_candidate_rank_max",
                            static_cast<double>(choice_index));
     }
@@ -301,7 +304,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
     const auto& parent = boxes[static_cast<std::size_t>(best.parent)];
     if (config_.component_connect_neighbor_root_bias && best.root_order_gap <= neighbor_window) {
         context.diagnostics().add_counter("grower.component_connect_neighbor_root_selected");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_neighbor_root_gap_max",
                            static_cast<double>(best.root_order_gap));
     }
@@ -325,7 +328,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                                         &context)) {
         context.diagnostics().add_counter("grower.component_connect_no_frontier_seed");
         const int failures = ++component_parent_failures_[parent.id];
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_parent_failure_max",
                            static_cast<double>(failures));
         return false;
@@ -361,7 +364,7 @@ bool RrtGrower::make_component_connect_seed_for_root(const std::vector<BoxNode>&
                 if (!seed_covered_by_frontier_cache(boxes, candidate_seed, &context)) {
                     seed = std::move(candidate_seed);
                     context.diagnostics().add_counter("grower.component_connect_lateral_seed");
-                    set_max_diagnostic(context,
+                    set_grower_max_diagnostic(context,
                                        "grower.component_connect_lateral_attempt_max",
                                        static_cast<double>(attempt + 1));
                     applied = true;

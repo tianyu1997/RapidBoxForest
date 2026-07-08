@@ -9,27 +9,22 @@
 #include <stdexcept>
 #include <utility>
 
-#include "adaptive_grid_partition_options.h"
-#include "planning_forest_dynamic_collision_cache_state.h"
+#include "../graph_partition/adaptive_grid_partition_options.h"
 
 namespace rbf {
 
 RBFPlanningForest::~RBFPlanningForest() = default;
 
-const OracleCounters* RBFPlanningForest::oracle_counters() const {
-    return oracle_ ? &oracle_->counters() : nullptr;
-}
-
 void RBFPlanningForest::clear_forest() {
     boxes_.clear();
     raw_boxes_.clear();
     adjacency_.clear();
-    segment_edges_.clear();
-    adaptive_partition_.reset();
-    adaptive_partition_query_enabled_ = false;
-    has_adaptive_partition_config_ = false;
-    clear_dynamic_collision_cache();
-    if (oracle_) {
+	segment_edges_.clear();
+	adaptive_partition_.reset();
+	adaptive_partition_query_enabled_ = false;
+	has_adaptive_partition_config_ = false;
+	clear_optional_collision_cache();
+	if (oracle_) {
         oracle_->clear_reservations();
     }
     invalidate_query_cache();

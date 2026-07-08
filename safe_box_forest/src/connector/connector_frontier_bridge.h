@@ -1,6 +1,9 @@
 #pragma once
 
-#include <SBF/connector.h>
+#include <SBF/box_adjacency_types.h>
+#include <SBF/connector_types.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/segment_edge_fwd.h>
 
 #include <Eigen/Core>
 
@@ -9,6 +12,9 @@
 #include <vector>
 
 namespace rbf {
+
+class BoxOracle;
+class CollisionChecker;
 
 struct FrontierBridgeCandidate {
     int source_box_id = -1;

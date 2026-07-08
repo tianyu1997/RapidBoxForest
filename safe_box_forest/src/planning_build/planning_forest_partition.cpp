@@ -10,7 +10,7 @@
 #include <string>
 #include <unordered_set>
 
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 namespace rbf {
 
@@ -132,108 +132,6 @@ void RBFPlanningForest::rebuild_adaptive_partition(const AdaptiveLeafSweepConfig
         adaptive_partition_.reset();
     }
     refresh_adaptive_partition_diagnostics(profile);
-}
-
-void RBFPlanningForest::refresh_dynamic_partition_after_update(RebuildProfile& profile,
-                                                               const char* diagnostic_prefix) {
-    if (!partition_native_mode()) {
-        return;
-    }
-    const auto t0 = std::chrono::steady_clock::now();
-    rebuild_adaptive_partition(last_adaptive_partition_config_, nullptr);
-    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, diagnostic_prefix);
-    const double ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - t0).count();
-    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
-        ? std::string(diagnostic_prefix)
-        : std::string("dynamic.partition");
-    profile.diagnostics[prefix + ".rebuild_ms"] += ms;
-    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
-    refresh_adaptive_partition_diagnostics(profile);
-    invalidate_query_cache();
-}
-
-void RBFPlanningForest::refresh_dynamic_partition_after_append(RebuildProfile& profile,
-                                                               std::size_t first_box_index,
-                                                               const char* diagnostic_prefix) {
-    if (!partition_native_mode()) {
-        return;
-    }
-    const auto t0 = std::chrono::steady_clock::now();
-    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
-        ? std::string(diagnostic_prefix)
-        : std::string("dynamic.partition_append");
-    int appended = 0;
-    if (first_box_index < boxes_.size()) {
-        appended = adaptive_partition_->append_boxes(boxes_,
-                                                     first_box_index,
-                                                     config_.query.adjacency_tolerance);
-    }
-    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, prefix.c_str());
-    if (first_box_index < boxes_.size() && appended <= 0) {
-        profile.diagnostics[prefix + ".append_failed_rebuilds"] += 1.0;
-        refresh_dynamic_partition_after_update(profile,
-                                               (prefix + ".rebuild_after_append_failure").c_str());
-        return;
-    }
-    const double ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - t0).count();
-    profile.diagnostics[prefix + ".append_ms"] += ms;
-    profile.diagnostics[prefix + ".boxes_appended"] += static_cast<double>(appended);
-    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
-    refresh_adaptive_partition_diagnostics(profile);
-    invalidate_query_cache();
-}
-
-void RBFPlanningForest::refresh_dynamic_partition_after_remove_append(
-    RebuildProfile& profile,
-    const std::unordered_set<int>& removed_box_ids,
-    std::size_t first_box_index,
-    const char* diagnostic_prefix) {
-    if (!partition_native_mode()) {
-        return;
-    }
-    const auto t0 = std::chrono::steady_clock::now();
-    const std::string prefix = (diagnostic_prefix != nullptr && diagnostic_prefix[0] != '\0')
-        ? std::string(diagnostic_prefix)
-        : std::string("dynamic.partition_delta");
-    const std::size_t expected_appended =
-        first_box_index < boxes_.size() ? boxes_.size() - first_box_index : 0u;
-    AdaptiveGridPartitionDeltaResult delta;
-    if (adaptive_partition_) {
-        delta = adaptive_partition_->replace_box_ids_with_boxes(removed_box_ids,
-                                                                boxes_,
-                                                                first_box_index,
-                                                                config_.query.adjacency_tolerance);
-    }
-    if (!removed_box_ids.empty() &&
-        delta.boxes_removed != static_cast<int>(removed_box_ids.size())) {
-        profile.diagnostics[prefix + ".remove_failed_rebuilds"] += 1.0;
-        profile.diagnostics[prefix + ".boxes_removed_before_rebuild"] +=
-            static_cast<double>(delta.boxes_removed);
-        refresh_dynamic_partition_after_update(profile,
-                                               (prefix + ".rebuild_after_remove_failure").c_str());
-        return;
-    }
-    if (expected_appended > 0u &&
-        delta.boxes_appended != static_cast<int>(expected_appended)) {
-        profile.diagnostics[prefix + ".append_failed_rebuilds"] += 1.0;
-        profile.diagnostics[prefix + ".boxes_appended_before_rebuild"] +=
-            static_cast<double>(delta.boxes_appended);
-        refresh_dynamic_partition_after_update(profile,
-                                               (prefix + ".rebuild_after_append_failure").c_str());
-        return;
-    }
-    const int synced_edges = sync_adaptive_partition_segment_edges(nullptr, prefix.c_str());
-    const double ms = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now() - t0).count();
-    profile.diagnostics[prefix + ".delta_ms"] += ms;
-    profile.diagnostics[prefix + ".replace_ms"] += delta.update_ms;
-    profile.diagnostics[prefix + ".boxes_removed"] += static_cast<double>(delta.boxes_removed);
-    profile.diagnostics[prefix + ".boxes_appended"] += static_cast<double>(delta.boxes_appended);
-    profile.diagnostics[prefix + ".edges_synced"] += static_cast<double>(synced_edges);
-    refresh_adaptive_partition_diagnostics(profile);
-    invalidate_query_cache();
 }
 
 int RBFPlanningForest::append_adaptive_partition_boxes(std::size_t first_box_index,

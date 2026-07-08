@@ -1,9 +1,9 @@
 #pragma once
 
 #include <SBF/connector_types.h>
-#include <SBF/query.h>
-#include <SBF/runtime.h>
-#include <LECTDatabase/sbf/scene.h>
+#include <SBF/query_config.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/scene_types.h>
 
 #include "planning_forest_query_bridge_corridor_options.h"
 

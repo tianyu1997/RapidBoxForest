@@ -2,6 +2,10 @@ add_executable(test_sbf test_sbf.cpp)
 target_link_libraries(test_sbf PRIVATE sbf_core)
 add_test(NAME test_sbf COMMAND test_sbf)
 
+add_executable(test_sbf_facade_surface test_facade_surface.cpp)
+target_link_libraries(test_sbf_facade_surface PRIVATE sbf_core)
+add_test(NAME test_sbf_facade_surface COMMAND test_sbf_facade_surface)
+
 add_executable(connector_birrt_benchmark connector_birrt_benchmark.cpp)
 target_link_libraries(connector_birrt_benchmark PRIVATE sbf_core)
 

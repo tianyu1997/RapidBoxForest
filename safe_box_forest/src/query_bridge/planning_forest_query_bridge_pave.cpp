@@ -1,9 +1,11 @@
 #include <SBF/safe_box_forest.h>
+#include <SBF/runtime.h>
 
 #include <SBF/connector.h>
 #include <SBF/oracle.h>
 
-#include "planning_forest_query_utils.h"
+#include "planning_forest_query_bridge_pave_guard.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>
@@ -145,18 +147,6 @@ int RBFPlanningForest::run_query_bridge_chain_pave(
     return added;
 }
 
-bool RBFPlanningForest::skip_graph_query_bridge_pave_if_partition_native(
-    StageContext& context,
-    const char* counter_name) const {
-    if (!partition_native_mode()) {
-        return false;
-    }
-    if (counter_name != nullptr && counter_name[0] != '\0') {
-        context.diagnostics().add_counter(counter_name);
-    }
-    return true;
-}
-
 std::pair<int, int> RBFPlanningForest::run_query_bridge_reverse_boundary_pave(
     const Eigen::Ref<const Eigen::VectorXd>& start,
     const Eigen::Ref<const Eigen::VectorXd>& goal,
@@ -172,7 +162,8 @@ std::pair<int, int> RBFPlanningForest::run_query_bridge_reverse_boundary_pave(
         box_only_path_connected_partition_first(source_box_id, target_box_id)) {
         return {source_box_id, target_box_id};
     }
-    if (skip_graph_query_bridge_pave_if_partition_native(
+    if (query_bridge_skip_graph_pave_for_partition_native(
+            partition_native_mode(),
             context,
             "query_bridge.partition_graph_reverse_chain_pave_skipped")) {
         return {source_box_id, target_box_id};
@@ -199,24 +190,6 @@ std::pair<int, int> RBFPlanningForest::run_query_bridge_reverse_boundary_pave(
                                           static_cast<double>(reverse_added));
     }
     return locate_query_bridge_boxes(start, goal, context);
-}
-
-void RBFPlanningForest::refresh_query_bridge_direct_corridor_partition(
-    std::size_t boxes_before) {
-    if (boxes_.size() > boxes_before) {
-        append_adaptive_partition_boxes(boxes_before,
-                                        &last_build_,
-                                        "query_bridge.direct_corridor");
-    }
-    sync_adaptive_partition_segment_edges(&last_build_,
-                                          "query_bridge.direct_corridor");
-}
-
-int RBFPlanningForest::finish_query_bridge_direct_corridor(
-    std::size_t boxes_before,
-    int value) {
-    refresh_query_bridge_direct_corridor_partition(boxes_before);
-    return value;
 }
 
 } // namespace rbf

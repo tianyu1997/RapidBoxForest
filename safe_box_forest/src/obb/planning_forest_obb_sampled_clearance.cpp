@@ -1,5 +1,7 @@
 #include "planning_forest_obb_sampled_internal.h"
 
+#include <SBF/scene.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>

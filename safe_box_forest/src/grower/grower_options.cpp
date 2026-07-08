@@ -1,5 +1,7 @@
 #include "grower_options.h"
 
+#include <SBF/runtime.h>
+
 #include "grower_internal.h"
 
 #include <algorithm>
@@ -65,11 +67,11 @@ FindFreeBoxOptions component_connect_ffb_options(const GrowerConfig& config,
     context.diagnostics().add_counter("grower.component_connect_adaptive_ffb_tasks");
     if (pair_unknown_failures > 0) {
         context.diagnostics().add_counter("grower.component_connect_unknown_depth_retry_tasks");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_pair_unknown_failures_max",
                            static_cast<double>(pair_unknown_failures));
     }
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.component_connect_adaptive_ffb_depth_max",
                        static_cast<double>(options.max_depth));
     return options;

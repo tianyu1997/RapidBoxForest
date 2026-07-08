@@ -35,9 +35,10 @@ local paths, and discarded implementation attempts.
   explicitly with `--only`.
 - `scripts/export_public_release.py` exports an allowlisted public source tree
   and excludes local outputs, caches, build trees, and historical archives by
-  default. It fails if a forbidden prototype sidecar exists, because optimized
-  implementations must be migrated into the main modules rather than kept in a
-  parallel workspace.
+  default. It fails if a forbidden prototype sidecar such as
+  `improve_workspace`, `rbf_v2`, `sbf_v2`, or `sbf-standalone` exists, because
+  optimized implementations must be migrated into the main modules rather than
+  kept in a parallel workspace.
   The generated `PUBLIC_RELEASE_MANIFEST.json` records every exported file and
   its SHA256 hash.
 - `scripts/check_public_release.py` validates the exported tree, checks for
@@ -83,7 +84,10 @@ local paths, and discarded implementation attempts.
   private development history.
 - `scripts/self_test_release_tools.py` runs lightweight regression checks for
   cache artifact packaging and release-tool failure cases without requiring
-  real LECT caches.
+  real LECT caches. `scripts/check_release_readiness.py --public-tree` runs
+  this self-test inside the exported tree, so source-group and diagnostic API
+  boundary checks are validated from the release artifact as well as the
+  development checkout.
 - `.github/workflows/ci.yml` defines the public CI path: C++ configure/build,
   CTest, public export self-check, Python-extension build, and smoke execute.
 

@@ -8,7 +8,6 @@ from ._sbf_cpp import (
     BoxSafetyStatus,
     ChainPaveConfig,
     DHParam,
-    DynamicUpdateConfig,
     EndpointMainBoxCorridorConfig,
     EndpointSource,
     EndpointSafetyLevel,
@@ -41,20 +40,17 @@ from ._sbf_cpp import (
     PathAuditStatus,
     QueryConfig,
     QueryResult,
-    RebuildProfile,
     RRTConnectConfig,
     RuntimeConfig,
     Robot,
-    RBFPlanningConfig,
-    RBFPlanningForest,
+    RBFPlanningConfig as _RBFPlanningConfig,
+    RBFPlanningForest as _RBFPlanningForest,
     RBFQueryRuntimeOptions,
     SegmentEdge,
     SegmentEdgeType,
     SegmentEdgeValidation,
     SplitPolicyDescriptor,
     SplitStrategy,
-    SubtractiveBuildOptions,
-    SubtractiveObstacleGroup,
     SupportHullConfig,
     aafk_volume_min_depth_schedule,
     support_hull_volume_min_depth_schedule,
@@ -78,9 +74,11 @@ from ._sbf_cpp import (
     split_policy_hash,
     stable_hash,
 )
+from .diagnostic_exports import *
+from .diagnostic_exports import _diagnostic_exports
 
-SBFConfig = RBFPlanningConfig
-SafeBoxForest = RBFPlanningForest
+SBFConfig = _RBFPlanningConfig
+SafeBoxForest = _RBFPlanningForest
 
 from .marcucci import (
     ANCHORS,
@@ -105,7 +103,6 @@ __all__ = [
     "BoxSafetyStatus",
     "ChainPaveConfig",
     "DHParam",
-    "DynamicUpdateConfig",
     "EndpointMainBoxCorridorConfig",
     "EndpointSource",
     "EndpointSafetyLevel",
@@ -138,7 +135,6 @@ __all__ = [
     "PathAuditStatus",
     "QueryConfig",
     "QueryResult",
-    "RebuildProfile",
     "RRTConnectConfig",
     "RuntimeConfig",
     "Robot",
@@ -150,8 +146,7 @@ __all__ = [
     "SegmentEdgeValidation",
     "SplitPolicyDescriptor",
     "SplitStrategy",
-    "SubtractiveBuildOptions",
-    "SubtractiveObstacleGroup",
+    *_diagnostic_exports,
     "SupportHullConfig",
     "aafk_volume_min_depth_schedule",
     "support_hull_volume_min_depth_schedule",

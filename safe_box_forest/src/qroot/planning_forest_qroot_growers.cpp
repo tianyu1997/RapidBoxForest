@@ -1,10 +1,13 @@
 #include "planning_forest_qroot_growers.h"
 
+#include <SBF/runtime.h>
+
+#include <SBF/box_graph.h>
 #include <SBF/oracle.h>
 
 #include "planning_forest_qroot_growers_internal.h"
 #include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>

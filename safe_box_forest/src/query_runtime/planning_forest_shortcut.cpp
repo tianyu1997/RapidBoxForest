@@ -1,9 +1,12 @@
 #include <SBF/safe_box_forest.h>
+
+#include <SBF/scene.h>
 #include <SBF/adaptive_grid_partition.h>
 
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 #include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <cmath>
@@ -13,7 +16,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "planning_forest_audit.h"
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_utils.h"
 
 namespace rbf {

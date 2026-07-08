@@ -1,5 +1,9 @@
 #include "planning_forest_adaptive_cover_utils.h"
 
+#include <SBF/runtime.h>
+
+#include <SBF/planning_result.h>
+
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -111,11 +115,6 @@ std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnap
     }
     out << ']';
     return out.str();
-}
-
-int adaptive_next_depth_checkpoint(int depth, int target_leaf_depth) {
-    const int step = depth < 16 ? 1 : 2;
-    return std::min(target_leaf_depth, depth + step);
 }
 
 void apply_adaptive_final_depth_snapshot(AdaptiveLeafSweepResult& result,

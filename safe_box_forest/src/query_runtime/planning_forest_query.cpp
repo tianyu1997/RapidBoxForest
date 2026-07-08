@@ -1,6 +1,11 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/scene.h>
+
+#include <SBF/runtime.h>
+
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
 #include <SBF/connector.h>
 #include <SBF/oracle.h>
 #include <SBF/query.h>
@@ -10,8 +15,8 @@
 #include <stdexcept>
 #include <vector>
 
-#include "adaptive_grid_partition_options.h"
-#include "planning_forest_audit.h"
+#include "../graph_partition/adaptive_grid_partition_options.h"
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_repair.h"
 #include "planning_forest_query_utils.h"
 

@@ -71,45 +71,4 @@ void RBFPlanningForest::refresh_adaptive_partition_diagnostics(BuildProfile* pro
     }
 }
 
-void RBFPlanningForest::refresh_adaptive_partition_diagnostics(RebuildProfile& profile) const {
-    profile.diagnostics["adaptive.offline_backend_grid_partition"] =
-        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
-    profile.diagnostics["adaptive.online_backend_partition_native"] =
-        adaptive_partition_query_enabled_ ? 1.0 : 0.0;
-    if (adaptive_partition_query_enabled_ && adaptive_partition_) {
-        const auto& stats = adaptive_partition_->stats();
-        profile.adjacency_islands = adaptive_partition_->component_count_with_overlay();
-        profile.diagnostics["adaptive.partition_cells"] = static_cast<double>(stats.cells);
-        profile.diagnostics["adaptive.partition_grid_cells"] = static_cast<double>(stats.grid_cells);
-        profile.diagnostics["adaptive.partition_non_grid_cells"] = static_cast<double>(stats.non_grid_cells);
-        profile.diagnostics["adaptive.partition_face_index_entries"] =
-            static_cast<double>(stats.face_index_entries);
-        profile.diagnostics["adaptive.partition_point_index_dims"] =
-            static_cast<double>(stats.point_index_dims);
-        profile.diagnostics["adaptive.partition_point_index_entries"] =
-            static_cast<double>(stats.point_index_entries);
-        profile.diagnostics["adaptive.partition_point_index_overflow_cells"] =
-            static_cast<double>(stats.point_index_overflow_cells);
-        profile.diagnostics["adaptive.partition_sparse_virtual_cells"] =
-            static_cast<double>(stats.sparse_virtual_cells);
-        profile.diagnostics["adaptive.partition_sparse_virtual_grid_cells"] =
-            static_cast<double>(stats.sparse_virtual_grid_cells);
-        profile.diagnostics["adaptive.partition_sparse_virtual_non_grid_cells"] =
-            static_cast<double>(stats.sparse_virtual_non_grid_cells);
-        profile.diagnostics["adaptive.partition_sparse_virtual_exact_index_entries"] =
-            static_cast<double>(stats.sparse_virtual_exact_index_entries);
-        profile.diagnostics["adaptive.partition_sparse_virtual_max_address_depth"] =
-            static_cast<double>(stats.sparse_virtual_max_address_depth);
-        profile.diagnostics["adaptive.partition_sparse_virtual_ancestor_refs_avoided"] =
-            static_cast<double>(stats.sparse_virtual_ancestor_refs_avoided);
-        profile.diagnostics["adaptive.partition_sparse_virtual_index_ms"] =
-            stats.sparse_virtual_index_ms;
-        profile.diagnostics["adaptive.partition_islands"] = static_cast<double>(stats.islands);
-        profile.diagnostics["adaptive.partition_largest_island"] =
-            static_cast<double>(stats.largest_island);
-        profile.diagnostics["adaptive.partition_overlay_edges"] =
-            static_cast<double>(stats.overlay_edges);
-    }
-}
-
 }  // namespace rbf

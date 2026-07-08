@@ -1,7 +1,7 @@
 #pragma once
 
 #include <SBF/oracle.h>
-#include <SBF/sbf.h>
+#include <SBF/safe_box_forest.h>
 
 #include "binding_utils.h"
 

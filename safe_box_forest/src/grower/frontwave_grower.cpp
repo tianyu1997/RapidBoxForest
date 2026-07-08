@@ -1,4 +1,8 @@
 #include <SBF/grower.h>
+#include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include "grower_internal.h"
 
@@ -179,7 +183,7 @@ int FrontwaveGrower::create_box(const Eigen::VectorXd& seed,
     }
     if (!intervals_contain_point(ffb_result.intervals, seed, config_.adjacency_tolerance)) {
         context.diagnostics().add_counter("grower.ffb_result_seed_miss");
-        set_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
+        set_grower_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
                            intervals_point_gap(ffb_result.intervals, seed));
         return -1;
     }
@@ -205,7 +209,7 @@ int FrontwaveGrower::create_box(const Eigen::VectorXd& seed,
             context.diagnostics().add_counter("grower.child_contained_in_parent");
             if (seed_parent_gap > config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
             }
             context.diagnostics().add_counter("grower.rejected_contained_child");
             return -1;
@@ -215,10 +219,10 @@ int FrontwaveGrower::create_box(const Eigen::VectorXd& seed,
             const double gap = std::sqrt(box_gap_squared(*parent_it, box));
             context.diagnostics().add_counter("grower.rejected_disconnected");
             context.diagnostics().add_counter("grower.rejected_disconnected_gap_sum", gap);
-            set_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
+            set_grower_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
             if (seed_parent_gap <= config_.boundary_epsilon + config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
             }
             return -1;
         }
@@ -246,7 +250,7 @@ int FrontwaveGrower::commit_box(const Eigen::VectorXd& seed,
     }
     if (!intervals_contain_point(ffb_result.intervals, seed, config_.adjacency_tolerance)) {
         context.diagnostics().add_counter("grower.ffb_result_seed_miss");
-        set_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
+        set_grower_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
                            intervals_point_gap(ffb_result.intervals, seed));
         return -1;
     }
@@ -272,7 +276,7 @@ int FrontwaveGrower::commit_box(const Eigen::VectorXd& seed,
             context.diagnostics().add_counter("grower.child_contained_in_parent");
             if (seed_parent_gap > config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
             }
             context.diagnostics().add_counter("grower.rejected_contained_child");
             return -1;
@@ -282,10 +286,10 @@ int FrontwaveGrower::commit_box(const Eigen::VectorXd& seed,
             const double gap = std::sqrt(box_gap_squared(*parent_it, box));
             context.diagnostics().add_counter("grower.rejected_disconnected");
             context.diagnostics().add_counter("grower.rejected_disconnected_gap_sum", gap);
-            set_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
+            set_grower_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
             if (seed_parent_gap <= config_.boundary_epsilon + config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
             }
             return -1;
         }

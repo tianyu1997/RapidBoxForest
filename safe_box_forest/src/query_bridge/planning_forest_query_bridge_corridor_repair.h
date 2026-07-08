@@ -3,9 +3,8 @@
 #include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_query_bridge_corridor_tasks.h"
 
-#include <SBF/box_graph.h>
-#include <SBF/find_free_box.h>
-#include <SBF/runtime.h>
+#include <SBF/find_free_box_types.h>
+#include <SBF/runtime_fwd.h>
 
 #include <Eigen/Core>
 

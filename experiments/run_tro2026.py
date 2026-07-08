@@ -29,7 +29,6 @@ EXPERIMENTS = {
     "exp04": ("Shelf leaf RRT", REPO_ROOT / "experiments" / "exp04_shelf_leaf_rrt" / "run_shelf_leaf_rrt.py"),
     "exp05": ("Shelf cross algorithm", REPO_ROOT / "experiments" / "exp05_shelf_cross_algorithm" / "run_shelf_cross_algorithm.py"),
     "exp06": ("Random robot", REPO_ROOT / "experiments" / "exp06_random_robot" / "run_random_robot.py"),
-    "exp07": ("Dynamic update", REPO_ROOT / "experiments" / "exp07_dynamic_update" / "run_dynamic_update.py"),
     "appendix": ("Appendix sweeps", REPO_ROOT / "experiments" / "appendix_sweeps" / "run_appendix_sweeps.py"),
 }
 
@@ -66,9 +65,9 @@ def command_for(args: argparse.Namespace, exp_id: str) -> list[str]:
     command = [sys.executable, str(script), "--out-dir", str(out_dir), "--phase", str(args.phase)]
     if args.dry_run:
         command.append("--dry-run")
-    if args.scene_catalog is not None and exp_id in {"exp06", "exp07"}:
+    if args.scene_catalog is not None and exp_id == "exp06":
         command.extend(["--scene-catalog", str(args.scene_catalog)])
-    if exp_id in {"exp06", "exp07"}:
+    if exp_id == "exp06":
         command.extend(["--scene-catalog-mode", str(args.scene_catalog_mode)])
     return command
 
@@ -85,7 +84,11 @@ def run_command(command: list[str]) -> dict[str, Any]:
 
 def main() -> int:
     args = parse_args()
-    exp_ids = selected_experiments(args)
+    try:
+        exp_ids = selected_experiments(args)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     commands = [
         {
             "id": exp_id,

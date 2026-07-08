@@ -1,20 +1,30 @@
 #include <SBF/grower.h>
+#include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include "grower_components.h"
 #include "grower_internal.h"
 #include "grower_options.h"
-#include "planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cmath>
-#include <limits>
-#include <memory>
 #include <string>
-#include <unordered_map>
-#include <unordered_set>
 
 namespace rbf {
+
+void finalize_result(GrowerResult& result, double adjacency_tol) {
+    result.adjacency = compute_adjacency(result.boxes, adjacency_tol);
+    auto islands = find_islands(result.adjacency);
+    result.adjacency_islands = static_cast<int>(islands.size());
+    result.all_connected = islands.size() <= 1;
+    result.adjacency_largest_island = 0;
+    for (const auto& island : islands) {
+        result.adjacency_largest_island = std::max(result.adjacency_largest_island, static_cast<int>(island.size()));
+    }
+}
 
 RrtGrower::RrtGrower(BoxOracle& oracle, GrowerConfig config)
     : oracle_(oracle), config_(std::move(config)), rng_(config_.rng_seed) {}
@@ -83,7 +93,7 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         if (next_stage != active_depth_stage_index) {
             if (active_depth_stage_index != -2) {
                 context.diagnostics().add_counter("grower.depth_stage_switches");
-                set_max_diagnostic(context,
+                set_grower_max_diagnostic(context,
                                    "grower.depth_stage_box_count_at_switch_max",
                                    static_cast<double>(box_count));
             }
@@ -91,7 +101,7 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
         }
         context.diagnostics().set_value("grower.depth_stage_index", static_cast<double>(active_depth_stage_index));
         context.diagnostics().set_value("grower.depth_stage_depth", static_cast<double>(active_ffb_options.max_depth));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.depth_stage_depth_max",
                            static_cast<double>(active_ffb_options.max_depth));
     };
@@ -446,56 +456,6 @@ GrowerResult RrtGrower::grow(const std::vector<Eigen::VectorXd>& seeds,
     result.build_time_ms = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
     close_trace();
     return result;
-}
-
-Eigen::VectorXd RrtGrower::sample_uniform() {
-    const auto root = oracle_.planning_intervals();
-    Eigen::VectorXd q(static_cast<int>(root.size()));
-    std::uniform_real_distribution<double> u01(0.0, 1.0);
-    for (int dim = 0; dim < static_cast<int>(root.size()); ++dim) {
-        q[dim] = root[static_cast<std::size_t>(dim)].lo +
-                 u01(rng_) * root[static_cast<std::size_t>(dim)].width();
-    }
-    return q;
-}
-
-Eigen::VectorXd RrtGrower::sample_unexplored() {
-    const OracleNodeId node = oracle_.select_unexplored_node();
-    std::vector<Interval> intervals;
-    if (node >= 0) {
-        auto copies = oracle_.native_interval_copies_for_node(node, oracle_.node_intervals(node));
-        if (!copies.empty()) {
-            std::uniform_int_distribution<std::size_t> pick(0, copies.size() - 1);
-            intervals = std::move(copies[pick(rng_)]);
-            if (!clip_intervals_to_root(intervals, oracle_.planning_intervals())) {
-                intervals.clear();
-            }
-        }
-    }
-    if (intervals.empty()) {
-        intervals = oracle_.planning_intervals();
-    }
-    Eigen::VectorXd q(static_cast<int>(intervals.size()));
-    std::uniform_real_distribution<double> u01(0.0, 1.0);
-    for (int dim = 0; dim < static_cast<int>(intervals.size()); ++dim) {
-        q[dim] = intervals[static_cast<std::size_t>(dim)].lo +
-                 u01(rng_) * intervals[static_cast<std::size_t>(dim)].width();
-    }
-    return q;
-}
-
-bool RrtGrower::connected(const std::vector<BoxNode>& boxes) const {
-    if (boxes.size() <= 1) {
-        return true;
-    }
-    return find_islands(compute_adjacency(boxes, config_.adjacency_tolerance)).size() <= 1;
-}
-
-std::unique_ptr<IGrower> make_grower(BoxOracle& oracle, const GrowerConfig& config) {
-    if (config.mode == GrowerConfig::Mode::Frontwave) {
-        return std::make_unique<FrontwaveGrower>(oracle, config);
-    }
-    return std::make_unique<RrtGrower>(oracle, config);
 }
 
 }  // namespace rbf

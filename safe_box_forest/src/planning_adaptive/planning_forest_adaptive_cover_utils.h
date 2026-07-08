@@ -1,8 +1,12 @@
 #pragma once
 
-#include <SBF/box_graph.h>
-#include <SBF/leaf_sweep_grower.h>
-#include <SBF/safe_box_forest.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
+#include <SBF/box_adjacency_types.h>
+#include <SBF/leaf_sweep_types.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
+#include <rbf/core.h>
+#include <rbf/lect_database/split_policy.h>
 
 #include <Eigen/Core>
 
@@ -12,6 +16,9 @@
 #include <vector>
 
 namespace rbf {
+
+struct AdaptiveLeafSweepResult;
+class DatabaseBoxOracle;
 
 struct PriorityPruneStats {
     int free_before = 0;
@@ -81,7 +88,6 @@ AdaptiveDepthSnapshot adaptive_snapshot_from_fast_candidate(const AdaptiveLeafSw
                                                             int depth,
                                                             const AdaptiveLeafSweepConfig& config);
 std::string adaptive_depth_snapshots_to_json(const std::vector<AdaptiveDepthSnapshot>& snapshots);
-int adaptive_next_depth_checkpoint(int depth, int target_leaf_depth);
 void apply_adaptive_final_depth_snapshot(AdaptiveLeafSweepResult& result,
                                          const AdaptiveDepthSnapshot& snapshot);
 double adaptive_active_overlap_depth_threshold(const AdaptiveLeafSweepConfig& config,

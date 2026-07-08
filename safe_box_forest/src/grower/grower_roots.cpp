@@ -1,5 +1,8 @@
 #include <SBF/grower.h>
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
 
@@ -199,7 +202,7 @@ void RrtGrower::initialize_anchor_targets(const std::vector<Eigen::VectorXd>& ro
         const double clip_delta = (clipped_anchor - anchor).cwiseAbs().maxCoeff();
         if (clip_delta > 1e-12) {
             context.diagnostics().add_counter("grower.fixed_anchor_target_clipped_to_root");
-            set_max_diagnostic(context,
+            set_grower_max_diagnostic(context,
                                "grower.fixed_anchor_target_clip_delta_max",
                                clip_delta);
         }
@@ -284,7 +287,7 @@ void RrtGrower::initialize_anchor_targets(const std::vector<Eigen::VectorXd>& ro
         random_anchor_targets_.push_back(best_anchor);
         anchor_reference_points.push_back(best_anchor);
         anchor_reference_leaves.push_back(best_leaf);
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.anchor_target_lca_depth_max",
                            static_cast<double>(best_lca_depth));
         if (best_lca_depth >= 0) {
@@ -296,7 +299,7 @@ void RrtGrower::initialize_anchor_targets(const std::vector<Eigen::VectorXd>& ro
                     ? static_cast<double>(best_lca_depth)
                     : std::min(previous_min, static_cast<double>(best_lca_depth)));
         }
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.anchor_target_min_distance_max",
                            best_distance);
     }

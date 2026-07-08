@@ -1,8 +1,10 @@
 #include <SBF/grower.h>
 
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -48,7 +50,7 @@ bool RrtGrower::make_component_connect_seed(const std::vector<BoxNode>& boxes,
         config_.component_connect_island_aware);
     context.diagnostics().set_value("grower.component_connect_components",
                                     static_cast<double>(component_graph.components.size()));
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.component_connect_connected_root_pairs_max",
                        static_cast<double>(component_graph.connected_cross_root_pairs));
     if (component_graph.components.size() < 2) {
@@ -87,7 +89,7 @@ bool RrtGrower::make_component_connect_seed(const std::vector<BoxNode>& boxes,
         const double center_sq = (parent_box.center() - target_box.center()).squaredNorm();
         if (staged) {
             context.diagnostics().add_counter("grower.component_connect_staged_targets");
-            set_max_diagnostic(context,
+            set_grower_max_diagnostic(context,
                                "grower.component_connect_stage_distance_max",
                                staged_distance);
         }
@@ -143,7 +145,7 @@ bool RrtGrower::make_component_connect_seed(const std::vector<BoxNode>& boxes,
         std::uniform_real_distribution<double> u01(0.0, 1.0);
         choice_index = std::min(choice_limit - 1,
                                 static_cast<int>(u01(rng_) * u01(rng_) * choice_limit));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_candidate_rank_max",
                            static_cast<double>(choice_index));
     }
@@ -165,7 +167,7 @@ bool RrtGrower::make_component_connect_seed(const std::vector<BoxNode>& boxes,
                                         &context)) {
         context.diagnostics().add_counter("grower.component_connect_no_frontier_seed");
         const int failures = ++component_parent_failures_[parent.id];
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_parent_failure_max",
                            static_cast<double>(failures));
         return false;

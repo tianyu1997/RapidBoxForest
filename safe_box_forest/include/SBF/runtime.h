@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/api.h>
+#include <SBF/runtime_config.h>
 
 #include <atomic>
 #include <chrono>

@@ -13,6 +13,5 @@ Known issues in the archived state:
 2. Several current experiment dispatchers call scripts under
    `safe_box_forest/experiments/sbf_old/`.
 3. Random-scene generation and replay are only partially cataloged.
-4. Exp.7 is a current dynamic-update experiment and must be kept in the new
-   active experiment plan.
-
+4. Exp.7 was treated as current in this archived snapshot; it has since been
+   moved out of the active experiment plan.

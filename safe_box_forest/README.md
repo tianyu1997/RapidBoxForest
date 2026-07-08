@@ -68,6 +68,21 @@ The test script configures the workspace root, builds C++, builds the Python
 extension, runs CTest, and checks that this module does not include forbidden
 private headers or paths.
 
+The default C++ facade and Python extension expose the production planner API
+only. To run private archived diagnostic scripts that call
+Python `SafeBoxForest.build_subtractive(...)`,
+`SafeBoxForest.refine_query_corridor(...)`,
+`SafeBoxForest.add_obstacle*_and_rebuild(...)`,
+`SafeBoxForest.remove_obstacle*_and_regrow(...)`,
+`SafeBoxForest.connect_update_*_fallback(...)`, or
+`SafeBoxForest.oracle_counters()` / `SafeBoxForest.debug_*` methods,
+configure with
+`-DSBF_PYTHON_DEBUG_METHODS=ON` for a module build or
+`-DRBF_SBF_PYTHON_DEBUG_METHODS=ON` from the workspace root. For C++-only
+diagnostic callers, use `-DSBF_DIAGNOSTIC_API=ON` or
+`-DRBF_SBF_DIAGNOSTIC_API=ON`; the diagnostic facade implementation is not
+compiled into the default `sbf_core` target.
+
 ## TRO 2026 Paper Quickstart
 
 Use the workspace-level dispatcher and paper asset generator rather than

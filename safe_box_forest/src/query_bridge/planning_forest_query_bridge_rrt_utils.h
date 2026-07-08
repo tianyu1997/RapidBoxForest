@@ -1,9 +1,8 @@
 #pragma once
 
 #include <SBF/connector_types.h>
-#include <SBF/planning_config.h>
-#include <SBF/runtime.h>
-#include <LECTDatabase/sbf/scene.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/scene_types.h>
 
 #include <Eigen/Core>
 
@@ -14,6 +13,7 @@
 
 namespace rbf {
 
+struct RBFPlanningConfig;
 struct QueryBridgeSearchTask;
 
 struct QueryBridgeRetryOptions {

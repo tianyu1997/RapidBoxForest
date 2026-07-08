@@ -1,6 +1,7 @@
 #pragma once
 
-#include <SBF/grower.h>
+#include <SBF/grower_types.h>
+#include <SBF/runtime_fwd.h>
 
 namespace rbf {
 

@@ -1,25 +1,35 @@
 #pragma once
 
-#include <SBF/box_graph.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
+#include <SBF/box_adjacency_types.h>
 #include <SBF/connector_types.h>
-#include <SBF/debug.h>
-#include <SBF/grower_types.h>
+#include <SBF/find_free_box_types.h>
 #include <SBF/leaf_sweep_types.h>
 #include <SBF/planning_config.h>
 #include <SBF/planning_result.h>
-#include <SBF/query.h>
-#include <SBF/runtime.h>
+#include <SBF/query_bridge_config.h>
+#include <SBF/query_graph_cache_types.h>
+#include <SBF/query_result.h>
+#include <SBF/query_runtime_config.h>
+#include <SBF/runtime_fwd.h>
 #include <SBF/scene.h>
-
-#include <LECTDatabase/sbf/oracle_types.h>
-#include <LECTDatabase/online_cache.h>
-#include <rbf/lect_database.h>
+#include <SBF/segment_edge_types.h>
 
 #include <chrono>
 #include <memory>
 #include <string>
 #include <unordered_set>
 #include <vector>
+
+namespace rbf::lect_database {
+class LectDatabase;
+class LectDatabaseEvidenceSource;
+class LectExternalEvidenceSource;
+class LectReadSnapshot;
+class LectSnapshotEvidenceSource;
+class OnlineEnvelopeCacheTree;
+class SharedEndpointEvidenceCache;
+} // namespace rbf::lect_database
 
 namespace rbf {
 
@@ -34,7 +44,16 @@ struct ObbPathCoverResult;
 struct ObbValidationOptions;
 struct AdaptiveDepthSnapshot;
 struct BudgetedMergeStats;
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+struct DebugChainPaveResult;
+struct RebuildProfile;
+struct SubtractiveBuildOptions;
+struct SubtractiveObstacleGroup;
 struct DynamicCollisionCacheState;
+struct DynamicCollisionCacheStateDeleter {
+	void operator()(DynamicCollisionCacheState* state) const;
+};
+#endif
 class AdaptiveGridPartition;
 class DatabaseBoxOracle;
 
@@ -43,6 +62,7 @@ public:
 	RBFPlanningForest(Robot robot, RBFPlanningConfig config = {});
 	~RBFPlanningForest();
 
+	// Build and coverage construction.
 	BuildProfile build(const Eigen::Ref<const Eigen::VectorXd>& start,
 					   const Eigen::Ref<const Eigen::VectorXd>& goal,
 					   const std::vector<Obstacle>& obstacles);
@@ -55,9 +75,6 @@ public:
 	BuildProfile build_coverage(const std::vector<Obstacle>& obstacles,
 								const std::vector<Eigen::VectorXd>& seeds,
 								StageContext& context);
-	BuildProfile build_subtractive(const std::vector<SubtractiveObstacleGroup>& obstacle_groups,
-								   const std::vector<Eigen::VectorXd>& seeds,
-								   const SubtractiveBuildOptions& options = {});
 	LeafSweepResult build_leaf_sweep(const std::vector<Obstacle>& obstacles,
 									 int start_depth,
 									 int max_depth,
@@ -75,15 +92,8 @@ public:
 	AdaptiveLeafSweepResult build_adaptive_deep_leaf_sweep_cover(
 		const std::vector<Obstacle>& obstacles,
 		const AdaptiveLeafSweepConfig& config = {});
-	/// Isolated FFB benchmark — no RRT, no grower, no adjacency.
-	/// Resets the oracle scene to @p obstacles, then calls ffb.find() once per
-	/// seed.  LECT evidence accumulates across repeated calls (same as build()).
-	/// Use this to measure the pure oracle / LECT-cache performance.
-	PureFfbProfile run_pure_ffb(const std::vector<Obstacle>& obstacles,
-	                            const std::vector<Eigen::VectorXd>& seeds);
-	/// Access oracle counters from the most recent build/run_pure_ffb call.
-	/// Returns nullptr if the oracle hasn't been initialised yet.
-	const OracleCounters* oracle_counters() const;
+
+	// Query, endpoint repair, and bridge construction.
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
 					  const Eigen::Ref<const Eigen::VectorXd>& goal) const;
 	QueryResult query(const Eigen::Ref<const Eigen::VectorXd>& start,
@@ -109,33 +119,15 @@ public:
 	std::vector<int> bridge_queries(const std::vector<Eigen::VectorXd>& starts,
 									const std::vector<Eigen::VectorXd>& goals,
 									const QueryBridgeBatchOptions& options);
-	/// Isolated chain_pave debug entry: build the BiRRT bridge between the boxes
-	/// containing @p start and @p goal, then run chain_pave_along_path() with the
-	/// supplied @p pave config (the IslandConnector gap step is skipped) so the
-	/// committed boxes reflect chain_pave alone. Mutates the forest box set.
-	DebugChainPaveResult debug_chain_pave(const Eigen::Ref<const Eigen::VectorXd>& start,
-										  const Eigen::Ref<const Eigen::VectorXd>& goal,
-										  const ChainPaveConfig& pave);
-	DebugChainPaveResult debug_chain_pave_waypoints(const std::vector<Eigen::VectorXd>& waypoint_path,
-													const ChainPaveConfig& pave);
-	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
-							  const Eigen::Ref<const Eigen::VectorXd>& goal,
-							  int max_boxes_to_add);
-	int refine_query_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
-							  const Eigen::Ref<const Eigen::VectorXd>& goal,
-							  int max_boxes_to_add,
-							  CorridorRefineMode mode,
-							  double long_path_ratio,
-							  double long_path_min_delta);
-	RebuildProfile add_obstacle_and_rebuild(const Obstacle& obstacle);
-	RebuildProfile add_obstacles_and_rebuild(const std::vector<Obstacle>& obstacles);
-	RebuildProfile connect_update_segment_fallback();
-	RebuildProfile connect_update_endpoint_segment_fallback(const Eigen::Ref<const Eigen::VectorXd>& start,
-															const Eigen::Ref<const Eigen::VectorXd>& goal);
-	RebuildProfile remove_obstacle_and_regrow(int obstacle_index);
-	RebuildProfile remove_obstacle_suffix_and_regrow(int target_obstacle_count);
 	void clear_forest();
 
+	// Diagnostic-only facade entry points. These are excluded from default
+	// builds and public-release source lists unless SBF_DIAGNOSTIC_API is set.
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+#include <SBF/detail/planning_forest_diagnostic_public_methods.inc>
+#endif
+
+	// State accessors and cache handles.
 	const Robot& robot() const { return robot_; }
 	const Robot& audit_robot() const { return audit_robot_; }
 	const RBFPlanningConfig& config() const { return config_; }
@@ -151,436 +143,34 @@ public:
 	const lect_database::OnlineEnvelopeCacheTree& online_cache() const { return *online_cache_; }
 
 private:
-	FindFreeBoxResult find_free_box_in_domain(const Eigen::Ref<const Eigen::VectorXd>& seed,
-											  const std::vector<Interval>& domain,
-											  StageContext& context,
-											  const FindFreeBoxOptions& options);
-	FindFreeBoxResult find_free_box_binary_in_domain(
-		const Eigen::Ref<const Eigen::VectorXd>& seed,
-		const std::vector<Interval>& domain,
-		StageContext& context,
-		const FindFreeBoxOptions& options,
-		const OracleSplitOptions& split_options,
-		int effective_max_depth,
-		std::chrono::steady_clock::time_point start);
-	QueryResult run_query_internal(const Eigen::Ref<const Eigen::VectorXd>& start,
-								   const Eigen::Ref<const Eigen::VectorXd>& goal,
-								   bool allow_collision_shortcut,
-								   const RBFQueryRuntimeOptions& runtime_options = {}) const;
-	int anchor_query_endpoint_box(const Eigen::Ref<const Eigen::VectorXd>& point,
-								  StageContext& context);
-	int anchor_query_endpoint_box_with_diagnostics(const Eigen::Ref<const Eigen::VectorXd>& point);
-	int locate_box_partition_first(const Eigen::Ref<const Eigen::VectorXd>& point,
-								   bool nearest_if_outside) const;
-	int locate_query_bridge_box(const Eigen::Ref<const Eigen::VectorXd>& point) const;
-	bool query_bridge_box_contains_point(int box_id,
-										 const Eigen::Ref<const Eigen::VectorXd>& point) const;
-	int refresh_query_bridge_box_or_anchor(int anchor_box_id,
-										   const Eigen::Ref<const Eigen::VectorXd>& point,
-										   const char* endpoint_name);
-	void sync_query_bridge_partition_boxes(std::size_t& partition_refresh_base,
-										   const char* diagnostic_prefix);
-	bool box_only_path_connected_partition_first(int source_box_id,
-												 int target_box_id) const;
-	bool overlay_path_connected_partition_first(int source_box_id,
-											   int target_box_id) const;
-	bool partition_native_mode() const;
-	int island_count_partition_first() const;
-	int bridge_query_with_waypoint_path(const Eigen::Ref<const Eigen::VectorXd>& start,
-										const Eigen::Ref<const Eigen::VectorXd>& goal,
-										const std::vector<Eigen::VectorXd>& waypoint_path,
-										bool short_local_bridge,
-										const RRTConnectConfig& bridge_rrt,
-										int query_index = -1,
-										bool allow_residual_segments = true);
-	int try_query_bridge_direct_ffb_corridor(const Eigen::Ref<const Eigen::VectorXd>& start,
-											 const Eigen::Ref<const Eigen::VectorXd>& goal,
-											 const std::vector<Eigen::VectorXd>& corridor_path,
-											 const RRTConnectConfig& bridge_rrt,
-											 CollisionChecker& checker,
-											 StageContext& context,
-											 int query_index,
-											 int bridge_edge_query_index,
-											 int query_bridge_ffb_depth,
-											 double audited_bridge_length,
-											 bool allow_residual_segments,
-											 int& next_id);
-	void run_query_bridge_direct_corridor_residual_segments(
-		const std::vector<Eigen::VectorXd>& samples,
-		const std::vector<std::vector<int>>& sample_layers,
-		const std::vector<int>& final_bad,
-		const RRTConnectConfig& bridge_rrt,
-		CollisionChecker& checker,
-		StageContext& context,
-		int bridge_edge_query_index,
-		QueryBridgeLocalDsu& dsu,
-		int& local_segment_edges_added,
-		int& local_segment_gap_samples_max,
-		double& residual_segment_audit_ms);
-	int try_promote_query_bridge_direct_transition(
-		int source_box_id,
-		int target_box_id,
-		const std::vector<std::vector<int>>& sample_layers,
-		std::size_t boxes_before_direct_corridor,
-		StageContext& context,
-		int query_index,
-		int bridge_edge_query_index,
-		const char* reason,
-		bool& attempted);
-	int try_add_query_box_corridor_edge(int source_box_id,
-										int target_box_id,
-										const std::vector<Eigen::VectorXd>& waypoint_path,
-										double segment_resolution,
-										int query_index);
-	int add_verified_query_box_corridor_edge(int source_box_id,
-											 int target_box_id,
-											 const std::vector<Eigen::VectorXd>& waypoint_path,
-											 double segment_resolution,
-											 int query_index);
-	int try_add_query_direct_segment_after_rrt_edge(int source_box_id,
-													int target_box_id,
-													const std::vector<Eigen::VectorXd>& waypoint_path,
-													const RRTConnectConfig& bridge_rrt,
-													const CollisionChecker& checker,
-													StageContext& context,
-													double original_path_length,
-													double audited_path_length,
-													int query_index,
-													bool enabled);
-	int add_audited_query_bridge_segment_edge(
-		int source_box_id,
-		int target_box_id,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const CollisionChecker& checker,
-		int segment_resolution,
-		int query_index);
-	int try_add_query_direct_start_goal_segment_edge(
-		int source_box_id,
-		int target_box_id,
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		StageContext& context,
-		int query_index,
-		int batch_task_index = -1);
-	int try_add_query_direct_start_goal_segment_for_points(
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		StageContext& context,
-		int query_index,
-		int batch_task_index = -1);
-	int try_add_query_fast_direct_segment_after_rrt_edge(
-		int source_box_id,
-		int target_box_id,
-		const std::vector<std::vector<Eigen::VectorXd>>& candidate_paths,
-		const RRTConnectConfig& bridge_rrt,
-		StageContext& context,
-		int query_index,
-		int batch_task_index = -1);
-	int try_add_query_fast_direct_segment_after_rrt_path(
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const RRTConnectConfig& bridge_rrt,
-		StageContext& context,
-		bool enabled,
-		int random_shortcut_iters,
-		int shortcut_query_index,
-		int edge_query_index,
-		int batch_task_index = -1);
-	int try_add_query_residual_segment_edge(int source_box_id,
-											int target_box_id,
-											const std::vector<Eigen::VectorXd>& waypoint_path,
-											const RRTConnectConfig& bridge_rrt,
-											const CollisionChecker& checker,
-											StageContext& context,
-											double depth_failures_before,
-											int query_index,
-											bool enabled);
-	int try_add_query_direct_corridor_full_residual_edge(
-		int source_box_id,
-		int target_box_id,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const RRTConnectConfig& bridge_rrt,
-		const CollisionChecker& checker,
-		StageContext& context,
-		int edge_query_index,
-		int batch_task_query_index,
-		bool local_overlay_connected,
-		bool count_without_local_overlay_attempt);
-	AdaptiveLeafSweepResult build_fixed_virtual_leaf_sweep_cover(
-		const std::vector<Obstacle>& obstacles,
-		const AdaptiveLeafSweepConfig& adaptive_config,
-		int initial_leaf_depth,
-		int adaptive_depth_min,
-		int target_leaf_depth,
-		LeafSweepConfig leaf_config,
-		const AdaptiveLeafSweepConfig& partition_config,
-		std::chrono::steady_clock::time_point total_start);
-	AdaptiveLeafSweepResult build_adaptive_fast_virtual_checkpoint_cover(
-		const std::vector<Obstacle>& obstacles,
-		const AdaptiveLeafSweepConfig& adaptive_config,
-		int initial_leaf_depth,
-		int adaptive_depth_min,
-		int target_leaf_depth,
-		LeafSweepConfig leaf_config,
-		const AdaptiveLeafSweepConfig& partition_config,
-		std::chrono::steady_clock::time_point total_start);
-	void finalize_adaptive_deep_leaf_sweep_cover_result(
-		AdaptiveLeafSweepResult& out,
-		const AdaptiveLeafSweepConfig& adaptive_config,
-		const AdaptiveLeafSweepConfig& partition_config,
-		bool adaptive_depth_enabled,
-		int initial_leaf_depth,
-		int adaptive_depth_min,
-		int target_leaf_depth,
-		double merge_ms,
-		const BudgetedMergeStats& merge_stats,
-		const AdjacencyBuildStats& initial_adjacency_stats,
-		const AdjacencyBuildStats& final_adjacency_stats,
-		std::vector<AdaptiveDepthSnapshot>& depth_snapshots,
-		double initial_probe_ms,
-		double checkpoint_probe_ms_total,
-		std::chrono::steady_clock::time_point total_start,
-		bool use_partition_backend);
-	double initialize_adaptive_build_topology(
-		const AdaptiveLeafSweepConfig& adaptive_config,
-		const AdaptiveLeafSweepConfig& partition_config,
-		double adjacency_tolerance,
-		AdaptiveLeafSweepResult& out,
-		BudgetedMergeStats& merge_stats,
-		AdjacencyBuildStats& initial_adjacency_stats,
-		std::unordered_set<int>& main_ids,
-		bool use_partition_backend);
-	AdaptiveDepthSnapshot evaluate_adaptive_depth_snapshot(
-		int depth,
-		bool allow_anchor_probe,
-		bool adaptive_depth_enabled,
-		int target_leaf_depth,
-		const LeafSweepResult& leaf_sweep,
-		const std::vector<Eigen::VectorXd>& free_probes,
-		const std::vector<Interval>& planning_domain,
-		const AdaptiveLeafSweepConfig& adaptive_config,
-		bool use_partition_backend,
-		std::unordered_set<int>& main_ids,
-		std::size_t& first_unconnected_new_index,
-		int& pending_adjacency_boxes,
-		double adjacency_tolerance);
-	std::pair<int, int> locate_query_bridge_boxes(const Eigen::Ref<const Eigen::VectorXd>& start,
-												  const Eigen::Ref<const Eigen::VectorXd>& goal,
-												  StageContext& context);
-	int run_query_bridge_chain_pave(const std::vector<Eigen::VectorXd>& waypoint_path,
-									int start_box_id,
-									int& next_id,
-									StageContext& context,
-									const ChainPaveConfig& pave_config,
-									const char* partition_prefix);
-	bool skip_graph_query_bridge_pave_if_partition_native(StageContext& context,
-														  const char* counter_name) const;
-	std::pair<int, int> run_query_bridge_reverse_boundary_pave(
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const ChainPaveConfig& forward_config,
-		int forward_added,
-		int& accumulated_added,
-		int& next_id,
-		StageContext& context);
-	void refresh_query_bridge_direct_corridor_partition(std::size_t boxes_before);
-	int finish_query_bridge_direct_corridor(std::size_t boxes_before, int value);
-	int add_partition_box_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
-										   const Eigen::Ref<const Eigen::VectorXd>& goal,
-										   const std::vector<Eigen::VectorXd>& waypoint_path,
-										   const char* diagnostic_prefix,
-										   bool anchor_endpoints,
-										   bool skip_if_connected,
-										   int query_index = -1,
-										   BuildProfile* profile = nullptr);
-	int add_partition_portal_corridor_overlay(const Eigen::Ref<const Eigen::VectorXd>& start,
-											  const Eigen::Ref<const Eigen::VectorXd>& goal,
-											  const std::vector<Eigen::VectorXd>& waypoint_path,
-											  const char* diagnostic_prefix,
-											  bool anchor_endpoints,
-											  bool skip_if_connected,
-											  int query_index = -1,
-											  BuildProfile* profile = nullptr);
-	int try_hipac_online_bridge_task(
-		QueryBridgeSearchTask& task,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		StageContext& context,
-		int query_index);
-	int try_hipac_prebridge_portal_task(
-		QueryBridgeSearchTask& task,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		StageContext& context,
-		int query_index);
-	bool run_query_bridge_hipac_online_sequence_task(
-		QueryBridgeSearchTask& task,
-		int& added_for_task,
-		StageContext& context,
-		bool scene_reusable_edges,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance);
-	std::vector<int> finish_query_bridge_batch_result(
-		const std::vector<int>& added_by_query,
-		std::size_t partition_refresh_base,
-		std::size_t segment_edges_before_partition_refresh,
-		bool oracle_counters_before_valid,
-		const OracleCounters& oracle_counters_before);
-	std::vector<QueryBridgeSearchTask> prepare_query_bridge_batch_tasks(
-		const std::vector<Eigen::VectorXd>& starts,
-		const std::vector<Eigen::VectorXd>& goals,
-		const QueryBridgeBatchOptions& options,
-		const std::unordered_set<int>& forced_query_indices,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		std::size_t& partition_refresh_base);
-	void run_query_bridge_batch_parallel_rrt(
-		std::vector<QueryBridgeSearchTask>& tasks,
-		std::vector<int>& added_by_query,
-		const std::unordered_set<int>& forced_query_indices,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		const QueryBridgeRetryOptions& retry_options,
-		const QueryBridgeParallelRrtOptions& parallel_rrt_options,
-		const QueryBridgeHybridizeAttemptOptions& hybrid_options,
-		const QueryBridgeEdgeRuntimeOptions& edge_options,
-		bool scene_reusable_edges,
-		StageContext& batch_context,
-		std::chrono::steady_clock::time_point batch_t0);
-	void run_query_bridge_batch_serial_rrt(
-		std::vector<QueryBridgeSearchTask>& tasks,
-		std::vector<int>& added_by_query,
-		const std::unordered_set<int>& forced_query_indices,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		const QueryBridgeRetryOptions& retry_options,
-		const QueryBridgeParallelRrtOptions& parallel_rrt_options,
-		const QueryBridgeHybridizeAttemptOptions& hybrid_options,
-		const QueryBridgeEdgeRuntimeOptions& edge_options,
-		bool scene_reusable_edges,
-		StageContext& batch_context);
-	void run_query_bridge_direct_start_goal_segments(
-		std::vector<QueryBridgeSearchTask>& tasks,
-		std::vector<int>& added_by_query,
-		StageContext& context,
-		bool scene_reusable_edges);
-	int run_query_bridge_waypoint_path(
-		QueryBridgeSearchTask& task,
-		int& added_for_task,
-		StageContext& context,
-		bool scene_reusable_edges);
-	void finish_query_bridge_ready_waypoint_task(
-		QueryBridgeSearchTask& task,
-		int& added_for_task,
-		bool forced_task,
-		double best_length,
-		StageContext& context,
-		bool scene_reusable_edges,
-		const std::unordered_set<int>& forced_query_indices,
-		const QueryBridgeAcceptanceThresholds& bridge_acceptance,
-		bool fast_direct_segment_after_rrt,
-		int fast_direct_random_shortcut_iters,
-		const std::function<double()>& task_elapsed_ms);
-	int try_promote_query_repair_to_hipac(
-		const Eigen::Ref<const Eigen::VectorXd>& start,
-		const Eigen::Ref<const Eigen::VectorXd>& goal,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		int bridge_added,
-		int query_index,
-		int batch_task_index,
-		StageContext& context);
-	void reset_oracle(Scene scene);
-	void reserve_existing_boxes();
-	void rebuild_adjacency();
-	void rebuild_adaptive_partition(const AdaptiveLeafSweepConfig& config, BuildProfile* profile);
-	void refresh_adaptive_partition_diagnostics(BuildProfile* profile) const;
-	void refresh_adaptive_partition_diagnostics(RebuildProfile& profile) const;
-	void refresh_dynamic_partition_after_update(RebuildProfile& profile,
-												const char* diagnostic_prefix);
-	void refresh_dynamic_partition_after_append(RebuildProfile& profile,
-												std::size_t first_box_index,
-												const char* diagnostic_prefix);
-	void refresh_dynamic_partition_after_remove_append(RebuildProfile& profile,
-													   const std::unordered_set<int>& removed_box_ids,
-													   std::size_t first_box_index,
-													   const char* diagnostic_prefix);
-	int append_adaptive_partition_boxes(std::size_t first_box_index,
-										 BuildProfile* profile,
-										 const char* diagnostic_prefix);
-	int sync_adaptive_partition_segment_edges(BuildProfile* profile,
-											 const char* diagnostic_prefix);
-	std::vector<int> endpoint_main_largest_island_partition_first(
-		const std::vector<int>& preferred_island) const;
-	int add_segment_edge_partition_first(int source_box_id,
-										 int target_box_id,
-										 std::vector<Eigen::VectorXd> waypoints,
-										 SegmentEdgeType type,
-										 int segment_resolution,
-										 SegmentEdgeValidation validation,
-										 bool strict_audit_required = false,
-										 int query_index = -1,
-										 BuildProfile* profile = nullptr,
-										 const char* diagnostic_prefix = nullptr);
-	bool try_add_endpoint_main_residual_segment_edge(
-		int front_box_id,
-		int target_box_id,
-		const Eigen::Ref<const Eigen::VectorXd>& target_point,
-		bool max_depth_ffb_failed,
-		double max_segment_length);
-	int try_add_clearance_retry_obb_edge(
-		int source_box_id,
-		int target_box_id,
-		const BoxNode& source_box,
-		const BoxNode& target_box,
-		const std::vector<Eigen::VectorXd>& waypoints,
-		const ObbValidationOptions& obb_validation_options,
-		double obb_safety_epsilon,
-		const std::string& diagnostic_prefix,
-		const std::string& obb_diag,
-		int query_index,
-		BuildProfile* profile,
-		ObbPathCoverResult& cover);
-	bool build_cell_native_portal_corridor_chain(
-		const BoxNode& source_box,
-		const BoxNode& target_box,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const std::vector<Interval>& domain,
-		const std::string& diagnostic_prefix,
-		int requested_depth,
-		int max_internal_boxes,
-		int max_recursion_depth,
-		double adjacency_tolerance,
-		BuildProfile* profile,
-		std::vector<BoxNode>& internal_boxes,
-		int& next_internal_id);
-	bool build_ffb_portal_corridor_chain(
-		const BoxNode& source_box,
-		const BoxNode& target_box,
-		const std::vector<Eigen::VectorXd>& waypoint_path,
-		const std::vector<Interval>& domain,
-		const std::string& diagnostic_prefix,
-		int requested_depth,
-		int max_internal_boxes,
-		int max_recursion_depth,
-		double adjacency_tolerance,
-		bool online_portal,
-		BuildProfile* profile,
-		StageContext& context,
-		std::vector<BoxNode>& internal_boxes,
-		int& next_internal_id);
-	void invalidate_query_cache() const;
-	const QueryGraphCache& query_cache() const;
-	int next_box_id() const;
-	void populate_dynamic_collision_cache(const LeafSweepResult& result,
-										  int obstacle_count);
-	void clear_dynamic_collision_cache();
-	void rebuild_dynamic_collision_cache_index();
-	void add_dynamic_collision_cache_box(const BoxNode& box,
-										 std::vector<int> blocking_obstacle_indices);
-	int promote_unblocked_collision_cache(const std::unordered_set<int>& removed_obstacle_indices,
-										  RebuildProfile& profile);
-	int refill_removed_box_with_leaf_sweep(const BoxNode& removed_box,
-										   int new_obstacle_index,
-										   int max_depth,
-										   int& next_id,
-										   RebuildProfile& profile);
+	// FFB and query entry helpers.
+#include <SBF/detail/planning_forest_private_entry_methods.inc>
 
+	// Query bridge point-location and direct-corridor helpers.
+#include <SBF/detail/planning_forest_private_query_bridge_direct_methods.inc>
+
+	// Adaptive cover build orchestration.
+#include <SBF/detail/planning_forest_private_adaptive_build_methods.inc>
+
+	// Query bridge paving, HiPaC, and batch helpers.
+#include <SBF/detail/planning_forest_private_query_bridge_batch_methods.inc>
+
+	// Core forest topology and adaptive partition helpers.
+#include <SBF/detail/planning_forest_private_topology_methods.inc>
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+#include <SBF/detail/planning_forest_diagnostic_partition_methods.inc>
+#endif
+
+	// OBB and portal corridor helpers.
+#include <SBF/detail/planning_forest_private_overlay_methods.inc>
+
+	// Query cache helpers.
+#include <SBF/detail/planning_forest_private_cache_methods.inc>
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+#include <SBF/detail/planning_forest_diagnostic_cache_methods.inc>
+#endif
+
+	// Core state.
 	Robot robot_;
 	Robot audit_robot_;
 	RBFPlanningConfig config_;
@@ -606,7 +196,9 @@ private:
 	bool adaptive_partition_query_enabled_ = false;
 	bool has_adaptive_partition_config_ = false;
 	AdaptiveLeafSweepConfig last_adaptive_partition_config_;
-	std::unique_ptr<DynamicCollisionCacheState> dynamic_collision_cache_;
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+#include <SBF/detail/planning_forest_diagnostic_state.inc>
+#endif
 	BuildProfile last_build_;
 	std::vector<Eigen::VectorXd> last_build_seeds_;
 	mutable QueryGraphCache query_cache_;

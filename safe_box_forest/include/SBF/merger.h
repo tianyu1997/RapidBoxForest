@@ -1,9 +1,11 @@
 #pragma once
 
-#include <SBF/box_graph.h>
 #include <SBF/merger_types.h>
-#include <SBF/oracle.h>
-#include <SBF/runtime.h>
+#include <SBF/runtime_fwd.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
+
+#include <rbf/core.h>
 
 #include <unordered_set>
 #include <vector>

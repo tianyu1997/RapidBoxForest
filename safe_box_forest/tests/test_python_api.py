@@ -16,6 +16,10 @@ def main():
     assert sbf.__version__ == "0.1.0"
     assert hasattr(sbf, "path_length")
     assert sbf.path_length([]) == 0.0
+    assert hasattr(sbf, "SBFConfig")
+    assert hasattr(sbf, "SafeBoxForest")
+    assert not hasattr(sbf, "RBFPlanningConfig")
+    assert not hasattr(sbf, "RBFPlanningForest")
     config = sbf.SBFConfig()
     config.runtime.mode = sbf.ExecutionMode.Parallel
     config.runtime.n_threads = 2
@@ -40,8 +44,6 @@ def main():
     config.database.canonical_mode = False
     config.database.path = tempfile.mkdtemp(prefix="sbf-python-smoke-")
     config.database.checkpoint_after_build = False
-    config.dynamic_update.dirty_region_padding = 100.0
-    config.dynamic_update.local_regrow_box_limit = 2
 
     robot = make_toy_robot()
     assert robot.n_joints() == 2
@@ -55,15 +57,25 @@ def main():
     assert query.success
     assert query.path_length >= 0.0
 
-    rebuild = forest.add_obstacle_and_rebuild(sbf.Obstacle(5.0, 5.0, 5.0, 6.0, 6.0, 6.0))
-    assert rebuild.boxes_after == len(forest.boxes())
-    assert hasattr(sbf, "DynamicUpdateConfig")
-    removal = forest.remove_obstacle_and_regrow(0)
-    assert removal.obstacles_after == 0
-    assert removal.boxes_after == len(forest.boxes())
-    assert hasattr(removal, "collision_cache_promoted")
-    assert hasattr(removal, "collision_cache_candidates")
-    assert hasattr(forest, "remove_obstacle_suffix_and_regrow")
+    assert not hasattr(sbf, "DynamicUpdateConfig")
+    assert not hasattr(sbf, "RebuildProfile")
+    assert not hasattr(sbf, "SubtractiveObstacleGroup")
+    assert not hasattr(sbf, "SubtractiveBuildOptions")
+    diagnostic_only_methods = [
+        "oracle_counters",
+        "build_subtractive",
+        "debug_chain_pave",
+        "debug_chain_pave_waypoints",
+        "refine_query_corridor",
+        "add_obstacle_and_rebuild",
+        "add_obstacles_and_rebuild",
+        "connect_update_segment_fallback",
+        "connect_update_endpoint_segment_fallback",
+        "remove_obstacle_and_regrow",
+        "remove_obstacle_suffix_and_regrow",
+    ]
+    for method_name in diagnostic_only_methods:
+        assert not hasattr(forest, method_name)
     sweep_config = sbf.LeafSweepConfig()
     sweep = forest.build_leaf_sweep([], 1, 1, sweep_config)
     assert len(sweep.free_boxes) == 2

@@ -1,9 +1,11 @@
 #include <SBF/safe_box_forest.h>
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+#include <SBF/runtime.h>
 
 #include "planning_forest_adaptive_cover_utils.h"
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>

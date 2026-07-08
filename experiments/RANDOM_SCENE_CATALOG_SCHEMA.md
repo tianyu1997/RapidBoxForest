@@ -1,8 +1,7 @@
 # Random Scene Catalog Schema
 
-Random scenes used by Exp.6 and Exp.7 are saved before planner execution. The
-catalog is the shared input for SBF, IRIS-NP+GCS, PRM, RRTConnect, BIT*, and
-dynamic-update runs.
+Random scenes used by Exp.6 are saved before planner execution. The catalog is
+the shared input for SBF, IRIS-NP+GCS, PRM, RRTConnect, and BIT* runs.
 
 ## Top-Level Object
 

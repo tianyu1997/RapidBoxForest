@@ -1,5 +1,7 @@
 #include "planning_forest_query_bridge_options.h"
 
+#include <SBF/planning_config.h>
+
 #include <algorithm>
 namespace rbf {
 

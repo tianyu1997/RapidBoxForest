@@ -1,5 +1,9 @@
 #include <SBF/grower.h>
 
+#include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
 #include "grower_options.h"

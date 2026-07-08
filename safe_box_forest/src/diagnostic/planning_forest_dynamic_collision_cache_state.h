@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/box_graph.h>
+#include <rbf/core.h>
 
 #include <cstddef>
 #include <unordered_map>

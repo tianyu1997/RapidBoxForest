@@ -4,7 +4,7 @@
 
 #include "planning_forest_adaptive_merge_grid.h"
 #include "planning_forest_adaptive_merge_internal.h"
-#include "planning_forest_qroot_helpers.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
 
 #include <algorithm>
 #include <chrono>

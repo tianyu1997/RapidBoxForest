@@ -1,9 +1,11 @@
 #pragma once
 
-#include <SBF/box_graph.h>
+#include <SBF/box_adjacency_types.h>
 #include <SBF/find_free_box_types.h>
-#include <SBF/runtime.h>
+#include <SBF/runtime_fwd.h>
 #include <LECTDatabase/sbf/oracle_types.h>
+
+#include <rbf/core.h>
 
 #include <Eigen/Core>
 

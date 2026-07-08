@@ -1,5 +1,9 @@
 #include "planning_forest_query_utils.h"
 
+#include <SBF/scene.h>
+
+#include <SBF/box_graph.h>
+
 #include <algorithm>
 #include <functional>
 #include <iterator>

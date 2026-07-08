@@ -11,4 +11,4 @@
 #include <SBF/merger.h>
 #include <SBF/connector.h>
 #include <SBF/grower.h>
-#include <SBF/planning_forest.h>
+#include <SBF/safe_box_forest.h>

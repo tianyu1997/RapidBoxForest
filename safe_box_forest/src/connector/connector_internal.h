@@ -1,15 +1,23 @@
 #pragma once
 
-#include <SBF/connector.h>
-#include <SBF/oracle.h>
+#include <SBF/box_adjacency_types.h>
+#include <SBF/connector_types.h>
+#include <SBF/find_free_box_types.h>
+#include <SBF/runtime_fwd.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
+
+#include <rbf/core.h>
 
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace rbf {
+
+class CollisionChecker;
 
 int segment_resolution_for_step(const Eigen::Ref<const Eigen::VectorXd>& a,
                                 const Eigen::Ref<const Eigen::VectorXd>& b,

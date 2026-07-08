@@ -1,7 +1,6 @@
 #pragma once
 
-#include <SBF/adaptive_grid_partition.h>
-#include <SBF/box_graph.h>
+#include <rbf/core.h>
 
 #include <Eigen/Core>
 
@@ -11,6 +10,8 @@
 #include <vector>
 
 namespace rbf {
+
+class AdaptiveGridPartition;
 
 struct EndpointMainTargetCandidate {
     int box_id = -1;

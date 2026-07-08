@@ -1,10 +1,14 @@
 #include <SBF/safe_box_forest.h>
+
+#include <SBF/runtime.h>
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+#include <SBF/oracle.h>
 
 #include "planning_forest_adaptive_cover_utils.h"
 #include "planning_forest_adaptive_diagnostics.h"
 #include "planning_forest_adaptive_merge.h"
-#include "planning_forest_diagnostics.h"
+#include "../planning_core/planning_forest_diagnostics.h"
 
 #include <algorithm>
 #include <chrono>

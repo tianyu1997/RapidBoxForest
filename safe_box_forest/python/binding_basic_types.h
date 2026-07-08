@@ -1,10 +1,14 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/query_result.h>
+#include <SBF/scene_types.h>
 
 #include "binding_utils.h"
 
+#include <rbf/lect_database/canonicalization.h>
 #include <rbf/lect_database/read_snapshot.h>
+#include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/envelope_type.h>
 #include <sbf/envelope/ifk_aa_source.h>
 
 #include <pybind11/pybind11.h>

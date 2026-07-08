@@ -19,7 +19,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from export_public_release import DEFAULT_EXCLUDE_PATTERNS  # noqa: E402
+from export_public_release import DEFAULT_EXCLUDE_PATTERNS, FORBIDDEN_SOURCE_DIR_NAMES  # noqa: E402
 
 
 LOCAL_PATH_RE = re.compile(
@@ -65,7 +65,6 @@ OPTIONAL_PAPER_FILES = (
     "paper/generated/tab_tro_shelf_ablation.tex",
     "paper/generated/tab_tro_shelf_cross_algorithm.tex",
     "paper/generated/tab_tro_random_summary.tex",
-    "paper/generated/tab_tro_dynamic_update.tex",
     "paper/generated/fig_tro_shelf_tradeoff.pdf",
     "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
     "paper/generated/fig_tro_random_tradeoff.pdf",
@@ -100,15 +99,32 @@ TEXT_SUFFIXES = {
     ".yml",
 }
 
+BROKEN_REFERENCE_TERMS = tuple(
+    sorted(
+        {
+            "sbf_old",
+            "legacy_demos",
+            "SBF_OLD_DIR",
+            "paper/sbf_old",
+            "experiments/archive",
+            "github.com/tianyu1997/SafeBoxForest",
+            *FORBIDDEN_SOURCE_DIR_NAMES,
+        }
+    )
+)
 BROKEN_REFERENCE_RE = re.compile(
-    rb"(sbf_old|legacy_demos|SBF_OLD_DIR|paper/sbf_old|experiments/archive|sbf-standalone|improve_workspace|github\.com/tianyu1997/SafeBoxForest)"
+    b"("
+    + b"|".join(re.escape(term.encode("utf-8")) for term in BROKEN_REFERENCE_TERMS)
+    + b")"
 )
 BROKEN_REFERENCE_ALLOWLIST = {
     ".gitignore",
+    "docs/ARCHITECTURE.md",
     "scripts/export_public_release.py",
     "scripts/check_public_release.py",
     "scripts/check_release_readiness.py",
     "scripts/self_test_release_tools.py",
+    "docs/README.md",
     "docs/OPEN_SOURCE_RELEASE_CHECKLIST.md",
     "docs/REPRODUCIBILITY.md",
 }

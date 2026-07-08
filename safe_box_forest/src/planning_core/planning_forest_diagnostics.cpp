@@ -1,5 +1,7 @@
 #include "planning_forest_diagnostics.h"
 
+#include <SBF/runtime.h>
+
 #include <algorithm>
 
 namespace rbf {

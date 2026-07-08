@@ -1,9 +1,14 @@
 #include "connector_frontier_bridge.h"
 
+#include <SBF/scene.h>
+
 #include "connector_internal.h"
 
 #include <SBF/box_graph.h>
 #include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+#include <SBF/segment_edge_types.h>
 
 #include <algorithm>
 #include <cmath>

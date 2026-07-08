@@ -1,0 +1,68 @@
+	AdaptiveLeafSweepResult build_fixed_virtual_leaf_sweep_cover(
+		const std::vector<Obstacle>& obstacles,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		int initial_leaf_depth,
+		int adaptive_depth_min,
+		int target_leaf_depth,
+		LeafSweepConfig leaf_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		std::chrono::steady_clock::time_point total_start);
+	AdaptiveLeafSweepResult build_adaptive_fast_virtual_checkpoint_cover(
+		const std::vector<Obstacle>& obstacles,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		int initial_leaf_depth,
+		int adaptive_depth_min,
+		int target_leaf_depth,
+		LeafSweepConfig leaf_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		std::chrono::steady_clock::time_point total_start);
+	AdaptiveLeafSweepResult materialize_adaptive_fast_checkpoint_candidate(
+		const std::vector<Obstacle>& obstacles,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		int target_leaf_depth,
+		const AdaptiveLeafSweepConfig& partition_config,
+		std::chrono::steady_clock::time_point total_start,
+		const LeafSweepResult& leaf_result,
+		int depth,
+		int sweep_count,
+		double accumulated_leaf_sweep_ms);
+	void finalize_adaptive_deep_leaf_sweep_cover_result(
+		AdaptiveLeafSweepResult& out,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		bool adaptive_depth_enabled,
+		int initial_leaf_depth,
+		int adaptive_depth_min,
+		int target_leaf_depth,
+		double merge_ms,
+		const BudgetedMergeStats& merge_stats,
+		const AdjacencyBuildStats& initial_adjacency_stats,
+		const AdjacencyBuildStats& final_adjacency_stats,
+		std::vector<AdaptiveDepthSnapshot>& depth_snapshots,
+		double initial_probe_ms,
+		double checkpoint_probe_ms_total,
+		std::chrono::steady_clock::time_point total_start,
+		bool use_partition_backend);
+	double initialize_adaptive_build_topology(
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		const AdaptiveLeafSweepConfig& partition_config,
+		double adjacency_tolerance,
+		AdaptiveLeafSweepResult& out,
+		BudgetedMergeStats& merge_stats,
+		AdjacencyBuildStats& initial_adjacency_stats,
+		std::unordered_set<int>& main_ids,
+		bool use_partition_backend);
+	AdaptiveDepthSnapshot evaluate_adaptive_depth_snapshot(
+		int depth,
+		bool allow_anchor_probe,
+		bool adaptive_depth_enabled,
+		int target_leaf_depth,
+		const LeafSweepResult& leaf_sweep,
+		const std::vector<Eigen::VectorXd>& free_probes,
+		const std::vector<Interval>& planning_domain,
+		const AdaptiveLeafSweepConfig& adaptive_config,
+		bool use_partition_backend,
+		std::unordered_set<int>& main_ids,
+		std::size_t& first_unconnected_new_index,
+		int& pending_adjacency_boxes,
+		double adjacency_tolerance);

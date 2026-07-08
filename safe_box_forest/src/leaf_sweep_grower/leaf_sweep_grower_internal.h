@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/leaf_sweep_grower.h>
+#include <SBF/leaf_sweep_types.h>
+#include <SBF/runtime_fwd.h>
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
 
@@ -22,30 +24,20 @@ inline double elapsed_ms(LeafSweepClock::time_point start) {
 	return std::chrono::duration<double, std::milli>(LeafSweepClock::now() - start).count();
 }
 
-inline void add_counter(LeafSweepResult& result,
-						StageContext& context,
-						const std::string& key,
-						double value = 1.0) {
-	context.diagnostics().add_counter(key, value);
-	result.diagnostics[key] += value;
-}
+void add_counter(LeafSweepResult& result,
+				 StageContext& context,
+				 const std::string& key,
+				 double value = 1.0);
 
-inline void set_value(LeafSweepResult& result,
-					  StageContext& context,
-					  const std::string& key,
-					  double value) {
-	context.diagnostics().set_value(key, value);
-	result.diagnostics[key] = value;
-}
+void set_value(LeafSweepResult& result,
+			   StageContext& context,
+			   const std::string& key,
+			   double value);
 
-inline void record_timing(LeafSweepResult& result,
-						  StageContext& context,
-						  const std::string& key,
-						  double milliseconds) {
-	context.diagnostics().record_timing(key, milliseconds);
-	result.diagnostics[key + ".total_ms"] += milliseconds;
-	result.diagnostics[key + ".count"] += 1.0;
-}
+void record_timing(LeafSweepResult& result,
+				   StageContext& context,
+				   const std::string& key,
+				   double milliseconds);
 
 inline Eigen::VectorXd center_of_intervals(const std::vector<Interval>& intervals) {
 	Eigen::VectorXd center(static_cast<int>(intervals.size()));
@@ -152,14 +144,9 @@ inline bool intervals_same_exact(const std::vector<Interval>& lhs,
 
 class ScopedOracleEnvelopeCache {
 public:
-	ScopedOracleEnvelopeCache(DatabaseBoxOracle& oracle, bool enabled)
-		: oracle_(oracle), previous_(oracle.envelope_cache_enabled()) {
-		oracle_.set_envelope_cache_enabled(enabled);
-	}
+	ScopedOracleEnvelopeCache(DatabaseBoxOracle& oracle, bool enabled);
 
-	~ScopedOracleEnvelopeCache() {
-		oracle_.set_envelope_cache_enabled(previous_);
-	}
+	~ScopedOracleEnvelopeCache();
 
 	ScopedOracleEnvelopeCache(const ScopedOracleEnvelopeCache&) = delete;
 	ScopedOracleEnvelopeCache& operator=(const ScopedOracleEnvelopeCache&) = delete;
@@ -171,16 +158,9 @@ private:
 
 class ScopedOracleFullOverlapStats {
 public:
-	ScopedOracleFullOverlapStats(DatabaseBoxOracle& oracle, bool enabled)
-		: oracle_(oracle), previous_(oracle.validation_config().collect_full_overlap_stats) {
-		if (enabled) {
-			oracle_.set_collect_full_overlap_stats(true);
-		}
-	}
+	ScopedOracleFullOverlapStats(DatabaseBoxOracle& oracle, bool enabled);
 
-	~ScopedOracleFullOverlapStats() {
-		oracle_.set_collect_full_overlap_stats(previous_);
-	}
+	~ScopedOracleFullOverlapStats();
 
 	ScopedOracleFullOverlapStats(const ScopedOracleFullOverlapStats&) = delete;
 	ScopedOracleFullOverlapStats& operator=(const ScopedOracleFullOverlapStats&) = delete;

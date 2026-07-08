@@ -1,5 +1,7 @@
 #include "planning_forest_query_bridge_diagnostics.h"
 
+#include <SBF/runtime.h>
+
 #include <string>
 
 namespace rbf {

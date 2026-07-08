@@ -1,6 +1,7 @@
 #include <SBF/safe_box_forest.h>
 
 #include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <chrono>
@@ -8,10 +9,10 @@
 #include <utility>
 #include <vector>
 
-#include "find_free_box_internal.h"
+#include "../free_box/find_free_box_internal.h"
 #include "planning_forest_ffb_binary_sparse.h"
 #include "planning_forest_ffb_helpers.h"
-#include "virtual_sparse_ffb_options.h"
+#include "../free_box/virtual_sparse_ffb_options.h"
 
 namespace rbf {
 

@@ -1,6 +1,8 @@
 #include "planning_forest_query_bridge_corridor_options.h"
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/runtime.h>
+
+#include <SBF/planning_config.h>
 
 #include <algorithm>
 

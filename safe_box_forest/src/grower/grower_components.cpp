@@ -1,5 +1,6 @@
 #include "grower_components.h"
 
+#include <SBF/box_graph.h>
 #include <SBF/oracle.h>
 
 #include <algorithm>

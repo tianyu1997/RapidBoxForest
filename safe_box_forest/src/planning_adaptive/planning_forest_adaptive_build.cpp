@@ -1,38 +1,23 @@
 #include <SBF/safe_box_forest.h>
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/box_graph.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <chrono>
-#include <exception>
-#include <limits>
-#include <queue>
 #include <unordered_set>
 
+#include "planning_forest_adaptive_checkpoint.h"
+#include "planning_forest_adaptive_commit.h"
 #include "planning_forest_adaptive_cover_utils.h"
+#include "planning_forest_adaptive_frontier.h"
 #include "planning_forest_adaptive_merge.h"
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "planning_forest_adaptive_validation.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 namespace rbf {
-
-namespace {
-
-bool intervals_overlap_local(const std::vector<Interval>& lhs,
-                             const std::vector<Interval>& rhs,
-                             double tolerance = 0.0) {
-    if (lhs.size() != rhs.size()) {
-        return false;
-    }
-    for (std::size_t dim = 0; dim < lhs.size(); ++dim) {
-        if (!lhs[dim].overlaps(rhs[dim], tolerance)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-
-}  // namespace
 
 AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     const std::vector<Obstacle>& obstacles,
@@ -121,42 +106,16 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     out.seed_probe_count = probe_attempted;
     out.seed_probe_free_count = static_cast<int>(free_probes.size());
 
-    auto item_less = [](const AdaptiveFrontierItem& lhs, const AdaptiveFrontierItem& rhs) {
-        return lhs.score < rhs.score;
-    };
-    std::priority_queue<AdaptiveFrontierItem,
-                        std::vector<AdaptiveFrontierItem>,
-                        decltype(item_less)>
-        frontier(item_less);
-
-    auto refresh_score = [&](AdaptiveFrontierItem& item) {
-        item.score = adaptive_frontier_score(scoring_boxes,
-                                             item,
-                                             main_ids,
-                                             adaptive_config.overlap_depth_threshold,
-                                             adjacency_tolerance);
-    };
-    auto push_frontier = [&](AdaptiveFrontierItem item) {
-        item.free_seed_hits = adaptive_count_seed_hits(item, free_probes);
-        if (item.free_seed_hits > 0) {
-            out.diagnostics["adaptive.frontier_seed_hit_pushes"] += 1.0;
-            out.diagnostics["adaptive.frontier_seed_hits_total"] += static_cast<double>(item.free_seed_hits);
-        }
-        refresh_score(item);
-        frontier.push(std::move(item));
-    };
-
-    for (const auto& collision_box : out.leaf_sweep.collision_boxes) {
-        AdaptiveFrontierItem item;
-        item.node = collision_box.tree_id >= 0 ? collision_box.tree_id : collision_box.id;
-        item.intervals = collision_box.joint_intervals;
-        item.changed_dim = -1;
-        if (!planning_domain.empty() && !intervals_overlap_local(item.intervals, planning_domain, 0.0)) {
-            out.diagnostics["adaptive.initial_frontier_outside_domain"] += 1.0;
-            continue;
-        }
-        push_frontier(std::move(item));
-    }
+    AdaptiveFrontierQueue frontier;
+    adaptive_seed_initial_frontier(out.leaf_sweep.collision_boxes,
+                                   planning_domain,
+                                   free_probes,
+                                   scoring_boxes,
+                                   main_ids,
+                                   adaptive_config,
+                                   adjacency_tolerance,
+                                   frontier,
+                                   out);
 
     const auto adaptive_start = Clock::now();
     auto elapsed_total_ms = [&]() {
@@ -170,27 +129,6 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         return adaptive_config.node_budget > 0 &&
                out.adaptive_validated >= adaptive_config.node_budget;
     };
-    auto promote_deferred = [&]() {
-        if (!adaptive_config.seed_promote_uncovered || deferred.empty() || free_probes.empty()) {
-            return;
-        }
-        std::vector<AdaptiveFrontierItem> keep;
-        keep.reserve(deferred.size());
-        for (auto& item : deferred) {
-            const int hits = adaptive_count_seed_hits(item, free_probes);
-            if (hits > 0) {
-                item.free_seed_hits = hits;
-                refresh_score(item);
-                frontier.push(std::move(item));
-                out.adaptive_promoted += 1;
-                out.diagnostics["adaptive.promoted_by_seed_probe"] += 1.0;
-            } else {
-                keep.push_back(std::move(item));
-            }
-        }
-        deferred = std::move(keep);
-    };
-
     const auto& split_descriptor = oracle_->database().split_policy_descriptor();
     std::size_t first_unconnected_new_index = boxes_.size();
     int pending_adjacency_boxes = 0;
@@ -220,16 +158,10 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
     int next_checkpoint_depth = initial_leaf_depth;
     if (adaptive_depth_enabled) {
         auto initial_snapshot = evaluate_depth_snapshot(initial_leaf_depth, true);
-        if (initial_snapshot.readiness_met) {
-            initial_snapshot.stop_reason = "coverage_ready";
-            adaptive_depth_stop = true;
-        } else if (initial_leaf_depth >= target_leaf_depth) {
-            initial_snapshot.stop_reason = "max_depth";
-            adaptive_depth_stop = true;
-        } else {
-            initial_snapshot.stop_reason = "checkpoint";
-            next_checkpoint_depth = adaptive_next_depth_checkpoint(initial_leaf_depth, target_leaf_depth);
-        }
+        const AdaptiveDepthCheckpointDecision checkpoint =
+            advance_adaptive_depth_checkpoint(initial_snapshot, target_leaf_depth);
+        adaptive_depth_stop = checkpoint.stop;
+        next_checkpoint_depth = checkpoint.next_checkpoint_depth;
         record_depth_snapshot(std::move(initial_snapshot));
     }
     std::vector<AdaptiveFrontierItem> checkpoint_hold;
@@ -244,43 +176,25 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             adaptive_config.overlap_ratio_threshold > 0.0 &&
             adaptive_config.defer_min_depth >= 0;
         ScopedAdaptiveFullOverlapStats overlap_stats(*oracle_, collect_overlap_ratio);
-        while (!frontier.empty() && !budget_exhausted() && !adaptive_depth_stop) {
-            AdaptiveFrontierItem item = frontier.top();
-            frontier.pop();
-            if (item.intervals.empty()) {
-                out.diagnostics["adaptive.empty_frontier_items"] += 1.0;
-                continue;
-            }
+        StageContext adaptive_context = StageContext::from_runtime(config_.runtime);
+        const int adaptive_threads = std::max(1, adaptive_context.executor().n_threads());
+        const int validation_batch_limit =
+            adaptive_config.parallel_virtual_validation && adaptive_threads > 1
+                ? std::max(1, adaptive_config.validation_batch_size)
+                : 1;
+        AdaptiveFrontierValidationSession validation_session(*oracle_,
+                                                             adaptive_context,
+                                                             adaptive_threads,
+                                                             validation_batch_limit,
+                                                             collect_overlap_ratio,
+                                                             out.diagnostics);
+        auto process_validated_item = [&](AdaptiveFrontierItem item,
+                                          BoxValidation validation,
+                                          const OracleValidationDetail& detail,
+                                          bool exception) {
             const int depth = adaptive_virtual_depth(item.node);
-            if (adaptive_depth_enabled && depth > next_checkpoint_depth) {
-                checkpoint_hold.push_back(std::move(item));
-                if (frontier.empty()) {
-                    restore_checkpoint_hold();
-                    auto snapshot = evaluate_depth_snapshot(next_checkpoint_depth, true);
-                    if (snapshot.readiness_met) {
-                        snapshot.stop_reason = "coverage_ready";
-                        adaptive_depth_stop = true;
-                    } else if (next_checkpoint_depth >= target_leaf_depth) {
-                        snapshot.stop_reason = "max_depth";
-                        adaptive_depth_stop = true;
-                    } else {
-                        snapshot.stop_reason = "checkpoint";
-                        next_checkpoint_depth =
-                            adaptive_next_depth_checkpoint(next_checkpoint_depth, target_leaf_depth);
-                    }
-                    record_depth_snapshot(std::move(snapshot));
-                }
-                continue;
-            }
-            adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.validated.", depth);
-            BoxValidation validation = BoxValidation::Unknown;
-            OracleValidationDetail detail;
-            try {
-                validation = oracle_->validate_node(item.node, item.intervals, item.changed_dim);
-                detail = oracle_->last_validation_detail();
-            } catch (const std::exception&) {
+            if (exception) {
                 out.diagnostics["adaptive.validation_exceptions"] += 1.0;
-                validation = BoxValidation::Unknown;
             }
             out.adaptive_validated += 1;
             item.overlap_depth = detail.aabb_overlap_depth;
@@ -291,135 +205,110 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
             }
 
             if (validation == BoxValidation::Free) {
-                BoxNode candidate = adaptive_make_box_from_intervals(item.intervals,
-                                                                     item.node,
-                                                                     next_box_id(),
-                                                                     detail.safety_status,
-                                                                     detail.strict_audit_required);
-                bool contained = false;
-                for (const auto& existing : boxes_) {
-                    if (intervals_subset_local(candidate.joint_intervals,
-                                               existing.joint_intervals,
-                                               1e-12)) {
-                        contained = true;
-                        break;
-                    }
-                }
-                if (contained) {
-                    out.diagnostics["adaptive.free_contained_rejects"] += 1.0;
-                    continue;
-                }
-                const std::size_t new_index = boxes_.size();
-                (void)new_index;
-                boxes_.push_back(candidate);
-                raw_boxes_.push_back(candidate);
-                scoring_boxes.push_back(candidate);
-                oracle_->reserve_node(candidate.tree_id, candidate.id);
-                out.adaptive_free_added += 1;
-                pending_adjacency_boxes += 1;
-                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.free.", depth);
-                if (item_has_seed_hit) {
-                    out.diagnostics["adaptive.seed_hit_free"] += 1.0;
-                }
-                if (use_partition_backend && adaptive_partition_query_enabled_ && adaptive_partition_) {
-                    const int appended =
-                        adaptive_partition_->append_boxes(boxes_, new_index, adjacency_tolerance);
-                    out.diagnostics["adaptive.partition_incremental_boxes_appended"] +=
-                        static_cast<double>(std::max(0, appended));
-                    if (pending_adjacency_boxes >= kAdaptiveAdjacencyBatchSize) {
-                        refresh_main_from_partition();
-                        pending_adjacency_boxes = 0;
-                        out.diagnostics["adaptive.partition_main_refreshes"] += 1.0;
-                    }
-                } else {
-                    adjacency_[candidate.id];
-                    if (pending_adjacency_boxes >= kAdaptiveAdjacencyBatchSize) {
-                        connect_incremental_boxes(adjacency_,
-                                                  boxes_,
-                                                  first_unconnected_new_index,
-                                                  adjacency_tolerance);
-                        first_unconnected_new_index = boxes_.size();
-                        pending_adjacency_boxes = 0;
-                        main_ids = adaptive_largest_island_ids(adjacency_);
-                        out.diagnostics["adaptive.adjacency_batch_updates"] += 1.0;
-                    }
-                }
-                continue;
+                adaptive_commit_free_box_candidate(item,
+                                                   detail,
+                                                   depth,
+                                                   item_has_seed_hit,
+                                                   next_box_id(),
+                                                   use_partition_backend,
+                                                   adaptive_partition_query_enabled_,
+                                                   adaptive_partition_.get(),
+                                                   adjacency_tolerance,
+                                                   kAdaptiveAdjacencyBatchSize,
+                                                   *oracle_,
+                                                   boxes_,
+                                                   raw_boxes_,
+                                                   scoring_boxes,
+                                                   adjacency_,
+                                                   main_ids,
+                                                   first_unconnected_new_index,
+                                                   pending_adjacency_boxes,
+                                                   out);
+                return;
             }
 
-            const bool high_overlap =
-                adaptive_item_high_overlap(adaptive_config, item, depth);
-            const bool protected_by_seed = item_has_seed_hit;
             const AdaptiveConnectivityDominance connectivity =
                 adaptive_connectivity_dominance(scoring_boxes, item, main_ids, adjacency_tolerance);
-            const bool protected_by_adjacency =
-                high_overlap && !protected_by_seed &&
-                (connectivity.connector_candidate || connectivity.adjacent_main > 0);
-            if (depth >= target_leaf_depth) {
-                deferred.push_back(std::move(item));
-                out.adaptive_deferred += 1;
-                out.diagnostics["adaptive.deferred_depth_cap"] += 1.0;
-                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
-                if (item_has_seed_hit) {
-                    out.diagnostics["adaptive.seed_hit_deferred"] += 1.0;
-                }
-                continue;
-            }
-            if (high_overlap && !protected_by_seed && !protected_by_adjacency) {
-                deferred.push_back(std::move(item));
-                out.adaptive_deferred += 1;
-                out.diagnostics["adaptive.deferred_high_overlap"] += 1.0;
-                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
-                continue;
-            }
-            if (depth >= adaptive_config.defer_min_depth &&
-                !protected_by_seed &&
-                connectivity.has_free_context &&
-                connectivity.isolated) {
-                deferred.push_back(std::move(item));
-                out.adaptive_deferred += 1;
-                out.diagnostics["adaptive.deferred_connectivity_isolated"] += 1.0;
-                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
-                continue;
-            }
-            if (depth >= adaptive_config.defer_min_depth &&
-                !protected_by_seed &&
-                connectivity.has_free_context &&
-                connectivity.single_component &&
-                connectivity.adjacent_main == 0) {
-                deferred.push_back(std::move(item));
-                out.adaptive_deferred += 1;
-                out.diagnostics["adaptive.deferred_connectivity_single_component"] += 1.0;
-                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.deferred.", depth);
-                continue;
+            if (adaptive_defer_frontier_item_if_needed(item,
+                                                       depth,
+                                                       target_leaf_depth,
+                                                       connectivity,
+                                                       adaptive_config,
+                                                       deferred,
+                                                       out)) {
+                return;
             }
 
-            AdaptiveFrontierItem left;
-            AdaptiveFrontierItem right;
-            if (!adaptive_virtual_split_node(split_descriptor, item, left, right)) {
-                deferred.push_back(std::move(item));
-                out.adaptive_deferred += 1;
-                out.diagnostics["adaptive.deferred_split_failure"] += 1.0;
-                continue;
-            }
-            out.adaptive_splits += 1;
-            if (item_has_seed_hit) {
-                out.diagnostics["adaptive.seed_hit_splits"] += 1.0;
-            }
-            adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.split.", depth);
-            if (planning_domain.empty() || intervals_overlap_local(left.intervals, planning_domain, 0.0)) {
-                push_frontier(std::move(left));
-            } else {
-                out.diagnostics["adaptive.split_child_outside_domain"] += 1.0;
-            }
-            if (planning_domain.empty() || intervals_overlap_local(right.intervals, planning_domain, 0.0)) {
-                push_frontier(std::move(right));
-            } else {
-                out.diagnostics["adaptive.split_child_outside_domain"] += 1.0;
-            }
+            adaptive_split_frontier_item_and_enqueue(std::move(item),
+                                                     depth,
+                                                     split_descriptor,
+                                                     planning_domain,
+                                                     free_probes,
+                                                     scoring_boxes,
+                                                     main_ids,
+                                                     adaptive_config,
+                                                     adjacency_tolerance,
+                                                     deferred,
+                                                     frontier,
+                                                     out);
             if (adaptive_config.promotion_interval > 0 &&
                 out.adaptive_validated % adaptive_config.promotion_interval == 0) {
-                promote_deferred();
+                adaptive_promote_deferred_by_seed(deferred,
+                                                  free_probes,
+                                                  scoring_boxes,
+                                                  main_ids,
+                                                  adaptive_config,
+                                                  adjacency_tolerance,
+                                                  frontier,
+                                                  out);
+            }
+        };
+        while (!frontier.empty() && !budget_exhausted() && !adaptive_depth_stop) {
+            const int remaining_budget =
+                adaptive_config.node_budget > 0
+                    ? std::max(0, adaptive_config.node_budget - out.adaptive_validated)
+                    : validation_batch_limit;
+            const int target_batch_size =
+                std::max(1, std::min(validation_batch_limit, remaining_budget));
+            std::vector<AdaptiveFrontierItem> validation_items;
+            validation_items.reserve(static_cast<std::size_t>(target_batch_size));
+            while (static_cast<int>(validation_items.size()) < target_batch_size &&
+                   !frontier.empty() && !budget_exhausted() && !adaptive_depth_stop) {
+                AdaptiveFrontierItem item = frontier.top();
+                frontier.pop();
+                if (item.intervals.empty()) {
+                    out.diagnostics["adaptive.empty_frontier_items"] += 1.0;
+                    continue;
+                }
+                const int depth = adaptive_virtual_depth(item.node);
+                if (adaptive_depth_enabled && depth > next_checkpoint_depth) {
+                    checkpoint_hold.push_back(std::move(item));
+                    if (validation_items.empty() && frontier.empty()) {
+                        restore_checkpoint_hold();
+                        auto snapshot = evaluate_depth_snapshot(next_checkpoint_depth, true);
+                        const AdaptiveDepthCheckpointDecision checkpoint =
+                            advance_adaptive_depth_checkpoint(snapshot, target_leaf_depth);
+                        adaptive_depth_stop = checkpoint.stop;
+                        next_checkpoint_depth = checkpoint.next_checkpoint_depth;
+                        record_depth_snapshot(std::move(snapshot));
+                    }
+                    break;
+                }
+                adaptive_add_depth_counter(out.diagnostics, "adaptive.depth.validated.", depth);
+                validation_items.push_back(std::move(item));
+                if (validation_batch_limit <= 1) {
+                    break;
+                }
+            }
+            if (validation_items.empty()) {
+                continue;
+            }
+            const auto outcomes = validation_session.validate_batch(validation_items);
+            for (std::size_t i = 0; i < validation_items.size(); ++i) {
+                process_validated_item(std::move(validation_items[i]),
+                                       outcomes[i].validation,
+                                       outcomes[i].detail,
+                                       outcomes[i].exception);
             }
         }
     }
@@ -441,7 +330,14 @@ AdaptiveLeafSweepResult RBFPlanningForest::build_adaptive_deep_leaf_sweep_cover(
         adaptive_depth_stop = true;
         record_depth_snapshot(std::move(snapshot));
     }
-    promote_deferred();
+    adaptive_promote_deferred_by_seed(deferred,
+                                      free_probes,
+                                      scoring_boxes,
+                                      main_ids,
+                                      adaptive_config,
+                                      adjacency_tolerance,
+                                      frontier,
+                                      out);
     while (!frontier.empty()) {
         deferred.push_back(frontier.top());
         frontier.pop();

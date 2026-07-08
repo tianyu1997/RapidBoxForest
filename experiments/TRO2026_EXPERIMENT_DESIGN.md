@@ -231,30 +231,18 @@ random-scene common-rule artifact until the external Drake/GCS pipeline is made
 self-contained in the current runner; it is reported as protocol context rather
 than a current-catalog row.
 
-### Exp.7 Dynamic Update
+### Archived Dynamic-Update Study
 
-Purpose: isolate the cost of maintaining an adaptive leaf-sweep partition as
-the number of workspace obstacles changes. This experiment no longer reuses the
-Exp.6 query catalog, because the independent variable is obstacle count rather
-than random-scene planning difficulty.
+The former Exp.7 dynamic-update runner has been moved to a private experiment
+archive excluded from the clean public export. It is retained as historical
+maintenance evidence, not as a current paper-facing experiment entry point. The
+active dispatcher no longer runs it with `--only exp07` or as part of full paper
+runs.
 
-Protocol: for each seed, generate and save an ordered obstacle list with schema
-`tro2026_exp07_ordered_obstacle_update_v1`. Starting from the two-obstacle
-prefix, build an adaptive leaf-sweep partition without query information, then
-insert the next saved obstacle to reach three obstacles. From that
-three-obstacle scene, remove the same obstacle back to two obstacles. The
-experiment also records fresh warm adaptive leaf-sweep builds at two and three
-obstacles. The sweep uses virtual topology, `deep_max_boxes=200`, and adaptive
-depth checkpoints from d10 to d14; it descends past a checkpoint only if fewer
-than 200 free partition cells have been retained. No query bridge, connector,
-OMPL simplification, or post-hoc path audit is run in Exp.7.
-
-Metrics: Warm@2 time, batched two-to-three insertion time, insertion speedup
-relative to Warm@3, batched three-to-two removal time, removal speedup relative to
-Warm@3, and Warm@3 time. The main paper table drops the robot column because
-Exp.7 is a focused IIWA scene-maintenance study and reports \([Q_1,Q_3]\)
-statistics over saved ordered random scenes. The manifest keeps all event
-timings and build diagnostics for reproducibility.
+Active paper table generation does not consume archived dynamic-update
+artifacts. New dynamic-update studies should be registered as a new experiment
+with a current protocol before they are added back to the dispatcher or paper
+asset manifest.
 
 ## Appendix Sweeps
 
@@ -281,7 +269,7 @@ The experiment section is considered complete only when:
    assets for experiment tables or figures.
 2. `experiments/` paper-facing runners no longer call bundled historical SBF
    experiment scripts.
-3. Exp.6 and Exp.7 consume saved scene catalogs in full runs.
+3. Exp.6 consumes saved scene catalogs in full runs.
 4. `paper/generated/tro_table_generation_manifest.json` records the source
    artifact for every table and figure.
 5. Smoke and py-compile checks pass for all new runners.

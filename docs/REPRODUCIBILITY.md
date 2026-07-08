@@ -313,7 +313,7 @@ python3 experiments/common/generate_random_scene_catalog.py \
 
 python3 experiments/run_tro2026.py \
   --phase paper \
-  --only exp06,exp07 \
+  --only exp06 \
   --scene-catalog outputs/new_experiments/tro2026/catalogs/random_scene_catalog.json \
   --scene-catalog-mode verify \
   --execute \
@@ -421,11 +421,10 @@ checkout and are not included in the public source export:
 3. `paper/generated/tab_tro_shelf_ablation.tex`
 4. `paper/generated/tab_tro_shelf_cross_algorithm.tex`
 5. `paper/generated/tab_tro_random_summary.tex`
-6. `paper/generated/tab_tro_dynamic_update.tex`
-7. `paper/generated/fig_tro_shelf_tradeoff.pdf`
-8. `paper/generated/fig_tro_shelf_cross_tradeoff.pdf`
-9. `paper/generated/fig_tro_random_tradeoff.pdf`
-10. `paper/generated/tro_table_generation_manifest.json`
+6. `paper/generated/fig_tro_shelf_tradeoff.pdf`
+7. `paper/generated/fig_tro_shelf_cross_tradeoff.pdf`
+8. `paper/generated/fig_tro_random_tradeoff.pdf`
+9. `paper/generated/tro_table_generation_manifest.json`
 
 Paper-facing runs should use current runners under `experiments/`. Historical
 module-local SBF experiment workflows have been removed from the active source

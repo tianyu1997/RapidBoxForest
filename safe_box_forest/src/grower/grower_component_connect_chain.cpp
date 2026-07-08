@@ -1,5 +1,8 @@
 #include <SBF/grower.h>
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
 #include "grower_options.h"
@@ -66,7 +69,7 @@ void RrtGrower::record_component_connect_result(int source_root_id,
     if (ffb_result != nullptr && ffb_result->hit_unknown_depth_cap) {
         const int failures = ++component_pair_unknown_failures_[key];
         context.diagnostics().add_counter("grower.component_connect_pair_unknown_failures");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_pair_unknown_failures_max",
                            static_cast<double>(failures));
     }
@@ -92,7 +95,7 @@ void RrtGrower::record_component_connect_failure(int parent_box_id,
                                                  StageContext& context) {
     context.diagnostics().add_counter("grower.component_connect_failures");
     const int failures = ++component_parent_failures_[parent_box_id];
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.component_connect_parent_failure_max",
                        static_cast<double>(failures));
     record_component_connect_result(source_root_id,
@@ -236,7 +239,7 @@ int RrtGrower::grow_component_connect_chain(std::vector<BoxNode>& boxes,
         }
     }
     if (added > 0) {
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_chain_added_max",
                            static_cast<double>(added));
     }

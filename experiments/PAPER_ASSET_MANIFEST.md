@@ -14,8 +14,7 @@ export by default.
 5. `paper/generated/tab_tro_shelf_cross_algorithm.tex`
 6. `paper/generated/fig_tro_random_tradeoff.pdf`
 7. `paper/generated/tab_tro_random_summary.tex`
-8. `paper/generated/tab_tro_dynamic_update.tex`
-9. `paper/generated/tro_table_generation_manifest.json`
+8. `paper/generated/tro_table_generation_manifest.json`
 
 ## Manifest Requirements
 
@@ -27,7 +26,7 @@ The generated JSON manifest must include:
 4. table row-selection rule;
 5. audit segment step and simplify policy;
 6. whether planning time excludes audit time;
-7. scene catalog path for Exp.6 and Exp.7.
+7. scene catalog path for Exp.6.
 
 When a generated figure or table includes context imported from the old TRO
 paper artifacts, the manifest must record the imported source path. Such rows

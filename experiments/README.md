@@ -14,9 +14,9 @@ python3 experiments/generate_tro2026_paper_assets.py --out-dir outputs/tro2026 -
 ```
 
 The default public smoke suite intentionally runs only the lightweight core
-mechanism checks (`exp01`, `exp02`). Heavier planning, random-scene, Drake/IRIS,
-and dynamic-update studies should be requested explicitly with `--only` once
-their required caches, catalogs, and optional dependencies are available.
+mechanism checks (`exp01`, `exp02`). Heavier planning, random-scene, and
+Drake/IRIS studies should be requested explicitly with `--only` once their
+required caches, catalogs, and optional dependencies are available.
 Smoke execute mode still requires the `link_interval_envelope` Python module to
 be importable; use dry-run mode in a source-only checkout.
 
@@ -28,8 +28,12 @@ be importable; use dry-run mode in a source-only checkout.
 4. `exp04_shelf_leaf_rrt/` — Shelf+IIWA leaf-sweep + partition-native query-bridge study.
 5. `exp05_shelf_cross_algorithm/` — Shelf+IIWA cross-algorithm comparison.
 6. `exp06_random_robot/` — saved-catalog random multi-robot study.
-7. `exp07_dynamic_update/` — current dynamic-update study.
-8. `appendix_sweeps/` — parameter and sensitivity sweeps.
+7. `appendix_sweeps/` — parameter and sensitivity sweeps.
+
+Private development checkouts may contain historical and diagnostic runners,
+including the former Exp.7 dynamic-update study, under paths excluded from the
+clean public export. Archived runners are not current paper-facing entry
+points.
 
 ## Required Policy
 

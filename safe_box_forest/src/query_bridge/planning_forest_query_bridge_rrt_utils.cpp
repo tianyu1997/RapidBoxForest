@@ -1,85 +1,22 @@
 #include "planning_forest_query_bridge_rrt_utils.h"
 
-#include "planning_forest_audit.h"
+#include <SBF/runtime.h>
+
+#include <SBF/box_graph.h>
+
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_task.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
+
+#include <SBF/connector.h>
+#include <SBF/planning_config.h>
+#include <SBF/scene.h>
 
 #include <algorithm>
 #include <chrono>
-#include <cmath>
-#include <string>
 
 namespace rbf {
-
-bool query_bridge_short_local_distance(double bridge_distance) {
-    return bridge_distance > 0.55 && bridge_distance < 0.85;
-}
-
-void query_bridge_configure_short_local_profiles(
-    RRTConnectConfig& bridge_rrt,
-    std::vector<RRTConnectConfig>& short_local_profiles) {
-    bridge_rrt.step_size = std::min(bridge_rrt.step_size, 0.25);
-    bridge_rrt.goal_bias = 0.08;
-    bridge_rrt.local_sampling_radius =
-        bridge_rrt.local_sampling_radius > 0.0
-            ? std::min(bridge_rrt.local_sampling_radius, 0.85)
-            : 0.85;
-    auto add_profile = [&](double step_size, double goal_bias, double radius) {
-        RRTConnectConfig profile = bridge_rrt;
-        profile.step_size = step_size;
-        profile.goal_bias = goal_bias;
-        profile.local_sampling_radius = radius;
-        profile.shortcut_path = true;
-        short_local_profiles.push_back(std::move(profile));
-    };
-    add_profile(0.25, 0.08, 0.90);
-    add_profile(0.50, 0.20, 1.00);
-    add_profile(0.35, 0.10, 1.00);
-    add_profile(0.25, 0.08, 0.45);
-}
-
-RRTConnectConfig query_bridge_rrt_config_for_attempt(
-    const QueryBridgeSearchTask& task,
-    int attempt,
-    int scheduled_attempt,
-    int override_fixed_iters,
-    double default_timeout_ms,
-    const QueryBridgeRetryOptions& options) {
-    RRTConnectConfig config =
-        task.short_local_profiles.empty()
-            ? task.bridge_rrt
-            : task.short_local_profiles[
-                  static_cast<std::size_t>(scheduled_attempt) % task.short_local_profiles.size()];
-    if (!options.local_radius_schedule.empty() &&
-        attempt >= 0 &&
-        static_cast<std::size_t>(attempt) < options.local_radius_schedule.size()) {
-        const double scheduled_radius =
-            options.local_radius_schedule[static_cast<std::size_t>(attempt)];
-        if (scheduled_radius >= 0.0) {
-            config.local_sampling_radius = scheduled_radius;
-        }
-    }
-    const int effective_fixed_iters =
-        override_fixed_iters > 0 ? override_fixed_iters : options.rrt_fixed_iters;
-    if (effective_fixed_iters > 0) {
-        config.max_iters = effective_fixed_iters;
-        config.timeout_ms = 0.0;
-    } else {
-        config.timeout_ms = std::max(1.0, default_timeout_ms);
-    }
-    return config;
-}
-
-int query_bridge_rrt_seed_for_attempt(const QueryBridgeSearchTask& task,
-                                      int rng_seed,
-                                      int scheduled_attempt) {
-    return derived_planner_seed(rng_seed,
-                                kSeedBatchBridgeOffset,
-                                scheduled_attempt,
-                                task.query_index,
-                                task.short_local_bridge ? 0 : kSeedAttemptStride);
-}
 
 std::vector<Eigen::VectorXd> run_query_bridge_task_rrt_attempt(
     const QueryBridgeSearchTask& task,
@@ -179,102 +116,6 @@ void run_query_bridge_task_attempts(
                                               config,
                                               context);
     }
-}
-
-QueryBridgeRetryOptions query_bridge_retry_options_from_config(
-    const RBFPlanningConfig& config) {
-    QueryBridgeRetryOptions options;
-    options.no_path_retry_attempts =
-        std::max(0, config.query_bridge_no_path_retry_attempts);
-    options.no_path_retry_stop_on_first_success =
-        config.query_bridge_no_path_retry_stop_on_first_success;
-    options.forced_attempts =
-        std::max(1, config.query_bridge_forced_attempts);
-    options.attempt_offset =
-        std::max(0, config.query_bridge_attempt_offset);
-    options.rrt_fixed_iters =
-        std::max(0, config.query_bridge_rrt_fixed_iters);
-    options.local_radius_schedule =
-        config.query_bridge_local_radius_schedule;
-    options.no_path_retry_budget_iters =
-        config.query_bridge_no_path_retry_budget_iters;
-    options.no_path_retry_budget_attempts =
-        config.query_bridge_no_path_retry_budget_attempts;
-    options.no_path_retry_budget_stages =
-        std::min(options.no_path_retry_budget_iters.size(),
-                 options.no_path_retry_budget_attempts.size());
-    return options;
-}
-
-void record_query_bridge_retry_diagnostics(StageContext& context,
-                                           const QueryBridgeRetryOptions& options) {
-    context.diagnostics().set_value("query_bridge.no_path_retry_attempts_default",
-                                    static_cast<double>(options.no_path_retry_attempts));
-    context.diagnostics().set_value("query_bridge.no_path_retry_stop_on_first_success",
-                                    options.no_path_retry_stop_on_first_success ? 1.0 : 0.0);
-    context.diagnostics().set_value("query_bridge.rrt_fixed_iters",
-                                    static_cast<double>(options.rrt_fixed_iters));
-    context.diagnostics().set_value("query_bridge.local_radius_schedule_size",
-                                    static_cast<double>(options.local_radius_schedule.size()));
-    context.diagnostics().set_value("query_bridge.no_path_retry_budget_stages",
-                                    static_cast<double>(options.no_path_retry_budget_stages));
-    for (std::size_t stage = 0; stage < options.no_path_retry_budget_stages; ++stage) {
-        const std::string prefix =
-            "query_bridge.no_path_retry_budget_stage." + std::to_string(stage) + ".";
-        context.diagnostics().set_value(
-            prefix + "iters",
-            static_cast<double>(options.no_path_retry_budget_iters[stage]));
-        context.diagnostics().set_value(
-            prefix + "attempts",
-            static_cast<double>(options.no_path_retry_budget_attempts[stage]));
-    }
-}
-
-QueryBridgeParallelRrtOptions query_bridge_parallel_rrt_options_from_config(
-    const RBFPlanningConfig& config) {
-    QueryBridgeParallelRrtOptions options;
-    options.early_stop = config.query_bridge_parallel_rrt_early_stop;
-    options.early_stop_min_successes =
-        std::max(1, config.query_bridge_parallel_rrt_early_stop_min_successes);
-    options.early_stop_ratio =
-        std::max(1.0, config.query_bridge_parallel_rrt_early_stop_ratio);
-    options.early_stop_additive =
-        std::max(0.0, config.query_bridge_parallel_rrt_early_stop_additive);
-    return options;
-}
-
-void record_query_bridge_parallel_rrt_diagnostics(
-    StageContext& context,
-    const QueryBridgeParallelRrtOptions& options) {
-    context.diagnostics().set_value("query_bridge.parallel_rrt_early_stop_enabled",
-                                    options.early_stop ? 1.0 : 0.0);
-}
-
-bool query_bridge_parallel_rrt_path_good_enough(
-    const Eigen::VectorXd& start,
-    const Eigen::VectorXd& goal,
-    const std::vector<Eigen::VectorXd>& path,
-    const QueryBridgeParallelRrtOptions& options) {
-    if (path.empty()) {
-        return false;
-    }
-    const double direct = (goal - start).norm();
-    if (direct <= 1e-9) {
-        return true;
-    }
-    const double length = path_length(path);
-    return length <= std::max(direct * options.early_stop_ratio,
-                              direct + options.early_stop_additive);
-}
-
-bool query_bridge_task_rrt_path_good_enough(
-    const QueryBridgeSearchTask& task,
-    const std::vector<Eigen::VectorXd>& path,
-    const QueryBridgeParallelRrtOptions& options) {
-    return query_bridge_parallel_rrt_path_good_enough(task.start,
-                                                      task.goal,
-                                                      path,
-                                                      options);
 }
 
 void query_bridge_adopt_retry_path_if_better(
@@ -389,71 +230,6 @@ void query_bridge_run_no_path_retries(
     task_diag.set_value("no_path_retry_ms", retry_ms_total);
     task_diag.set_value("no_path_retry_successes",
                         static_cast<double>(retry_successes_total));
-}
-
-QueryBridgeAttemptPlan query_bridge_attempt_plan(
-    const QueryBridgeSearchTask& task,
-    bool forced,
-    const QueryBridgeRetryOptions& options) {
-    QueryBridgeAttemptPlan plan;
-    plan.forced = forced;
-    plan.base_attempts =
-        forced ? std::max(std::max(1, task.attempts), options.forced_attempts)
-               : std::max(1, task.attempts);
-    plan.effective_attempts = plan.base_attempts;
-    if (plan.effective_attempts > 0 &&
-        !options.local_radius_schedule.empty()) {
-        plan.effective_attempts =
-            std::max(plan.effective_attempts,
-                     static_cast<int>(options.local_radius_schedule.size()) + 1);
-    }
-    return plan;
-}
-
-std::shared_ptr<std::atomic<bool>> query_bridge_parallel_rrt_cancel_flag(
-    const QueryBridgeParallelRrtOptions& options,
-    const std::shared_ptr<std::atomic<bool>>& fallback_cancel) {
-    if (!options.early_stop) {
-        return fallback_cancel;
-    }
-    return std::make_shared<std::atomic<bool>>(false);
-}
-
-bool query_bridge_parallel_rrt_cancelled(
-    const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
-    return cancel_flag && cancel_flag->load(std::memory_order_relaxed);
-}
-
-void query_bridge_maybe_stop_parallel_rrt_after_success(
-    bool path_good_enough,
-    const QueryBridgeParallelRrtOptions& options,
-    std::atomic<int>& early_successes,
-    const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
-    if (!options.early_stop || !path_good_enough || !cancel_flag) {
-        return;
-    }
-    const int successes =
-        early_successes.fetch_add(1, std::memory_order_relaxed) + 1;
-    if (successes >= options.early_stop_min_successes) {
-        cancel_flag->store(true, std::memory_order_relaxed);
-    }
-}
-
-void record_query_bridge_parallel_rrt_early_stop(
-    StageContext& context,
-    const QueryBridgeParallelRrtOptions& options,
-    const std::shared_ptr<std::atomic<bool>>& cancel_flag,
-    const std::atomic<int>& early_successes) {
-    if (!options.early_stop) {
-        return;
-    }
-    context.diagnostics().add_counter(
-        "query_bridge.parallel_rrt_early_stop_successes",
-        static_cast<double>(early_successes.load(std::memory_order_relaxed)));
-    context.diagnostics().add_counter(
-        query_bridge_parallel_rrt_cancelled(cancel_flag)
-            ? "query_bridge.parallel_rrt_early_stop_triggered"
-            : "query_bridge.parallel_rrt_early_stop_not_triggered");
 }
 
 }  // namespace rbf

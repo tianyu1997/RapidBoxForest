@@ -42,7 +42,7 @@ directory.
   collision checker, and database-backed oracle adapter.
 - `safe_box_forest/` builds and queries SafeBoxForest planning forests. Its
   pipeline combines growers, free-box search, graph construction, merger,
-  connector, corridor query, dynamic update, and optional Python bindings.
+  connector, corridor query, and optional Python bindings.
 
 See `docs/ARCHITECTURE.md` for the code framework and package boundaries.
 
@@ -67,6 +67,12 @@ Useful options:
 - `RBF_BUILD_SBF=ON` enables the planner module. It is off by default for a
   smaller dependency surface.
 - `RBF_WITH_PYTHON=ON` builds Python extensions for enabled modules.
+- `RBF_SBF_DIAGNOSTIC_API=ON` compiles and exposes archived SBF
+  diagnostic-only C++ facade methods, including subtractive-build,
+  dynamic-maintenance, and debug entry points.
+- `RBF_SBF_PYTHON_DEBUG_METHODS=ON` exposes archived SBF diagnostic-only
+  `SafeBoxForest.debug_*` methods in the Python extension and enables the
+  C++ diagnostic API.
 - `RBF_BUILD_EXPERIMENTS=ON` builds optional C++ experiment drivers.
 - `RBF_BUILD_TOOLS=ON` builds LECTDatabase command-line tools.
 

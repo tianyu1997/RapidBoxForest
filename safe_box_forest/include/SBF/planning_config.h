@@ -1,12 +1,16 @@
 #pragma once
 
-#include <SBF/build_config.h>
 #include <SBF/connector_types.h>
+#include <SBF/database_runtime_config.h>
 #include <SBF/grower_types.h>
 #include <SBF/merger_types.h>
-#include <SBF/query_bridge_config.h>
-#include <SBF/query.h>
-#include <SBF/runtime.h>
+#include <SBF/query_config.h>
+#include <SBF/query_runtime_config.h>
+#include <SBF/runtime_config.h>
+
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+#include <SBF/dynamic_update_config.h>
+#endif
 
 #include <LECTDatabase/sbf/oracle_types.h>
 #include <rbf/envelope/endpoint_source.h>
@@ -31,7 +35,9 @@ struct RBFPlanningConfig {
 	QueryConfig query;
 	LectDatabaseRuntimeConfig database;
 	RuntimeConfig runtime;
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
 	DynamicUpdateConfig dynamic_update;
+#endif
 	bool enable_merger = true;
 	bool enable_connector = true;
 	/// Optional query-bridge chain-pave FFB depth. <=0 reuses connector.pave.

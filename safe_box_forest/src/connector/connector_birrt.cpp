@@ -1,5 +1,9 @@
 #include "connector_birrt.h"
 
+#include <SBF/scene.h>
+
+#include <SBF/runtime.h>
+
 #include <LECTDatabase/sbf/scene.h>
 
 #include <algorithm>

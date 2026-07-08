@@ -1,5 +1,7 @@
 #include "leaf_sweep_grower_diagnostics.h"
 
+#include <SBF/runtime.h>
+
 #include "leaf_sweep_grower_internal.h"
 
 namespace rbf {

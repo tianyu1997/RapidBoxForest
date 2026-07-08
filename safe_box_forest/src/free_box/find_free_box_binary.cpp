@@ -1,5 +1,8 @@
 #include <SBF/find_free_box.h>
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>

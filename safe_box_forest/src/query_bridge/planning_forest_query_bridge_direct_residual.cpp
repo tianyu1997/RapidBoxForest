@@ -1,6 +1,9 @@
 #include <SBF/safe_box_forest.h>
 
-#include "planning_forest_audit.h"
+#include <SBF/scene.h>
+#include <SBF/runtime.h>
+
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_query_bridge_corridor_repair.h"
 

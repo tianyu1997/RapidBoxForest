@@ -1,4 +1,6 @@
 #include <SBF/leaf_sweep_grower.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include "leaf_sweep_grower_diagnostics.h"
 #include "leaf_sweep_grower_internal.h"

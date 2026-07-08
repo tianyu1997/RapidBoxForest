@@ -46,12 +46,17 @@ types.
 - `validation`: `OracleValidationConfig`
 - `database`: `LectDatabaseRuntimeConfig`
 - `runtime`: `RuntimeConfig`
-- `dynamic_update`: `DynamicUpdateConfig`
 - feature toggles: `enable_merger`, `enable_connector`,
 	plus database/runtime options for replay, checkpointing, and online-cache size
 
 The default `SBFConfig()` constructor initializes the paper-facing `SBF-SH`
 profile.
+
+Diagnostic builds add archived experiment controls such as `dynamic_update`:
+`DynamicUpdateConfig`. These fields are intentionally excluded from the default
+C++ and Python API. The Python package root adds diagnostic type names to
+`__all__` only through `_diagnostic_exports` when the compiled extension was
+built with the diagnostic Python layer.
 
 High-value nested config types:
 
@@ -68,8 +73,9 @@ High-value nested config types:
 - `OracleValidationConfig`: strict-vs-coverage validation mode, grid
 	refinement, validation caching, endpoint cache policy, and external evidence
 	reuse.
-- `DynamicUpdateConfig`: dirty-region detection, local regrow limits, and warm
-	rebuild fallback thresholds.
+- `DynamicUpdateConfig` (diagnostic builds only): dirty-region detection, local
+	regrow limits, and warm rebuild fallback thresholds for archived dynamic
+	obstacle-update studies.
 
 ### LECT Warm-Reuse Best Practice
 
@@ -111,16 +117,11 @@ Public build and query methods:
 - `build_coverage(obstacles, seeds)`
 - `build_coverage(obstacles, seeds, context)`
 - `query(start, goal)`
-- `refine_query_corridor(start, goal, max_boxes_to_add)`
-  - Python binding accepts `mode="segment_bridge"` or `mode="box_only_long_path"`.
 - `bridge_query(start, goal)`
 - `bridge_query_known_needed(start, goal)`
 
-Dynamic update and maintenance methods:
+Maintenance methods:
 
-- `add_obstacle_and_rebuild(obstacle)`
-- `remove_obstacle_and_regrow(obstacle_index)`
-- `remove_obstacle_suffix_and_regrow(target_obstacle_count)`
 - `clear_forest()`
 
 State accessors:
@@ -133,13 +134,26 @@ State accessors:
 - `lect()`
 
 Diagnostic entry points are intentionally separate from the production planning
-pipeline. Python exposes helpers such as `debug_chain_pave(...)`,
-`debug_chain_pave_waypoints(...)`, `debug_validate_intervals(...)`,
-`debug_find_free_box(...)`, `debug_cover_path_with_ffb(...)`,
-`debug_external_endpoint_lookup(...)`, and `debug_compute_envelope_summary(...)`
-for regression tests, experiment forensics, and cache/canonicalization audits.
-They should not be used as paper-facing planner stages unless the caller records
-them as explicit diagnostics.
+pipeline. The default C++ facade and Python extension do not expose archived
+diagnostic helpers, and the diagnostic facade implementation is not compiled
+into the default `sbf_core` target. Configure with `-DSBF_DIAGNOSTIC_API=ON`,
+or with `-DRBF_SBF_DIAGNOSTIC_API=ON` from the workspace root, for C++
+diagnostic callers. Configure with `-DSBF_PYTHON_DEBUG_METHODS=ON`, or with
+`-DRBF_SBF_PYTHON_DEBUG_METHODS=ON` from the workspace root, to expose Python
+diagnostic config/result types and helpers such as `DynamicUpdateConfig`,
+`RebuildProfile`, `SubtractiveObstacleGroup`, `SubtractiveBuildOptions`,
+`build_subtractive(...)`, `refine_query_corridor(...)`,
+`add_obstacle_and_rebuild(...)`, `add_obstacles_and_rebuild(...)`,
+`remove_obstacle_and_regrow(...)`, `remove_obstacle_suffix_and_regrow(...)`,
+`connect_update_segment_fallback(...)`,
+`connect_update_endpoint_segment_fallback(...)`, `oracle_counters()`,
+`debug_chain_pave(...)`, `debug_chain_pave_waypoints(...)`,
+`debug_validate_intervals(...)`, `debug_find_free_box(...)`,
+`debug_cover_path_with_ffb(...)`, `debug_external_endpoint_lookup(...)`, and
+`debug_compute_envelope_summary(...)` for regression forensics and
+cache/canonicalization audits. The Python debug-method option enables the C++
+diagnostic API automatically. These helpers should not be used as paper-facing
+planner stages unless the caller records them as explicit diagnostics.
 
 `SafeBoxForest::build()` runs the active pipeline in this order:
 
@@ -164,11 +178,11 @@ them as explicit diagnostics.
 	`adjacency_islands`
 - arbitrary per-stage diagnostics in `diagnostics`
 
-### `RebuildProfile`
+### `RebuildProfile` (diagnostic builds only)
 
-Returned by the dynamic obstacle update methods. It tracks boxes/obstacles
-before and after the update, dirty-region usage, regrow attempts, warm rebuild
-fallback, and stage timings.
+Returned by the archived dynamic obstacle-update methods when the diagnostic
+API is enabled. It tracks boxes/obstacles before and after the update,
+dirty-region usage, regrow attempts, warm rebuild fallback, and stage timings.
 
 ### `QueryResult`
 
@@ -308,8 +322,8 @@ Stable top-level exports include:
 	`OracleSplitOptions`, `OracleValidationConfig`,
 	`FindFreeBoxOptions`, `GrowerConfig`, `GrowerDepthStage`, `MergerConfig`,
 	`RRTConnectConfig`, `IslandConnectorConfig`, `QueryConfig`, `RuntimeConfig`,
-	`DynamicUpdateConfig`, `SBFConfig`, `BuildProfile`, `RebuildProfile`,
-	`QueryResult`, plus the shared endpoint/envelope config types
+	`SBFConfig`, `BuildProfile`, `QueryResult`, plus the shared endpoint/envelope
+	config types
 - main facade: `SafeBoxForest`
 - free functions: `check_config_collision`, `path_length`, `rrt_connect_path`,
 	`ompl_rrt_connect_path`, `ompl_prm_multiquery`, `ompl_simplify_path`,
@@ -321,6 +335,12 @@ Stable top-level exports include:
 
 The Python layer currently centers on the facade and utility functions. It does
 not expose the grower/merger/query stage classes as first-class Python objects.
+
+The Python root package intentionally exposes the planner root through the
+stable aliases `SBFConfig` and `SafeBoxForest`; raw pybind class names are kept
+behind the compiled extension. Python diagnostic builds additionally export
+`DynamicUpdateConfig`, `RebuildProfile`, `SubtractiveObstacleGroup`, and
+`SubtractiveBuildOptions`.
 
 The bound `LectDatabaseRuntimeConfig` also exposes the snapshot-backed warm
 reuse controls listed above, so Python experiment runners can switch between
@@ -346,12 +366,8 @@ Public bound `SafeBoxForest` methods mirror the current facade surface:
 - `build(...)`
 - `build_coverage(...)`
 - `query(...)`
-- `refine_query_corridor(...)`
 - `bridge_query(...)`
 - `bridge_query_known_needed(...)`
-- `add_obstacle_and_rebuild(...)`
-- `remove_obstacle_and_regrow(...)`
-- `remove_obstacle_suffix_and_regrow(...)`
 - `clear_forest()`
 - `boxes()`, `raw_boxes()`, `adjacency()`, `segment_edges()`,
 	`last_build_profile()`

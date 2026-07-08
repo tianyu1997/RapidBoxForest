@@ -1,9 +1,9 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/scene.h>
 
-#include "binding_utils.h"
-#include "ompl_binding_utils.h"
+#include "../binding_utils.h"
+#include "../ompl_binding_utils.h"
 
 #include <pybind11/eigen.h>
 #include <pybind11/pybind11.h>

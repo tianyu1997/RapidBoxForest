@@ -1,7 +1,7 @@
 #pragma once
 
-#include <SBF/api.h>
-#include <SBF/runtime.h>
+#include <SBF/build_profile.h>
+#include <SBF/runtime_fwd.h>
 #include <LECTDatabase/sbf/oracle_types.h>
 
 #include "planning_forest_query_bridge_options.h"

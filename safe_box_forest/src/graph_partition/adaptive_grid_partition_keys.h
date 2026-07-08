@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/adaptive_grid_partition.h>
+#include <SBF/adaptive_grid_partition_types.h>
 
 #include <array>
 #include <cstdint>

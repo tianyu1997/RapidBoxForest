@@ -1,15 +1,15 @@
 #pragma once
 
-#include "planning_forest_adaptive_merge.h"
-
-#include <SBF/box_graph.h>
-#include <SBF/build_config.h>
-#include <SBF/planning_result.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
 
 #include <string>
 #include <unordered_map>
 
 namespace rbf {
+
+struct AdaptiveLeafSweepResult;
+struct AdjacencyBuildStats;
+struct BudgetedMergeStats;
 
 void record_adaptive_merge_diagnostics(std::unordered_map<std::string, double>& diagnostics,
                                        const BudgetedMergeStats& stats);

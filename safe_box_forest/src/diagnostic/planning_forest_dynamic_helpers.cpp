@@ -1,8 +1,10 @@
 #include "planning_forest_dynamic_helpers.h"
 
+#include <SBF/scene.h>
+
 #include <SBF/box_graph.h>
 
-#include "planning_forest_qroot_helpers.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
 
 #include <algorithm>
 #include <limits>

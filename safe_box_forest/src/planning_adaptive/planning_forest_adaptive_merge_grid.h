@@ -1,7 +1,8 @@
 #pragma once
 
-#include <SBF/box_graph.h>
 #include <LECTDatabase/sbf/oracle_types.h>
+
+#include <rbf/core.h>
 
 #include <chrono>
 #include <vector>

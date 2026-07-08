@@ -1,4 +1,7 @@
 #include <SBF/merger.h>
+#include <SBF/box_graph.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <cmath>

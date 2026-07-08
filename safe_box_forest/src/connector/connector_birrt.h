@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/connector.h>
+#include <SBF/connector_types.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/scene_types.h>
 
 #include <Eigen/Core>
 
@@ -9,6 +11,8 @@
 #include <vector>
 
 namespace rbf {
+
+class CollisionChecker;
 
 struct RRTConnectStats {
     bool success = false;

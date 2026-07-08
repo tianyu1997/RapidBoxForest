@@ -1,12 +1,26 @@
 #pragma once
 
-#include <SBF/connector_types.h>
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
 
 #include <vector>
 
 namespace rbf {
+
+struct DebugBoundaryFfbFailure {
+	std::vector<double> seed;
+	std::vector<Interval> intervals;
+	OracleValidationDetail validation_detail;
+	int node = -1;
+	int depth = -1;
+	int changed_dim = -1;
+	int fail_code = 0;
+	bool hit_unknown_depth_cap = false;
+	bool hit_reserved_depth_cap = false;
+};
 
 /// Result of the isolated chain_pave debug entry. Captures the BiRRT bridge
 /// polyline and the boxes chain_pave committed along it, so callers can measure
@@ -44,3 +58,5 @@ struct DebugChainPaveResult {
 };
 
 } // namespace rbf
+
+#endif

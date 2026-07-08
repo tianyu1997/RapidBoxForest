@@ -1,4 +1,5 @@
 #include <SBF/box_graph.h>
+#include <SBF/segment_edge_types.h>
 
 #include <algorithm>
 #include <cstdint>

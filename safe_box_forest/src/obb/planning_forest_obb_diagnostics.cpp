@@ -1,5 +1,7 @@
 #include "planning_forest_obb_diagnostics.h"
 
+#include <SBF/runtime.h>
+
 #include <algorithm>
 #include <cmath>
 

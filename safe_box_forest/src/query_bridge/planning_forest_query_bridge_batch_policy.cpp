@@ -1,7 +1,5 @@
 #include "planning_forest_query_bridge_policy.h"
 
-#include <SBF/safe_box_forest.h>
-
 namespace rbf {
 
 bool query_bridge_should_check_current_query(
@@ -17,15 +15,10 @@ bool query_bridge_should_check_current_query(
 }
 
 bool query_bridge_current_query_good(
-    const RBFPlanningForest& forest,
+    const QueryResult& current,
     const QueryBridgeSearchTask& task,
-    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance) {
-    if (forced_query_indices.find(static_cast<int>(task.index)) !=
-        forced_query_indices.end()) {
-        return false;
-    }
-    return query_bridge_result_acceptable(forest.query(task.start, task.goal),
+    return query_bridge_result_acceptable(current,
                                           task.start,
                                           task.goal,
                                           bridge_acceptance);

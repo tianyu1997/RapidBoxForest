@@ -1,5 +1,7 @@
 #include <SBF/grower.h>
 
+#include <SBF/runtime.h>
+
 #include "grower_internal.h"
 
 #include <algorithm>
@@ -34,11 +36,11 @@ bool RrtGrower::node_in_failure_cooling(OracleNodeId node,
     if (config_.coverage_first_stop_loss) {
         context.diagnostics().add_counter("grower.hard_frontier_stop_loss_hits");
         context.diagnostics().add_counter("grower.hard_frontier_stop_loss_skips");
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.hard_frontier_remaining_horizon_max",
                            static_cast<double>(entry.cool_until_box_count - box_count));
     }
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.failure_cooling_remaining_horizon_max",
                        static_cast<double>(entry.cool_until_box_count - box_count));
     return true;
@@ -87,20 +89,20 @@ void RrtGrower::record_failure_cooling(const FindFreeBoxResult& result,
         if (result.hit_unknown_depth_cap) {
             context.diagnostics().add_counter("grower.hard_frontier_unknown_depth_cap_failures");
         }
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.hard_frontier_depth_max",
                            static_cast<double>(active_depth));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.hard_frontier_node_count_max",
                            static_cast<double>(failure_cooling_.size()));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.hard_frontier_fail_count_max",
                            static_cast<double>(entry.fail_count));
     }
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.failure_cooling_node_count_max",
                        static_cast<double>(failure_cooling_.size()));
-    set_max_diagnostic(context,
+    set_grower_max_diagnostic(context,
                        "grower.failure_cooling_fail_count_max",
                        static_cast<double>(entry.fail_count));
     const int threshold = hard_frontier_failure_threshold();
@@ -111,11 +113,11 @@ void RrtGrower::record_failure_cooling(const FindFreeBoxResult& result,
         context.diagnostics().add_counter("grower.failure_cooling_activated");
         if (config_.coverage_first_stop_loss) {
             context.diagnostics().add_counter("grower.hard_frontier_activated");
-            set_max_diagnostic(context,
+            set_grower_max_diagnostic(context,
                                "grower.hard_frontier_cool_until_box_count_max",
                                static_cast<double>(entry.cool_until_box_count));
         }
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.failure_cooling_cool_until_box_count_max",
                            static_cast<double>(entry.cool_until_box_count));
     }

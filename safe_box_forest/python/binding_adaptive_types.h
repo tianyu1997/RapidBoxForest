@@ -1,6 +1,8 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
+#include <SBF/planning_result.h>
+#include <SBF/query_runtime_config.h>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>

@@ -31,7 +31,8 @@ documentation and should not be committed under `docs/`.
 
 Prototype source trees must be upstreamed into the main modules instead of kept
 as parallel workspaces. The release-readiness checks fail if a forbidden
-sidecar source tree exists in the checkout. The correct fix is to migrate the
+sidecar source tree such as `improve_workspace`, `rbf_v2`, `sbf_v2`, or
+`sbf-standalone` exists in the checkout. The correct fix is to migrate the
 implementation into the owning module and delete the sidecar.
 
 ## Archive Policy

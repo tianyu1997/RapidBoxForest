@@ -1,6 +1,13 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/grower_types.h>
+#include <SBF/leaf_sweep_types.h>
+#include <SBF/runtime_config.h>
+#include <SBF/segment_edge_types.h>
+
+#include <rbf/core.h>
+#include <sbf/envelope/endpoint_source.h>
+#include <sbf/envelope/envelope_type.h>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -96,47 +103,6 @@ inline void register_planner_core_types(py::module_& module) {
         .def_readwrite("batch_size", &rbf::RuntimeConfig::batch_size)
         .def_readwrite("parallel_threshold", &rbf::RuntimeConfig::parallel_threshold)
         .def_readwrite("deterministic_reduce", &rbf::RuntimeConfig::deterministic_reduce);
-
-    py::class_<rbf::DynamicUpdateConfig>(module, "DynamicUpdateConfig")
-        .def(py::init<>())
-        .def_readwrite("enable_spatial_dirty_region",
-                       &rbf::DynamicUpdateConfig::enable_spatial_dirty_region)
-        .def_readwrite("dirty_region_padding", &rbf::DynamicUpdateConfig::dirty_region_padding)
-        .def_readwrite("dirty_anchor_limit", &rbf::DynamicUpdateConfig::dirty_anchor_limit)
-        .def_readwrite("dirty_seed_limit", &rbf::DynamicUpdateConfig::dirty_seed_limit)
-        .def_readwrite("local_regrow_box_limit",
-                       &rbf::DynamicUpdateConfig::local_regrow_box_limit)
-        .def_readwrite("local_regrow_timeout_ms",
-                       &rbf::DynamicUpdateConfig::local_regrow_timeout_ms)
-        .def_readwrite("insertion_leaf_sweep_max_depth",
-                       &rbf::DynamicUpdateConfig::insertion_leaf_sweep_max_depth)
-        .def_readwrite("insertion_leaf_sweep_relative_depth",
-                       &rbf::DynamicUpdateConfig::insertion_leaf_sweep_relative_depth)
-        .def_readwrite("enable_warm_rebuild_fallback",
-                       &rbf::DynamicUpdateConfig::enable_warm_rebuild_fallback)
-        .def_readwrite("warm_rebuild_on_empty_forest",
-                       &rbf::DynamicUpdateConfig::warm_rebuild_on_empty_forest)
-        .def_readwrite("warm_rebuild_on_empty_dirty_region",
-                       &rbf::DynamicUpdateConfig::warm_rebuild_on_empty_dirty_region)
-        .def_readwrite("warm_rebuild_dirty_box_threshold",
-                       &rbf::DynamicUpdateConfig::warm_rebuild_dirty_box_threshold)
-        .def_readwrite("warm_rebuild_dirty_box_fraction",
-                       &rbf::DynamicUpdateConfig::warm_rebuild_dirty_box_fraction)
-        .def_readwrite("warm_rebuild_min_local_boxes_added",
-                       &rbf::DynamicUpdateConfig::warm_rebuild_min_local_boxes_added);
-
-    py::class_<rbf::SubtractiveObstacleGroup>(module, "SubtractiveObstacleGroup")
-        .def(py::init<>())
-        .def_readwrite("name", &rbf::SubtractiveObstacleGroup::name)
-        .def_readwrite("carving_obstacles", &rbf::SubtractiveObstacleGroup::carving_obstacles)
-        .def_readwrite("validation_obstacles",
-                       &rbf::SubtractiveObstacleGroup::validation_obstacles);
-
-    py::class_<rbf::SubtractiveBuildOptions>(module, "SubtractiveBuildOptions")
-        .def(py::init<>())
-        .def_readwrite("run_connector", &rbf::SubtractiveBuildOptions::run_connector)
-        .def_readwrite("use_validation_obstacles_for_final_scene",
-                       &rbf::SubtractiveBuildOptions::use_validation_obstacles_for_final_scene);
 
     py::class_<rbf::LeafSweepConfig>(module, "LeafSweepConfig")
         .def(py::init<>())

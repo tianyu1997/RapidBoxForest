@@ -1,8 +1,8 @@
 #pragma once
 
-#include <SBF/api.h>
-#include <SBF/query.h>
-#include <SBF/scene.h>
+#include <SBF/query_config.h>
+#include <SBF/scene_types.h>
+#include <SBF/segment_edge_fwd.h>
 
 #include <Eigen/Core>
 

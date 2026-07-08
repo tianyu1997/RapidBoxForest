@@ -1,5 +1,7 @@
 #include "planning_forest_query_bridge_corridor_repair.h"
 
+#include <SBF/runtime.h>
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/runtime.h>
+#include <SBF/runtime_fwd.h>
 
 #include <cstddef>
 

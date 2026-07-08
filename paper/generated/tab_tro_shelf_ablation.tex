@@ -1,22 +1,22 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA \rbf{} query-validated profile and mechanism ablations.}
+\captionof{table}{Shelf+IIWA \rbf{} profile and mechanism ablations.}
 \label{tab:tro-shelf-ablation}
 \scriptsize
 \setlength{\tabcolsep}{2.2pt}
 \renewcommand{\arraystretch}{1.02}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
-Case & Build & \onlineq{} & Amort. 5q & $L/L^\star$ \\
+Case & Build & \onlineq{} & Amort.\ 5q & $L/L^\star$ \\
 \midrule
-\rbf{} baseline & 0.166 [0.163, 0.170] & 0.130 [0.104, 0.150] & 0.164 [0.137, 0.183] & 1.16 [1.08, 1.38] \\
-Critical sample & 0.282 [0.280, 0.285] & 0.134 [0.103, 0.157] & 0.190 [0.161, 0.213] & 1.14 [1.08, 1.38] \\
-Link AABB & 0.141 [0.139, 0.143] & 0.123 [0.099, 0.140] & 0.151 [0.128, 0.168] & 1.19 [1.08, 1.47] \\
-Live HIFK-5 & 7.006 [6.947, 7.068] & 0.234 [0.170, 0.278] & 1.639 [1.576, 1.687] & 1.14 [1.08, 1.39] \\
-SupportHull only & 0.349 [0.287, 0.363] & 0.232 [0.155, 0.283] & 0.296 [0.220, 0.352] & 1.16 [1.08, 1.38] \\
+\rbf{} baseline & 0.171 [0.166, 0.174] & 0.077 [0.072, 0.085] & 0.111 [0.107, 0.117] & 1.15 [1.08, 1.39] \\
+Critical sample & 0.279 [0.275, 0.283] & 0.087 [0.078, 0.095] & 0.145 [0.134, 0.151] & 1.14 [1.09, 1.38] \\
+Link AABB & 0.167 [0.164, 0.171] & 0.083 [0.077, 0.086] & 0.116 [0.111, 0.119] & 1.19 [1.08, 1.48] \\
+Live HIFK-5 & 2.770 [2.644, 3.003] & 0.181 [0.139, 0.207] & 0.739 [0.703, 0.777] & 1.15 [1.08, 1.43] \\
+SupportHull only & 0.193 [0.188, 0.200] & 0.087 [0.082, 0.095] & 0.126 [0.120, 0.136] & 1.15 [1.08, 1.39] \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit; \(L/L^\star\) uses success-only query-level 0.01-rad audited references.\par}
+{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Build is reusable; Amort.\ 5q \(=\) Build/5+\onlineq{}; \onlineq{} excludes simplification/validation. AABB = axis-aligned bounding box; HIFK = hierarchical interval forward kinematics; SupportHull = support-function hull. Critical sample is non-certifying; \(L/L^\star\) uses the same-query 0.01~rad reference.\par}
 \par\endgroup

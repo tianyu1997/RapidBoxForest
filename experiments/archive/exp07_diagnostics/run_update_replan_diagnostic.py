@@ -32,7 +32,7 @@ from experiments.common.random_scene_catalog import (  # noqa: E402
     obstacle_from_bounds,
     sample_free_pair,
 )
-from experiments.exp07_dynamic_update import run_dynamic_update as dyn  # noqa: E402
+from experiments.archive.exp07_dynamic_update import run_dynamic_update as dyn  # noqa: E402
 
 
 CATALOG_SCHEMA = "tro2026_exp07_update_replan_diagnostic_v1"
@@ -362,7 +362,7 @@ def write_summary_md(path: Path, summary: dict[str, Any]) -> None:
         )
     lines.extend([
         "",
-        "Scope: diagnostic only. Queries are sampled free in the target scene; the runner compares update+query against a fresh target rebuild+query under the current Exp.7 adaptive profile.",
+        "Scope: diagnostic only. Queries are sampled free in the target scene; the runner compares update+query against a fresh target rebuild+query under the archived Exp.7 adaptive profile.",
         "",
     ])
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,7 +1,7 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Link-envelope representation comparison over fixed joint-box widths.}
+\captionof{table}{Link-envelope representations over joint-interval side lengths.}
 \label{tab:tro-link-envelope}
 \scriptsize
 \setlength{\tabcolsep}{2.0pt}
@@ -9,7 +9,7 @@
 \resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}l*{6}{r}@{\hspace{0.8em}}*{6}{r}@{\hspace{0.8em}}*{6}{r}@{}}
 \toprule
- & \multicolumn{6}{c}{Volume} & \multicolumn{6}{c}{Build ($\mu$s)} & \multicolumn{6}{c}{Test ($\mu$s)} \\
+ & \multicolumn{6}{c}{Volume (m$^3$)} & \multicolumn{6}{c}{Build ($\mu$s)} & \multicolumn{6}{c}{Test ($\mu$s)} \\
 \cmidrule(lr){2-7}\cmidrule(lr){8-13}\cmidrule(l){14-19}
 Envelope & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 \\
 \midrule
@@ -18,6 +18,6 @@ SupportHull & 0.000359 & 0.00266 & 0.0143 & 0.106 & 0.449 & 4.54 & 0.205 & 0.214
 \bottomrule
 \end{tabular}
 }
-\par\vspace{0.1ex}
-{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools far-separated probes and local obstacle-overlap probes; build time excludes endpoint time.\par}
+\par\vspace{0.35ex}
+{\scriptsize\emph{Notes:} Widths are rad; volume is mean workspace volume. AABB = axis-aligned bounding box; SupportHull = support-function hull. Test pools far/local probes; build excludes endpoint envelopes.\par}
 \par\endgroup

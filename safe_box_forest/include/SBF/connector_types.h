@@ -1,13 +1,16 @@
 #pragma once
 
-#include <SBF/box_graph.h>
-#include <SBF/find_free_box_types.h>
+#include <SBF/find_free_box_config.h>
 
 #include <Eigen/Core>
 
 #include <vector>
 
 namespace rbf {
+
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
+struct DebugBoundaryFfbFailure;
+#endif
 
 struct RRTConnectConfig {
 	int max_iters = 50000;
@@ -32,18 +35,6 @@ struct RRTConnectConfig {
 	int optimize_after_first_iters = 0;
 	double domain_tolerance = 1e-3;
 	std::vector<Interval> domain_intervals;
-};
-
-struct DebugBoundaryFfbFailure {
-	std::vector<double> seed;
-	std::vector<Interval> intervals;
-	OracleValidationDetail validation_detail;
-	int node = -1;
-	int depth = -1;
-	int changed_dim = -1;
-	int fail_code = 0;
-	bool hit_unknown_depth_cap = false;
-	bool hit_reserved_depth_cap = false;
 };
 
 struct ChainPaveConfig {
@@ -83,7 +74,9 @@ struct ChainPaveConfig {
 	// densification of the bridge polyline before paving.
 	bool require_connected_chain = false;
 	FindFreeBoxOptions find_free_box;
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API
 	std::vector<DebugBoundaryFfbFailure>* debug_boundary_failures = nullptr;
+#endif
 };
 
 struct IslandConnectorConfig {

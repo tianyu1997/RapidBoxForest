@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SBF/query_bridge_config.h>
+
 #include "planning_forest_query_bridge_diagnostics.h"
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
@@ -11,17 +13,14 @@
 
 namespace rbf {
 
-class RBFPlanningForest;
-
 bool query_bridge_should_check_current_query(
     const QueryBridgeSearchTask& task,
     bool respect_forced,
     const std::unordered_set<int>& forced_query_indices);
 
 bool query_bridge_current_query_good(
-    const RBFPlanningForest& forest,
+    const QueryResult& current,
     const QueryBridgeSearchTask& task,
-    const std::unordered_set<int>& forced_query_indices,
     const QueryBridgeAcceptanceThresholds& bridge_acceptance);
 
 bool query_bridge_parallel_task_rrt_enabled(

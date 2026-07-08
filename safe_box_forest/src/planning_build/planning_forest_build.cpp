@@ -1,4 +1,6 @@
 #include <SBF/safe_box_forest.h>
+
+#include <SBF/scene.h>
 #include <SBF/adaptive_grid_partition.h>
 
 #include <SBF/box_graph.h>
@@ -6,12 +8,14 @@
 #include <SBF/grower.h>
 #include <SBF/leaf_sweep_grower.h>
 #include <SBF/merger.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <chrono>
 #include <string>
 
-#include "planning_forest_diagnostics.h"
+#include "../planning_core/planning_forest_diagnostics.h"
 
 namespace rbf {
 
@@ -47,12 +51,12 @@ BuildProfile RBFPlanningForest::build_coverage(const std::vector<Obstacle>& obst
     boxes_.clear();
     raw_boxes_.clear();
     adjacency_.clear();
-    segment_edges_.clear();
-    adaptive_partition_.reset();
-    adaptive_partition_query_enabled_ = false;
-    has_adaptive_partition_config_ = false;
-    clear_dynamic_collision_cache();
-    invalidate_query_cache();
+	segment_edges_.clear();
+	adaptive_partition_.reset();
+	adaptive_partition_query_enabled_ = false;
+	has_adaptive_partition_config_ = false;
+	clear_optional_collision_cache();
+	invalidate_query_cache();
 
     const auto grow_t0 = Clock::now();
     auto grower = make_grower(*oracle_, config_.grower);
@@ -232,12 +236,12 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
         config_.validation.stateless_materialization_context = true;
     }
     reset_oracle(scene_);
-    boxes_.clear();
-    raw_boxes_.clear();
-    adjacency_.clear();
-    segment_edges_.clear();
-    clear_dynamic_collision_cache();
-    invalidate_query_cache();
+	boxes_.clear();
+	raw_boxes_.clear();
+	adjacency_.clear();
+	segment_edges_.clear();
+	clear_optional_collision_cache();
+	invalidate_query_cache();
 
     LeafSweepConfig active_config = leaf_sweep_config;
     if (active_config.n_threads <= 0) {
@@ -255,11 +259,11 @@ LeafSweepResult RBFPlanningForest::build_leaf_sweep(const std::vector<Obstacle>&
 
     scene_.set_obstacles(obstacles);
     config_.validation.stateless_materialization_context = previous_stateless_materialization;
-    oracle_->set_scene(scene_);
-    boxes_ = result.free_boxes;
-    raw_boxes_ = boxes_;
-    populate_dynamic_collision_cache(result, static_cast<int>(obstacles.size()));
-    reserve_existing_boxes();
+	oracle_->set_scene(scene_);
+	boxes_ = result.free_boxes;
+	raw_boxes_ = boxes_;
+	populate_optional_collision_cache_from_leaf_sweep(result, static_cast<int>(obstacles.size()));
+	reserve_existing_boxes();
     adjacency_.clear();
     segment_edges_.clear();
     invalidate_query_cache();

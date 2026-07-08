@@ -1,8 +1,10 @@
 #pragma once
 
-#include <SBF/find_free_box.h>
+#include <SBF/find_free_box_types.h>
 #include <SBF/grower_types.h>
-#include <SBF/runtime.h>
+#include <SBF/runtime_fwd.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
 
@@ -20,6 +22,8 @@
 #include <vector>
 
 namespace rbf {
+
+class FindFreeBoxService;
 
 class IGrower {
 public:

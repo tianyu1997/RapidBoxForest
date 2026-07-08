@@ -1,0 +1,1 @@
+	std::unique_ptr<DynamicCollisionCacheState, DynamicCollisionCacheStateDeleter> dynamic_collision_cache_;

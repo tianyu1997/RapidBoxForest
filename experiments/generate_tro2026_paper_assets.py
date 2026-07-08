@@ -25,12 +25,11 @@ from experiments.common.rbf_defaults import (  # noqa: E402
 
 
 REQUIRED_TABLES = {
-    "tab_tro_endpoint_envelope.tex": "Endpoint-envelope source comparison over fixed joint-box widths.",
-    "tab_tro_link_envelope.tex": "Link-envelope representation comparison over fixed joint-box widths.",
+    "tab_tro_endpoint_envelope.tex": "Endpoint-envelope source comparison over fixed joint-interval side lengths.",
+    "tab_tro_link_envelope.tex": "Link-envelope representation comparison over fixed joint-interval side lengths.",
     "tab_tro_shelf_ablation.tex": "Shelf+IIWA RBF profile and mechanism ablations.",
     "tab_tro_shelf_cross_algorithm.tex": "Shelf+IIWA cross-algorithm comparison.",
     "tab_tro_random_summary.tex": "Random multi-robot summary.",
-    "tab_tro_dynamic_update.tex": "Dynamic update summary.",
 }
 
 REQUIRED_FIGURES = {
@@ -59,7 +58,7 @@ GOLD_POINT_RELATIVE_PATH_IMPROVEMENT_THRESHOLD = 0.01
 
 METHOD_STYLE = {
     "sbf_leaf_rrt": {"label": "RBF", "color": "#1f77b4", "marker": "o"},
-    "iris_np_gcs": {"label": "IRIS-NP/GCS", "color": "#ff7f0e", "marker": "D"},
+    "iris_np_gcs": {"label": "IRIS/GCS", "color": "#ff7f0e", "marker": "D"},
     "prm": {"label": "PRM", "color": "#2ca02c", "marker": "s"},
     "rrtconnect": {"label": "RRT-Connect", "color": "#d62728", "marker": "x"},
     "bitstar": {"label": "BIT*", "color": "#9467bd", "marker": "^"},
@@ -135,7 +134,7 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Merge exp06/current_ompl_baselines into Table VI/figure generation. "
             "Enabled by default because the registered Exp.6 OMPL baselines use the saved catalog "
-            "and the global fixed-audit/final-simplify policy."
+            "and the global fixed-step validation/final-simplification policy."
         ),
     )
     return parser.parse_args()
@@ -559,8 +558,8 @@ def select_quality_plateau_index(
 ) -> int | None:
     """Select the last substantial quality-improvement point after start.
 
-    Lower values are better. Starting from the first point with audited success
-    on the reported saved query set, move
+    Lower values are better. Starting from the first point with validated success
+    on the saved query set, move
     forward only when a later checkpoint improves the current displayed path
     quality by at least the relative threshold.  This prevents a gold marker
     from drifting to a much later checkpoint for a visually negligible gain.
@@ -600,6 +599,22 @@ LINE_WIDTH = 1.35
 POINT_SIZE = 32
 SELECTED_POINT_SIZE = 78
 SELECTED_LINE_WIDTH = 1.65
+
+
+def configure_matplotlib_for_ieee(matplotlib_module: Any) -> None:
+    """Use submission-friendly embedded fonts for generated vector figures."""
+    matplotlib_module.rcParams.update({
+        "pdf.fonttype": 42,
+        "ps.fonttype": 42,
+        "font.family": "serif",
+        "font.serif": [
+            "Times New Roman",
+            "TeX Gyre Termes",
+            "Times",
+            "DejaVu Serif",
+        ],
+        "mathtext.fontset": "stix",
+    })
 
 
 def plot_query_amortization_panel(
@@ -642,7 +657,7 @@ def plot_query_amortization_panel(
     ax.set_xscale("log")
     ax.set_yscale("log")
     ax.set_xlabel("number of queries" if show_xlabel else "")
-    ax.set_ylabel("Build/$K$ + Online/q (s)" if show_ylabel else "")
+    ax.set_ylabel("amortized time (s)" if show_ylabel else "")
     ax.set_title(title, fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
@@ -1080,7 +1095,7 @@ def exp06_per_query_tradeoff_rows(
 
     Summary checkpoint rows charge one stage to all queries. For paper Table IV
     and the random-scene context markers, reusable PRM and anytime BIT* instead
-    use the best fixed-audit trade-off candidate independently for each
+    use the best trade-off candidate after fixed-step validation independently for each
     saved query.
     """
     if not isinstance(manifest_payload, dict):
@@ -1434,7 +1449,7 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
             )
             selected_indices.add(index)
 
-        # Always show the first checkpoint with audited success on the reported saved query set,
+        # Always show the first checkpoint with validated success on the saved query set,
         # the best path point,
         # and the final/biggest-budget checkpoint on the cumulative curve.  The
         # final checkpoint must come from the original sorted curve, not only
@@ -1566,8 +1581,8 @@ def current_random_curves_from_rows(rows: list[dict[str, Any]]) -> dict[tuple[st
     # (10 queries each) rather than one scenario-level 100-query summary row.
     # Aggregate those rows for the figure so the cumulative roadmap curve keeps
     # its late, usually flat, high-build tail.  This is display-only; table
-    # context selection still uses scenario-level rows with audited success on the
-    # reported saved query set.
+    # context selection still uses scenario-level rows with validated success on
+    # the saved query set.
     prm_groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         if str(row.get("method", "")) != "prm":
@@ -1790,7 +1805,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Endpoint-envelope source comparison over fixed joint-box widths.}",
+        r"\captionof{table}{Endpoint-envelope sources over joint-interval side lengths.}",
         r"\label{tab:tro-endpoint-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",
@@ -1806,16 +1821,17 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
     for source in source_order:
         if not any((source, width) in selected for width in width_order):
             continue
+        label = "Monte Carlo" if source == "MC" else source
         volume = volume_ratio_cells(source)
         time_us = metric_cells(source, "endpoint_us_median", digits=2)
         gap = gap_mm_cells(source)
-        lines.append(f"{source} & {volume} & {time_us} & {gap} \\\\")
+        lines.append(f"{label} & {volume} & {time_us} & {gap} \\\\")
     lines.extend([
         r"\bottomrule",
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Volumes are normalized to Analytical at each width. IFK-AA and HIFK are the certificate-backed rows; Critical sample, Analytical, and Monte Carlo (MC) are diagnostic or reference rows. Gap is the sampled-union signed gap (mm); dashes mark rows where the diagnostic is omitted.\par}",
+        r"{\scriptsize\emph{Notes:} Widths are rad. Volume is normalized to Analytical; time is endpoint construction. IFK-AA = affine-arithmetic interval forward kinematics; HIFK = hierarchical interval forward kinematics. IFK-AA/HIFK certify; other rows are references. Gap = sampled-union signed gap (mm); -- = omitted.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1872,7 +1888,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Link-envelope representation comparison over fixed joint-box widths.}",
+        r"\captionof{table}{Link-envelope representations over joint-interval side lengths.}",
         r"\label{tab:tro-link-envelope}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.0pt}",
@@ -1880,7 +1896,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\resizebox{\textwidth}{!}{%",
         r"\begin{tabular}{@{}l*{6}{r}@{\hspace{0.8em}}*{6}{r}@{\hspace{0.8em}}*{6}{r}@{}}",
         r"\toprule",
-        r" & \multicolumn{6}{c}{Volume} & \multicolumn{6}{c}{Build ($\mu$s)} & \multicolumn{6}{c}{Test ($\mu$s)} \\",
+        r" & \multicolumn{6}{c}{Volume (m$^3$)} & \multicolumn{6}{c}{Build ($\mu$s)} & \multicolumn{6}{c}{Test ($\mu$s)} \\",
         r"\cmidrule(lr){2-7}\cmidrule(lr){8-13}\cmidrule(l){14-19}",
         r"Envelope & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 & 0.02 & 0.05 & 0.10 & 0.20 & 0.30 & 0.50 \\",
         r"\midrule",
@@ -1896,8 +1912,8 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\bottomrule",
         r"\end{tabular}",
         r"}",
-        r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Means over fixed-width boxes. Test time pools far-separated probes and local obstacle-overlap probes; build time excludes endpoint time.\par}",
+        r"\par\vspace{0.35ex}",
+        r"{\scriptsize\emph{Notes:} Widths are rad; volume is mean workspace volume. AABB = axis-aligned bounding box; SupportHull = support-function hull. Test time pools far/local probes; build excludes endpoint envelopes.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -2285,76 +2301,6 @@ def find_exp06_iris_summaries(out_dir: Path) -> list[Path]:
     return out
 
 
-def find_dynamic_update_summary(out_dir: Path) -> Path | None:
-    candidates = [
-        out_dir / "dynamic_update_summary.csv",
-        out_dir / "exp07" / "dynamic_update_summary.csv",
-        out_dir / "exp07_dynamic_update" / "dynamic_update_summary.csv",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    matches = sorted(out_dir.glob("**/dynamic_update_summary.csv"))
-    return matches[0] if matches else None
-
-
-def attach_dynamic_update_raw_distributions(summary: Path, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    event_path = summary.parent / "dynamic_update_events.csv"
-    build_path = summary.parent / "dynamic_update_builds.csv"
-    if not event_path.exists() or not build_path.exists():
-        return rows
-
-    events = read_csv_rows(event_path)
-    builds = read_csv_rows(build_path)
-    builds_by_robot: dict[str, list[dict[str, Any]]] = {}
-    target_build_by_robot_seed: dict[tuple[str, str], float] = {}
-    for build in builds:
-        robot = str(build.get("robot", ""))
-        seed = str(build.get("seed", ""))
-        builds_by_robot.setdefault(robot, []).append(build)
-        target_build = as_float(build.get("max_build_s"))
-        if math.isfinite(target_build):
-            target_build_by_robot_seed[(robot, seed)] = target_build
-
-    events_by_robot_op: dict[tuple[str, str], list[dict[str, Any]]] = {}
-    for event in events:
-        robot = str(event.get("robot", ""))
-        op = str(event.get("operation", ""))
-        events_by_robot_op.setdefault((robot, op), []).append(event)
-
-    enriched: list[dict[str, Any]] = []
-    for row in rows:
-        item = dict(row)
-        robot = str(row.get("robot", ""))
-        robot_builds = builds_by_robot.get(robot, [])
-        item["_source_warm_values"] = [
-            as_float(build.get("initial_build_s"))
-            for build in robot_builds
-            if math.isfinite(as_float(build.get("initial_build_s")))
-        ]
-        item["_target_warm_values"] = [
-            as_float(build.get("max_build_s"))
-            for build in robot_builds
-            if math.isfinite(as_float(build.get("max_build_s")))
-        ]
-        for op in ("insert", "remove"):
-            op_events = events_by_robot_op.get((robot, op), [])
-            item[f"_{op}_values"] = [
-                as_float(event.get("time_s"))
-                for event in op_events
-                if math.isfinite(as_float(event.get("time_s")))
-            ]
-            speedups: list[float] = []
-            for event in op_events:
-                update_s = as_float(event.get("time_s"))
-                target_build_s = target_build_by_robot_seed.get((robot, str(event.get("seed", ""))), math.nan)
-                if math.isfinite(update_s) and update_s > 0.0 and math.isfinite(target_build_s):
-                    speedups.append(target_build_s / update_s)
-            item[f"_{op}_speedup_values"] = speedups
-        enriched.append(item)
-    return enriched
-
-
 def find_supporting_import_manifest(out_dir: Path) -> Path | None:
     candidates = [
         out_dir / "supporting_table_import_manifest.json",
@@ -2667,6 +2613,67 @@ def rbf_registered_per_query_online_stats(
     return out
 
 
+def rbf_single_query_online_stats(
+    run_rows: list[dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """RBF per-query stats from the single-query online fallback artifact.
+
+    The registered Exp.4 summary can be available without per-query manifest
+    rows.  Table III still needs RBF b100 query-level entries, so use the
+    single-query online manifest when the registered manifest is empty.
+    """
+    buckets: dict[str, dict[str, list[float]]] = {
+        label: {"query_s": [], "path": [], "segment": []}
+        for label in QUERY_ORDER
+    }
+    for row in run_rows:
+        if str(row.get("method")) not in {"", "sbf_leaf_rrt"}:
+            continue
+        online_s = online_query_time(row)
+        queries = row.get("queries", [])
+        if queries:
+            for query in queries:
+                label = str(query.get("label", ""))
+                if label not in buckets or not query_success(query):
+                    continue
+                query_s = online_s if math.isfinite(online_s) else query_solve_seconds(query)
+                if math.isfinite(query_s):
+                    buckets[label]["query_s"].append(query_s)
+                path_len = as_float(query.get("path_length"))
+                if math.isfinite(path_len):
+                    buckets[label]["path"].append(path_len)
+                segment = as_float(query.get("segment_fraction"))
+                if math.isfinite(segment):
+                    buckets[label]["segment"].append(segment)
+            continue
+
+        # Summary-only fallback, used only if a manifest is unavailable.
+        label = str(row.get("query_label", ""))
+        if label not in buckets or not full_success(row):
+            continue
+        if math.isfinite(online_s):
+            buckets[label]["query_s"].append(online_s)
+        path_len = path_length_stat(row)
+        if math.isfinite(path_len):
+            buckets[label]["path"].append(path_len)
+        segment = as_float(row.get("raw_segment_fraction_median"))
+        if math.isfinite(segment):
+            buckets[label]["segment"].append(segment)
+
+    out: dict[str, dict[str, float]] = {}
+    for label, values in buckets.items():
+        out[label] = {
+            "query_s": median(values["query_s"]),
+            "query_s_values": values["query_s"],
+            "path": median(values["path"]),
+            "path_mean": mean(values["path"]),
+            "path_values": values["path"],
+            "segment": median(values["segment"]),
+            "segment_values": values["segment"],
+        }
+    return out
+
+
 def bitstar_first_full_success_query_stats(
     run_rows: list[dict[str, Any]],
 ) -> tuple[dict[str, dict[str, float]], int, int]:
@@ -2746,7 +2753,7 @@ def ompl_per_query_tradeoff_stats(
     single global checkpoint can therefore misrepresent both online time and
     path quality.  For Table III, select the fastest full-seed-success
     checkpoint for each query whose mean path is within ``path_slack`` of that
-    query's best checkpoint with audited success on the saved five-query set.
+    query's best checkpoint with validated success on the saved five-query set.
     """
     method_rows = [
         row for row in run_rows
@@ -3049,7 +3056,10 @@ def grouped_query_table(
             if not math.isfinite(current) or ref < current:
                 path_refs[query_label] = ref
     for query_label in QUERY_ORDER:
-        cells = [QUERY_LABELS[query_label]]
+        query_cell = QUERY_LABELS[query_label]
+        if stacked_iqr_cells:
+            query_cell = rf"\shortstack{{{query_cell}\\[-0.2ex]{{\scriptsize\strut}}}}"
+        cells = [query_cell]
         for method in methods:
             stats = method.get("queries", {}).get(query_label, {})
             time_values = finite_values(stats.get("query_s_values"))
@@ -3303,14 +3313,14 @@ def generate_exp04_table(
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA \rbf{} query-validated profile and mechanism ablations.}",
+        r"\captionof{table}{Shelf+IIWA \rbf{} profile and mechanism ablations.}",
         r"\label{tab:tro-shelf-ablation}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.2pt}",
         r"\renewcommand{\arraystretch}{1.02}",
         r"\begin{tabular}{@{}lcccc@{}}",
         r"\toprule",
-        r"Case & Build & \onlineq{} & Amort. 5q & $L/L^\star$ \\",
+        r"Case & Build & \onlineq{} & Amort.\ 5q & $L/L^\star$ \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -3327,7 +3337,7 @@ def generate_exp04_table(
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\), s. Amort. 5q is Build/5 + \onlineq{}; \onlineq{} excludes final simplification and audit; \(L/L^\star\) uses success-only query-level 0.01-rad audited references.\par}",
+        r"{\scriptsize\emph{Notes:} Median \([Q_1,Q_3]\) (quartiles); times in s. Build = reusable build; Amort.\ 5q = Build/5 + \onlineq{}; \onlineq{} excludes simplification/validation. RBF = RapidBoxForest; AABB = axis-aligned bounding box; HIFK = hierarchical interval forward kinematics; SupportHull = support-function hull. Critical sample is non-certifying. \(L/L^\star\) = same-query empirical 0.01~rad reference ratio.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3380,9 +3390,9 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
         path,
         caption=(
             r"Shelf+IIWA RBF mechanism rows from Fig.~\ref{fig:tro_shelf_tradeoff}, "
-            r"reported by query. Each row contributes the design point selected "
+            r"shown by query. Each row contributes the design point selected "
             r"from its five-query amortized-time trade-off curve; the full curves remain the primary evidence. "
-            r"Query path entries report success-only $L/L^\star$ intervals over fixed 0.01-rad audited paths."
+            r"Query path entries report $L/L^\star$ intervals computed only from successful fixed 0.01~rad validated paths for the same saved Shelf query."
         ),
         label="tab:tro-shelf-ablation",
         methods=methods,
@@ -3447,12 +3457,17 @@ def generate_exp05_table(
         row_by_method["sbf_leaf_rrt"] = selected_rbf
     labels = {
         "sbf_leaf_rrt": r"\rbf{}",
-        "iris_np_gcs": "IRIS-NP/GCS",
+        "iris_np_gcs": "IRIS/GCS",
         "prm": "PRM",
         "rrtconnect": "RRT-Connect",
         "bitstar": "BIT*",
     }
     rbf_runs = rbf_manifest.get("rows", []) if isinstance(rbf_manifest, dict) else []
+    rbf_single_runs = (
+        rbf_single_query_manifest.get("rows", [])
+        if isinstance(rbf_single_query_manifest, dict)
+        else []
+    )
     baseline_runs = baseline_manifest.get("rows", []) if isinstance(baseline_manifest, dict) else []
     methods: list[dict[str, Any]] = []
     for method in order:
@@ -3474,6 +3489,8 @@ def generate_exp05_table(
                     and int(float(run.get("deep_max_boxes", 0) or 0)) == deep_boxes
                 ),
             )
+            if not any(finite_values(stats.get("query_s_values")) for stats in query_stats.values()):
+                query_stats = rbf_single_query_online_stats(rbf_single_runs)
             time_metric_label = r"$T$ (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
@@ -3544,13 +3561,17 @@ def generate_exp05_table(
             global_path_refs[query_label] = ref
     grouped_query_table(
         path,
-        caption=r"Shelf+IIWA audited-success per-query timing and path-quality comparison.",
+        caption=(
+            r"Shelf+IIWA query-validated cross-algorithm comparison."
+        ),
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
-            r"Median \([Q_1,Q_3]\), s. \(T=\onlineq{}\), excluding final simplification and audit; "
-            r"\(L/L^\star\) uses the success-only query-level 0.01-rad audited reference path. "
-            r"AS, TS, CS, LB, and RB denote the approach-side anchor, two shelf-side anchors, and the left and right bin anchors."
+            r"Median \([Q_1,Q_3]\) (quartiles); times in s. Header Build = reusable build; \(T=\onlineq{}\) excludes simplification/validation. "
+            r"\(L/L^\star\) = same-query empirical 0.01~rad reference ratio. "
+            r"RBF b100 = fixed 100-box Shelf point; IRIS/GCS = Iterative Regional Inflation + Graphs of Convex Sets; "
+            r"PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees. "
+            r"AS/TS/CS/LB/RB = approach/target/center/left/right anchors."
         ),
         include_segment=False,
         time_unit="s",
@@ -3574,6 +3595,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     import matplotlib
 
     matplotlib.use("Agg")
+    configure_matplotlib_for_ieee(matplotlib)
     import matplotlib.pyplot as plt
 
     method_order = ["sbf_leaf_rrt", "iris_np_gcs", "prm", "rrtconnect", "bitstar"]
@@ -3640,7 +3662,7 @@ def generate_exp05_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             )
     ax.set_xscale("log")
     ax.set_xlabel("Build/5 + Online/q (s)")
-    ax.set_ylabel(r"path ratio $L/L^\star_q$")
+    ax.set_ylabel(r"path-length ratio $L/L^\star$")
     ax.set_title("(a) time / ratio", fontsize=PANEL_TITLE_FONTSIZE)
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
@@ -3693,13 +3715,14 @@ def generate_exp04_figure(
     import matplotlib
 
     matplotlib.use("Agg")
+    configure_matplotlib_for_ieee(matplotlib)
     import matplotlib.pyplot as plt
 
     case_order = [
         ("baseline_d23_aafk_support_hull_8t", "RBF", "#1f77b4", "o"),
-        ("critsample_d23_cache", "Crit. sample", "#17becf", "v"),
-        ("critsample_support_hull_unsafe", "Crit.", "#17becf", "v"),
-        ("critsample_support_hull", "Crit.", "#17becf", "v"),
+        ("critsample_d23_cache", "Critical sample", "#17becf", "v"),
+        ("critsample_support_hull_unsafe", "Critical sample", "#17becf", "v"),
+        ("critsample_support_hull", "Critical sample", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
         ("no_external_lect", "Live HIFK-5", "#ff7f0e", "D"),
         ("single_thread", "1T", "#9467bd", "^"),
@@ -3780,7 +3803,7 @@ def generate_exp04_figure(
             )
     ax.set_xscale("log")
     ax.set_xlabel("Build/5 + Online/q (s)")
-    ax.set_ylabel(r"path ratio $L/L^\star_q$")
+    ax.set_ylabel(r"path-length ratio $L/L^\star$")
     ax.grid(True, which="both", alpha=0.24)
     ax.tick_params(labelsize=TICK_LABEL_FONTSIZE)
     ax.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
@@ -4018,8 +4041,8 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         rows,
         rbf_manifest=exp04_manifest_payload if exp04_summary is not None else rbf_manifest,
         baseline_manifest=baseline_manifest,
-        rbf_single_query_summary_rows=[],
-        rbf_single_query_manifest={},
+        rbf_single_query_summary_rows=rbf_single_query_rows,
+        rbf_single_query_manifest=rbf_single_query_manifest_payload,
     )
     generate_exp05_figure(pdf_path, png_path, rows)
     bitstar_table_stats: dict[str, dict[str, float]] = {}
@@ -4059,7 +4082,7 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "current_iris_summary_sha256": file_sha256(current_iris_summary) if current_iris_summary is not None else None,
         "current_iris_manifest": str(current_iris_manifest) if current_iris_manifest is not None else None,
         "current_iris_manifest_sha256": file_sha256(current_iris_manifest) if current_iris_manifest is not None else None,
-        "current_iris_context_policy": "current_shelf_iris_manifest_context_with_strict_audit_status",
+        "current_iris_context_policy": "current_shelf_iris_manifest_context_with_fixed_validation_status",
         "bitstar_trace_summary": str(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_summary_sha256": file_sha256(bitstar_trace_summary) if bitstar_trace_summary is not None else None,
         "bitstar_trace_manifest": str(bitstar_trace_manifest) if bitstar_trace_manifest is not None else None,
@@ -4069,7 +4092,7 @@ def generate_exp05_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
         "rbf_manifest": str(rbf_manifest_path) if rbf_manifest_path is not None else None,
         "rbf_manifest_for_table": str(exp04_manifest_path) if exp04_summary is not None else str(rbf_manifest_path) if rbf_manifest_path is not None else None,
         "rbf_manifest_policy": "current_exp04_registered_profile",
-        "table_rbf_time_policy": "per_query_diag_query_bridge_task_total_ms_from_current_exp04_registered_profile",
+        "table_rbf_time_policy": "registered_exp04_build_with_single_query_online_manifest_fallback_for_per_query_entries",
         "table_prm_tradeoff_policy": "per_query_fastest_full_seed_checkpoint_within_1p01x_best_query_path_mean",
         "table_prm_tradeoff_path_slack": 1.01,
         "table_prm_success": prm_table_success,
@@ -4162,6 +4185,7 @@ def generate_rbf_budget_figure(pdf_path: Path,
     import matplotlib
 
     matplotlib.use("Agg")
+    configure_matplotlib_for_ieee(matplotlib)
     import matplotlib.pyplot as plt
 
     def group_label(row: dict[str, Any]) -> str:
@@ -4174,7 +4198,7 @@ def generate_rbf_budget_figure(pdf_path: Path,
     path_ref = finite_min([path_length_stat(row) for row in rows])
     metrics = [
         ("raw_segment_fraction_median", "Raw segment fraction"),
-        ("path_length_mean", r"Path ratio $L/L^\star$"),
+        ("path_length_mean", r"Path-length ratio $L/L^\star$"),
     ]
     for group in groups:
         items = sorted([row for row in rows if group_label(row) == group], key=measured_time_key)
@@ -4284,15 +4308,14 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
     caption = r"\captionof{table}{Saved-catalog random-scene operating points.}"
     path_metric = r"$L/L^\star_{\mathrm{q}}$" if has_current_baselines else r"$L/L^\star_{\mathrm{scn}}$"
     notes = (
-        r"Median \([Q_1,Q_3]\), s. Build is a per-scene reusable-build term for \rbf{} and PRM; "
-        r"RRT-Connect and BIT* are single-query rows. \onlineq{} excludes final simplification and audit; "
-        r"\(L/L^\star_{\mathrm{q}}\) uses success-only query-level 0.01-rad audited references for the reported saved queries."
+        r"Median \([Q_1,Q_3]\) (quartiles); times in s. IIWA/UR5/Panda = KUKA LBR iiwa/Universal Robots UR5/Franka Emika Panda. Direct successes are pruned; catalogs retain ten queries/scene. Build is reusable for \rbf{}/PRM; RRT-Connect/BIT* are single-query. \onlineq{} excludes simplification/validation; \(L/L^\star_{\mathrm{q}}\) = same-query empirical 0.01~rad reference ratio. RBF = RapidBoxForest; PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees."
     )
     if not has_current_baselines:
         path_metric = r"$L/L^\star_{\mathrm{scn}}$"
         notes = (
-            r"Median \([Q_1,Q_3]\), s. \onlineq{} excludes final simplification and audit; "
-            r"\(L/L^\star_{\mathrm{scn}}\) uses a scenario-level 0.01-rad audited reference path."
+            r"Median \([Q_1,Q_3]\) (quartiles); times in s. \onlineq{} excludes simplification/validation; "
+            r"\(L/L^\star_{\mathrm{scn}}\) = scenario-level empirical 0.01~rad reference ratio. "
+            r"RBF = RapidBoxForest; PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees."
         )
 
     lines = [
@@ -4356,6 +4379,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
     import matplotlib
 
     matplotlib.use("Agg")
+    configure_matplotlib_for_ieee(matplotlib)
     import matplotlib.pyplot as plt
 
     context, _has_current_baselines = merged_random_context(rows)
@@ -4651,13 +4675,13 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
                     ]
                     if not candidate_indices:
                         continue
-                    # The reported/gold point is on the actual displayed
+                    # The displayed/gold point is on the actual displayed
                     # curve, constrained to lie at or after the first
-                    # point with audited success on the reported saved query set (black).
+                    # point with validated success on the saved query set (black).
                     # It advances only while path
                     # quality decreases by the configured relative threshold,
                     # preventing negligible late improvements from moving the
-                    # reported point to the far end of the curve.
+                    # displayed point to the far end of the curve.
                     selected_index = select_quality_plateau_index(
                         ys,
                         start_index=first_full_index,
@@ -4692,9 +4716,9 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
             use_compact_log_x_ticks(axis)
             axis.set_xlabel("Build/5 + Online/q (s)" if row_index == len(robot_order) - 1 else "")
             if row_index == 0:
-                axis.set_title(f"{difficulty.capitalize()} (q-ref)", fontsize=PANEL_TITLE_FONTSIZE)
+                axis.set_title(difficulty.capitalize(), fontsize=PANEL_TITLE_FONTSIZE)
             if col_index == 0:
-                axis.set_ylabel(f"{robot_labels[robot]}\n$L/L^\\star_q$")
+                axis.set_ylabel(robot_labels[robot] + "\n" + r"$L/L^\star_{\mathrm{q}}$")
             axis.grid(True, which="both", alpha=0.22)
             axis.tick_params(labelsize=TICK_LABEL_FONTSIZE)
             axis.xaxis.label.set_size(AXIS_LABEL_FONTSIZE)
@@ -4754,7 +4778,7 @@ def generate_exp06_figure(pdf_path: Path, png_path: Path, rows: list[dict[str, A
         plot_query_amortization_panel(
             amort_axis,
             amort_methods,
-            title="Amortization (mean M/H)" if row_index == 0 else "",
+            title="Amortization (medium/hard mean)" if row_index == 0 else "",
             show_xlabel=row_index == len(robot_order) - 1,
             show_ylabel=False,
         )
@@ -4998,7 +5022,7 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "current_iris_summaries": [str(path) for path in iris_summaries],
         "current_iris_summary_sha256": {str(path): file_sha256(path) for path in iris_summaries},
         "current_iris_accepted_summaries": [str(path) for path in accepted_iris_summaries],
-        "current_iris_context_policy": "excluded_from_exp06_table_and_figure_due_to_low_strict_saved_catalog_success",
+        "current_iris_context_policy": "excluded_from_exp06_table_and_figure_due_to_low_fixed_saved_catalog_validation_success",
         "current_iris_rows": len(iris_rows),
         "ompl_curve_summary": str(curve_summary) if curve_summary is not None else None,
         "ompl_curve_summary_sha256": file_sha256(curve_summary) if curve_summary is not None else None,
@@ -5024,141 +5048,6 @@ def generate_exp06_assets(generated: Path, out_dir: Path, *, include_current_bas
         "table": str(table_path),
         "figure_pdf": str(pdf_path),
         "figure_png": str(png_path),
-    }
-
-
-def generate_dynamic_update_table(path: Path, rows: list[dict[str, Any]]) -> None:
-    if rows and "source_warm_s_q1" in rows[0]:
-        source_n = int(float(rows[0].get("source_obstacles", 10) or 10))
-        target_n = int(float(rows[0].get("target_obstacles", 15) or 15))
-        lines = [
-            r"\par\vspace{0.25ex}",
-            r"\noindent\begin{minipage}{\columnwidth}",
-            r"\centering",
-            r"\captionof{table}{Adaptive leaf-sweep maintenance-only timing.}",
-            r"\label{tab:tro-dynamic-update}",
-            r"\scriptsize",
-            r"\setlength{\tabcolsep}{2.0pt}",
-            r"\renewcommand{\arraystretch}{1.02}",
-            r"\begin{tabular}{@{}lcc@{}}",
-            r"\toprule",
-            rf"Operation & Time (ms) & \shortstack{{Speedup over\\{target_n}-obstacle build}} \\",
-            r"\midrule",
-        ]
-        for row in rows:
-            lines.extend([
-                rf"Warm build ({source_n} obstacles) & {tex_iqr_or_qrange_ms(row.get('_source_warm_values'), row.get('source_warm_s_q1'), row.get('source_warm_s_q3'))} & -- \\",
-                rf"Insert to {target_n} obstacles & {tex_iqr_or_qrange_ms(row.get('_insert_values'), row.get('insert_s_q1'), row.get('insert_s_q3'))} & {tex_speedup_range(row.get('insert_speedup_q1'), row.get('insert_speedup_q3'))} \\",
-                rf"Remove from {target_n} obstacles & {tex_iqr_or_qrange_ms(row.get('_remove_values'), row.get('remove_s_q1'), row.get('remove_s_q3'))} & {tex_speedup_range(row.get('remove_speedup_q1'), row.get('remove_speedup_q3'))} \\",
-                rf"Warm build ({target_n} obstacles) & {tex_iqr_or_qrange_ms(row.get('_target_warm_values'), row.get('target_warm_s_q1'), row.get('target_warm_s_q3'))} & -- \\",
-            ])
-        lines.extend([
-            r"\bottomrule",
-            r"\end{tabular}",
-            r"\par\vspace{0.1ex}",
-            rf"{{\scriptsize\emph{{Notes:}} Median \([Q_1,Q_3]\), ms. Maintenance only, not end-to-end replanning; speedup compares each update row with the {target_n}-obstacle warm build.\par}}",
-            r"\end{minipage}",
-            r"\par\vspace{0.25ex}",
-            "",
-        ])
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return
-    if rows and "insert_s_q1" in rows[0] and "obstacle_count" not in rows[0]:
-        lines = [
-            r"\begin{table}[t]",
-            r"\centering",
-            r"\caption{Adaptive leaf-sweep maintenance-only timing. Values are milliseconds shown as \([Q_1, Q_3]\) over saved ordered random scenes.}",
-            r"\label{tab:tro-dynamic-update}",
-            r"\footnotesize",
-            r"\setlength{\tabcolsep}{3.0pt}",
-            r"\begin{tabular}{rr}",
-            r"\toprule",
-            r"Insert & Remove \\",
-            r"\midrule",
-        ]
-        for row in rows:
-            lines.append(
-                f"{tex_qrange_ms(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
-                f"{tex_qrange_ms(row.get('remove_s_q1'), row.get('remove_s_q3'))} \\\\"
-            )
-        lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return
-    if rows and "obstacle_count" in rows[0]:
-        lines = [
-            r"\begin{table}[t]",
-            r"\centering",
-            r"\caption{Adaptive leaf-sweep maintenance-only timing. Insert reports the cost of adding the obstacle that makes the scene contain \(N\) obstacles; remove reports deleting one obstacle from an \(N\)-obstacle scene. Values are milliseconds shown as \([Q_1, Q_3]\) over random ordered scenes.}",
-            r"\label{tab:tro-dynamic-update}",
-            r"\footnotesize",
-            r"\setlength{\tabcolsep}{3.0pt}",
-            r"\begin{tabular}{rrrr}",
-            r"\toprule",
-            r"\(N\) & Insert (ms) & Remove (ms) & Full build (ms) \\",
-            r"\midrule",
-        ]
-        robots = sorted({str(row.get("robot", "")) for row in rows})
-        for robot in robots:
-            robot_rows = [row for row in rows if str(row.get("robot", "")) == robot]
-            robot_rows.sort(key=lambda row: int(float(row.get("obstacle_count", 0) or 0)))
-            for row in robot_rows:
-                full = (
-                    tex_qrange_ms(row.get("max_build_s_q1"), row.get("max_build_s_q3"))
-                    if int(float(row.get("max_build_runs", 0) or 0)) > 0
-                    else "--"
-                )
-                lines.append(
-                    f"{int(float(row.get('obstacle_count', 0) or 0))} & "
-                    f"{tex_qrange_ms(row.get('insert_s_q1'), row.get('insert_s_q3'))} & "
-                    f"{tex_qrange_ms(row.get('remove_s_q1'), row.get('remove_s_q3'))} & "
-                    f"{full} \\\\"
-                )
-            if robot != robots[-1]:
-                lines.append(r"\addlinespace")
-        lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
-        path.write_text("\n".join(lines), encoding="utf-8")
-        return
-    lines = [
-        r"\begin{table}[t]",
-        r"\centering",
-        r"\caption{Saved-catalog adaptive leaf-sweep maintenance only, not end-to-end replanning. Update time is compared with a fresh warm rebuild on the target scene; final audit time is excluded.}",
-        r"\label{tab:tro-dynamic-update}",
-        r"\footnotesize",
-        r"\begin{tabular}{lrrrr}",
-        r"\toprule",
-        r"Transition & SR & Update (s) & Warm (s) & \shortstack{Speedup\\over warm} \\",
-        r"\midrule",
-    ]
-    for row in rows:
-        sr = f"{int(float(row.get('success_runs', 0) or 0))}/{int(float(row.get('runs', 0) or 0))}"
-        lines.append(
-            f"{row.get('transition')} & {sr} & {tex_num(row.get('update_s_median'))} & "
-            f"{tex_num(row.get('warm_rebuild_s_median'))} & {tex_num(row.get('speedup_median'))} \\\\"
-        )
-    lines.extend([r"\bottomrule", r"\end{tabular}", r"\end{table}", ""])
-    path.write_text("\n".join(lines), encoding="utf-8")
-
-
-def generate_dynamic_update_assets(generated: Path, out_dir: Path) -> dict[str, Any]:
-    summary = find_dynamic_update_summary(out_dir)
-    if summary is None:
-        return {"status": "missing", "summary": None}
-    rows = read_csv_rows(summary)
-    rows = attach_dynamic_update_raw_distributions(summary, rows)
-    table_path = generated / "tab_tro_dynamic_update.tex"
-    generate_dynamic_update_table(table_path, rows)
-    return {
-        "status": "generated",
-        "summary": str(summary),
-        "summary_sha256": file_sha256(summary),
-        "event_records": str(summary.parent / "dynamic_update_events.csv")
-        if (summary.parent / "dynamic_update_events.csv").exists()
-        else None,
-        "build_records": str(summary.parent / "dynamic_update_builds.csv")
-        if (summary.parent / "dynamic_update_builds.csv").exists()
-        else None,
-        "rows": len(rows),
-        "table": str(table_path),
     }
 
 
@@ -5211,8 +5100,6 @@ def main() -> int:
         include_current_baselines=bool(args.include_exp06_current_baselines),
     )
     manifest["sources"]["exp06_random_robot"] = exp06
-    dynamic_update = generate_dynamic_update_assets(generated, args.out_dir)
-    manifest["sources"]["dynamic_update_maintenance"] = dynamic_update
     supporting_manifest_path = find_supporting_import_manifest(args.out_dir)
     supporting_payload = load_json_file(supporting_manifest_path)
     manifest["sources"]["supporting_table_imports"] = {
@@ -5237,8 +5124,6 @@ def main() -> int:
         generated_tables.add("tab_tro_shelf_cross_algorithm.tex")
     if exp06.get("status") == "generated":
         generated_tables.add("tab_tro_random_summary.tex")
-    if dynamic_update.get("status") == "generated":
-        generated_tables.add("tab_tro_dynamic_update.tex")
     for filename, caption in REQUIRED_TABLES.items():
         path = generated / filename
         label = "tab:" + filename.removesuffix(".tex").replace("_", "-")

@@ -1,5 +1,10 @@
 #include <SBF/grower.h>
 
+#include <SBF/box_graph.h>
+#include <SBF/find_free_box.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_internal.h"
 #include "grower_options.h"
 
@@ -53,7 +58,7 @@ int RrtGrower::create_box(const Eigen::VectorXd& seed,
     trace_ffb_result("ffb_success", seed, ffb_result, parent_box_id, root_id, trace_task, nullptr, worker_id, options.max_depth);
     if (!intervals_contain_point(ffb_result.intervals, seed, config_.adjacency_tolerance)) {
         context.diagnostics().add_counter("grower.ffb_result_seed_miss");
-        set_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
+        set_grower_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
                            intervals_point_gap(ffb_result.intervals, seed));
         trace_box_rejected("ffb_result_seed_miss", seed, parent_box_id, root_id, trace_task, nullptr, worker_id, &ffb_result);
         return -1;
@@ -83,7 +88,7 @@ int RrtGrower::create_box(const Eigen::VectorXd& seed,
             context.diagnostics().add_counter("grower.child_contained_in_parent");
             if (seed_parent_gap > config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
             }
             context.diagnostics().add_counter("grower.rejected_contained_child");
             trace_box_rejected("contained_child", seed, parent_box_id, root_id, trace_task, nullptr, worker_id, &ffb_result);
@@ -94,10 +99,10 @@ int RrtGrower::create_box(const Eigen::VectorXd& seed,
             const double gap = std::sqrt(box_gap_squared(*parent_it, box));
             context.diagnostics().add_counter("grower.rejected_disconnected");
             context.diagnostics().add_counter("grower.rejected_disconnected_gap_sum", gap);
-            set_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
+            set_grower_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
             if (seed_parent_gap <= config_.boundary_epsilon + config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
             }
             trace_box_rejected("disconnected_child", seed, parent_box_id, root_id, trace_task, nullptr, worker_id, &ffb_result);
             return -1;
@@ -132,7 +137,7 @@ int RrtGrower::commit_box(const Eigen::VectorXd& seed,
     }
     if (!intervals_contain_point(ffb_result.intervals, seed, config_.adjacency_tolerance)) {
         context.diagnostics().add_counter("grower.ffb_result_seed_miss");
-        set_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
+        set_grower_max_diagnostic(context, "grower.ffb_result_seed_miss_gap_max",
                            intervals_point_gap(ffb_result.intervals, seed));
         trace_box_rejected("ffb_result_seed_miss", seed, parent_box_id, root_id, nullptr, trace_result,
                            trace_result != nullptr ? trace_result->worker_id : -1, &ffb_result);
@@ -164,7 +169,7 @@ int RrtGrower::commit_box(const Eigen::VectorXd& seed,
             context.diagnostics().add_counter("grower.child_contained_in_parent");
             if (seed_parent_gap > config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", seed_parent_gap);
             }
             context.diagnostics().add_counter("grower.rejected_contained_child");
             trace_box_rejected("contained_child", seed, parent_box_id, root_id, nullptr, trace_result,
@@ -176,10 +181,10 @@ int RrtGrower::commit_box(const Eigen::VectorXd& seed,
             const double gap = std::sqrt(box_gap_squared(*parent_it, box));
             context.diagnostics().add_counter("grower.rejected_disconnected");
             context.diagnostics().add_counter("grower.rejected_disconnected_gap_sum", gap);
-            set_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
+            set_grower_max_diagnostic(context, "grower.rejected_disconnected_gap_max", gap);
             if (seed_parent_gap <= config_.boundary_epsilon + config_.adjacency_tolerance) {
                 context.diagnostics().add_counter("grower.connected_invariant_violation");
-                set_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
+                set_grower_max_diagnostic(context, "grower.connected_invariant_gap_max", gap);
             }
             trace_box_rejected("disconnected_child", seed, parent_box_id, root_id, nullptr, trace_result,
                                trace_result != nullptr ? trace_result->worker_id : -1, &ffb_result);

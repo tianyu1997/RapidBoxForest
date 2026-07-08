@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/api.h>
+#include <rbf/core.h>
 
 #include <algorithm>
 #include <cmath>

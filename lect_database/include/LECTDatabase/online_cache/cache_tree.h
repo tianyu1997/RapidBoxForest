@@ -1,5 +1,7 @@
 #pragma once
 
+#include <LECTDatabase/online_cache/config.h>
+
 #include <rbf/lect_database.h>
 
 #include <Eigen/Core>
@@ -11,12 +13,6 @@
 #include <vector>
 
 namespace rbf::lect_database {
-
-struct OnlineEnvelopeCacheConfig {
-    std::size_t max_nodes = 0;
-    std::size_t max_payload_bytes = 64u * 1024u * 1024u;
-    bool allow_database_backfill = true;
-};
 
 struct OnlineEnvelopeCacheStats {
     std::uint64_t cache_hits = 0;

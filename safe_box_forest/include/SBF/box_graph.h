@@ -1,62 +1,18 @@
 #pragma once
 
-#include <SBF/api.h>
+#include <SBF/box_adjacency_types.h>
+#include <SBF/query_graph_cache_types.h>
+#include <SBF/query_graph_types.h>
+#include <SBF/segment_edge_fwd.h>
 
 #include <Eigen/Core>
 
-#include <cstddef>
-#include <cstdint>
-#include <unordered_map>
+#include <rbf/core.h>
+
 #include <unordered_set>
 #include <vector>
 
 namespace rbf {
-
-using AdjacencyGraph = std::unordered_map<int, std::vector<int>>;
-
-struct AdjacencyBuildStats {
-	int boxes = 0;
-	int selected_dims = 0;
-	int primary_dim = -1;
-	std::uint64_t candidate_pairs = 0;
-	std::uint64_t exact_tests = 0;
-	std::uint64_t edges = 0;
-	double build_ms = 0.0;
-};
-
-struct QueryGraphCache {
-	const std::vector<BoxNode>* boxes = nullptr;
-	const AdjacencyGraph* graph = nullptr;
-	const SegmentEdgeList* segment_edges = nullptr;
-	std::unordered_map<int, std::size_t> box_index_by_id;
-	std::unordered_map<std::uint64_t, std::size_t> segment_edge_index_by_pair;
-	std::unordered_map<int, std::unordered_set<int>> adjacency_sets;
-	int point_index_dim = -1;
-	double point_bin_width = 1.0;
-	double point_bin_origin = 0.0;
-	std::unordered_map<long long, std::vector<int>> point_bins;
-};
-
-struct DijkstraResult {
-	bool found = false;
-	std::vector<int> box_sequence;
-	std::vector<int> segment_edge_sequence;
-	double total_cost = 0.0;
-};
-
-struct QueryGraphCostOptions {
-	double box_transition_penalty = 0.0;
-	double box_nonprogress_penalty = 0.0;
-	double box_line_deviation_penalty = 0.0;
-	double query_bridge_penalty = 0.0;
-	int active_query_index = -1;
-	double foreign_query_edge_penalty = 0.0;
-};
-
-struct QueryShortcutCostOptions {
-	bool cost_aware = true;
-	double cost_factor = 1.05;
-};
 
 bool boxes_connected(const BoxNode& lhs, const BoxNode& rhs, double tolerance = 1e-9);
 AdjacencyGraph compute_adjacency_reference(const std::vector<BoxNode>& boxes,

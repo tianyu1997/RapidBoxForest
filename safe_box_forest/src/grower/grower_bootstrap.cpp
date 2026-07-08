@@ -1,5 +1,8 @@
 #include <SBF/grower.h>
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include "grower_internal.h"
 
 #include <algorithm>

@@ -1,5 +1,10 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/scene.h>
+
+#include <SBF/runtime.h>
+
+#include <SBF/box_graph.h>
 #include <SBF/oracle.h>
 
 #include <algorithm>
@@ -8,11 +13,11 @@
 #include <string>
 #include <vector>
 
-#include "planning_forest_audit.h"
-#include "planning_forest_diagnostics.h"
-#include "planning_forest_obb.h"
-#include "planning_forest_obb_diagnostics.h"
-#include "planning_forest_query_utils.h"
+#include "../planning_core/planning_forest_audit.h"
+#include "../planning_core/planning_forest_diagnostics.h"
+#include "../obb/planning_forest_obb.h"
+#include "../obb/planning_forest_obb_diagnostics.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 namespace rbf {
 

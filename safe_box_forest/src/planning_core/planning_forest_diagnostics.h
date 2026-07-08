@@ -1,9 +1,9 @@
 #pragma once
 
-#include <SBF/api.h>
+#include <SBF/build_profile.h>
 #include <SBF/find_free_box_types.h>
-#include <SBF/query_bridge_config.h>
-#include <SBF/runtime.h>
+#include <SBF/query_runtime_config.h>
+#include <SBF/runtime_fwd.h>
 #include <LECTDatabase/sbf/oracle_types.h>
 
 #include <string>

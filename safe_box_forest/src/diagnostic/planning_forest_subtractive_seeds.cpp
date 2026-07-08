@@ -1,7 +1,7 @@
 #include "planning_forest_subtractive_seeds.h"
 
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <unordered_map>

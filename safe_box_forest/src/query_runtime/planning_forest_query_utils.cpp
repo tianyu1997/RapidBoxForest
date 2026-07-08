@@ -1,6 +1,7 @@
 #include "planning_forest_query_utils.h"
 
 #include <SBF/oracle.h>
+#include <SBF/segment_edge_types.h>
 
 #include <algorithm>
 #include <cctype>

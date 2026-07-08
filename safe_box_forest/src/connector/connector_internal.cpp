@@ -1,5 +1,10 @@
 #include "connector_internal.h"
 
+#include <SBF/box_graph.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+#include <SBF/scene.h>
+
 #include <algorithm>
 #include <cmath>
 #include <limits>

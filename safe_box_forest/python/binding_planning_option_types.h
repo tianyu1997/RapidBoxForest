@@ -1,8 +1,19 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/build_profile.h>
+#include <SBF/planning_config.h>
+#include <SBF/query_result.h>
+#include <SBF/query_runtime_config.h>
 
 #include "binding_utils.h"
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API && \
+    defined(SBF_PYTHON_DEBUG_METHODS) && SBF_PYTHON_DEBUG_METHODS
+#include "diagnostic/binding_diagnostic_types.h"
+#endif
+
+#include <LECTDatabase/online_cache/config.h>
+#include <LECTDatabase/sbf/oracle_types.h>
+#include <rbf/lect_database/split_policy.h>
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -336,7 +347,8 @@ inline void register_planning_option_types(py::module_& module) {
         .def_readwrite("final_rrt_simplify_attempts", &rbf::QueryConfig::final_rrt_simplify_attempts)
         .def_readwrite("adjacency_tolerance", &rbf::QueryConfig::adjacency_tolerance);
 
-    py::class_<rbf::RBFPlanningConfig>(module, "RBFPlanningConfig")
+    py::class_<rbf::RBFPlanningConfig> planning_config_class(module, "RBFPlanningConfig");
+    planning_config_class
         .def(py::init<>())
         .def_readwrite("grower", &rbf::RBFPlanningConfig::grower)
         .def_readwrite("merger", &rbf::RBFPlanningConfig::merger)
@@ -346,8 +358,12 @@ inline void register_planning_option_types(py::module_& module) {
         .def_readwrite("envelope_type", &rbf::RBFPlanningConfig::envelope_type)
         .def_readwrite("validation", &rbf::RBFPlanningConfig::validation)
         .def_readwrite("database", &rbf::RBFPlanningConfig::database)
-        .def_readwrite("runtime", &rbf::RBFPlanningConfig::runtime)
-        .def_readwrite("dynamic_update", &rbf::RBFPlanningConfig::dynamic_update)
+        .def_readwrite("runtime", &rbf::RBFPlanningConfig::runtime);
+#if defined(SBF_DIAGNOSTIC_API) && SBF_DIAGNOSTIC_API && \
+    defined(SBF_PYTHON_DEBUG_METHODS) && SBF_PYTHON_DEBUG_METHODS
+    register_planning_config_diagnostic_fields(planning_config_class);
+#endif
+    planning_config_class
         .def_readwrite("enable_merger", &rbf::RBFPlanningConfig::enable_merger)
         .def_readwrite("enable_connector", &rbf::RBFPlanningConfig::enable_connector)
         .def_readwrite("query_bridge_pave_depth", &rbf::RBFPlanningConfig::query_bridge_pave_depth)
@@ -418,45 +434,6 @@ inline void register_planning_option_types(py::module_& module) {
         .def_readonly("connector_connected", &rbf::BuildProfile::connector_connected)
         .def_readonly("adjacency_islands", &rbf::BuildProfile::adjacency_islands)
         .def_readonly("diagnostics", &rbf::BuildProfile::diagnostics);
-
-    py::class_<rbf::RebuildProfile>(module, "RebuildProfile")
-        .def_readonly("boxes_before", &rbf::RebuildProfile::boxes_before)
-        .def_readonly("boxes_after", &rbf::RebuildProfile::boxes_after)
-        .def_readonly("boxes_removed", &rbf::RebuildProfile::boxes_removed)
-        .def_readonly("raw_boxes_before", &rbf::RebuildProfile::raw_boxes_before)
-        .def_readonly("raw_boxes_after", &rbf::RebuildProfile::raw_boxes_after)
-        .def_readonly("raw_boxes_removed", &rbf::RebuildProfile::raw_boxes_removed)
-        .def_readonly("adjacency_islands", &rbf::RebuildProfile::adjacency_islands)
-        .def_readonly("obstacles_before", &rbf::RebuildProfile::obstacles_before)
-        .def_readonly("obstacles_after", &rbf::RebuildProfile::obstacles_after)
-        .def_readonly("removed_obstacle_index", &rbf::RebuildProfile::removed_obstacle_index)
-        .def_readonly("dirty_boxes", &rbf::RebuildProfile::dirty_boxes)
-        .def_readonly("dirty_boxes_used", &rbf::RebuildProfile::dirty_boxes_used)
-        .def_readonly("dirty_seed_count", &rbf::RebuildProfile::dirty_seed_count)
-        .def_readonly("regrow_attempts", &rbf::RebuildProfile::regrow_attempts)
-        .def_readonly("boxes_added", &rbf::RebuildProfile::boxes_added)
-        .def_readonly("raw_boxes_added", &rbf::RebuildProfile::raw_boxes_added)
-        .def_readonly("bridge_boxes_added", &rbf::RebuildProfile::bridge_boxes_added)
-        .def_readonly("segment_edges_added", &rbf::RebuildProfile::segment_edges_added)
-        .def_readonly("rrt_segment_edges_added", &rbf::RebuildProfile::rrt_segment_edges_added)
-        .def_readonly("point_gap_segment_edges_added", &rbf::RebuildProfile::point_gap_segment_edges_added)
-        .def_readonly("collision_cache_boxes_before", &rbf::RebuildProfile::collision_cache_boxes_before)
-        .def_readonly("collision_cache_boxes_after", &rbf::RebuildProfile::collision_cache_boxes_after)
-        .def_readonly("collision_cache_candidates", &rbf::RebuildProfile::collision_cache_candidates)
-        .def_readonly("collision_cache_promoted", &rbf::RebuildProfile::collision_cache_promoted)
-        .def_readonly("collision_cache_rejected_collision", &rbf::RebuildProfile::collision_cache_rejected_collision)
-        .def_readonly("collision_cache_rejected_contained", &rbf::RebuildProfile::collision_cache_rejected_contained)
-        .def_readonly("collision_cache_rejected_disconnected", &rbf::RebuildProfile::collision_cache_rejected_disconnected)
-        .def_readonly("used_spatial_dirty_region", &rbf::RebuildProfile::used_spatial_dirty_region)
-        .def_readonly("used_warm_rebuild", &rbf::RebuildProfile::used_warm_rebuild)
-        .def_readonly("fallback_reason", &rbf::RebuildProfile::fallback_reason)
-        .def_readonly("dirty_region_ms", &rbf::RebuildProfile::dirty_region_ms)
-        .def_readonly("regrow_ms", &rbf::RebuildProfile::regrow_ms)
-        .def_readonly("warm_rebuild_ms", &rbf::RebuildProfile::warm_rebuild_ms)
-        .def_readonly("collision_check_ms", &rbf::RebuildProfile::collision_check_ms)
-        .def_readonly("adjacency_ms", &rbf::RebuildProfile::adjacency_ms)
-        .def_readonly("total_ms", &rbf::RebuildProfile::total_ms)
-        .def_readonly("diagnostics", &rbf::RebuildProfile::diagnostics);
 
     py::class_<rbf::QueryResult>(module, "QueryResult")
         .def_readonly("success", &rbf::QueryResult::success)

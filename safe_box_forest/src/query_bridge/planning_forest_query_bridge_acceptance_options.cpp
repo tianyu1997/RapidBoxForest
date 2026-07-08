@@ -1,5 +1,9 @@
 #include "planning_forest_query_bridge_options.h"
 
+#include <SBF/runtime.h>
+
+#include <SBF/planning_config.h>
+
 #include <algorithm>
 #include <limits>
 

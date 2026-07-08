@@ -1,8 +1,12 @@
 #include "planning_forest_query_bridge_path_utils.h"
 
-#include "planning_forest_audit.h"
+#include <SBF/scene.h>
+
+#include <SBF/runtime.h>
+
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_graph.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <SBF/connector.h>
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <SBF/sbf.h>
+#include <SBF/scene.h>
 
 #define private public
 #define protected public

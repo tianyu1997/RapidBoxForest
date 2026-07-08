@@ -1,7 +1,12 @@
 #pragma once
 
+#include <SBF/box_adjacency_types.h>
 #include <SBF/connector_types.h>
-#include <SBF/runtime.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/scene_types.h>
+#include <SBF/segment_edge_fwd.h>
+
+#include <LECTDatabase/sbf/oracle_types.h>
 
 #include <Eigen/Core>
 

@@ -1,16 +1,21 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/oracle.h>
+#include <SBF/scene.h>
+#include <SBF/runtime.h>
+
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 
-#include "planning_forest_audit.h"
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_bridge_corridor_graph.h"
 #include "planning_forest_query_bridge_corridor_options.h"
 #include "planning_forest_query_bridge_path_utils.h"
-#include "planning_forest_diagnostics.h"
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
-#include "virtual_sparse_ffb.h"
+#include "planning_forest_query_bridge_pave_guard.h"
+#include "../planning_core/planning_forest_diagnostics.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
+#include "../free_box/virtual_sparse_ffb.h"
 
 #include <algorithm>
 #include <array>
@@ -182,7 +187,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return direct_corridor_added;
         }
         if (partition_native_mode()) {
-            skip_graph_query_bridge_pave_if_partition_native(
+            query_bridge_skip_graph_pave_for_partition_native(
+                partition_native_mode(),
                 context,
                 "query_bridge.partition_graph_dense_chain_pave_skipped");
             dense_repair_attempted = true;
@@ -225,7 +231,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
                                                query_bridge_ffb_depth,
                                                short_local_bridge);
     int added = 0;
-    if (!skip_graph_query_bridge_pave_if_partition_native(
+    if (!query_bridge_skip_graph_pave_for_partition_native(
+            partition_native_mode(),
             context,
             "query_bridge.partition_graph_forward_chain_pave_skipped")) {
         added = run_query_bridge_chain_pave(
@@ -288,7 +295,8 @@ int RBFPlanningForest::bridge_query_with_waypoint_path(
             return finish_bridge(added + dense_repair_added + box_corridor_edges_added);
         }
     }
-    if (!skip_graph_query_bridge_pave_if_partition_native(
+    if (!query_bridge_skip_graph_pave_for_partition_native(
+            partition_native_mode(),
             context,
             "query_bridge.partition_graph_gap_connector_skipped")) {
         IslandConnectorConfig gap_config = config_.connector;

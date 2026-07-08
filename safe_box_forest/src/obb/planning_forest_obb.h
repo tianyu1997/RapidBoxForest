@@ -1,9 +1,11 @@
 #pragma once
 
-#include <SBF/safe_box_forest.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
+#include <SBF/scene_types.h>
 
 #include <Eigen/Core>
 
+#include <cstddef>
 #include <limits>
 #include <vector>
 

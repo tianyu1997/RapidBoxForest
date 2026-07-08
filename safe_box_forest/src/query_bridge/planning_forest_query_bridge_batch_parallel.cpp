@@ -1,4 +1,5 @@
 #include <SBF/safe_box_forest.h>
+#include <SBF/runtime.h>
 
 #include "planning_forest_query_bridge_attempt_paths.h"
 #include "planning_forest_query_bridge_corridor_options.h"
@@ -59,10 +60,12 @@ void RBFPlanningForest::run_query_bridge_batch_parallel_rrt(
             query_bridge_batch_parallel_elapsed_ms_since(batch_t0);
         const auto probe_t0 = QueryBridgeBatchParallelClock::now();
         if (query_bridge_task_has_explicit_satisfaction(task) ||
-            query_bridge_current_query_good(*this,
-                                            task,
-                                            forced_query_indices,
-                                            bridge_acceptance)) {
+            (query_bridge_should_check_current_query(task,
+                                                     true,
+                                                     forced_query_indices) &&
+             query_bridge_current_query_good(query(task.start, task.goal),
+                                             task,
+                                             bridge_acceptance))) {
             prepared[task_offset].skipped = true;
             record_query_bridge_batch_task_already_satisfied(
                 batch_context,

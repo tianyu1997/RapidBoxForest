@@ -1,22 +1,32 @@
 #include <SBF/safe_box_forest.h>
 
+#include <SBF/scene.h>
+#include <SBF/subtractive_build_config.h>
+
 #include <SBF/box_graph.h>
 #include <SBF/connector.h>
 #include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <chrono>
 #include <unordered_set>
 #include <vector>
 
-#include "planning_forest_audit.h"
-#include "planning_forest_diagnostics.h"
+#include "../planning_core/planning_forest_audit.h"
+#include "../planning_core/planning_forest_diagnostics.h"
 #include "planning_forest_dynamic_helpers.h"
-#include "planning_forest_qroot_helpers.h"
-#include "planning_forest_query_utils.h"
+#include "../qroot/planning_forest_qroot_helpers.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 #include "planning_forest_subtractive_seeds.h"
 
 namespace rbf {
+
+BuildProfile RBFPlanningForest::build_subtractive(
+    const std::vector<SubtractiveObstacleGroup>& obstacle_groups,
+    const std::vector<Eigen::VectorXd>& seeds) {
+    return build_subtractive(obstacle_groups, seeds, SubtractiveBuildOptions{});
+}
 
 BuildProfile RBFPlanningForest::build_subtractive(
     const std::vector<SubtractiveObstacleGroup>& obstacle_groups,

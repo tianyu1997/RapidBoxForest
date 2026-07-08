@@ -1,5 +1,7 @@
 #include <SBF/grower.h>
 
+#include <SBF/runtime.h>
+
 #include "grower_components.h"
 #include "grower_internal.h"
 
@@ -204,7 +206,7 @@ std::vector<GrowTaskRequest> RrtGrower::make_growth_task_requests(
         component_graph_ptr = &component_graph;
         context.diagnostics().set_value("grower.component_connect_components",
                                         static_cast<double>(component_graph.components.size()));
-        set_max_diagnostic(context,
+        set_grower_max_diagnostic(context,
                            "grower.component_connect_connected_root_pairs_max",
                            static_cast<double>(component_graph.connected_cross_root_pairs));
     }

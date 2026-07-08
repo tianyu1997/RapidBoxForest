@@ -1,11 +1,12 @@
 #include <SBF/safe_box_forest.h>
+#include <SBF/runtime.h>
 
 #include <SBF/box_graph.h>
 
 #include "planning_forest_query_bridge_corridor_graph.h"
-#include "planning_forest_diagnostics.h"
+#include "../planning_core/planning_forest_diagnostics.h"
 #include "planning_forest_query_bridge_path_utils.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <chrono>

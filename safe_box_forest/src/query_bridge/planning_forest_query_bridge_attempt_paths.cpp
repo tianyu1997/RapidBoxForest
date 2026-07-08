@@ -1,10 +1,14 @@
 #include "planning_forest_query_bridge_attempt_paths.h"
 
-#include "planning_forest_audit.h"
+#include <SBF/runtime.h>
+
+#include "../planning_core/planning_forest_audit.h"
 #include "planning_forest_query_bridge_diagnostics.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <SBF/box_graph.h>
+#include <SBF/planning_config.h>
+#include <SBF/scene.h>
 
 #include <algorithm>
 #include <cmath>

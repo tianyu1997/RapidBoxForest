@@ -1,5 +1,8 @@
 #include "connector_chain_pave_internal.h"
 
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
 #include <algorithm>
 #include <cmath>
 #include <string>
@@ -91,20 +94,7 @@ void record_chain_pave_boundary_ffb_failure(const FindFreeBoxResult& result,
     if (result.fail_code == 6) {
         context.diagnostics().add_counter("connector.chain_pave_boundary_fail_split");
     }
-    if (config.debug_boundary_failures != nullptr &&
-        (result.hit_unknown_depth_cap || result.hit_reserved_depth_cap)) {
-        DebugBoundaryFfbFailure failure;
-        failure.seed.assign(seed.data(), seed.data() + seed.size());
-        failure.intervals = result.intervals;
-        failure.validation_detail = result.validation_detail;
-        failure.node = result.node;
-        failure.depth = result.node >= 0 ? oracle.depth(result.node) : -1;
-        failure.changed_dim = result.changed_dim;
-        failure.fail_code = result.fail_code;
-        failure.hit_unknown_depth_cap = result.hit_unknown_depth_cap;
-        failure.hit_reserved_depth_cap = result.hit_reserved_depth_cap;
-        config.debug_boundary_failures->push_back(std::move(failure));
-    }
+    record_optional_chain_pave_boundary_failure_payload(result, seed, oracle, config);
 }
 
 std::vector<Eigen::VectorXd> chain_pave_boundary_seed_candidates(const BoxNode& box,

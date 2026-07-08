@@ -1,9 +1,12 @@
 #include "planning_forest_ffb_binary_sparse.h"
 
-#include "find_free_box_internal.h"
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
+
+#include "../free_box/find_free_box_internal.h"
 #include "planning_forest_ffb_helpers.h"
-#include "virtual_sparse_ffb.h"
-#include "virtual_sparse_ffb_options.h"
+#include "../free_box/virtual_sparse_ffb.h"
+#include "../free_box/virtual_sparse_ffb_options.h"
 
 #include <algorithm>
 #include <chrono>

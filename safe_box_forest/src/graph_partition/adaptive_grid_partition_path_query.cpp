@@ -1,4 +1,5 @@
 #include <SBF/adaptive_grid_partition.h>
+#include <SBF/segment_edge_types.h>
 
 #include "adaptive_grid_partition_geometry.h"
 #include "adaptive_grid_partition_options.h"

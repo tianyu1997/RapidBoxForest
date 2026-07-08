@@ -1,9 +1,10 @@
 #pragma once
 
-#include <SBF/adaptive_grid_partition.h>
-#include <SBF/box_graph.h>
+#include <SBF/box_adjacency_types.h>
 
 #include "planning_forest_query_bridge_endpoint_index.h"
+
+#include <rbf/core.h>
 
 #include <Eigen/Core>
 
@@ -12,6 +13,8 @@
 #include <vector>
 
 namespace rbf {
+
+class AdaptiveGridPartition;
 
 struct EndpointMainRuntime {
     std::vector<BoxNode>& boxes;

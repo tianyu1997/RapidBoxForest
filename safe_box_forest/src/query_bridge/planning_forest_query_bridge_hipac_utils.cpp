@@ -1,10 +1,10 @@
 #include "planning_forest_query_bridge_hipac_utils.h"
 
 #include <SBF/adaptive_grid_partition.h>
-#include <SBF/safe_box_forest.h>
+#include <SBF/adaptive_leaf_sweep_config.h>
 
 #include "planning_forest_query_bridge_task.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
 
 #include <algorithm>
 #include <cmath>

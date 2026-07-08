@@ -2,9 +2,9 @@
 
 ## Scope
 
-`experiments/exp07_dynamic_update/run_dynamic_update.py` now measures adaptive
-leaf-sweep maintenance cost as obstacle count changes. It does not reuse the
-Exp.6 random-query catalog and does not run online planning.
+`experiments/archive/exp07_dynamic_update/run_dynamic_update.py` measured
+adaptive leaf-sweep maintenance cost as obstacle count changes. It does not
+reuse the Exp.6 random-query catalog and does not run online planning.
 
 The experiment answers a narrow question: given an existing RBF adaptive
 partition for a scene, how expensive is a batched obstacle-count update from

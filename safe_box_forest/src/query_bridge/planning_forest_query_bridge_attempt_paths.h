@@ -1,8 +1,7 @@
 #pragma once
 
-#include <SBF/planning_config.h>
-#include <SBF/runtime.h>
-#include <LECTDatabase/sbf/scene.h>
+#include <SBF/runtime_fwd.h>
+#include <SBF/scene_types.h>
 
 #include "planning_forest_query_bridge_options.h"
 #include "planning_forest_query_bridge_rrt_utils.h"
@@ -13,6 +12,8 @@
 #include <vector>
 
 namespace rbf {
+
+struct RBFPlanningConfig;
 
 void adopt_query_bridge_waypoint_after_rrt(
     QueryBridgeSearchTask& task,

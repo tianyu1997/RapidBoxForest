@@ -1,5 +1,7 @@
 #include "planning_forest_adaptive_cover_utils.h"
-#include "planning_forest_query_utils.h"
+#include "../query_runtime/planning_forest_query_utils.h"
+
+#include <SBF/box_graph.h>
 
 #include <algorithm>
 #include <cmath>

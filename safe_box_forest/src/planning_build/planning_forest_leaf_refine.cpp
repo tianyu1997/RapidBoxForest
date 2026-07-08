@@ -1,16 +1,20 @@
 #include <SBF/safe_box_forest.h>
+
+#include <SBF/scene.h>
+#include <SBF/box_graph.h>
 #include <SBF/connector.h>
+#include <SBF/oracle.h>
+#include <SBF/runtime.h>
 
 #include <algorithm>
 #include <chrono>
 #include <string>
 #include <unordered_map>
 
-#include "planning_forest_adaptive_cover_utils.h"
-#include "planning_forest_adaptive_merge.h"
-#include "planning_forest_diagnostics.h"
-#include "planning_forest_dynamic_collision_cache_state.h"
-#include "planning_forest_qroot_growers.h"
+#include "../planning_adaptive/planning_forest_adaptive_cover_utils.h"
+#include "../planning_adaptive/planning_forest_adaptive_merge.h"
+#include "../planning_core/planning_forest_diagnostics.h"
+#include "../qroot/planning_forest_qroot_growers.h"
 
 namespace rbf {
 
@@ -40,17 +44,17 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
                                       refine_config.leaf_start_depth,
                                       refine_config.leaf_max_depth,
                                       leaf_config);
-    const auto priority_prune = prune_leaf_sweep_to_priority(out.leaf_sweep,
-                                                             boxes_,
-                                                             raw_boxes_,
-                                                             priority_points,
-                                                             refine_config.priority_prune_radius);
-    if (refine_config.priority_prune_radius > 0.0 && !priority_points.empty()) {
-        clear_dynamic_collision_cache();
-        populate_dynamic_collision_cache(out.leaf_sweep, static_cast<int>(obstacles.size()));
-        reserve_existing_boxes();
-        adjacency_.clear();
-        segment_edges_.clear();
+	const auto priority_prune = prune_leaf_sweep_to_priority(out.leaf_sweep,
+	                                                         boxes_,
+	                                                         raw_boxes_,
+	                                                         priority_points,
+	                                                         refine_config.priority_prune_radius);
+	if (refine_config.priority_prune_radius > 0.0 && !priority_points.empty()) {
+		clear_optional_collision_cache();
+		populate_optional_collision_cache_from_leaf_sweep(out.leaf_sweep, static_cast<int>(obstacles.size()));
+		reserve_existing_boxes();
+		adjacency_.clear();
+		segment_edges_.clear();
         invalidate_query_cache();
     }
     out.leaf_sweep_ms = out.leaf_sweep.total_ms;
@@ -225,13 +229,12 @@ LeafSweepRefineResult RBFPlanningForest::build_leaf_sweep_refined(
         static_cast<double>(leaf_merge_result.boxes_before);
     out.profile.diagnostics["leaf_refine.leaf_merge_boxes_after"] =
         static_cast<double>(leaf_merge_result.boxes_after);
-    out.profile.diagnostics["leaf_refine.leaf_merge_exact"] =
-        static_cast<double>(leaf_merge_result.exact_merges);
-    out.profile.diagnostics["leaf_refine.leaf_merge_pruned"] =
-        static_cast<double>(leaf_merge_result.pruned_boxes);
-    out.profile.diagnostics["leaf_refine.collision_cache_boxes"] =
-        static_cast<double>(dynamic_collision_cache_->boxes.size());
-    out.profile.diagnostics["leaf_refine.deep_refine_ms"] = out.deep_refine_ms;
+	out.profile.diagnostics["leaf_refine.leaf_merge_exact"] =
+	    static_cast<double>(leaf_merge_result.exact_merges);
+	out.profile.diagnostics["leaf_refine.leaf_merge_pruned"] =
+	    static_cast<double>(leaf_merge_result.pruned_boxes);
+	record_optional_collision_cache_box_count(out.profile, "leaf_refine.collision_cache_boxes");
+	out.profile.diagnostics["leaf_refine.deep_refine_ms"] = out.deep_refine_ms;
     out.profile.diagnostics["leaf_refine.offline_anchor_ms"] = offline_anchors.total_ms;
     out.profile.diagnostics["leaf_refine.offline_anchor_candidates"] =
         static_cast<double>(offline_anchors.candidates_total);
