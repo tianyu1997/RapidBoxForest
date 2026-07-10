@@ -45,9 +45,24 @@
 % narrow IEEE two-column layout while keeping good justification.
 \tolerance=2000
 \emergencystretch=2em
-% Keep float and caption spacing at IEEEtran defaults; page fitting in the review
-% manuscript should come from text edits, local table simplification, or
-% supplementary material rather than global spacing compression.
+% Keep dense experiment floats near their discussion and let IEEE pages share
+% more space between text and floats instead of creating float-heavy pages.
+\setcounter{topnumber}{4}
+\setcounter{dbltopnumber}{3}
+\setcounter{bottomnumber}{3}
+\setcounter{totalnumber}{6}
+\renewcommand{\topfraction}{0.92}
+\renewcommand{\bottomfraction}{0.80}
+\renewcommand{\textfraction}{0.04}
+\renewcommand{\floatpagefraction}{0.82}
+\renewcommand{\dbltopfraction}{0.92}
+\renewcommand{\dblfloatpagefraction}{0.82}
+\setlength{\textfloatsep}{6pt plus 1pt minus 2pt}
+\setlength{\dbltextfloatsep}{7pt plus 1pt minus 2pt}
+\setlength{\floatsep}{5pt plus 1pt minus 2pt}
+\setlength{\intextsep}{6pt plus 1pt minus 2pt}
+\setlength{\abovecaptionskip}{3pt}
+\setlength{\belowcaptionskip}{0pt}
 
 \usepackage{amsmath,amssymb,amsfonts}
 \usepackage{amsthm}
@@ -128,6 +143,26 @@ and 943.6--3354.0$\times$ for removal over a 15-obstacle warm rebuild.
 Motion planning, manipulation planning, multi-query planning, collision checking,
 configuration-space decomposition, link envelopes.
 \end{IEEEkeywords}
+
+\begin{table*}[!t]
+\centering
+\caption{Reusable state in planning paradigms. \rbf{} is positioned as
+low-overhead volumetric reuse with explicit returned-path semantics.}
+\label{tab:related_qualitative_comparison}
+\footnotesize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.10}
+\begin{tabular}{@{}M{0.18\textwidth}M{0.18\textwidth}cM{0.25\textwidth}M{0.26\textwidth}@{}}
+\toprule
+Paradigm family & Reused state & Vol. & Update or validation style & Multi-query implication \\
+\midrule
+Roadmap reuse (PRM/LazyPRM) & Vertices, edges, and cached edge checks & No & Recheck affected edges after scene changes & Strong graph reuse, but no reusable free-volume unit. \\
+Tree and anytime sampling (RRT, RRT-Connect, BIT*, FMT*) & Query tree or batch sample graph & No & Primarily query-local; rebuilt or checkpointed & Fast discovery or quality improvement without persistent volumetric scene structure. \\
+Convex-region optimization (IRIS/GCS) & Convex cells and region graph & Yes & Inflate, certify, or recertify regions after edits & Optimization-ready regions, but update cost can dominate short query batches. \\
+\rbf{} & Box forest, typed graph, and LECT evidence & Yes & Recheck boxes, replay kinematics evidence, and validate non-certificate outputs & Low-overhead free-volume reuse with auditable certificate boundaries. \\
+\bottomrule
+\end{tabular}
+\end{table*}
 
 
 
@@ -213,7 +248,7 @@ then evaluate them.
 
 \begin{figure*}[!t]
 \centering
-\includegraphics[width=0.97\textwidth]{figures/framework.png}
+\includegraphics[width=0.94\textwidth]{figures/framework.png}
 \caption{\rbf{} pipeline. Top: endpoint and segment interval envelopes induce
 link interval envelopes over a \cspace{} interval. Lower left: sample-guided
 \rbf{} growth labels free, collision, and unsampled boxes. Lower right: LECT
@@ -244,26 +279,6 @@ universally. Its intended niche is repeated manipulation in scenes where a
 volumetric reusable layer is valuable, but repeatedly inflating optimization-ready
 convex regions or rebuilding large roadmaps is too expensive for local edits and
 short query batches.
-
-\begin{table*}[!t]
-\centering
-\caption{Reusable state in planning paradigms. \rbf{} is positioned as
-low-overhead volumetric reuse with explicit returned-path semantics.}
-\label{tab:related_qualitative_comparison}
-\footnotesize
-\setlength{\tabcolsep}{2.6pt}
-\renewcommand{\arraystretch}{1.10}
-\begin{tabular}{@{}M{0.18\textwidth}M{0.18\textwidth}cM{0.25\textwidth}M{0.26\textwidth}@{}}
-\toprule
-Paradigm family & Reused state & Vol. & Update or validation style & Multi-query implication \\
-\midrule
-Roadmap reuse (PRM/LazyPRM) & Vertices, edges, and cached edge checks & No & Recheck affected edges after scene changes & Strong graph reuse, but no reusable free-volume unit. \\
-Tree and anytime sampling (RRT, RRT-Connect, BIT*, FMT*) & Query tree or batch sample graph & No & Primarily query-local; rebuilt or checkpointed & Fast discovery or quality improvement without persistent volumetric scene structure. \\
-Convex-region optimization (IRIS/GCS) & Convex cells and region graph & Yes & Inflate, certify, or recertify regions after edits & Optimization-ready regions, but update cost can dominate short query batches. \\
-\rbf{} & Box forest, typed graph, and LECT evidence & Yes & Recheck boxes, replay kinematics evidence, and validate non-certificate outputs & Low-overhead free-volume reuse with auditable certificate boundaries. \\
-\bottomrule
-\end{tabular}
-\end{table*}
 
 \paragraph{Continuous-collision-detection endpoint bounds}
 \label{sec:related_endpoint_bounds}
@@ -858,43 +873,19 @@ pattern, so later graph search never relies on an unvalidated scene label.
 \paragraph{Controls}
 Validation semantics and timings are governed by the build budget, LECT
 descriptor, endpoint and link representation, admitted edge types, and
-validation resolution. \Cref{tab:build_controls} lists the implementation
-policies fixed in the experiment configuration. Materialization failures remain
-deferred domains for restricted refinement; frontier and repair witnesses follow
-the status rules in \Cref{tab:claim_boundary}. In Algorithms~\ref{alg:ffb_rewrite} and~\ref{alg:leaf_sweep_refine},
+validation resolution. The fixed profile uses saved anchors, query endpoints,
+frontier domains, and repair witnesses as seeds; priority favors anchor and
+connector coverage before uncovered frontier volume, with deterministic
+tie-breaking. Splits follow the LECT descriptor schedule, profile budgets are
+fixed before evaluation, and candidate merges are kept only after revalidation.
+Materialization failures remain deferred domains for restricted refinement;
+frontier and repair witnesses follow the status rules in
+\Cref{tab:claim_boundary}. In Algorithms~\ref{alg:ffb_rewrite} and~\ref{alg:leaf_sweep_refine},
 \(\mathcal{T}_L\), \(D_{\max}\), and \(\mathcal{C}\) denote the LECT tree, the
 descent depth cap, and the retained blocked or inconclusive collision-domain
 cache.
 
-\begin{table}[!t]
-\centering
-\caption{Build controls used by Algorithms~\ref{alg:ffb_rewrite}--\ref{alg:leaf_sweep_refine}.}
-\label{tab:build_controls}
-\footnotesize
-\setlength{\tabcolsep}{2.5pt}
-\renewcommand{\arraystretch}{1.10}
-\begin{tabular}{@{}M{0.31\columnwidth}M{0.63\columnwidth}@{}}
-\toprule
-Control & Default policy \\
-\midrule
-Seed source & Saved anchors, query endpoints when available, uncovered frontier domains, and repair witnesses. \\
-Priority score & Prefer anchor and connector coverage, then uncovered frontier volume; ties favor shallower domains and deterministic seed order. \\
-Split dimension & Use the LECT descriptor schedule in Sec.~\ref{sec:lect_design}; fall back to the widest active dimension. \\
-Refinement budget & Split retained blocked or inconclusive domains only within the fixed sweep/refinement budget for the profile. \\
-Profile budget & Fix maximum boxes, connector proposals, OBB-corridor attempts, repair witnesses, and refinement cells before evaluation. \\
-Merge criterion & Merge or remove boxes only after the resulting retained box passes the same validation predicate. \\
-Edge insertion & Insert overlap/contact edges directly; propose gap, segment, OBB, and repair transitions within the fixed profile budget and store their status from Table~\ref{tab:claim_boundary}. \\
-Status rule & Conservative region checks return certified boxes; filter-only acceptance returns validation-required boxes. \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Exact-cell materialization means replaying or computing evidence for the retained
-cell itself rather than descending from a seed-containing ancestor. This keeps
-edit, refill, and repair domains aligned with the scene-cache labels that caused
-the revisit.
-
-\begin{algorithm}[t]
+\begin{algorithm}[!t]
 \caption{Adaptive leaf sweep and local refinement.}
 \label{alg:leaf_sweep_refine}
 \footnotesize
@@ -902,7 +893,7 @@ the revisit.
 \REQUIRE Seed/anchor set $\mathcal{S}$, LECT tree $\mathcal{T}_L$, obstacle set
 $\calO$, validation policy $V_{\calO}$, sweep and refinement budgets
 \ENSURE Scene forest $\mathcal{F}$, typed graph $G$, retained domains $\mathcal{C}$
-\STATE initialize priority queue $\mathcal{P}$ using the order in \Cref{tab:build_controls}
+\STATE initialize priority queue $\mathcal{P}$ using the fixed priority policy
 \STATE $\mathcal{F}\leftarrow\emptyset$; $G\leftarrow\emptyset$; $\mathcal{C}\leftarrow\emptyset$
 \WHILE{$\mathcal{P}$ is nonempty and sweep budget remains}
   \STATE pop the highest-priority cell or seed domain from $\mathcal{P}$
@@ -926,6 +917,11 @@ $\calO$, validation policy $V_{\calO}$, sweep and refinement budgets
 \RETURN $\mathcal{F},G,\mathcal{C}$
 \end{algorithmic}
 \end{algorithm}
+
+Exact-cell materialization means replaying or computing evidence for the retained
+cell itself rather than descending from a seed-containing ancestor. This keeps
+edit, refill, and repair domains aligned with the scene-cache labels that caused
+the revisit.
 
 \FloatBarrier
 \subsection{Corridor Query and Certificate}
@@ -1010,7 +1006,7 @@ accounting boundary so the experimental narrative stays aligned with
 \label{tab:evaluation_map}
 \footnotesize
 \setlength{\tabcolsep}{2.6pt}
-\renewcommand{\arraystretch}{1.12}
+\renewcommand{\arraystretch}{1.00}
 \begin{tabular}{@{}M{0.08\textwidth}M{0.25\textwidth}M{0.28\textwidth}M{0.30\textwidth}@{}}
 \toprule
 Question & Writing claim & Main evidence & Boundary emphasized \\
@@ -1060,8 +1056,8 @@ snapshot creation/loading, resident memory, and offline setup amortization. The
 12.75~GiB on disk, and 958.079~s prewarm time. Bridge and repair witnesses
 follow \Cref{tab:claim_boundary}: after conservative box-corridor or finite-cover
 OBB-corridor conversion they are certificate-backed; otherwise they remain
-validation-required transitions. All profile budgets in \Cref{tab:build_controls}
-are fixed before producing the Shelf and random-scene summaries; the b100 Shelf
+validation-required transitions. All profile budgets are fixed before producing
+the Shelf and random-scene summaries; the b100 Shelf
 profile and random-scene OBB-corridor profiles use these fixed budgets unchanged
 across saved seeds and robot/difficulty rows, and no row is tuned after observing
 validation outcomes.
@@ -1077,10 +1073,10 @@ validation outcomes.
   \centering
   {\footnotesize Labels: IRIS/GCS = Iterative Regional Inflation + Graphs of
   Convex Sets; RBF b100 = fixed 100-box Shelf point; Amort.\ 5q =
-  Build/5 + \onlineq{}.\par\vspace{0.3ex}}
+  Build/5 + \onlineq{}.\par}
   \begin{minipage}[t]{0.34\textwidth}
     \centering
-    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_tradeoff.pdf}
+    \includegraphics[width=0.96\linewidth,keepaspectratio]{generated/fig_tro_shelf_tradeoff.pdf}
     \caption{Shelf+IIWA mechanism trade-off. Points plot Table~\ref{tab:tro-shelf-ablation}
     Amort.\ 5q versus \(L/\Lref{}\); smaller ratios are shorter, and gold rings
     mark Table~\ref{tab:tro-shelf-ablation} rows.}
@@ -1088,7 +1084,7 @@ validation outcomes.
   \end{minipage}\hfill
   \begin{minipage}[t]{0.62\textwidth}
     \centering
-    \includegraphics[width=\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
+    \includegraphics[width=0.96\linewidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
     \caption{Shelf+IIWA cross-algorithm trade-off. Black rings mark first
     successful checkpoints. All rows follow the common 8-thread execution
     policy. The horizontal coordinate is Build/5 + \onlineq{} for reusable
@@ -1166,10 +1162,46 @@ paths than \mbox{RRT-Connect}. The same data should not be read as a shortest-pa
 or fastest-single-query claim, because BIT* is shorter and \mbox{RRT-Connect} is
 faster per query in this saved cycle.
 
+\FloatBarrier
 \subsection{Q3: Random Multi-Robot Scenes}
 \label{sec:exp_generalization}
 
 Q3 tests whether reusable box forests remain useful beyond the Shelf profile.
+
+\begin{table*}[!t]
+  \centering
+  \TableFontRestore
+  \input{generated/tab_tro_random_summary.tex}
+  \vspace{0.3ex}
+  {\footnotesize\emph{Accounting note:} The columns $N_{\mathrm{ret}}$ and
+  IRIS/GCS $N_{\mathrm{full}}/6$ make pruning and baseline coverage visible.
+  $N_{\mathrm{ret}}$ is the method-independent retained-query count after
+  direct-segment pruning for each robot/difficulty row, and $N_{\mathrm{full}}/6$
+  counts robot/difficulty rows satisfying the full validated-success rule.
+  Medians over method-specific survivors are not reported.\par}
+\end{table*}
+
+\begin{figure*}[!t]
+  \centering
+  \includegraphics[width=0.84\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
+  \caption{Saved-catalog random-scene trade-off. Left/middle: fixed five-query
+  point Build/5 + \onlineq{}; right: reuse horizon \(K\) in Build/\(K\) +
+  \onlineq{}. \onlineq{} is per-query online time, and smaller path-length
+  ratios are shorter. Rows are the three robot models. The summary table reports
+  $N_{\mathrm{ret}}$ and IRIS/GCS $N_{\mathrm{full}}/6$ coverage; no-build
+  methods plot at \onlineq{} under the common 8-thread policy. Rings mark first
+  validated checkpoints (black) and later \(\ge 1\%\) path-ratio gains (gold);
+  PRM and BIT* use offline checkpoints.}
+  \label{fig:tro_random_tradeoff}
+\end{figure*}
+
+\begin{table*}[!t]
+\centering
+\TableFontRestore
+\input{generated/tab_tro_endpoint_envelope.tex}
+\vspace{0.45ex}
+\input{generated/tab_tro_link_envelope.tex}
+\end{table*}
 
 \emph{Dataset and pruning.}
 Each saved random scene has ten pre-generated queries shared by every method.
@@ -1210,32 +1242,6 @@ robot/difficulty rows satisfying that rule, rather than a median operating point
 medians over a method-specific surviving subset are intentionally not reported.
 Compact random-scene rows without audit-cost fields are planner-time rows rather
 than total accepted-path latency rows.
-\begin{table*}[!t]
-  \centering
-  \TableFontRestore
-  \input{generated/tab_tro_random_summary.tex}
-  \vspace{0.3ex}
-  {\footnotesize\emph{Accounting note:} The columns $N_{\mathrm{ret}}$ and
-  IRIS/GCS $N_{\mathrm{full}}/6$ make pruning and baseline coverage visible.
-  $N_{\mathrm{ret}}$ is the method-independent retained-query count after
-  direct-segment pruning for each robot/difficulty row, and $N_{\mathrm{full}}/6$
-  counts robot/difficulty rows satisfying the full validated-success rule.
-  Medians over method-specific survivors are not reported.\par}
-\end{table*}
-
-\begin{figure*}[!t]
-  \centering
-  \includegraphics[width=0.84\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
-  \caption{Saved-catalog random-scene trade-off. Left/middle: fixed five-query
-  point Build/5 + \onlineq{}; right: reuse horizon \(K\) in Build/\(K\) +
-  \onlineq{}. \onlineq{} is per-query online time, and smaller path-length
-  ratios are shorter. Rows are the three robot models. The summary table reports
-  $N_{\mathrm{ret}}$ and IRIS/GCS $N_{\mathrm{full}}/6$ coverage; no-build
-  methods plot at \onlineq{} under the common 8-thread policy. Rings mark first
-  validated checkpoints (black) and later \(\ge 1\%\) path-ratio gains (gold);
-  PRM and BIT* use offline checkpoints.}
-  \label{fig:tro_random_tradeoff}
-\end{figure*}
 
 \emph{Results.}
 \mbox{RRT-Connect} has the lowest median \onlineq{} in five of the six operating
@@ -1262,14 +1268,6 @@ and~\ref{tab:tro-link-envelope} report joint-interval widths in radians. The
 endpoint table separates certificate-capable interval sources (IFK-AA and HIFK)
 from reference or filter rows; negative sampled-union gaps indicate finite-sample
 undercoverage, not certificate margins.
-
-\begin{table*}[!t]
-\centering
-\TableFontRestore
-\input{generated/tab_tro_endpoint_envelope.tex}
-\vspace{0.45ex}
-\input{generated/tab_tro_link_envelope.tex}
-\end{table*}
 
 The link table explains the AABB-first narrow phase. SupportHull/GJK stores
 compact support records, but wide boxes can increase GJK calls after broadphase
@@ -1303,6 +1301,7 @@ insertion and 943.6--3354.0$\times$ for removal over a 15-obstacle warm rebuild.
 These are cache-maintenance speedups; post-edit planning should be read as the
 full query pipeline applied after this lower-cost scene-cache update.
 
+\FloatBarrier
 \section{Conclusion}\label{sec:conclusion}
 
 \rbf{} is a reusable scene-construction layer for repeated manipulation queries.
@@ -1341,6 +1340,8 @@ the present certificates. These limits define the scope of the claim contract in
 can provide a practical middle layer between roadmap reuse and convex-region
 optimization for repeated-query manipulation.
 
+\IEEEtriggercmd{\enlargethispage{\baselineskip}}
+\IEEEtriggeratref{43}
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 
