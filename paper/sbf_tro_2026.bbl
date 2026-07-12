@@ -21,44 +21,53 @@
 \providecommand{\BIBdecl}{\relax}
 \BIBdecl
 
-\bibitem{deits2015computing}
-R.~Deits and R.~Tedrake, ``Computing large convex regions of obstacle-free
-  space through semidefinite programming,'' in \emph{Algorithmic Foundations of
-  Robotics XI}, 2015, pp. 109--124.
-
-\bibitem{marcucci2023motion}
-T.~Marcucci, M.~Petersen, D.~{von Wrangel}, and R.~Tedrake, ``Motion planning
-  around obstacles with convex optimization,'' \emph{Sci. Robot.}, vol.~8,
-  no.~84, 2023.
-
-\bibitem{marcucci2024shortest}
-T.~Marcucci, J.~Umenberger, P.~Parrilo, and R.~Tedrake, ``Shortest paths in
-  graphs of convex sets,'' \emph{{SIAM} J. Optim.}, vol.~34, no.~1, pp.
-  507--532, 2024.
-
-\bibitem{lavalle2006planning}
-S.~M. LaValle, \emph{Planning Algorithms}.\hskip 1em plus 0.5em minus
-  0.4em\relax Cambridge University Press, 2006.
-
-\bibitem{lavalle1998rapidly}
-------, ``Rapidly-exploring random trees: A new tool for path planning,'' Iowa
-  State University, Tech. Rep. TR 98-11, 1998.
-
 \bibitem{kavraki1996probabilistic}
 L.~E. Kavraki, P.~{\v S}vestka, J.-C. Latombe, and M.~H. Overmars,
   ``Probabilistic roadmaps for path planning in high-dimensional configuration
   spaces,'' \emph{IEEE Trans. Robot. Autom.}, vol.~12, no.~4, pp. 566--580,
   1996.
 
+\bibitem{bialkowski2016safety}
+J.~Bialkowski, M.~Otte, S.~Karaman, and E.~Frazzoli, ``Efficient collision
+  checking in sampling-based motion planning via safety certificates,''
+  \emph{Int. J. Robot. Res.}, vol.~35, no.~7, pp. 767--796, 2016.
+
+\bibitem{coleman2015experience}
+D.~Coleman, I.~A. {\c{S}}ucan, M.~Moll, K.~Okada, and N.~Correll,
+  ``Experience-based planning with sparse roadmap spanners,'' in \emph{{IEEE}
+  International Conference on Robotics and Automation ({ICRA})}, 2015, pp.
+  900--905.
+
 \bibitem{karaman2011sampling}
 S.~Karaman and E.~Frazzoli, ``Sampling-based algorithms for optimal motion
   planning,'' \emph{Int. J. Robot. Res.}, vol.~30, no.~7, pp. 846--894, 2011.
 
-\bibitem{amice2022finding}
-A.~Amice, H.~Dai, P.~Werner, A.~Zhang, and R.~Tedrake, ``Finding and optimizing
-  certified, collision-free regions in configuration space for robot
-  manipulators,'' in \emph{Algorithmic Foundations of Robotics XV}.\hskip 1em
-  plus 0.5em minus 0.4em\relax Springer, 2022, pp. 328--348.
+\bibitem{dai2024certified}
+H.~Dai, A.~Amice, P.~Werner, A.~Zhang, and R.~Tedrake, ``Certified polyhedral
+  decompositions of collision-free configuration space,'' \emph{Int. J. Robot.
+  Res.}, vol.~43, no.~9, pp. 1322--1341, 2024.
+
+\bibitem{marcucci2024fastboxes}
+T.~Marcucci, P.~Nobel, R.~Tedrake, and S.~Boyd, ``Fast path planning through
+  large collections of safe boxes,'' \emph{IEEE Trans. Robot.}, vol.~40, pp.
+  3795--3811, 2024.
+
+\bibitem{marcucci2024shortest}
+T.~Marcucci, J.~Umenberger, P.~Parrilo, and R.~Tedrake, ``Shortest paths in
+  graphs of convex sets,'' \emph{{SIAM} J. Optim.}, vol.~34, no.~1, pp.
+  507--532, 2024.
+
+\bibitem{morozov2026multiquery}
+S.~Morozov, T.~Marcucci, A.~Amice, B.~P. Graesdal, R.~Bosworth, P.~A. Parrilo,
+  and R.~Tedrake, ``Multi-query shortest-path problem in graphs of convex
+  sets,'' in \emph{Algorithmic Foundations of Robotics XVI, Volume 1}, ser.
+  Springer Proceedings in Advanced Robotics, vol.~37.\hskip 1em plus 0.5em
+  minus 0.4em\relax Springer, 2026, pp. 67--86.
+
+\bibitem{deits2015computing}
+R.~Deits and R.~Tedrake, ``Computing large convex regions of obstacle-free
+  space through semidefinite programming,'' in \emph{Algorithmic Foundations of
+  Robotics XI}, 2015, pp. 109--124.
 
 \bibitem{petersen2023growing}
 \BIBentryALTinterwordspacing
@@ -67,11 +76,51 @@ M.~Petersen and R.~Tedrake, ``Growing convex collision-free regions in
   \url{https://arxiv.org/abs/2303.14737}
 \BIBentrySTDinterwordspacing
 
+\bibitem{werner2025superfast}
+P.~Werner, R.~Cheng, T.~Stewart, R.~Tedrake, and D.~Rus, ``Superfast
+  configuration-space convex set computation on {GPU}s for online motion
+  planning,'' in \emph{Robotics: Science and Systems XXI}, Los Angeles, CA,
+  USA, Jun. 2025.
+
+\bibitem{werner2026faster}
+P.~Werner, T.~Cohn, R.~H. Jiang, T.~Seyde, M.~Simchowitz, R.~Tedrake, and
+  D.~Rus, ``Faster algorithms for growing collision-free convex polytopes in
+  robot configuration space,'' \emph{Int. J. Robot. Res.}, May 2026,
+  {OnlineFirst}.
+
 \bibitem{werner2024approximating}
 P.~Werner, A.~Amice, T.~Marcucci, D.~Rus, and R.~Tedrake, ``Approximating robot
   configuration spaces with few convex sets using clique covers of visibility
   graphs,'' in \emph{{IEEE} International Conference on Robotics and Automation
   ({ICRA})}, 2024, pp. 10\,359--10\,365.
+
+\bibitem{marcucci2023motion}
+T.~Marcucci, M.~Petersen, D.~{von Wrangel}, and R.~Tedrake, ``Motion planning
+  around obstacles with convex optimization,'' \emph{Sci. Robot.}, vol.~8,
+  no.~84, p. eadf7843, Nov. 2023.
+
+\bibitem{chewchia2026gcsstar}
+S.~Y. {Chew Chia}, R.~H. Jiang, B.~P. Graesdal, L.~P. Kaelbling, and
+  R.~Tedrake, ``{GCS}*: Forward heuristic search on implicit graphs of convex
+  sets,'' in \emph{Algorithmic Foundations of Robotics XVI, Volume 1}, ser.
+  Springer Proceedings in Advanced Robotics, vol.~37.\hskip 1em plus 0.5em
+  minus 0.4em\relax Springer, 2026, pp. 87--108.
+
+\bibitem{leven2002framework}
+P.~Leven and S.~Hutchinson, ``A framework for real-time path planning in
+  changing environments,'' \emph{Int. J. Robot. Res.}, vol.~21, no.~12, pp.
+  999--1030, 2002.
+
+\bibitem{ashur2026spite}
+S.~Ashur, M.~Lusardi, M.~Markowicz, J.~Motes, M.~Morales, S.~Har-Peled, and
+  N.~M. Amato, ``{SPITE}: Simple polyhedral intersection techniques for motion
+  planning in modified environments,'' in \emph{Algorithmic Foundations of
+  Robotics XVI, Volume 1}, ser. Springer Proceedings in Advanced Robotics,
+  vol.~37.\hskip 1em plus 0.5em minus 0.4em\relax Springer, 2026, pp. 151--168.
+
+\bibitem{wang2015soft}
+C.~Wang, Y.-J. Chiang, and C.~Yap, ``On soft predicates in subdivision motion
+  planning,'' \emph{Comput. Geom.}, vol.~48, no.~8, pp. 589--605, 2015.
 
 \bibitem{blackmore1992swept}
 D.~Blackmore and M.~C. Leu, ``Analysis of swept volume via {Lie} groups and
@@ -85,7 +134,8 @@ K.~Abdel-Malek, J.~Yang, D.~Blackmore, and K.~Joy, ``Swept volumes: foundation,
 
 \bibitem{gottschalk1996obbtree}
 S.~Gottschalk, M.~C. Lin, and D.~Manocha, ``{OBBTree}: A hierarchical structure
-  for rapid interference detection,'' in \emph{{ACM} {SIGGRAPH}}, 1996.
+  for rapid interference detection,'' in \emph{{ACM} {SIGGRAPH}}, 1996, pp.
+  171--180.
 
 \bibitem{larsen1999fast}
 E.~Larsen, S.~Gottschalk, M.~C. Lin, and D.~Manocha, ``Fast proximity queries
@@ -98,7 +148,7 @@ E.~G. Gilbert, D.~W. Johnson, and S.~S. Keerthi, ``A fast procedure for
   \emph{IEEE J. Robot. Autom.}, vol.~4, no.~2, pp. 193--203, 1988.
 
 \bibitem{bergen1999gjk}
-G.~v.~d. Bergen, ``A fast and robust {GJK} implementation for collision
+G.~{van den Bergen}, ``A fast and robust {GJK} implementation for collision
   detection of convex objects,'' \emph{J. Graph. Tools}, vol.~4, no.~2, pp.
   7--25, 1999.
 
@@ -159,23 +209,6 @@ R.~Bohlin and L.~E. Kavraki, ``Path planning using lazy {PRM},'' in
   \emph{{IEEE} International Conference on Robotics and Automation ({ICRA})},
   2000, pp. 521--528.
 
-\bibitem{dellin2016unifying}
-C.~M. Dellin and S.~S. Srinivasa, ``A unifying formalism for shortest path
-  problems with expensive edge evaluations via lazy best-first search over
-  paths with edge selectors,'' in \emph{International Conference on Automated
-  Planning and Scheduling ({ICAPS})}, 2016.
-
-\bibitem{schmerling2015optimal}
-E.~Schmerling, L.~Janson, and M.~Pavone, ``Optimal sampling-based motion
-  planning under differential constraints: The driftless case,'' in
-  \emph{{IEEE} International Conference on Robotics and Automation ({ICRA})},
-  2015.
-
-\bibitem{coleman2014moveit}
-D.~Coleman, I.~Sucan, S.~Chitta, and N.~Correll, ``Reducing the barrier to
-  entry of complex robotic software: A {MoveIt!} case study,'' \emph{J. Softw.
-  Eng. Robot.}, vol.~5, no.~1, pp. 3--16, 2014.
-
 \bibitem{lozanoperez1983spatial}
 T.~Lozano-P\'erez, ``Spatial planning: A configuration space approach,''
   \emph{IEEE Trans. Comput.}, vol. C-32, no.~2, pp. 108--120, 1983.
@@ -196,11 +229,6 @@ J.~D. Gammell, S.~S. Srinivasa, and T.~D. Barfoot, ``{Batch Informed Trees}
   of implicit random geometric graphs,'' in \emph{{IEEE} International
   Conference on Robotics and Automation ({ICRA})}, 2015, pp. 3067--3074.
 
-\bibitem{gammell2018informed}
-J.~D. Gammell, T.~D. Barfoot, and S.~S. Srinivasa, ``Informed sampling for
-  asymptotically optimal path planning,'' \emph{IEEE Trans. Robot.}, vol.~34,
-  no.~4, pp. 966--984, 2018.
-
 \bibitem{janson2015fmt}
 L.~Janson, E.~Schmerling, A.~Clark, and M.~Pavone, ``{Fast Marching Tree}: A
   fast marching sampling-based method for optimal motion planning in many
@@ -220,22 +248,5 @@ N.~Ratliff, M.~Zucker, J.~A. Bagnell, and S.~Srinivasa, ``{CHOMP}: Gradient
   optimization techniques for efficient motion planning,'' in \emph{{IEEE}
   International Conference on Robotics and Automation ({ICRA})}, 2009, pp.
   489--494.
-
-\bibitem{kalakrishnan2011stomp}
-M.~Kalakrishnan, S.~Chitta, E.~Theodorou, P.~Pastor, and S.~Schaal, ``{STOMP}:
-  Stochastic trajectory optimization for motion planning,'' in \emph{{IEEE}
-  International Conference on Robotics and Automation ({ICRA})}, 2011, pp.
-  4569--4574.
-
-\bibitem{schulman2014motion}
-J.~Schulman, Y.~Duan, J.~Ho, A.~Lee, I.~Awwal, H.~Bradlow, J.~Pan, S.~Patil,
-  K.~Goldberg, and P.~Abbeel, ``Motion planning with sequential convex
-  optimization and convex collision checking,'' \emph{Int. J. Robot. Res.},
-  vol.~33, no.~9, pp. 1251--1270, 2014.
-
-\bibitem{mukadam2018gpmp2}
-M.~Mukadam, J.~Dong, X.~Yan, F.~Dellaert, and B.~Boots, ``Continuous-time
-  {Gaussian} process motion planning via probabilistic inference,'' \emph{Int.
-  J. Robot. Res.}, vol.~37, no.~11, pp. 1319--1340, 2018.
 
 \end{thebibliography}

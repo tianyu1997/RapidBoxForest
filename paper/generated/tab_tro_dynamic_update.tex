@@ -1,23 +1,19 @@
-\par\smallskip
-\noindent\begin{minipage}{\columnwidth}
-\centering
-\captionof{table}{Adaptive leaf-sweep maintenance-only timing.}
+\caption{Timing of archived scene-cache maintenance primitives}
 \label{tab:tro-dynamic-update}
 \scriptsize
 \setlength{\tabcolsep}{2.0pt}
 \renewcommand{\arraystretch}{1.03}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-Operation & Time (ms) & Speedup \\
+Operation & Time (ms) & Warm/update \\
 \midrule
 Warm build (10 obstacles) & 922.75 [897.57, 955.67] & -- \\
-Insert to 15 obstacles & 6.06 [5.69, 6.54] & 153.3--207.5$\times$ \\
-Remove from 15 obstacles & 0.35 [0.31, 1.65] & 943.6--3354.0$\times$ \\
+Insert $10\!\to\!15$ & 6.06 [5.69, 6.54] & 153.3--207.5$\times$ \\
+Remove $15\!\to\!10$ & 0.35 [0.31, 1.65] & 943.6--3354.0$\times$ \\
 Warm build (15 obstacles) & 958.79 [941.67, 1115.18] & -- \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.2ex}
-{\footnotesize\emph{Notes:} Median \([Q_1,Q_3]\), ms. Maintenance only; speedup
-is relative to the 15-obstacle warm build.\par}
-\end{minipage}
-\par\smallskip
+{\footnotesize\emph{Notes:} Historical; excluded from Q1--Q4. Values are median
+[first quartile, third quartile] milliseconds; Warm/update is the paired target-state
+warm-build/update ratio (15 obstacles for insertion; 10 for removal).\par}

@@ -69,6 +69,7 @@ OPTIONAL_PAPER_FILES = (
     "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
     "paper/generated/fig_tro_random_tradeoff.pdf",
     "paper/generated/tro_table_generation_manifest.json",
+    "paper/figures/framework.pdf",
     "paper/figures/framework.png",
     "paper/figures/sbf_grow_1.png",
     "paper/figures/sbf_grow_2.png",

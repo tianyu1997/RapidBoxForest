@@ -173,13 +173,23 @@ def shelf_iris_json_to_run_rows(payload: dict[str, Any]) -> list[dict[str, Any]]
             ok = bool(task.get("audit_passed")) and path_length is not None
             if ok:
                 success_count += 1
+            query_s = float(task.get("query_s", 0.0) or 0.0)
+            simplify_s = float(task.get("ompl_final_simplify_time_s", 0.0) or 0.0)
+            raw_solve_s = raw.get("time_s")
+            solve_s = (
+                float(raw_solve_s)
+                if raw_solve_s is not None
+                else max(0.0, query_s - simplify_s)
+            )
             queries.append({
                 "label": str(task.get("name", "")),
                 "success": ok,
                 "audit_passed": ok,
                 "audit_status": "passed" if ok else str(task.get("reason", "failed")),
                 "path_length": path_length,
-                "query_ms": 1000.0 * float(task.get("query_s", 0.0) or 0.0),
+                "query_ms": 1000.0 * query_s,
+                "solve_ms": 1000.0 * solve_s,
+                "simplify_ms": 1000.0 * simplify_s,
                 "audit_ms": 0.0,
                 "waypoint_count": int(task.get("waypoint_count", 0) or 0),
                 "planner_status": "ok" if ok else str(task.get("reason", "failed")),
@@ -212,6 +222,14 @@ def shelf_iris_json_to_run_rows(payload: dict[str, Any]) -> list[dict[str, Any]]
 
 
 def shelf_iris_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def solve_seconds(query: dict[str, Any]) -> float:
+        solve_ms = query.get("solve_ms")
+        if solve_ms is not None:
+            return float(solve_ms) / 1000.0
+        query_ms = float(query.get("query_ms", math.nan) or math.nan)
+        simplify_ms = float(query.get("simplify_ms", 0.0) or 0.0)
+        return max(0.0, query_ms - simplify_ms) / 1000.0
+
     out: list[dict[str, Any]] = []
     stage_ids = sorted({str(row.get("stage_id", "")) for row in rows})
     for stage_id in stage_ids:
@@ -227,8 +245,8 @@ def shelf_iris_summary_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "success_runs": len(success_items),
             "source": "current_execution",
             "build_s": median(row.get("build_s", math.nan) for row in items),
-            "query_s_median": median(
-                median(q.get("query_ms", math.nan) / 1000.0 for q in row.get("queries", []))
+            "online_solve_per_query_s_median": median(
+                median(solve_seconds(q) for q in row.get("queries", []))
                 for row in items
             ),
             "planning_s_median": median(row.get("planning_s", math.nan) for row in items),
