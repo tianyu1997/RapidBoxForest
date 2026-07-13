@@ -4,10 +4,33 @@
 
 The active goal is to finish the TRO manuscript at `paper/sbf_tro_2026.tex`.
 The code framework and basic paper structure are in place; current work is in
-the experiment section, especially Experiment 4 shelf ablation. Exp.4 should
-use the baseline with the d23 warm cache, while non-baseline comparison groups
-run without cache unless explicitly changed for a new study. Exp.7 and Exp.8
-are no longer part of the active experiment plan.
+the experiment section, especially Experiment 4 shelf ablation. Exp.4 uses the
+baseline with the d23 warm cache. Non-baseline groups follow their registered
+profile-specific cache assignments: HIFK-5 is the no-cache contrast;
+Critical-sample replays its matching d23 cache; and Link-AABB and
+SupportHull-only retain IFK-AA+d23. Do not impose a blanket no-cache rule when
+reproducing Table III. Any future change to these assignments defines a new
+study and must be documented explicitly. Exp.7 and Exp.8 are no longer part of
+the active experiment plan.
+
+## Locked TRO Figure and Table Layout
+
+Keep the current `paper/sbf_tro_2026.tex` float layout unchanged during writing
+or copyediting unless the user explicitly requests a new layout. Do not change
+float order, placement specifiers, widths, or spacing merely to accommodate
+prose edits. The required PDF-page regression baseline is:
+
+- Fig. 1: page 3.
+- Fig. 2: page 6.
+- Algorithm 1: page 7.
+- Table II, Table III, and Fig. 3: page 8.
+- Table IV and Fig. 4: page 9.
+- Table V and Fig. 5: page 10.
+- Table VI and Table VII: page 11.
+- Table VIII: page 12.
+
+After manuscript edits, rebuild the PDF and verify these exact pages before
+considering the work complete.
 
 ## Project Structure & Module Organization
 

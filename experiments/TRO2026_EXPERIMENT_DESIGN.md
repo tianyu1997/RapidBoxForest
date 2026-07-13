@@ -171,6 +171,12 @@ AAFKVolumeMin split policy, `build_leaf_sweep_refined` + adaptive deep leaf
 refine, fixed five Marcucci query pairs, seeds `0..7`. The registered default
 budget is `400` deep boxes; the main trade-off curve sweeps `100/200/400/800`.
 
+Table III uses registered profile-specific cache assignments rather than a
+blanket no-cache default for non-baseline rows. HIFK-5 is the no-cache contrast;
+Critical-sample replays its matching d23 cache; and Link-AABB and
+SupportHull-only retain IFK-AA+d23. Changing one of these assignments defines a
+new study and must be recorded explicitly in the experiment profile and paper.
+
 Ablations: no external LECT replay, envelope option, endpoint source, thread
 count, split policy, anchor policy, leaf/deep depth, and box budget.
 

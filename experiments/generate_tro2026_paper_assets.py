@@ -1861,7 +1861,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\footnotesize\emph{Notes:} 1000 boxes/width; medians; volume/Analytical. Gap is the negative largest per-axis width shortfall to the per-box reference extent hull; more negative is worse. Only IFK-AA/HIFK are candidates for the theoretical conservative branch.\par}",
+        r"{\footnotesize\emph{Notes:} 1000 boxes/width; medians; volume ratios use Analytical as the denominator. Gap is the negative largest per-axis width shortfall to the per-box reference extent hull; more negative is worse. Only IFK-AA and HIFK are candidates for the theoretical conservative branch.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1943,7 +1943,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.35ex}",
-        r"{\footnotesize\emph{Notes:} Means over 1000 boxes/width and five repeats; no early exits. AABB uses overlap; SupportHull direct GJK\@; Build excludes endpoints.\par}",
+        r"{\footnotesize\emph{Notes:} Means over 1000 boxes/width and five repeats; no early exits. AABB uses overlap; SupportHull uses direct GJK\@; Build excludes endpoint construction.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3348,14 +3348,14 @@ def generate_exp04_table(
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA \rbf{} d23 baseline and profile controls}",
+        r"\captionof{table}{Shelf+IIWA \rbf{} warm-d23 baseline and registered profile controls}",
         r"\label{tab:tro-shelf-ablation}",
-        r"\scriptsize",
-        r"\setlength{\tabcolsep}{2.2pt}",
-        r"\renewcommand{\arraystretch}{1.02}",
-        r"\begin{tabular}{@{}lcccc@{}}",
+        r"\footnotesize",
+        r"\setlength{\tabcolsep}{1.8pt}",
+        r"\renewcommand{\arraystretch}{1.25}",
+        r"\begin{tabular}{@{}lccc@{}}",
         r"\toprule",
-        r"Case & Build & Batch-task diag. & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\",
+        r"Case & Build & Batch timestamp & $L_q/L_{\mathrm{ref},q}$ \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -3365,14 +3365,13 @@ def generate_exp04_table(
             f"{label} & "
             f"{tex_iqr(dist_or_scalar(dist, 'build_values', row.get('offline_build_s_median', row.get('build_s_median', row.get('build_s')))), 3)} & "
             f"{tex_iqr(dist_or_scalar(dist, 'online_values', online_query_time(row)), 3)} & "
-            f"{tex_iqr(dist_or_scalar(dist, 'amortized_values', row.get('amortized_s_k5', amortized_query_time(row, 5))), 3)} & "
             f"{gap_cell(dist, path_length_stat(row))} \\\\"
         )
     lines.extend([
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch task: 40 within-batch timestamps, not single-query latency; ratios: matching audits. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}",
+        r"{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch timestamp: 40 within-batch completion times, not single-query latency. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Registered caches: none (HIFK-5); d23 (Critical-sample); IFK-AA+d23 (Link-AABB and SupportHull-only). Critical-sample is non-certifying; its outputs remain validation-required.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3526,7 +3525,7 @@ def generate_exp05_table(
             )
             if not any(finite_values(stats.get("query_s_values")) for stats in query_stats.values()):
                 query_stats = rbf_single_query_online_stats(rbf_single_runs)
-            time_metric_label = r"Batch task (s)"
+            time_metric_label = r"Batch timestamp (s)"
             label = rf"{labels[method]} b{deep_boxes}"
             build_s = row.get("offline_build_s_median", row.get("build_s", row.get("planning_s_median")))
             time_label = "Build"
@@ -3597,14 +3596,14 @@ def generate_exp05_table(
     grouped_query_table(
         path,
         caption=(
-            r"Shelf+IIWA cross-algorithm comparison of audited paths"
+            r"Shelf+IIWA comparison at method-specific, in-sample operating points"
         ),
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
             r"Seconds; medians [25\%, 75\%], eight seeds. "
-            r"\rbf{} Batch task: 40 within-batch completions from eight five-query runs; other \(T\) values are per query. "
-            r"Times are method-local; postprocessing/audit is excluded."
+            r"\rbf{} Batch timestamp: 40 within-batch completions from eight five-query runs; other \(T\) values are per query. "
+            r"Times are method-local; postprocessing is excluded."
         ),
         include_segment=False,
         time_unit="s",
@@ -4379,16 +4378,16 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
             2,
         )
 
-    caption = r"\captionof{table}{Profile-selection-catalog summaries at the reported operating points}"
+    caption = r"\captionof{table}{Random-scene results at method-specific, in-sample operating points}"
     path_metric = r"$L/L_{\mathrm{ref},\lambda}$" if has_current_baselines else r"$L/L_{\mathrm{ref,scn}}$"
     notes = (
-        r"Seconds; medians [25\%, 75\%]. \rbf{} Task/q: ten-query batch coordinate; OMPL \(\mathrm{Online/q}\): 100 queries/condition. "
-        r"BIT* is selected per instance; UR5 Medium uses query-local edges; postprocessing/audit is excluded."
+        r"Seconds; medians [25\%, 75\%]. \rbf{} Task/q: ten-query scene-adaptation-plus-query average; OMPL \(\mathrm{Online/q}\): 100 queries/condition. "
+        r"BIT* is selected per instance; UR5 Medium uses query-local edges; postprocessing is excluded."
     )
     if not has_current_baselines:
         path_metric = r"$L/L_{\mathrm{ref,scn}}$"
         notes = (
-            r"Entries are medians [first quartile, third quartile]; timing columns are in seconds. Separately recorded final-return simplification and audit are excluded; planning-internal collision and region-validation checks remain included. "
+            r"Entries are medians [first quartile, third quartile]; timing columns are in seconds. Separately recorded final-return simplification and the data-integrity check are excluded; planning-internal collision and region-validation checks remain included. "
             r"\(L/L_{\mathrm{ref,scn}}\) is the scenario-level empirical 0.01~rad reference ratio. "
             r"RBF = RapidBoxForest; PRM = probabilistic roadmap; RRT-Connect = bidirectional RRT; BIT* = Batch Informed Trees."
         )

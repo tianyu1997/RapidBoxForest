@@ -1,11 +1,11 @@
-\captionof{table}{Supplementary scene-cache update timings and warm-build/update ratios (outside Q1--Q4)}
+\captionof{table}{Additional scene-cache update timings (outside Q1--Q4)}
 \label{tab:tro-dynamic-update}
 \scriptsize
 \setlength{\tabcolsep}{2.0pt}
 \renewcommand{\arraystretch}{0.95}
 \begin{tabular}{@{}lcc@{}}
 \toprule
-Operation & Time (ms) & Warm build/update \\
+Operation & Time (ms) & Warm@15/update \\
 \midrule
 Warm build (10 obstacles) & 922.75 [897.57, 955.67] & -- \\
 Insert $10\!\to\!15$ & 6.06 [5.69, 6.54] & 153.3--207.5$\times$ \\
@@ -13,3 +13,5 @@ Remove $15\!\to\!10$ & 0.35 [0.31, 1.65] & 943.6--3354.0$\times$ \\
 Warm build (15 obstacles) & 958.79 [941.67, 1115.18] & -- \\
 \bottomrule
 \end{tabular}
+\par\vspace{0.1ex}
+{\footnotesize\emph{Notes:} Eight saved ordered scenes; medians [25\%, 75\%]. Ratio ranges are interquartile ranges of per-scene Warm@15/update values. Planning is excluded.\par}

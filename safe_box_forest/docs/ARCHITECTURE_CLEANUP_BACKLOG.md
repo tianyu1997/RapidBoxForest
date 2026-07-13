@@ -149,8 +149,12 @@ Important invariants:
 ### 6. Keep paper-facing experiment scope current
 
 The current TRO plan no longer includes Exp.7 and Exp.8. Exp.4 shelf ablation
-uses the baseline with the d23 warm cache; non-baseline comparison groups run
-without cache unless a new study explicitly changes that.
+uses the baseline with the d23 warm cache. Non-baseline groups follow their
+registered profile-specific cache assignments: HIFK-5 is the no-cache
+contrast; Critical-sample replays its matching d23 cache; and Link-AABB and
+SupportHull-only retain IFK-AA+d23. Do not apply a blanket no-cache default to
+the non-baseline rows. Changing any of these assignments defines a new study
+and must be documented explicitly.
 
 Do not re-add retired dynamic-update tables or runners to active generation
 paths. In particular, `paper/generated/tab_tro_dynamic_update.tex` should not

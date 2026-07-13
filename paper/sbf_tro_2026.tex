@@ -28,10 +28,17 @@
 \usepackage{graphicx}
 \usepackage{capt-of}
 \usepackage{placeins}
+\usepackage{needspace}
 \usepackage{bm}
 \usepackage{cite}
 \usepackage{hyperref}
-\hypersetup{hidelinks}
+\hypersetup{
+  hidelinks,
+  pdftitle={RapidBoxForest: Cross-Revision Endpoint-Envelope Reuse for Region-Graph Motion Planning},
+  pdfauthor={Anonymous Authors},
+  pdfsubject={Reusable region-graph motion planning with continuous-path certificates},
+  pdfkeywords={motion planning, multi-query planning, collision checking, link envelopes}
+}
 \usepackage{cleveref}
 \usepackage[inline]{enumitem}
 
@@ -75,25 +82,28 @@
 \maketitle
 
 \begin{abstract}
-Safe-region and Graphs of Convex Sets (GCS) planners amortize queries over
-scene-dependent region graphs, whereas modified-environment roadmap methods
-retain or update sampled graph elements. RapidBoxForest (\rbf{}) reuses a
-different object: robot-only endpoint enclosures keyed by canonical dyadic
-joint cells. Each address is both a Lifelong Envelope Cache Tree (LECT) key and
-a primitive of the scene graph rebuilt after a compatible obstacle revision.
-Replay therefore requires no geometric rematching and carries no obstacle label
-or adjacency across revisions. A budgeted builder refines these cells,
-coalesces only exact dyadic unions, and forms typed corridors from current-scene
-witnesses. On Shelf+IIWA, the warm profile reports a 0.171-s reusable build and
-a 0.077-s median within-batch task-completion diagnostic; all 40 paths pass an
-independent 0.01-rad sampled audit. Across three robots, amortizing the recorded
-build over ten rather than one query decreases the build-plus-task accounting
-coordinate by 69.6--79.7\%. On the six-condition
-in-sample profile-selection catalog, every selected \rbf{} profile returns
-audit-passing paths for all 100 instances in its condition. At those operating
-points, median query-matched path ratios are lower than the bidirectional
-rapidly-exploring random-tree planner (RRT-Connect) in six conditions and than
-probabilistic roadmaps (PRM) and Batch Informed Trees (BIT*) in five.
+Repeated-query motion planning in changing workcells requires geometric reuse
+without carrying obsolete collision claims across revisions.
+RapidBoxForest (\rbf{}) stores obstacle-independent endpoint envelopes in a
+Lifelong Envelope Cache Tree (LECT), keyed by canonical dyadic addresses
+shared with region-graph primitives. Across compatible revisions,
+exact-key replay avoids rematching, while link envelopes, obstacle labels, and
+adjacency are rebuilt for the current scene. A budgeted builder refines
+cells, coalesces exact dyadic unions, and constructs corridors from current-scene
+witnesses. Under stated collision and conservative-validation assumptions,
+a finite cover of validated regions guarantees collision freedom
+throughout a certificate-backed continuous path, without sampled collision checks.
+The Shelf+IIWA warm profile completed all 40 tasks; median reusable-build time
+and within-batch completion timestamp were 0.171 and 0.077~s.
+Holding per-task time fixed,
+the ten-query build-plus-task projection was 69.6--79.7\% below the one-query
+projection across three robots; this arithmetic result is not a measured
+multi-query or cross-revision speedup. At method-specific points selected on
+this six-condition catalog, each \rbf{} profile completed its 100 instances.
+The median empirical-reference-normalized
+path-length ratios for \rbf{} were numerically below the corresponding
+RRT-Connect medians in all six conditions and below the corresponding medians
+for probabilistic roadmaps (PRM) and Batch Informed Trees (BIT*) in five.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -104,250 +114,248 @@ configuration-space decomposition, link envelopes.
 % ==============================================================================
 \section{Introduction}\label{sec:intro}
 
-Manipulators repeatedly solve related queries in semi-static workcells, where
-kinematics stay fixed but start--goal pairs and local clutter change. A reusable
-planner must amortize free-space construction, separate persistent kinematic
-evidence from scene-local validity, and track whether each returned segment has
-conservative current-scene support.
+Manipulators often solve sequences of related queries in semi-static workcells,
+where robot kinematics remain fixed but start--goal pairs and local clutter
+change. A reusable planner should amortize free-space construction across
+queries, isolate obstacle-independent kinematic evidence from revision-local
+validity, and retain conservative current-scene support for every path segment
+claimed to be collision-free.
 
-Existing methods occupy different reuse regimes. Probabilistic roadmaps,
-experience graphs, and safety certificates reuse connectivity, paths, or
-clearance neighborhoods, whereas tree and batch planners typically construct
+Planning methods support different forms of reuse. Probabilistic roadmaps,
+experience graphs, and safety certificates reuse connectivity, prior paths, or
+clearance neighborhoods, whereas standard tree and batch planners construct
 query-local search structures~\cite{kavraki1996probabilistic,
-bialkowski2016safety,coleman2015experience}. Certified
-polyhedral decompositions, safe-box planners, and Graphs of Convex Sets (GCS)
-methods instead make collision-free regions explicit~\cite{dai2024certified,
-marcucci2024fastboxes,marcucci2024shortest,morozov2026multiquery}.
-This motivates the design question: how can explicit regions be reused across
-queries while obstacle-independent kinematic evidence---but no scene-validity
-claim---persists across compatible revisions?
-Table~\ref{tab:related_qualitative_comparison} compares the proposed
-RapidBoxForest (\rbf{}) and Lifelong Envelope Cache Tree (LECT) with
-representative planning families in terms of reusable state and validation
-responsibility.
+bialkowski2016safety,coleman2015experience}. Region-based methods---including
+certified decompositions, safe-box planners, and motion-planning Graphs of
+Convex Sets (GCS)---operate on scene-specific configuration-space sets and
+graphs~\cite{dai2024certified,marcucci2024fastboxes,
+marcucci2024shortest,morozov2026multiquery}. This separation raises a central
+question: can a region graph be reconstructed for each scene revision while
+obstacle-independent kinematic evidence is reused through exact identity
+matching? Table~\ref{tab:related_qualitative_comparison} positions the proposed
+RapidBoxForest (\rbf{}) framework and its Lifelong Envelope Cache Tree (LECT)
+relative to representative planning families.
 
 \begin{table*}[!t]
 \centering
-\caption{Reusable state in representative planning paradigms}
+\caption{Representative reuse and revision handling; variants may differ}
 \label{tab:related_qualitative_comparison}
 \footnotesize
 \setlength{\tabcolsep}{2.6pt}
 \renewcommand{\arraystretch}{1.10}
 \begin{tabular}{@{}M{0.17\textwidth}M{0.18\textwidth}M{0.14\textwidth}M{0.22\textwidth}M{0.23\textwidth}@{}}
 \toprule
-Paradigm family & Reused state & Explicit region cells & Update or validation style & Multi-query implication \\
+Planning paradigm & Reused state & Explicit region representation & Revision handling & Implication for repeated queries \\
 \midrule
-Roadmaps, experience graphs, and clearance caches & Vertices, edges, path fragments, or clearance neighborhoods & Method-dependent & Recheck, retrieve, or repair affected graph elements & Strong connectivity or experience reuse without a persistent scene decomposition. \\
-Tree and anytime sampling & None across queries; query-local tree or batch sample graph & Not in the standard formulation & Primarily query-local; rebuilt or checkpointed & Fast discovery or quality improvement without persistent volumetric scene structure. \\
-Region construction and region-graph planning & Convex cells or safe boxes and their graph & Yes, for the represented scene & Construct, certify, optimize through, or recertify regions & Expressive or optimization-ready region reuse once a region collection exists. \\
-\rbf{} & Within-scene typed box graph; cross-revision obstacle-independent endpoint enclosures & Yes & Relabel boxes; rebuild adjacency; replay only matched endpoint evidence & Shared dyadic evidence keys with current-scene corridor verification. \\
+Roadmaps, experience graphs, and clearance caches & Vertices, edges, path fragments, or clearance neighborhoods & Method dependent & Revalidate, retrieve, or repair affected graph elements & Reuses connectivity or experience without maintaining a volumetric scene decomposition. \\
+Tree-based and anytime sampling & Query-local tree or batch graph & Not in the standard formulation & Rebuild per independent query; checkpoints may persist within a run & Supports rapid discovery or refinement without a persistent volumetric representation. \\
+Convex-region and safe-box planning & Scene-specific cells or boxes and adjacency & Yes & Revalidate, repair, or reconstruct scene-dependent regions after changes & Reuses an existing region graph within a fixed scene. \\
+\rbf{} & Revision-local typed box graph; obstacle-independent endpoint records across revisions & Yes & Replay exactly matched endpoint records; recompute link envelopes, box labels, and adjacency & Reuses kinematic evidence while deriving every collision-validity claim from the current scene. \\
 \bottomrule
 \end{tabular}
 \end{table*}
 
-Canonical dyadic identity aligns each LECT record with a primitive forest cell,
-eliminating geometric rematching during replay, batched validation, and
-refinement. Only obstacle-independent endpoint evidence persists; each revision
-rebuilds link envelopes, labels, and connectivity. Coalesced scene nodes remain
-dyadic-range aligned but never become cache keys.
+Each LECT record and its corresponding primitive forest cell share a canonical
+dyadic address. Replay therefore uses exact-key lookup rather than geometric
+rematching, while validation and refinement operate on the same address space.
+Only obstacle-independent endpoint records persist across compatible revisions;
+\rbf{} reconstructs link envelopes, box labels, and adjacency for the current
+scene. Coalesced scene nodes represent exact dyadic unions but do not serve as
+persistent cache keys.
 
 \paragraph{Problem statement}
 Let $\Q\subset\Real^n$ be the joint-limit box of a fixed
-\(n\)-degree-of-freedom manipulator, and let $\{\calO^{(r)}\}$ denote workspace
-obstacle revisions. Let endpoint-record identity $\kappa_E$ identify the robot
-endpoint model and canonical dyadic decomposition, and let descriptor $\delta$
-collect the active-link geometry and validator settings. For the current
-$\delta$, $\Cfree(\calO^{(r)})\subseteq\Q$ denotes the corresponding modeled
-free space; its dependence on $\delta$ is suppressed below. Each query supplies
-$(q_s,q_g)\in\Q^2$, and \rbf{} builds a finite graph of policy-accepted \cspace{}
-boxes. Queries within one revision reuse this graph. Across revisions, only
-endpoint enclosures with an exact joint-region and $\kappa_E$ match are replayed;
-link envelopes, labels, and connectivity are regenerated. The target is a sound,
-resource-bounded volumetric planning structure.
+$n$-degree-of-freedom manipulator, and let $\{\calO^{(r)}\}$ denote a sequence
+of revisions to the workspace obstacles. Endpoint-record identity $\kappa_E$ specifies
+the robot endpoint model and canonical dyadic decomposition, whereas descriptor
+$\delta$ specifies the active-link geometry and validator settings. For fixed
+$\delta$, $\Cfree(\calO^{(r)})\subseteq\Q$ denotes the modeled free
+configuration space; its dependence on $\delta$ is suppressed below. Each query
+provides $(q_s,q_g)\in\Q^2$, and \rbf{} constructs a finite graph of
+policy-accepted configuration-space boxes. Queries within one revision share
+this graph. Across revisions, an endpoint record is replayed only when both its
+joint region and $\kappa_E$ match exactly; link envelopes, box labels, and
+connectivity are then recomputed. The objective is a resource-bounded
+volumetric planner whose collision-free claims follow solely from conservative
+current-scene witnesses.
 
-\paragraph{Reuse and certificate semantics}
-\rbf{} keeps persistent endpoint geometry separate from revision-local graph
-state and route-witness status. \Cref{tab:claim_boundary} states the
-returned-object contract.
+A scene revision is \emph{compatible} when it preserves $\kappa_E$ and the
+canonical address semantics. The descriptor $\delta$ may change, but every
+$\delta$-dependent link envelope, label, adjacency, and validation result must
+then be reconstructed for the current scene.
+
+\paragraph{Reuse and continuous-path semantics}
+\rbf{} separates persistent endpoint geometry from revision-local graph state.
+A returned path is certificate-backed only if a complete finite cover of
+conservative current-scene witnesses is retained; any unsupported transition
+leaves the returned path validation-required.
 
 The paper makes three contributions:
 \begin{enumerate}[nosep,leftmargin=*]
   \item \emph{Cross-revision evidence interface.}
-  An identity invariant binds each endpoint record to the forest's canonical
-  dyadic cell, separating revision-persistent robot geometry from state that
-  must be rebuilt.
+  We introduce an exact identity contract that maps every persistent endpoint
+  record to one canonical dyadic forest cell. This contract permits reuse of
+  obstacle-independent geometry while requiring all scene-dependent state to
+  be reconstructed.
   \item \emph{Cache-aligned construction.}
-  A resource-bounded builder replays or materializes endpoint evidence,
-  refines unresolved canonical cells, and coalesces integer-verified exact
-  unions without remapping primitive evidence keys or enlarging the verified set.
-  \item \emph{Witness-typed corridor contract.}
-  A returned-path contract composes overlap-box and finite-cover oriented
-  bounding box (OBB) witnesses
-  and separates them from tolerance-gap, segment, and repair transitions that
-  remain validation-required.
+  We develop a resource-bounded builder that replays or materializes endpoint
+  records, refines unresolved canonical cells, and coalesces cells only through
+  exact dyadic unions with retained provenance, thereby preserving primitive
+  cache keys and the certified free set.
+  \item \emph{Continuous-path collision freedom.}
+  We prove pointwise collision freedom for any returned path covered by finitely
+  many conservatively validated axis-aligned boxes or oriented bounding boxes
+  (OBBs), under the stated collision and numerical assumptions. Any unsupported
+  tolerance-gap, segment, or repair transition leaves the returned path
+  validation-required.
 \end{enumerate}
-Sections~\ref{sec:link_envelopes}--\ref{sec:forest} formalize this pipeline
-(Fig.~\ref{fig:linkiaabb}); Q1--Q4 characterize warm-profile costs, selected
-planning trade-offs, and envelope mechanisms.
+Sections~\ref{sec:link_envelopes}--\ref{sec:forest} develop the method
+(Fig.~\ref{fig:linkiaabb}); Q1--Q4 evaluate the warm-cache cost profile,
+planning trade-offs at the reported operating points, and endpoint- and
+link-envelope mechanisms.
+
+% Queue the full-width pipeline overview early enough to fix it on page 3.
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.94\textwidth]{figures/framework.pdf}
+\caption{\rbf{} pipeline. Top: endpoint envelopes bound the zero-radius link
+centerline and are expanded by the link radius. Lower left: sample-guided growth
+produces accepted, rejected, and unsampled boxes. Lower right: LECT replays
+obstacle-independent endpoint records, while \rbf{} recomputes link envelopes,
+obstacle labels, and adjacency for the current scene revision.}
+\label{fig:linkiaabb}
+\end{figure*}
 
 % ==============================================================================
 \section{Related Work}\label{sec:related}
 
-Region-based planners make collision-free volume explicit. IRIS (Iterative
-Regional Inflation by Semidefinite programming) constructs convex regions, and
-configuration-space IRIS (C-IRIS) certifies \cspace{}
-polytopes~\cite{deits2015computing,dai2024certified}. Graphics processing unit
-(GPU) methods accelerate region growth~\cite{werner2025superfast,werner2026faster},
-and visibility-graph clique covers reduce set count~\cite{werner2024approximating}.
-Fast safe-box planning preprocesses a safe-region collection~\cite{marcucci2024fastboxes},
-while GCS optimizes trajectories over convex-region graphs~\cite{marcucci2023motion,
-marcucci2024shortest}. Implicit GCS search (IxG/IxG*) and GCS* restrict online
-work to query-relevant portions~\cite{natarajan2024ixg,chewchia2026gcsstar};
-multi-query GCS precomputes a cost-to-go surrogate for repeated queries on a
-fixed GCS~\cite{morozov2026multiquery}. These methods accelerate search once
-the convex sets and successor relation are defined. \rbf{} addresses the
-construction-and-update problem: it builds a budgeted dyadic graph whose
-primitive cells also key robot-only endpoint bounds, then recomputes all
-scene-dependent labels and overlaps after a revision.
+Region-based guarantees vary by method. IRIS (Iterative Regional Inflation by
+Semidefinite Programming) constructs convex regions, configuration-space IRIS
+(C-IRIS) certifies polytopes~\cite{deits2015computing,dai2024certified}, and
+graphics-processing-unit (GPU) methods construct probabilistically collision-free
+convex sets~\cite{werner2025superfast,werner2026faster}. Visibility-graph clique
+covers reduce the number of sets~\cite{werner2024approximating}. Fast safe-box
+planning preprocesses a safe-region collection~\cite{marcucci2024fastboxes},
+whereas GCS optimizes trajectories over convex-region
+graphs~\cite{marcucci2023motion,marcucci2024shortest}. Implicit GCS methods
+(IxG/IxG*) and GCS* restrict search to query-relevant portions of an implicit
+region graph~\cite{natarajan2024ixg,chewchia2026gcsstar}; multi-query GCS
+precomputes a cost-to-go surrogate for repeated queries on a fixed
+  GCS~\cite{morozov2026multiquery}. These methods construct or search region
+  graphs whose geometric sets and successor rules are scene dependent. \rbf{}
+  instead couples construction with revision handling in a dyadic region graph:
+  its primitive cells index
+obstacle-independent endpoint envelopes, while all obstacle-dependent labels
+and overlaps are recomputed after a revision.
 
 \paragraph{Closest methods}
-ReUse-based probabilistic roadmap (RU-PRM) reuses obstacle-local roadmaps by
-matching and transforming models across similar environments~\cite{lien2009reuse};
-Ball Tree attaches volumes to a single-query tree~\cite{shkolnik2011volumes}.
-Safety certificates cache local clearance~\cite{bialkowski2016safety}; dynamic
-roadmaps, decomposed checking, and Simple Polyhedral Intersection
-Techniques (SPITE) accelerate updates of a pre-existing sampled graph; SPITE
+ReUse-based Probabilistic Roadmap (RU-PRM) reuses obstacle-local roadmaps by
+matching and transforming corresponding models across similar
+environments~\cite{lien2009reuse}; Ball Tree associates volumes with nodes of a
+single-query search tree~\cite{shkolnik2011volumes}. Safety certificates cache
+local clearance~\cite{bialkowski2016safety}. Dynamic roadmaps, decomposed
+collision checking, and Simple Polyhedral Intersection Techniques (SPITE)
+reduce revalidation work for pre-existing sampled graphs; SPITE, in particular,
 associates configurations and edges with workspace swept-volume approximations
-and intersects them with moved obstacles~\cite{leven2002framework,
-hartmann2023decomposed,ashur2026spite}. Experience graphs retain validated path
-or graph structure~\cite{coleman2015experience}, while soft subdivision targets
-conservative cell classification~\cite{wang2015soft}. The key distinction is the
-state that survives a revision. C-IRIS/GCS operate on scene-defined regions;
-RU-PRM and dynamic-roadmap/SPITE methods retain or update sampled graph
-elements; clearance caches retain local validity neighborhoods. \rbf{} carries
-none of those scene-validity or connectivity claims across revisions. It reuses
-robot-only endpoint enclosures on canonical volumetric cells and reconstructs
-the current labels, overlaps, and corridor witnesses.
+and tests those volumes against moved obstacles~\cite{leven2002framework,
+hartmann2023decomposed,ashur2026spite}. Experience graphs retain prior path or
+graph experience~\cite{coleman2015experience}, whereas soft subdivision targets
+conservative cell classification~\cite{wang2015soft}. These methods differ in
+the state retained across revisions. C-IRIS constructs scene-specific certified
+regions; GCS optimizes over a supplied scene-specific region graph. RU-PRM,
+dynamic roadmaps, and SPITE retain or update sampled graph elements; clearance
+caches retain local validity neighborhoods.
+Across revisions, \rbf{} retains neither scene-validity labels nor connectivity.
+Instead, it reuses obstacle-independent endpoint envelopes indexed by canonical
+volumetric cells and reconstructs current-scene labels, overlaps, and corridor
+witnesses.
 
 \paragraph{Endpoint bounds}
 \label{sec:related_endpoint_bounds}
-Proximity queries use the Gilbert--Johnson--Keerthi (GJK)
-algorithm~\cite{gilbert1988fast} and Flexible Collision Library
-(FCL)~\cite{pan2012fcl}.
-Interval methods bound nonlinear robot
-kinematics~\cite{moore2009introduction,merlet2009interval}. For articulated
-continuous collision detection (CCD), interval hierarchies, swept primitives,
-and Taylor models bound motion~\cite{redon2005fast_artic,zhang2007taylor}.
-\rbf{} separates versioned endpoint evidence from current link envelopes and
-scene separation.
+Common tools for geometric proximity queries include the
+Gilbert--Johnson--Keerthi (GJK) algorithm~\cite{gilbert1988fast} and the
+  Flexible Collision Library (FCL)~\cite{pan2012fcl}. Interval methods provide
+conservative bounds for nonlinear robot kinematics~\cite{moore2009introduction,
+merlet2009interval}. Articulated continuous collision detection (CCD) has used
+interval hierarchies, swept primitives, and Taylor models to bound
+motion~\cite{redon2005fast_artic,zhang2007taylor}. \rbf{} adopts interval
+bounding within a cross-revision reuse contract: versioned,
+obstacle-independent endpoint envelopes may persist, whereas link envelopes and
+obstacle-separation tests are recomputed for the current scene.
 
 \paragraph{Graph reuse}
-PRM and LazyPRM amortize or defer sampled-edge
-validation~\cite{kavraki1996probabilistic,bohlin2000path}. Effort Informed
-Roadmaps (EIRM*), decomposed checking, and Repetition Roadmaps reuse prior
-edges, collision tests, or paths~\cite{hartmann2023eirm,
-hartmann2023decomposed,lehner2018repetition}. Adaptive cell planners refine
-accepted-cell graphs~\cite{lozanoperez1983spatial,
-brooks1985subdivision,wang2015soft}. In contrast, \rbf{} uses canonical
-volumetric cells both to index reusable robot-only endpoint bounds and to form a
-freshly labeled overlap graph under an explicit budget.
+The probabilistic roadmap (PRM) amortizes sampled-roadmap construction across
+queries, whereas LazyPRM
+defers sampled-edge validation~\cite{kavraki1996probabilistic,
+bohlin2000path}. Effort Informed Roadmaps (EIRM*), decomposed collision
+checking, and Repetition Roadmaps reuse prior edges, collision-test results, or
+paths~\cite{hartmann2023eirm,hartmann2023decomposed,
+lehner2018repetition}. Adaptive cell planners refine graphs of accepted
+cells~\cite{lozanoperez1983spatial,brooks1985subdivision,wang2015soft}. \rbf{}
+instead assigns canonical volumetric cells two roles: they index reusable,
+obstacle-independent endpoint records and form the primitives of a newly
+labeled overlap graph constructed under an explicit resource budget.
 
 \paragraph{Sampling and refinement}
-RRT-Connect is a bidirectional single-query planner~\cite{kuffner2000rrt}; BIT*
-is an informed, anytime, asymptotically optimal sampling-based
+RRT-Connect is a bidirectional single-query planner~\cite{kuffner2000rrt}, and
+Batch Informed Trees (BIT*) is an informed, anytime, asymptotically optimal sampling-based
 planner~\cite{gammell2015batch}. The Open Motion Planning Library (OMPL)
-supplies the benchmarking infrastructure~\cite{sucan2012ompl}.
-\rbf{} instead supplies reusable volumetric context before repair,
-optimization, and final audit.
-
-\begin{figure*}[t]
-\centering
-\includegraphics[width=0.94\textwidth]{figures/framework.pdf}
-\caption{\rbf{} pipeline. Endpoint envelopes induce zero-radius centerline
-envelopes, which are expanded by the link radius (top). The lower-left panel
-shows sample-guided growth with accepted, rejected, and unsampled boxes; box
-statuses are defined in
-\Cref{tab:claim_boundary}. The lower-right panel shows LECT replay of endpoint
-evidence with recomputed obstacle labels and graph edges.}
-\label{fig:linkiaabb}
-\end{figure*}
-
-\begin{table*}[t]
-\centering
-\caption{Theoretical returned-object status under
-\Cref{ass:collision_model}; experimental artifacts follow the
-validation-required protocol in \Cref{sec:exp}}
-\label{tab:claim_boundary}
-\footnotesize
-\setlength{\tabcolsep}{3.0pt}
-\renewcommand{\arraystretch}{1.10}
-\begin{tabular}{@{}M{0.26\textwidth}M{0.18\textwidth}M{0.48\textwidth}@{}}
-\toprule
-Object or state & Status & Condition \\
-\midrule
-Finite box-covered path & Certificate-backed & The retained regions cover the path, and each returns the conservative-free status $\mathrm{CertFree}$ or inherits through verified, same-revision, descriptor-matched exact-union tiling. \\
-Finite oriented bounding box (OBB) path & Certificate-backed & The retained OBB regions cover the path, and each complete region passes the affine-zonotope validator under the current revision and descriptor. \\
-Tolerance-gap, segment, or repair edge & Validation-required & Requires conversion to a conservatively validated box or OBB corridor. \\
-Path relying on filter-only evidence & Validation-required & Empirical evidence may guide search but does not certify the path. \\
-LECT replay record & No path claim & The endpoint-evidence identity must match; scene labels and edges are recomputed. \\
-\bottomrule
-\end{tabular}
-\end{table*}
+provides the benchmarking infrastructure~\cite{sucan2012ompl}. \rbf{} instead
+constructs reusable volumetric context before query-local repair or optimization.
 
 % ==============================================================================
 \section{Link Interval Envelopes}\label{sec:link_envelopes}
 
-The endpoint/link split enables cross-revision reuse. For a joint region
-$I\subseteq\Q$, $E_k(I)$ bounds endpoint $k$'s robot-specific trajectory and is
-reusable under an identity match, whereas $B_\ell(I)$ is derived under the
+The separation of endpoint and link representations enables cross-revision
+reuse. For a joint region
+$I\subseteq\Q$, $E_k(I)$ bounds the trajectory of endpoint $k$ and is reusable
+under an identity match, whereas $B_\ell(I)$ is derived under the
 current descriptor and tested against the current scene:
 \[
 I \mapsto \{E_k(I)\} \mapsto \{B_\ell(I)\}.
 \]
 \rbf{} uses axis-aligned boxes as global forest cells and OBB regions only as
-local finite-cover corridor witnesses. Either supports
-certificate status only after conservative current-scene validation.
-
-\FloatBarrier
-% placeins can leave IEEEtran's next column with a double-column-float-sized
-% page goal after flushing this early barrier; restore the class column height.
-\vsize=\textheight
+local finite-cover corridor witnesses. Only current-scene conservative
+validation lets either region contribute to a path certificate.
 
 \begin{assumption}[Collision model for certificates]
 \label{ass:collision_model}
-The certificate model covers active rounded links against a finite union
-$\mathcal{O}$ of closed workspace axis-aligned bounding-box (AABB) obstacles;
+The certificate model covers collisions between active rounded links and a
+finite union $\mathcal{O}$ of closed workspace obstacles represented by
+axis-aligned bounding boxes (AABBs);
 boundary contact is collision, and $I\subseteq\Q$ enforces joint limits. A
 change to either the scene revision or descriptor $\delta$ invalidates every
 scene-dependent box and edge label.
-The status $\mathrm{CertFree}$ denotes this conservative free outcome; no other
-validator outcome carries a free-space claim.
-Self-collision, attached bodies, grippers, and task constraints require another
-conservative validator.
+The semantic status $\mathrm{CertFree}$ denotes this conservative outcome; a
+runtime label without the required proof carries no free-space claim.
+Self-collision, attached bodies, grippers, and task constraints are outside
+this model and would require additional conservative validation.
 \end{assumption}
 
 \paragraph{Numerical contract}
-Soundness assumes outward-rounded endpoint and link envelopes and all margins
-in $\delta$. Here $\Ball_p(r)$ is the $p$-norm ball of radius
-$r$; the AABB broadphase inflates by $\Ball_\infty(r_\ell)$, which contains the
-Euclidean link-radius ball. In the evaluated implementation,
-$\mathrm{CertFree}$ names the intended conservative branch; because its
-arithmetic was not independently verified and complete witnesses $W$ were not
-retained, experimental paths are audited and reported as validation-required.
+Soundness assumes outward-rounded endpoint and link envelopes, with all
+numerical margins included in $\delta$. Here $\Ball_p(r)$ is the $p$-norm ball
+of radius $r$; the AABB broadphase inflates by $\Ball_\infty(r_\ell)$, which contains the
+Euclidean link-radius ball. The soundness results below therefore apply to an
+implementation that enforces this numerical contract; all such results are
+conditional on it.
 
+\Needspace{5\baselineskip}
 \begin{definition}[Returned-path certificate status]
 \label{def:path_witness}
 Let $\nu_{\mathrm{scene}}$ denote the current scene revision, let
-$\calO(\nu_{\mathrm{scene}})$ be its obstacle set, and fix descriptor $\delta$ and a
-continuous returned path $\gamma:[0,1]\rightarrow\Q$. A retained construction
-witness $W=\langle(t_{j-1},t_j,R_j)\rangle_{j=1}^{m}$ satisfies
-$0=t_0<\cdots<t_m=1$ and
-$\gamma([t_{j-1},t_j])\subseteq R_j$. Each retained $R_j$ is either (i) an
+$\calO(\nu_{\mathrm{scene}})$ be its obstacle set, and fix descriptor $\delta$
+and a continuous returned path $\gamma:[0,1]\rightarrow\Q$. A retained
+finite-cover witness $W=\bigl\{(J_j,R_j)\bigr\}_{j=1}^{m}$ consists of closed
+parameter windows $J_j\subseteq[0,1]$ and regions $R_j\subseteq\Q$ satisfying
+$[0,1]=\bigcup_{j=1}^{m}J_j$ and $\gamma(J_j)\subseteq R_j$. Each retained
+$R_j$ is either (i) an
 axis-aligned box for which the current validator returns $\mathrm{CertFree}$,
-(ii) an axis-aligned box equal to a retained exact union of same-revision,
-descriptor-matched $\mathrm{CertFree}$ boxes with complete tiling provenance,
+(ii) an axis-aligned box that is the exact union of same-revision,
+descriptor-matched $\mathrm{CertFree}$ boxes with a retained verified-tiling record,
 or (iii) a complete \cspace{} OBB region for which the affine-zonotope validator
-returns $\mathrm{CertFree}$ under that pair. The path is certificate-backed
+returns $\mathrm{CertFree}$ under the same scene revision and descriptor. The
+path is certificate-backed
 exactly when such a retained $W$ exists; otherwise it is validation-required.
 \end{definition}
 
@@ -365,8 +373,8 @@ Thus a rounded link can be bounded by first bounding the zero-radius center
 segment and then lifting by the link radius. Let \(\Gamma_a(I)\) and
 \(\Gamma_b(I)\) denote the exact workspace trajectories of a capsule link's
 proximal and distal endpoints over \(I\). \rbf{} stores conservative endpoint
-bounds in reusable records keyed by kinematics; the following proposition converts
-them into whole-link envelopes.
+bounds in reusable records keyed by kinematics; the following proposition
+converts them into whole-link envelopes.
 
 \begin{samepage}
 \begin{proposition}[Endpoint envelopes induce link interval envelopes]
@@ -416,7 +424,8 @@ trajectory $\Gamma_k(I)$ and shared by all link representations.
 Affine-arithmetic interval forward kinematics (IFK-AA) uses one
 Denavit--Hartenberg interval pass. Hierarchical interval forward kinematics
 (HIFK) bisects $I$ to depth $d$ and hulls the child boxes, denoted HIFK-$d$.
-Critical-sample is filter-only; Q4 also reports Analytical and Monte Carlo
+Within this certificate model, Critical-sample bounds are filter-only and
+ineligible for $\mathrm{CertFree}$; Q4 also reports Analytical and Monte Carlo
 empirical references.
 Fig.~\ref{fig:linkiaabb} summarizes the conversion.
 
@@ -434,8 +443,11 @@ R_{\mathrm{obb}}
 =
 \{\,q_c + A\xi \mid \xi\in\Xi\,\}.
 \]
-For $R_{\mathrm{obb}}$, the correlated validator encloses each endpoint by the
-outward affine zonotope $E_k(R_{\mathrm{obb}})$ specified below.
+Here ``OBB'' denotes this affine image; it may be lower dimensional when
+$m<n$, and the full-dimensional case has $m=n$.
+For $R_{\mathrm{obb}}$, the correlated validator bounds each endpoint
+trajectory using the outward-rounded affine-zonotope enclosure
+$E_k(R_{\mathrm{obb}})$ specified below.
 Certificate eligibility requires \(R_{\mathrm{obb}}\subseteq\Q\), verified
 containment of the represented path window, and conservative validation of the
 complete region; the fitted orientation alone provides no safety status.
@@ -444,27 +456,30 @@ complete region; the fitted orientation alone provides no safety status.
 A piecewise-linear candidate path $\gamma$ has an OBB witness only if finitely
 many closed windows $J_\tau$ cover $[0,1]$, with
 $\gamma(J_\tau)\subseteq R_\tau\subseteq\Q$, and every complete $R_\tau$ passes
-the correlated endpoint/link test. An uncovered window remains
-validation-required; sampled fallbacks are search-only.
+the correlated endpoint/link test. Any uncovered window leaves the path
+validation-required; sampled fallbacks may guide search but cannot establish
+certificate status.
 
-\begin{corollary}[Finite-cover OBB-path soundness]
+\begin{corollary}[OBB-region and finite-cover path soundness]
 \label{cor:obb_corridor}
 Fix a scene revision $\nu_{\mathrm{scene}}$ and descriptor $\delta$, and write
-$\calO=\calO(\nu_{\mathrm{scene}})$. Let
-$[0,1]=\bigcup_{\tau=1}^{M}J_\tau$ be a finite window cover of a continuous
-path $\gamma$, with $\gamma(J_\tau)\subseteq R_\tau\subseteq\Q$. Suppose that,
-for every $\tau$, conservative affine-zonotope endpoint enclosures induce
+$\calO=\calO(\nu_{\mathrm{scene}})$. Let $\{R_\tau\}_{\tau=1}^{M}$ be a finite
+family of joint-space OBB regions contained in $\Q$. Suppose that, for every
+$\tau$, conservative affine-zonotope endpoint enclosures induce
 conservative envelopes for all active links over the complete region $R_\tau$,
-and that those link envelopes pass current-scene separation under the same
-revision and descriptor. Then $\gamma([0,1])\subseteq\Cfree(\calO)$ under
-\Cref{ass:collision_model}.
+and that those link envelopes pass conservative separation tests against the
+current-scene obstacles under the same revision and descriptor. Then
+$R_\tau\subseteq\Cfree(\calO)$ for every $\tau$. Consequently, if closed
+windows $J_\tau$ cover $[0,1]$ and a continuous path $\gamma$ satisfies
+$\gamma(J_\tau)\subseteq R_\tau$ for every $\tau$, then
+$\gamma([0,1])\subseteq\Cfree(\calO)$ under \Cref{ass:collision_model}.
 \end{corollary}
 
 \begin{proof}
 For each $\tau$, \Cref{prop:endpoint_to_link_envelope} and current-scene
-separation give $R_\tau\subseteq\Cfree(\calO)$. For any $t\in[0,1]$, the window
-cover supplies an index $\tau$ with $t\in J_\tau$, and hence
-$\gamma(t)\in R_\tau\subseteq\Cfree(\calO)$. The claim follows.
+separation give $R_\tau\subseteq\Cfree(\calO)$. Under the additional cover
+hypothesis, every $t\in[0,1]$ belongs to some $J_\tau$, and hence
+$\gamma(t)\in R_\tau\subseteq\Cfree(\calO)$. The path claim follows.
 \end{proof}
 
 \paragraph{Correlated endpoint envelope}
@@ -506,8 +521,8 @@ radius-lift set. AABB uses \(\Ball_\infty(r_\ell)\), while SupportHull uses the
 Euclidean-ball support.
 
 \paragraph{AABB envelope}
-AABB envelopes wrap the two endpoint envelopes in one box and pad by the link
-radius:
+Each AABB envelope encloses the two endpoint envelopes in a single box and
+expands it by the link radius:
 \[
 B_\ell(I) = \operatorname{bbox}\bigl(E_{\ell-1}(I) \cup E_\ell(I)\bigr)
 \oplus \Ball_\infty(r_\ell).
@@ -524,11 +539,37 @@ a decision, the method returns $\mathrm{Unknown}$ rather than a free label.
 Fig.~\ref{fig:overview} illustrates the resulting build, query, and update
 cycle on a two-link schematic.
 
+% Queue the full-width build--query--update schematic for page 6.
+\begin{figure*}[!t]
+\centering
+\begin{tabular}{@{}c@{\hspace{3pt}}c@{\hspace{3pt}}c@{}}
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_1.png} &
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_3.png} &
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_5.png} \\
+{\footnotesize (a) \cspace{} cells and selected box} &
+{\footnotesize (b) \cspace{} path} &
+{\footnotesize (c) Invalidated boxes} \\[2pt]
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_2.png} &
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_4.png} &
+\includegraphics[width=0.32\textwidth]{figures/sbf_grow_6.png} \\
+{\footnotesize (d) Workspace AABBs} &
+{\footnotesize (e) Workspace path} &
+{\footnotesize (f) After regrowth} \\
+\end{tabular}
+\caption{Two-link \rbf{} build--query--update schematic. Top: (a) selected
+\cspace{} box, (b) route, and (c) invalidation; bottom: (d) workspace link
+AABBs, (e) mapped route, and (f) regrowth. Embedded counts and costs are
+illustrative; $\theta_0,\theta_1$ are joint coordinates and $x,y$ are workspace
+coordinates; end-effector (EE) and waypoint (wp) are abbreviated in panels (b)
+and (e).}
+\label{fig:overview}
+\end{figure*}
+
 \section{Lifelong Envelope Cache Tree}\label{sec:lect}
 
-LECT supplies the cross-revision half of the reuse contract by keying
-obstacle-independent endpoint evidence to dyadic joint boxes shared with forest
-construction. \rbf{} derives link envelopes under the current descriptor and
+LECT supplies the cross-revision half of the reuse contract by indexing
+obstacle-independent endpoint evidence with the dyadic joint-space boxes used
+in forest construction. \rbf{} derives link envelopes under the current descriptor and
 refreshes every scene-dependent label; graph connectivity and query outcomes
 are never reused across scene revisions.
 
@@ -558,28 +599,30 @@ record invariant
 \[
 \Gamma_k\!\left(I_{\kappa_E}(\alpha)\right)\subseteq E_k.
 \]
-Scene-local coalesced nodes store their verified tiling status and matched
-revision--descriptor label but never become persistent cache keys. This
-identity invariant, rather than a geometric lookup, interfaces cache replay and
-forest refinement.
+Certificate-eligible coalesced nodes must retain an exact-union record and the
+matched revision--descriptor label; they never become persistent cache keys.
+Constituent boxes may leave the active graph only while that record remains. This
+identity invariant, rather than geometric lookup, provides the interface
+between cache replay and forest refinement.
 
 \paragraph{Sparse interval staging}
-Planning may stage an exact interval without materializing every ancestor. If
-its endpoint record is absent, that interval is materialized under $\kappa_E$
-before validation under the current descriptor.
+Planning may stage a canonical dyadic interval at address $\alpha$ without
+materializing all of its ancestors. If its endpoint record is absent, the record
+is materialized under $(\kappa_E,\alpha)$ before current-scene validation.
 
 \subsection{Runtime Use and Validation Semantics}
 
 For a joint interval, LECT replays or materializes endpoint evidence, derives
 link envelopes under $\delta$, and applies the current-scene validator. When
-child endpoint records are hulled into a parent endpoint envelope, the resulting
-parent box must still pass the same validator. Missing or inconclusive evidence
-yields $\mathrm{Unknown}$. Cache hits may change enclosure tightness and hence the
-acceptance outcome, but not the meaning or validation obligations of any
+child endpoint records are hulled to form a parent endpoint enclosure, link
+envelopes are re-derived for the parent joint cell and validated against the
+current scene; child labels are not inherited. Missing or inconclusive evidence
+yields $\mathrm{Unknown}$. Cache hits may change enclosure tightness and hence
+the acceptance outcome, but not the meaning or validation obligations of any
 returned status.
 
-The cache-identity gate above controls replay eligibility; safety then follows
-from decoded containment and fresh scene validation.
+The cache-identity gate above controls replay eligibility; soundness additionally
+requires decoded containment and fresh conservative scene validation.
 
 \begin{proposition}[Sound replay of matched endpoint enclosures]
 \label{prop:scene_safe_replay}
@@ -587,8 +630,7 @@ Let $I=I_{\kappa_E}(\alpha)\subseteq\Q$, and fix the current scene revision
 $\nu_{\mathrm{scene}}$ and descriptor $\delta$. Suppose each required endpoint
 record matches the current $\kappa_E$ and satisfies the record invariant above
 at address $\alpha$. If the link envelopes derived under $\delta$ are
-conservative and all
-pass separation from
+conservative and all pass conservative separation tests against
 $\calO(\nu_{\mathrm{scene}})$, then
 $I\subseteq\Cfree(\calO(\nu_{\mathrm{scene}}))$ under
 \Cref{ass:collision_model}.
@@ -607,31 +649,6 @@ Serialization retains compatible endpoint geometry and split metadata only;
 link envelopes, labels, adjacency, and query outcomes are reconstructed per
 revision.
 
-\begin{figure*}[!t]
-\centering
-\begin{tabular}{@{}c@{\hspace{3pt}}c@{\hspace{3pt}}c@{}}
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_1.png} &
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_3.png} &
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_5.png} \\
-{\footnotesize (a) \cspace{} cells and selected box} &
-{\footnotesize (b) \cspace{} path} &
-{\footnotesize (c) Invalidated boxes} \\[2pt]
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_2.png} &
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_4.png} &
-\includegraphics[width=0.32\textwidth]{figures/sbf_grow_6.png} \\
-{\footnotesize (d) Workspace AABBs} &
-{\footnotesize (e) Workspace path} &
-{\footnotesize (f) After regrowth} \\
-\end{tabular}
-\caption{Two-link \rbf{} build--query--update schematic. Top: (a) selected
-\cspace{} box, (b) route, and (c) invalidation; bottom: (d) workspace link
-AABBs, (e) mapped route, and (f) regrowth. Embedded counts and costs are
-illustrative; $\theta_0,\theta_1$ are joint coordinates and $x,y$ are workspace
-coordinates; end effector (EE) and waypoint (wp) are abbreviated in panels (b)
-and (e).}
-\label{fig:overview}
-\end{figure*}
-
 % ==============================================================================
 \section{RapidBoxForest Construction}\label{sec:forest}
 
@@ -640,22 +657,23 @@ identities let replay, batch validation, and refinement address the same joint
 boxes. \rbf{} turns envelope validation and LECT replay into a query-reusable,
 scene-specific structure comprising policy-accepted \cspace{} boxes and typed
 corridor adjacencies.
-Later queries use box membership and graph search; every accepted box is checked
-against current obstacles or inherits status through a same-revision exact-union
-witness.
+Queries then use box membership and graph search. A box can support $W$ only
+through current-scene conservative validation or a retained same-revision
+exact-union witness.
 
 A box is an axis-aligned joint interval
 $B=[l^{(1)},u^{(1)}]\times\cdots\times[l^{(n)},u^{(n)}]\subseteq\Q$.
 A \emph{policy-accepted box} has passed the configured scene-validation policy.
 Under the stated geometric and numerical assumptions, conservative link-envelope
 disjointness makes it eligible for \(\mathrm{CertFree}\); filter-only acceptance
-yields a validation-required region. Rejected or unresolved cells may be retained
-for refinement but are excluded from the forest.
+yields a provisional region that cannot contribute to $W$. Rejected or
+unresolved cells may be retained for refinement but are excluded from the
+forest.
 
 \subsection{Budgeted Construction Contract}\label{sec:forest_objective}
 
-Construction returns a resource-bounded reusable region graph. Given the joint-limit box
-$\Q$ and obstacle set $\calO$, the scene policy
+Construction returns a resource-bounded reusable region graph. Given the
+joint-limit box $\Q$ and obstacle set $\calO$, the scene policy
 $V_{\calO}(B;\delta)$ evaluates active-link envelopes for $B$ under descriptor
 $\delta$ and has range
 \[
@@ -669,9 +687,9 @@ By definition of the conservative branch,
 V_{\calO}(B;\delta)=\mathrm{CertFree}
 \ \Longrightarrow\ B\subseteq\Cfree(\calO).
 \]
-\(\mathrm{ProvisionalFree}\) is filter-only, \(\mathrm{Occupied}\) is a policy
-rejection, and \(\mathrm{Unknown}\) is inconclusive. The accepted region set of
-\(N\) boxes is
+\(\mathrm{ProvisionalFree}\) is filter-only, \(\mathrm{Occupied}\) denotes a
+policy rejection rather than a certificate of collision, and
+\(\mathrm{Unknown}\) is inconclusive. The accepted region set of \(N\) boxes is
 \[
 \begin{gathered}
 \mathcal{F}=\bigl\{(B_i,\sigma_i):i=1,\ldots,N\bigr\},\\
@@ -679,10 +697,13 @@ B_i\subseteq\Q,\qquad \sigma_i\in
 \{\mathrm{CertFree},\mathrm{ProvisionalFree}\}.
 \end{gathered}
 \]
-The evaluated profile and Algorithm~\ref{alg:leaf_sweep_refine} retain only
-$\mathrm{CertFree}$ boxes; $\mathrm{ProvisionalFree}$ belongs to the general
-search-policy range but cannot contribute to $W$ without conservative
-revalidation. For a same-revision, descriptor-matched family $\mathcal{G}$,
+
+Algorithm~\ref{alg:leaf_sweep_refine} states the certificate-producing branch
+and therefore commits only boxes with semantic $\mathrm{CertFree}$ status.
+Filter-only profiles may retain $\mathrm{ProvisionalFree}$ boxes for search, but
+those boxes cannot contribute to $W$ without conservative revalidation. For a
+same-revision family $\mathcal{G}$
+with matching descriptor,
 let $H=\operatorname{bbox}(\bigcup_{B\in\mathcal{G}}B)$; the hull inherits this
 label exactly when
 \[
@@ -692,18 +713,21 @@ label exactly when
 holds. Let $\varepsilon_c$ denote the connection tolerance, with
 $\varepsilon_c\ge0$; it does not enter this predicate. Exact union is tested by
 dyadic integer-range coverage, not floating-point volume equality, and is
-enabled in Q1 but disabled in Q3. Let $\mathcal{S}\subseteq\Q$ be a finite
+enabled in Q1 and at the Q2 \rbf{} operating point but disabled in Q3. Let
+$\mathcal{S}\subseteq\Q$ be a finite
 anchor set fixed before queries; it affects admission priority, not
-$V_{\calO}$ or certificate status. The reusable scene state $(\mathcal{F},G)$
-records revision/descriptor and exact-union provenance.
+$V_{\calO}$ or certificate status. The reusable scene state
+$(\mathcal{F},G_\cap)$ is certificate-eligible only with recorded revision,
+descriptor, and exact-union provenance; query-specific typed edges are added
+only during corridor construction.
 
 For two boxes
 \[
 B_i=\prod_{d=1}^{n}[l_i^{(d)},u_i^{(d)}],\qquad
 B_j=\prod_{d=1}^{n}[l_j^{(d)},u_j^{(d)}],
 \]
-\rbf{} treats the boxes as candidate-adjacent when the closed intervals in every coordinate
-overlap or have a gap no larger than \(\varepsilon_c\):
+\rbf{} treats the boxes as candidate-adjacent when their closed intervals in
+every coordinate overlap or have a gap no larger than \(\varepsilon_c\):
 \[
 \max\{l_i^{(d)},l_j^{(d)}\}
 \le
@@ -716,46 +740,44 @@ or finite-cover OBB corridor.
 
 \subsection{Build Pipeline}
 
-Let $G_\cap=(\mathcal{F},E_\cap)$ denote the reusable subgraph of exact overlaps
-and contacts.
-Algorithm~\ref{alg:leaf_sweep_refine} implements this canonical-address build:
-it batch-validates a LECT-aligned frontier, compresses $\mathrm{CertFree}$ cells
-by exact-union coalescing, and refines unresolved regions through an
-anchor-prioritized budget. The operation
-$\widehat V_{\calO}(I;\kappa_E,\delta)$ obtains matched or materialized endpoint
-evidence, derives current link envelopes, applies $V_{\calO}$, and maps missing
-or inconclusive evidence to $\mathrm{Unknown}$. The reusable output comprises
-$\mathcal{F}$, $G_\cap$, and deferred frontier state; query attachments and
-typed corridor transitions are constructed afterward.
+Let $\mathcal{T}_L$ denote the LECT tree, and let
+$G_\cap=(\mathcal{F},E_\cap)$ be the reusable exact-overlap/contact subgraph.
+Algorithm~\ref{alg:leaf_sweep_refine} batch-validates a LECT-aligned frontier,
+coalesces exact unions, and refines unresolved regions under an anchor-prioritized
+budget. Its $\widehat V_{\calO}(I;\kappa_E,\delta)$ operation obtains or
+materializes matched endpoint evidence, derives and validates current link
+envelopes, and maps missing or inconclusive evidence to $\mathrm{Unknown}$.
+It returns $\mathcal{F}$, $G_\cap$, and deferred frontier state; attachments and
+typed transitions are query-local.
 
 \subsection{Corridor Query and Certificate}
 \label{sec:forest_graph}
 
-The typed graph separates candidate origin from route evidence:
+The typed graph is a query-local overlay on $G_\cap$:
 $G=(\mathcal{F},E_{\cap}\cup E_{\varepsilon}\cup E_s\cup
 E_{\mathrm{obb}}\cup E_{\mathrm{rep}})$, comprising overlap/contact, tolerance
-gap, segment, finite-cover OBB-corridor, and repair edges. Edge types record how
-candidate corridors were produced; certificate status is determined solely by
-\Cref{def:path_witness} and the witness construction below.
+gap, candidate-segment, finite-cover OBB-corridor, and repair edges. Start/goal
+attachments remain separate. Edge types record candidate origin, whereas
+\Cref{def:path_witness} alone determines certificate status.
 
-For a returned graph route, an overlap/contact transition contributes its
-incident validated boxes and contained gateway segment; a validated OBB
-transition contributes its retained finite cover. A tolerance-gap, segment,
-repair, or endpoint attachment contributes no witness until converted to one of
-these region covers. Concatenating their parameter windows constructs $W$; the
-route is certificate-backed exactly when the windows cover $[0,1]$ without an
-unsupported transition.
+For a returned route, an overlap/contact transition contributes its incident
+validated boxes and contained gateway; an OBB transition contributes its
+retained finite cover. Other edges and endpoint attachments contribute no
+witness until converted to a conservatively validated box corridor or
+finite-cover OBB corridor. Concatenating the parameter windows constructs
+$W$; certificate status requires full coverage without an unsupported transition.
 
-A best-first traversal uses a heuristic priority. For overlap routes, gateways lie in consecutive box
-intersections, and convexity keeps their connecting segments within witnessed
-boxes.
+A best-first traversal orders candidate routes heuristically. For overlap
+routes, gateways lie in consecutive box intersections, and convexity keeps
+their connecting segments within witnessed boxes.
 
 \begin{lemma}[Box-corridor certificate]
 \label{lem:corridor_certificate}
 For scene revision $\nu_{\mathrm{scene}}$ and descriptor $\delta$, let
-$\mathcal{F}_{\mathrm{cert}}$ contain boxes labeled CertFree against
+$\mathcal{F}_{\mathrm{cert}}$ contain boxes labeled $\mathrm{CertFree}$ against
 $\calO(\nu_{\mathrm{scene}})$, each directly validated or retained as a
-zero-gap exact union of such boxes under the same pair. Set
+zero-gap exact union of such boxes under the same
+$(\nu_{\mathrm{scene}},\delta)$ pair. Set
 $R_{\mathrm{cert}}=\bigcup_{B\in\mathcal{F}_{\mathrm{cert}}}B$. If a continuous
 path $\gamma:[0,1]\to\Q$ lies in $R_{\mathrm{cert}}$, then
 $\gamma([0,1])\subseteq\Cfree(\calO(\nu_{\mathrm{scene}}))$ under
@@ -769,6 +791,83 @@ $(\nu_{\mathrm{scene}},\delta)$. Hence
 $R_{\mathrm{cert}}\subseteq\Cfree$, and the path inclusion follows.
 \end{proof}
 
+% Declare Algorithm 1 after page 7 has begun so that it occupies the next
+% single-column top area without moving the page-6 full-width schematic.
+\begin{algorithm}[!t]
+\caption{Zero-gap coalescing and budgeted refinement.}
+\label{alg:leaf_sweep_refine}
+\footnotesize
+\begin{algorithmic}[1]
+\REQUIRE anchors $\mathcal{S}$; LECT $\mathcal{T}_L$;
+$\kappa_E,\calO,\nu_{\mathrm{scene}},V_{\calO},\delta$;
+depths $0\le D_0\le D_s$; admission cap
+$B_{\max}\in\mathbb{Z}_{\ge1}$; time, depth, and retention caps
+\ENSURE $\mathcal{F},G_\cap,\mathcal{C}$
+\STATE form the identity-deduplicated $\mathcal{S}$--$\mathcal{T}_L$ frontier at
+depths $D_0{:}D_s$; batch-evaluate
+$s_I\leftarrow\widehat V_{\calO}(I;\kappa_E,\delta)$
+\STATE for each same-revision, descriptor-matched family $\mathcal{G}$ of
+$\mathrm{CertFree}$ cells, set $H\leftarrow\operatorname{bbox}(\bigcup_{B\in\mathcal{G}}B)$
+\STATE coalesce only if dyadic integer ranges establish
+$\operatorname{ExactUnion}(H,\mathcal{G})$
+\STATE insert $(H,\mathrm{CertFree})$ with its exact-union record under
+$(\nu_{\mathrm{scene}},\delta)$; remove constituents only from the active set
+\STATE insert unmerged $\mathrm{CertFree}$ leaves into $\mathcal{F}$; build $G_\cap$
+\STATE initialize $\mathcal{P}$ with maximal frontier cells, deduplicated by
+identity and prioritized by anchors; $\mathcal{C}\leftarrow\emptyset$; $b\leftarrow0$
+\WHILE{$\mathcal{P}$ is nonempty, $b<B_{\max}$, and time/depth caps remain}
+  \STATE pop and batch-evaluate $\mathcal{A}\subseteq\mathcal{P}$ with
+  $|\mathcal{A}|\le B_{\max}-b$; $b\leftarrow b+|\mathcal{A}|$
+  \STATE for each $I\in\mathcal{A}$, commit it and update $G_\cap$ if
+  $s_I=\mathrm{CertFree}$; otherwise
+  enqueue unseen LECT-aligned children or defer unsplittable $I$ to $\mathcal{C}$
+\ENDWHILE
+\STATE $\mathcal{C}\leftarrow$ retention-capped $(\mathcal{C}\cup\mathcal{P})$; record omissions
+\RETURN $\mathcal{F},G_\cap,\mathcal{C}$
+\end{algorithmic}
+\end{algorithm}
+
+% From this point the full-width queue is Table II (page 8), the Shelf assets
+% (page 9), and the random-scene assets (page 10), in that order.
+\begin{table*}[!t]
+\centering
+\caption{Evaluation questions, evidence, and reuse mechanisms}
+\label{tab:evaluation_map}
+\footnotesize
+\setlength{\tabcolsep}{2.6pt}
+\renewcommand{\arraystretch}{1.00}
+\begin{tabular}{@{}M{0.08\textwidth}M{0.25\textwidth}M{0.28\textwidth}M{0.30\textwidth}@{}}
+\toprule
+Question & Evaluation objective & Main evidence & Reuse mechanism \\
+\midrule
+Q1 Shelf profile & Characterize the registered warm-cache profile and control costs. & One no-cache contrast and three registered cache-backed controls over eight seeds. & Endpoint replay and scene-local rebuild. \\
+Q2 Shelf comparison & Contextualize selector-conditioned path length and within-method trade-offs. & Five methods over eight seeds. & Within-scene graph reuse over five queries. \\
+Q3 Random scenes & Characterize selected in-sample profiles across robot models. & Six robot--difficulty conditions, 100 queries each. & Within-scene graph reuse over ten queries. \\
+Q4 Mechanisms & Isolate endpoint- and link-envelope trade-offs. & 1000 shared boxes per width at six widths. & Endpoint construction and link-envelope validation. \\
+Cache update & Record scene-cache maintenance primitives. & Historical insertion, removal, and warm rebuild. & Additional timing outside Q1--Q4. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+% Place the compact Table III/Fig. 3 pair with Table II on page 8. Table III
+% retains a single-column measure; bottom alignment removes trailing whitespace
+% below the shorter table.
+\begin{figure*}[!t]
+  \centering
+  \begin{minipage}[b]{0.50\textwidth}
+    \centering
+    \input{generated/tab_tro_shelf_ablation.tex}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[b]{0.46\textwidth}
+    \centering
+    \includegraphics[width=0.60\linewidth]{figures/Marcucci_scene.png}
+    \captionof{figure}{Canonical Marcucci shelf scene~\cite{marcucci2024fastboxes}
+    with a KUKA LBR iiwa manipulator (Shelf+IIWA) and the five fixed anchors.}
+    \label{fig:tro_shelf_scene}
+  \end{minipage}
+\end{figure*}
+
 \begin{corollary}[Route construction from an overlap corridor]
 \label{cor:route_construction}
 Let $B_1,\ldots,B_m\in\mathcal{F}_{\mathrm{cert}}$, with
@@ -776,10 +875,9 @@ $q_s\in B_1$, $q_g\in B_m$, and gateways
 $g_i\in B_i\cap B_{i+1}$. The polyline
 $(q_s,g_1,\ldots,g_{m-1},q_g)$ lies in $R_{\mathrm{cert}}$ and is collision-free
 under \Cref{ass:collision_model}. Replacing a route segment by a continuous
-segment whose complete image is covered by its retained, validated finite OBB
-cover preserves the conclusion. Any transition not converted to a retained
-validated box or finite-cover OBB witness makes the returned route
-validation-required.
+segment whose complete image is covered by a retained finite cover of validated
+OBB regions preserves the conclusion. Any transition lacking a retained
+validated-box or OBB-cover witness makes the returned route validation-required.
 \end{corollary}
 
 \begin{proof}
@@ -789,51 +887,100 @@ $R_{\mathrm{cert}}$ and \Cref{lem:corridor_certificate} applies. A validated
 OBB replacement follows from \Cref{cor:obb_corridor}.
 \end{proof}
 
-\begin{algorithm}[!t]
-\caption{Zero-gap exact coalescing and budgeted refinement.}
-\label{alg:leaf_sweep_refine}
-\footnotesize
-\begin{algorithmic}[1]
-\REQUIRE Anchors $\mathcal{S}$, LECT $\mathcal{T}_L$, endpoint identity
-$\kappa_E$, obstacles $\calO$, current revision $\nu_{\mathrm{scene}}$, policy $V_{\calO}$, descriptor
-$\delta$, depths $0\le D_0\le D_s$, refinement-admission cap
-$B_{\max}\in\mathbb{Z}_{\ge1}$, and time, depth, and retention caps
-\ENSURE Labeled boxes $\mathcal{F}$, overlap subgraph $G_\cap$, deferred frontier domains $\mathcal{C}$
-\STATE form from $\mathcal{S}$ and $\mathcal{T}_L$ the identity-deduplicated
-frontier through depths $D_0{:}D_s$, then batch-evaluate it:
-$s_I\leftarrow\widehat V_{\calO}(I;\kappa_E,\delta)$
-\STATE for each candidate family $\mathcal{G}$ of $\mathrm{CertFree}$ dyadic
-cells with matching revision and descriptor, set
-$H\leftarrow\operatorname{bbox}(\bigcup_{B\in\mathcal{G}}B)$
-\STATE coalesce only if dyadic integer ranges establish
-$\operatorname{ExactUnion}(H,\mathcal{G})$
-\STATE insert $H$ with $\mathrm{CertFree}$ and verified-tiling status under
-$(\nu_{\mathrm{scene}},\delta)$; consume constituents only from the active node set
-\STATE insert unmerged $(I,\mathrm{CertFree})$ leaves into $\mathcal{F}$; build $G_\cap$
-\STATE initialize $\mathcal{P}$ with maximal remaining frontier cells, keyed by
-region identity and prioritized by anchor coverage;
-$\mathcal{C}\leftarrow\emptyset$; $b\leftarrow0$
-\WHILE{$\mathcal{P}$ is nonempty, $b<B_{\max}$, and time/depth caps remain}
-  \STATE admit and batch-evaluate at most $B_{\max}-b$ cells;
-  increment $b$ by the batch size
-  \STATE for each evaluated $I$: commit it and update $G_\cap$ if
-  $s_I=\mathrm{CertFree}$; otherwise enqueue unseen LECT-aligned children if
-  $I$ is splittable, or defer $I$ into $\mathcal{C}$
-\ENDWHILE
-\STATE assign the retention-capped union of $\mathcal{C}$ and $\mathcal{P}$ to
-$\mathcal{C}$; record omissions
-\RETURN $\mathcal{F},G_\cap,\mathcal{C}$
-\end{algorithmic}
-\end{algorithm}
+\begin{theorem}[Continuous collision freedom]
+\label{thm:rbf_continuous_safety}
+Under \Cref{ass:collision_model} and the numerical contract above, fix a scene
+revision $\nu_{\mathrm{scene}}$ and descriptor $\delta$. For any continuous
+returned path $\gamma:[0,1]\to\Q$ for which a conforming implementation retains
+a witness $W$ satisfying \Cref{def:path_witness},
+\[
+    \forall t\in[0,1],\qquad
+    \gamma(t)\in\Cfree(\calO(\nu_{\mathrm{scene}})).
+\]
+\end{theorem}
+
+% Queue Table IV/Fig. 4 after page 8 has begun; Fig. 4 remains directly below
+% Table IV in the page-9 full-width float.
+\begin{figure*}[!t]
+  \centering
+  \TableFontRestore
+  \input{generated/tab_tro_shelf_cross_algorithm.tex}
+  \vspace{0.4ex}
+  \includegraphics[width=0.68\textwidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
+  \caption{Shelf+IIWA trade-offs over eight seeds. Left: mean path-length ratio
+  $\bar L/\bar L_{\mathrm{ref}}$. Black
+  rings mark the first operating point that completes all 40 tasks; gold rings
+  mark the registered \rbf{} profile and each comparison method's fastest
+  full-success point within 8\% of its best mean path-length ratio. Right:
+  method-local accounting projections over $K$ ($K>5$ extrapolated), not
+  end-to-end latency; the \rbf{} projection excludes the one-time d23 prewarm
+  (1008.6~s; 12.74~GiB serialized cache). Table~\ref{tab:tro-shelf-cross-algorithm} gives the Q2
+  selections.}
+  \label{fig:tro_shelf_cross_tradeoff}
+\end{figure*}
+
+\begin{proof}
+For any $t\in[0,1]$, the finite cover in $W$ supplies a retained region $R_j$
+with $\gamma(t)\in R_j$. A directly validated box lies in $\Cfree$ by
+\Cref{cor:box_validation}, and an exact-union box inherits this inclusion from
+its retained verified-tiling record. Each validated OBB region lies in $\Cfree$ by
+\Cref{cor:obb_corridor}. Hence every $\gamma(t)$ is collision-free under the
+fixed revision and descriptor. This pointwise argument is independent of
+waypoint spacing or sampled checks.
+\end{proof}
+
+% Declare the page-10 random-scene float only after the page-8 table has been
+% placed; the page-9 Shelf figure then keeps this float in the following slot.
+\begin{table*}[!t]
+  \centering
+  \TableFontRestore
+  \input{generated/tab_tro_random_summary.tex}
+  \vspace{0ex}
+  \includegraphics[width=0.95\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
+  \captionof{figure}{Random-scene trade-offs. Left: OMPL traces and reported
+  \rbf{} profiles at $K=5$. Black rings mark each method's first full-catalog
+  operating point; gold rings mark the reported \rbf{} profiles and the
+  comparison-method points selected by the $\geq1\%$ aggregate
+  path-length-ratio rule. Right: selected $\mathrm{Build}/K+\mathrm{Task/q}$
+  projections averaged over Medium and Hard as a function of $K$ ($K>10$
+  extrapolated).
+  Table~\ref{tab:tro-random-summary} uses BIT*'s separate 8\% per-instance rule
+  and reports query-matched ratios.}
+  \label{fig:tro_random_tradeoff}
+\end{table*}
+
+\begin{corollary}[Cross-revision path soundness]
+\label{cor:cross_revision_path}
+After an obstacle revision from $\nu_{\mathrm{scene}}$ to
+$\nu_{\mathrm{scene}}'$ that preserves $\kappa_E$, fix the current descriptor
+$\delta$. Suppose every replayed endpoint record matches $\kappa_E$ and
+satisfies the record invariant, and every witness region is either directly
+revalidated against $\calO(\nu_{\mathrm{scene}}')$ under $\delta$ or newly
+constructed by a verified exact-union operation on
+$\nu_{\mathrm{scene}}'$-matched, $\delta$-matched $\mathrm{CertFree}$ boxes. The
+certificate-backed returned path is then collision-free for
+every $t\in[0,1]$ in the revised scene.
+\end{corollary}
+
+\begin{proof}
+Matched replay followed by fresh current-scene validation makes each primitive
+box sound by \Cref{prop:scene_safe_replay}. Directly revalidated OBB regions are
+sound by \Cref{cor:obb_corridor}, and a newly verified exact union preserves the
+inclusion of its current-revision constituents. Thus the retained witness
+satisfies \Cref{def:path_witness} for $(\nu_{\mathrm{scene}}',\delta)$, and
+\Cref{thm:rbf_continuous_safety} applies to its complete cover.
+\end{proof}
 
 \section{Experiments}\label{sec:exp}
 
-The theory above establishes the soundness contract; the evaluation addresses
-four questions about operating cost and planning behavior. Q1 characterizes a
-fixed warm-cache Shelf+KUKA LBR iiwa (Shelf+IIWA) profile and compound profile
-controls; Q2 provides path-quality context against roadmap, sampling, and
-convex-region baselines; Q3 characterizes selected in-sample profiles on three
-robots; and Q4 isolates endpoint- and link-envelope trade-offs.
+\Cref{thm:rbf_continuous_safety} establishes continuous-path collision freedom
+from conservative finite-region coverage; the evaluation does not attempt to
+re-establish this guarantee by sampling. Instead, it addresses four questions
+about operating cost and planning behavior. Q1 characterizes a fixed warm-cache
+Shelf+KUKA LBR iiwa (Shelf+IIWA) profile and compound profile controls. Q2
+provides path-length context against roadmap, sampling, and convex-region
+baselines. Q3 characterizes selected in-sample profiles on three robots, and Q4
+isolates endpoint- and link-envelope trade-offs.
 Fig.~\ref{fig:tro_shelf_scene} introduces the fixed Shelf scene.
 The Q2 baseline couples iterative regional inflation with Graphs of Convex Sets
 (IRIS/GCS).
@@ -841,73 +988,101 @@ Table~\ref{tab:evaluation_map} maps each empirical question to its evidence and
 reuse mechanism.
 
 \noindent\emph{Protocol and metrics.}
-Experiments ran on Ubuntu~22.04 with an Intel Core i5-12600KF; OMPL planners
-were single-threaded, and imported timings without host-load metadata are
-descriptive.
+Experiments were run on Ubuntu~22.04 with an Intel Core i5-12600KF\@. OMPL
+planners were single-threaded; timings imported from archived runs without
+host-load metadata are treated as descriptive.
 
-Build denotes post-initialization reusable construction. For \rbf{}, it includes
-evidence access or materialization, scene labeling, graph/anchor construction,
-and shortcuts, but excludes snapshot creation/opening; PRM endpoints are
-preloaded. \onlineq{} denotes per-query work. Timings exclude simplification and
-the independent audit, which densifies each polyline to at most $0.01$~rad.
-Time coordinates are method-local, whereas path ratios use query-matched
-references. Because the artifacts omit complete $W$, audit-passing returns are
-not reported as certificate-backed.
+Build denotes post-initialization reusable construction time. For \rbf{}, this
+metric includes
+evidence access or materialization, scene labeling, graph and anchor construction,
+and shortcut generation, but excludes snapshot creation/opening; PRM endpoints are
+preloaded. \onlineq{} denotes per-query work. Timings exclude simplification.
+Successful runtime completion and the subsequent sampled check are empirical
+gates. Each saved polyline was subsequently densified to at most $0.01$~rad
+between samples and collision-checked;
+this check was untimed. A failed gate excludes the record and can change reported
+completion, but no sampled gate establishes $W$ or supports
+\Cref{thm:rbf_continuous_safety}. The results API and archives omit a complete
+witness $W$, so no per-path certificate-coverage rate is reported; experiments
+measure cost, completion, and path quality. The theorem applies only to a final
+path with retained $W$; repair or postprocessing requires reconstructing $W$.
 
-Q1 Batch task is one completion within a jointly scheduled five-query run (40
-values from eight runs). Q3 uses
+In Q1, Batch timestamp denotes a query's within-run completion time in a jointly
+scheduled five-query run (40 observations nested within eight runs). Q2 reports
+eight seeds per query, and each Q3 condition contains 100
+queries nested within ten scenes. Q3 uses
 \[
 \mathrm{Task/q}=\left(T_{\mathrm{adapt}}^{\mathrm{wall}}+
 \sum_{i=1}^{N_q}T_{\mathrm{query},i}^{\mathrm{internal}}\right)/N_q.
 \]
-Here $N_q$ is batch size; the two terms are scene-adaptation wall time and
-internal query time. Reuse curves add Build/$K$ to a fixed task coordinate;
-Shelf $K>5$ and random-scene $K>10$ are extrapolated. Tables report
-success-only medians and interquartile ranges. $L$ is joint-space path length,
-and $L_{\mathrm{ref},\lambda}$ is the pooled empirical lower envelope of
-audit-passing returns from the fixed methods and checkpoints before selection,
-not a known optimum or held-out reference; Shelf uses its per-query counterpart.
-For Fig.~\ref{fig:tro_shelf_cross_tradeoff}, let $\bar L$ and
-$\bar L_{\mathrm{ref}}$ denote the displayed audited mean and its minimum
-reference.
+Here, $N_q$ is the batch size; the two terms are scene-adaptation wall time and
+internal query time. For accounting only, the reuse projections use unrounded
+metric values and add $\mathrm{Build}/K$ to a fixed Task/q value; Shelf $K>5$ and
+random-scene $K>10$ are extrapolated. Tables report descriptive
+medians and interquartile ranges, not confidence intervals. Let $L$ denote
+joint-space path length for a saved scene--query instance $\lambda$. We report
+$L/L_{\mathrm{ref},\lambda}$, where $L_{\mathrm{ref},\lambda}$ is the empirical
+minimum computed from the same data and pooled over the fixed methods and
+checkpoints before selection; it is neither a known optimum nor a held-out
+reference. Shelf uses the corresponding per-query reference. In
+Fig.~\ref{fig:tro_shelf_cross_tradeoff}, $\bar L$ and $\bar L_{\mathrm{ref}}$
+denote the displayed mean path length and its empirical reference minimum,
+respectively.
 
 \noindent\emph{Profile inheritance and cache accounting.}
-Q1 and Q2 use a read-only depth-23 LECT and a 100-box admission cap
-(d23/b100). Q3 inherits the \rbf{} build/query backend, collision checker,
-postprocessor, and 0.01-rad audit, but not the Shelf anchors, b100 cap, or Shelf
-cache root. Its six robot--difficulty profiles use robot-local roots: IIWA and
-Panda replay depth-23 and depth-20 records, respectively, whereas UR5
-materializes endpoint evidence. Warm Build includes lookup, reads, and demand
-paging but excludes snapshot creation/opening, storage, peak memory, and the
-one-time d23 prewarm (16.8 million records, 12.74~GiB, 1008.6~s). Q1 compares
-endpoint-source/replay and link-representation profiles; Q4 separately measures
-endpoint construction and isolated link-envelope operations.
+The Q1 baseline and Q2 \rbf{} operating point use a read-only depth-23 LECT and
+a 100-box admission cap (d23/b100). Q1 controls follow registered,
+profile-specific cache assignments rather than a common cache treatment:
+HIFK-5 is the no-cache contrast; Critical-sample replays its matching d23 cache;
+and Link-AABB and SupportHull-only retain IFK-AA+d23. Q3 inherits the \rbf{}
+build/query backend, collision checker,
+postprocessor, and data-integrity protocol, but not the Shelf anchors, b100 cap,
+or Shelf cache root. Its six robot--difficulty profiles use robot-local roots:
+IIWA and Panda replay depth-23 and depth-20 records, respectively, whereas UR5
+materializes endpoint evidence. For cache-backed profiles, Warm Build includes
+lookup, reads, and demand paging but excludes snapshot creation/opening and the
+one-time d23 prewarm (16.8 million records, a 12.74~GiB serialized cache, and
+1008.6~s); peak resident memory is not reported. The Q1 controls are compound
+profiles that vary endpoint source, replay, or link representation. Q4
+separately measures endpoint construction and isolated link-envelope
+operations.
 
 \subsection{Q1: Shelf+IIWA Replay and Profile Controls}
 \label{sec:exp_shelf_iiwa}
 
 Fig.~\ref{fig:tro_shelf_scene} shows the fixed cycle through approach-side (AS),
 target-shelf (TS), center-shelf (CS), left-bin (LB), and right-bin (RB),
-executed as AS--TS--CS--LB--RB--AS\@. Table~\ref{tab:tro-shelf-ablation} reports the b100
-profile over seeds 0--7; b100 was selected during development on this cycle and
-then held fixed for Q1 and Q2.
+executed as AS--TS--CS--LB--RB--AS\@. Table~\ref{tab:tro-shelf-ablation}
+reports the b100 profile over seeds 0--7; b100 was selected during development
+on this cycle and then held fixed for Q1 and Q2.
 
 \noindent\emph{Takeaway.}
-All 40 warm-d23 IFK-AA/SupportHull baseline paths pass the 0.01-rad audit, with
-median Build and within-batch task-completion diagnostics of 0.171 and 0.077~s.
-The HIFK-5/no-cache row changes both endpoint construction and replay; its
-2.770-s Build (16.2$\times$) is a compound profile contrast, not a cache-only
-effect. Critical-sample replays its matching d23 cache, whereas Link-AABB and
-SupportHull-only retain IFK-AA+d23. Table~\ref{tab:tro-shelf-ablation} reports
-the controls.
+The warm-d23 IFK-AA/SupportHull baseline completes all 40 tasks; the median
+Build time and within-batch task-completion timestamp are 0.171 and 0.077~s,
+respectively.
+HIFK-5 is the registered no-cache contrast. Because it changes both
+endpoint construction and replay, its 2.770-s Build (16.2$\times$) is not a
+cache-only effect. Under the registered caches, Critical-sample replays d23 but
+is non-certifying, so its outputs remain validation-required; Link-AABB and
+SupportHull-only retain IFK-AA+d23.
+Table~\ref{tab:tro-shelf-ablation} therefore supports compound-profile
+comparison, not factor-wise attribution.
 
-\begin{figure}[!t]
-  \centering
-  \includegraphics[width=0.88\columnwidth]{figures/Marcucci_scene.png}
-  \caption{Canonical Marcucci shelf scene~\cite{marcucci2024fastboxes} with a
-  KUKA LBR iiwa manipulator (Shelf+IIWA) and the five fixed anchors.}
-  \label{fig:tro_shelf_scene}
-\end{figure}
+% Keep the two Q4 mechanism tables (VI and VII) together on page 11. Table VIII
+% is anchored with its corresponding scene-update subsection below so that it
+% first appears on page 12.
+\setcounter{dbltopnumber}{2}
+\begin{table*}[t]
+\centering
+\TableFontRestore
+\input{generated/tab_tro_endpoint_envelope.tex}
+\end{table*}
+
+\begin{table*}[t]
+\centering
+\TableFontRestore
+\input{generated/tab_tro_link_envelope.tex}
+\end{table*}
 
 \subsection{Q2: Shelf Cross-Algorithm Context}
 \label{sec:exp_shelf_cross_algorithm}
@@ -918,121 +1093,59 @@ endpoint-preloaded cumulative roadmap per seed. Operating points use all five
 queries and eight runs per method.
 
 For Table~\ref{tab:tro-shelf-cross-algorithm}, PRM and BIT* independently
-select, for each query, the lowest-median-time checkpoint among checkpoints with
-audit-passing returns for all eight seeds and an audited mean path within 1\% of
-that query's best. \mbox{IRIS/GCS+post} instead selects the fastest 40/40 prefix
-within 8\% of its best aggregate ratio. Fig.~\ref{fig:tro_shelf_cross_tradeoff}
-uses separate method-level 8\% display markers; the \rbf{} marker is the
-registered b100 point. All selectors use the reported Shelf runs, so Q2 compares
-selector-conditioned path quality, not held-out performance or cross-planner
-latency. A common postprocessor determines path statistics; its time is excluded.
+select, for each query, the checkpoint with the lowest median online-query time
+among those
+producing successful saved paths for all eight seeds and a mean path length
+within 1\% of the method--query minimum. \mbox{IRIS/GCS+post} instead selects the
+fastest construction prefix completing 40/40 tasks with an aggregate ratio within 8\% of
+its minimum.
+Fig.~\ref{fig:tro_shelf_cross_tradeoff} uses separate method-level 8\% display
+markers; the \rbf{} marker is the registered b100 point. All selectors use the
+reported Shelf runs, so Q2 compares selector-conditioned path quality, not
+held-out performance or cross-planner latency. A common postprocessor determines
+path statistics; its time is excluded.
 
 \noindent\emph{Takeaway.}
-At the selected operating points, \rbf{} has lower median
-query-normalized ratios than PRM and RRT-Connect for all five queries, but
-higher ratios than BIT* for all five and IRIS/GCS+post for four.
-
-% Queue the Q1--Q2 evidence after their explanatory text so the double-column
-% floats remain grouped without displacing the following body page.
-\begin{table*}[!t]
-\centering
-\caption{Evaluation questions, evidence, and reuse mechanisms}
-\label{tab:evaluation_map}
-\footnotesize
-\setlength{\tabcolsep}{2.6pt}
-\renewcommand{\arraystretch}{1.00}
-\begin{tabular}{@{}M{0.08\textwidth}M{0.25\textwidth}M{0.28\textwidth}M{0.30\textwidth}@{}}
-\toprule
-Question & Tested claim & Main evidence & Reuse mechanism \\
-\midrule
-Q1 Shelf profile & Characterize fixed warm-cache cost and compound profile controls. & Eight-seed controls on a five-query cycle. & Endpoint replay and scene-local rebuild. \\
-Q2 Shelf comparison & Contextualize audited path quality and within-method trade-offs. & Five methods over eight seeds. & Within-scene graph reuse over five queries. \\
-Q3 Random scenes & Describe selected-profile path quality across robot models. & Six robot--difficulty conditions, 100 queries each. & Within-scene graph reuse over ten queries. \\
-Q4 Mechanisms & Isolate endpoint- and link-envelope trade-offs. & 1000 shared boxes per width at six widths. & Endpoint construction and link-envelope validation. \\
-Cache update & Record scene-cache maintenance primitives. & Historical insertion, removal, and warm rebuild. & Supplementary timing outside Q1--Q4. \\
-\bottomrule
-\end{tabular}
-\end{table*}
-
-\begin{table*}[t]
-  \centering
-  \begin{minipage}{0.74\textwidth}
-  \input{generated/tab_tro_shelf_ablation.tex}
-  \end{minipage}
-\end{table*}
+Under these method-specific, in-sample selection rules, the median normalized
+path-length ratio for \rbf{} is below the corresponding PRM and RRT-Connect
+medians for all five queries, but above the BIT* median for all five and the
+IRIS/GCS+post median for four. These descriptive path-length comparisons do not
+establish a latency ranking.
 
 \subsection{Q3: Random Scenes Across Robot Models}
 \label{sec:exp_generalization}
 
 \emph{Dataset and selection.}
 Q3 uses a frozen catalog of three robots, ten seeds per difficulty, and ten
-queries per scene: 60 Medium/Hard scenes and 600 saved scene--query instances
-per method. For each robot--seed pair, Hard strictly extends Medium by an
-obstacle-prefix addition; queries are shared and direct start--goal segments
-are obstructed. The obstacle prefixes and one \rbf{} profile per
-robot--difficulty condition were selected on this same catalog. Eligibility
-required 100/100 audit-passing returns within that condition; among eligible
-candidates, selection used Task/q and path length. Q3 therefore characterizes
-six selected in-sample operating points.
+queries per scene: 60 scenes spanning the Medium and Hard settings and 600 saved
+scene--query instances per method. For each robot--seed pair, the Hard obstacle
+prefix strictly extends the Medium prefix; queries are shared, and direct
+start--goal segments are obstructed. The obstacle prefixes and one \rbf{} profile
+per robot--difficulty condition were tuned and evaluated on this same catalog.
+Each reported profile completed all 100 instances and was registered
+from the full-completion candidates after joint inspection of Task/q and path
+length on that catalog. Q3 is therefore descriptive and in-sample, not a
+held-out generalization test.
 
 \emph{Compared methods.}
-\rbf{} reuses one query-agnostic forest per ten-query scene. PRM builds one
+\rbf{} reuses one query-agnostic forest for each ten-query scene. PRM builds one
 endpoint-preloaded cumulative roadmap per scene; RRT-Connect and BIT* are
-query-local. Full-success RRT-Connect and PRM curves advance after
-$\geq1\%$ aggregate path-ratio gains. Table~\ref{tab:tro-random-summary}
-selects BIT*'s fastest per-instance checkpoint within 8\% of its best path,
-whereas Fig.~\ref{fig:tro_random_tradeoff} uses the 1\% display rule.
+query-local. The full-success RRT-Connect and PRM curves retain a new point only
+after an aggregate path-length-ratio improvement of at least 1\%.
+Table~\ref{tab:tro-random-summary}
+selects BIT*'s fastest per-instance checkpoint whose path length is within 8\%
+of the method--instance minimum, whereas Fig.~\ref{fig:tro_random_tradeoff}
+uses the 1\% display rule.
 
 \emph{Results.}
-Median path ratios are 0.02--0.31 lower than RRT-Connect in all six conditions
-and lower than PRM in five; UR5 Medium is 0.03 higher. They are also lower than
-BIT* in five; Panda Medium is 0.01 higher. Holding Task/q fixed, the recorded
-$\mathrm{Build}/K+\mathrm{Task/q}$ accounting projection decreases by
-69.6--79.7\% from $K=1$ to $K=10$ across the three robot-wise means.
-
-% Bind the cross-algorithm figure and Table V in one float.
-\begin{figure*}[!t]
-  \centering
-  \includegraphics[width=0.95\textwidth,keepaspectratio]{generated/fig_tro_shelf_cross_tradeoff.pdf}
-  \caption{Shelf+IIWA trade-offs over eight seeds. Left: audited mean-path ratio
-  $\bar L/\bar L_{\mathrm{ref}}$. Black
-  rings mark the first 40/40 budget; gold rings mark the registered \rbf{}
-  profile and each comparison method's fastest full-success point within 8\%
-  of its best mean. Right: selected method-local task coordinates across $K$
-  ($K>5$ extrapolated). Table~\ref{tab:tro-shelf-cross-algorithm} gives the Q2
-  selections; postprocessing/audit is excluded.}
-  \label{fig:tro_shelf_cross_tradeoff}
-  \vspace{0.6ex}
-  \TableFontRestore
-  \input{generated/tab_tro_shelf_cross_algorithm.tex}
-\end{figure*}
-
-% Keep the random-scene table and figure in one double-column float.
-\begin{table*}[!t]
-  \centering
-  \TableFontRestore
-  \input{generated/tab_tro_random_summary.tex}
-  \vspace{0.8ex}
-  \includegraphics[width=\textwidth,keepaspectratio]{generated/fig_tro_random_tradeoff.pdf}
-  \captionof{figure}{Random-scene trade-offs. Left: OMPL traces and reported
-  \rbf{} profiles at $K=5$. Black rings mark first full-catalog success; gold
-  rings mark reported \rbf{} and comparison-method display selections, which
-  advance after $\geq1\%$ path-ratio gains. Right: selected task coordinates
-  averaged over Medium/Hard across $K$ ($K>10$ extrapolated).
-  Table~\ref{tab:tro-random-summary} gives query-matched ratios;
-  postprocessing/audit is excluded.}
-  \label{fig:tro_random_tradeoff}
-\end{table*}
-
-% Queue the Q4 mechanism tables after the Q3 float; the barrier below ensures
-% that their evidence appears before the conclusion.
-\begin{table*}[t]
-\centering
-\TableFontRestore
-\input{generated/tab_tro_endpoint_envelope.tex}
-\vspace{0.45ex}
-\input{generated/tab_tro_link_envelope.tex}
-\end{table*}
+Under these method-specific, in-sample selections, the reported \rbf{} median
+normalized path-length ratios are 0.02--0.31 lower in absolute ratio units than
+the corresponding RRT-Connect medians in all six conditions. They are below the
+PRM medians in five conditions (0.03 above for UR5 Medium) and below the BIT*
+medians in five (0.01 above for Panda Medium). With Task/q fixed, the arithmetic
+$\mathrm{Build}/K+\mathrm{Task/q}$ projection is 69.6--79.7\% lower at $K=10$
+than at $K=1$ across the three robot-specific averages; this is not a measured
+multi-query or cross-revision speedup.
 
 \subsection{Q4: Endpoint and Link-Envelope Mechanisms}
 \label{sec:exp_mechanisms}
@@ -1040,9 +1153,11 @@ $\mathrm{Build}/K+\mathrm{Task/q}$ accounting projection decreases by
 Tables~\ref{tab:tro-endpoint-envelope} and~\ref{tab:tro-link-envelope} report Q4
 over six joint-interval widths. Each study uses a deterministic set of 1000 IIWA
 joint boxes per width, shared across all representations within that study. The
-endpoint study reports median construction time and volume. Gap is the negative
-of the largest per-axis width shortfall to the per-box extent hull of the
-Critical-sample, Analytical, and Monte Carlo references; more negative is worse.
+endpoint study reports median construction time and volume. For each box, Gap
+is the negative of the largest axis-wise envelope shortfall relative to the
+extent hull of the Critical-sample, Analytical, and Monte Carlo references;
+more negative values indicate larger shortfalls. This empirical hull is a
+diagnostic comparator rather than a certificate of conservatism.
 
 The link study reports mean isolated envelope-build and separation costs rather
 than production-cascade latency. SupportHull's AABB broadphase and all early
@@ -1055,57 +1170,92 @@ At 0.50~rad, HIFK-5 has normalized endpoint volume
 cost. Across the tested widths, isolated AABB overlap takes 4.7--6.1\% of the
 mean per-probe time required by direct SupportHull/GJK\@.
 
-\subsection{Supplementary Scene-Cache Update Timing}
+\subsection{Additional Scene-Cache Update Timing}
 \label{sec:exp_dynamic_updates}
 
-Table~\ref{tab:tro-dynamic-update} records supplementary scene-cache update
-timings outside Q1--Q4; planning is excluded and brackets are interquartile
-ranges.
+Table~\ref{tab:tro-dynamic-update} records additional scene-cache update
+timings over eight saved ordered scenes outside Q1--Q4; planning is excluded.
+Brackets give time interquartile ranges, and ratio ranges give interquartile
+ranges of per-scene Warm@15/update values.
 
 \subsection{Discussion and Scope}
 
 Three components form one algorithmic interface: canonical dyadic addresses
 couple endpoint replay with forest refinement; exact-union coalescing compresses
-the current graph without enlarging the verified set; and typed box/OBB
-transitions compose corridor witnesses. Cache depth and graph size remain
-decoupled because the admission budget exposes only anchor-relevant cells while
-primitive keys remain unchanged by revision-local unions. Changing endpoint
+the current graph without enlarging the certified free set; and typed box and OBB
+transitions compose corridor witnesses. The dyadic cache hierarchy and
+region-graph admission remain separately controlled: cache depth bounds replay
+addresses, the admission cap limits evaluated frontier cells, and anchor
+coverage affects only frontier-cell priority. Primitive keys remain unchanged by
+revision-local unions. Changing endpoint
 construction changes $\kappa_E$, and changing link representation changes
-$\delta$, but neither changes route-status semantics.
+$\delta$, but neither changes certificate-status semantics.
 
-\rbf{} targets repeated queries for a fixed robot under local scene revisions.
-Q2 reports path quality, Q3 reports selected in-sample profiles, and the
-controls quantify warm-replay and mechanism costs. Complete route-witness
-serialization remains future work.
+% Anchor Table VIII after the page-12 discussion has begun; this preserves the
+% page-11 pairing of Tables VI and VII.
+\begin{table}[!t]
+\centering
+\input{generated/tab_tro_dynamic_update.tex}
+\end{table}
+
+Candidate generation is outside the certificate condition. A future, unevaluated
+integration could expose the validator as an external checker for sampling- or
+optimization-based planners and learned generators, including
+vision--language--action (VLA) models such as OpenVLA and world-model--action
+(WMA) architectures such as
+\mbox{UnifoLM-WMA-0}~\cite{kim2024openvla,unitree2025unifolmwma}.
+Such an interface could reuse endpoint evidence, but its end-to-end latency and
+amortization remain to be measured. In this integration, the upstream planner or
+model would generate candidates. \rbf{} would retain a complete finite cover of
+regions validated for the current scene or flag unsupported windows for repair
+or rejection. Under \Cref{ass:collision_model}, only a fully covered candidate
+would be certificate-backed under \Cref{def:path_witness} and meet the premise
+of \Cref{thm:rbf_continuous_safety}. Developing this interface requires
+mapping learned action chunks to continuous joint-space paths,
+synchronizing perceptual scene revisions, extending the conservative validator
+to task-relevant collision models, and measuring end-to-end checking latency.
+
+\rbf{} targets repeated queries for a fixed robot under compatible scene
+revisions. Q2 reports selector-conditioned path quality, Q3 reports selected
+in-sample profiles, and Q1 and Q4 characterize compound cache profiles and
+isolated envelope mechanisms, respectively. The safety result establishes
+geometric collision freedom only for paths with a retained finite-cover witness
+as defined in \Cref{def:path_witness}, under a fixed scene revision and
+\Cref{ass:collision_model}. The reported profiles are not evidence of numerical-
+contract conformance or per-path certificate coverage. The result does not cover
+dynamics, tracking error, or obstacles that move during execution.
 
 \section{Conclusion}\label{sec:conclusion}
 
 \rbf{} turns obstacle-independent kinematic bounds into reusable planning
-state. A shared dyadic identity maps each endpoint record to the primitive cell
-of a rebuilt scene graph, while compositional corridor verification combines
-current-scene witnesses and exposes typed repair interfaces. The budgeted builder refines
-canonical cells and coalesces only exact dyadic unions, preserving the validated
-free set while reducing the revision-local graph. On Shelf+IIWA, 40/40
-warm-profile paths passed the sampled audit and median warm Build was 0.171~s.
-On the six-condition in-sample profile-selection catalog, selected profiles had lower
-median query-matched path ratios than RRT-Connect in all six and than PRM and
-BIT* in five. With Task/q held fixed, the recorded $\mathrm{Build}/K+
-\mathrm{Task/q}$ accounting projection decreases by 69.6--79.7\% from $K=1$
-to $K=10$. The soundness analysis establishes a cross-revision reuse contract,
-while the experiments quantify operating costs and selected path-quality
-behavior. Isolating end-to-end speedup across a scene revision remains future
-work.
+state. A shared dyadic identity maps each endpoint record to a primitive cell of
+the rebuilt region graph; compositional corridor verification combines
+current-scene witnesses, and typed transitions expose repair interfaces. The budgeted
+builder refines canonical cells and coalesces only exact dyadic unions,
+preserving the certified free set while reducing the revision-local graph.
+Under the stated collision and numerical assumptions, the resulting
+finite-cover certificate guarantees collision freedom at every point of a
+certificate-backed continuous path. The cross-revision conclusion holds only
+under the matched-replay and fresh-validation conditions of
+\Cref{cor:cross_revision_path}. On Shelf+IIWA, the
+warm profile completed all 40 tasks, and its median warm Build time was
+0.171~s. At the method-specific, in-sample operating points, the selected
+\rbf{} profiles have median normalized path-length ratios below the
+corresponding RRT-Connect medians in all six conditions and below the PRM and
+BIT* medians in five. With Task/q held fixed, the projected
+$\mathrm{Build}/K+\mathrm{Task/q}$ metric is 69.6--79.7\% lower at $K=10$ than
+at $K=1$; this arithmetic comparison is not a measured cross-revision speedup.
+The analysis establishes the conditional soundness of the cross-revision reuse
+contract,
+while the experiments characterize operating costs and selector-conditioned
+path-length outcomes. Measuring end-to-end speedup across scene revisions and
+evaluating whether the certificate interface can serve as a low-latency checker
+for conventional planners and VLA- or WMA-based candidate generators remain
+future work.
 
 \FloatBarrier
-% Restore IEEEtran's normal column goal after the double-column float flush.
-\vsize=\textheight
-
-\noindent\makebox[\columnwidth][c]{%
-\begin{minipage}{\columnwidth}
-\centering
-\input{generated/tab_tro_dynamic_update.tex}
-\end{minipage}}
-\par
+% Balance the final bibliography page in IEEEtran's two-column layout.
+\IEEEtriggeratref{27}
 \bibliographystyle{IEEEtran}
 \bibliography{references}
 

@@ -63,7 +63,8 @@ S.~Morozov, T.~Marcucci, A.~Amice, B.~P. Graesdal, R.~Bosworth, P.~A. Parrilo,
 \bibitem{deits2015computing}
 R.~Deits and R.~Tedrake, ``Computing large convex regions of obstacle-free
   space through semidefinite programming,'' in \emph{Algorithmic Foundations of
-  Robotics XI}, 2015, pp. 109--124.
+  Robotics XI}, ser. Springer Tracts in Advanced Robotics, vol. 107.\hskip 1em
+  plus 0.5em minus 0.4em\relax Cham, Switzerland: Springer, 2015, pp. 109--124.
 
 \bibitem{werner2025superfast}
 P.~Werner, R.~Cheng, T.~Stewart, R.~Tedrake, and D.~Rus, ``Superfast
@@ -86,7 +87,7 @@ P.~Werner, A.~Amice, T.~Marcucci, D.~Rus, and R.~Tedrake, ``Approximating robot
 \bibitem{marcucci2023motion}
 T.~Marcucci, M.~Petersen, D.~{von Wrangel}, and R.~Tedrake, ``Motion planning
   around obstacles with convex optimization,'' \emph{Sci. Robot.}, vol.~8,
-  no.~84, p. eadf7843, Nov. 2023.
+  no.~84, Nov. 2023, art. no. eadf7843.
 
 \bibitem{natarajan2024ixg}
 R.~Natarajan, C.~Liu, H.~Choset, and M.~Likhachev, ``Implicit graph search for
@@ -108,8 +109,8 @@ J.-M. Lien and Y.~Lu, ``Planning motion in environments with similar
 \bibitem{shkolnik2011volumes}
 \BIBentryALTinterwordspacing
 A.~C. Shkolnik and R.~Tedrake, ``Sample-based planning with volumes in
-  configuration space,'' 2011. [Online]. Available:
-  \url{https://arxiv.org/abs/1109.3145}
+  configuration space,'' arXiv preprint arXiv:1109.3145, 2011. [Online].
+  Available: \url{https://arxiv.org/abs/1109.3145}
 \BIBentrySTDinterwordspacing
 
 \bibitem{leven2002framework}
@@ -146,7 +147,8 @@ J.~Pan, S.~Chitta, and D.~Manocha, ``{FCL}: A general purpose library for
 
 \bibitem{moore2009introduction}
 R.~E. Moore, R.~B. Kearfott, and M.~J. Cloud, \emph{Introduction to Interval
-  Analysis}.\hskip 1em plus 0.5em minus 0.4em\relax {SIAM}, 2009.
+  Analysis}.\hskip 1em plus 0.5em minus 0.4em\relax Philadelphia, PA, USA:
+  {SIAM}, 2009.
 
 \bibitem{merlet2009interval}
 J.-P. Merlet, ``Interval analysis for certified numerical solution of problems
@@ -161,12 +163,12 @@ S.~Redon, M.~C. Lin, D.~Manocha, and Y.~J. Kim, ``Fast continuous collision
 \bibitem{zhang2007taylor}
 X.~Zhang, S.~Redon, M.~Lee, and Y.~J. Kim, ``Continuous collision detection for
   articulated models using {Taylor} models and temporal culling,'' \emph{ACM
-  Trans. Graph.}, vol.~26, no.~3, p.~15, 2007.
+  Trans. Graph.}, vol.~26, no.~3, Jul. 2007, art. no. 15.
 
 \bibitem{bohlin2000path}
 R.~Bohlin and L.~E. Kavraki, ``Path planning using lazy {PRM},'' in
   \emph{{IEEE} International Conference on Robotics and Automation ({ICRA})},
-  2000, pp. 521--528.
+  vol.~1, 2000, pp. 521--528.
 
 \bibitem{hartmann2023eirm}
 V.~N. Hartmann, M.~P. Strub, M.~Toussaint, and J.~D. Gammell, ``Effort informed
@@ -192,7 +194,7 @@ R.~A. Brooks and T.~Lozano-P\'erez, ``A subdivision algorithm in configuration
 \bibitem{kuffner2000rrt}
 J.~J. Kuffner and S.~M. LaValle, ``{RRT-Connect}: An efficient approach to
   single-query path planning,'' in \emph{{IEEE} International Conference on
-  Robotics and Automation ({ICRA})}, 2000, pp. 995--1001.
+  Robotics and Automation ({ICRA})}, vol.~2, 2000, pp. 995--1001.
 
 \bibitem{gammell2015batch}
 J.~D. Gammell, S.~S. Srinivasa, and T.~D. Barfoot, ``{Batch Informed Trees}
@@ -202,6 +204,26 @@ J.~D. Gammell, S.~S. Srinivasa, and T.~D. Barfoot, ``{Batch Informed Trees}
 
 \bibitem{sucan2012ompl}
 I.~A. {\c S}ucan, M.~Moll, and L.~E. Kavraki, ``The {Open Motion Planning
-  Library},'' \emph{IEEE Robot. Autom. Mag.}, vol.~19, no.~4, pp. 72--82, 2012.
+  Library},'' \emph{IEEE Robot. Autom. Mag.}, vol.~19, no.~4, pp. 72--82, Dec.
+  2012.
+
+\bibitem{kim2024openvla}
+\BIBentryALTinterwordspacing
+M.~J. Kim, K.~Pertsch, S.~Karamcheti, T.~Xiao, A.~Balakrishna, S.~Nair,
+  R.~Rafailov, E.~P. Foster, P.~R. Sanketi, Q.~Vuong, T.~Kollar, B.~Burchfiel,
+  R.~Tedrake, D.~Sadigh, S.~Levine, P.~Liang, and C.~Finn, ``{OpenVLA}: An
+  open-source vision--language--action model,'' in \emph{Proceedings of the 8th
+  Conference on Robot Learning}, ser. Proceedings of Machine Learning Research,
+  vol. 270.\hskip 1em plus 0.5em minus 0.4em\relax PMLR, 2025, pp. 2679--2713.
+  [Online]. Available: \url{https://proceedings.mlr.press/v270/kim25c.html}
+\BIBentrySTDinterwordspacing
+
+\bibitem{unitree2025unifolmwma}
+\BIBentryALTinterwordspacing
+{Unitree Robotics}, ``{UnifoLM-WMA-0}: A world-model--action ({WMA}) framework
+  under the {UnifoLM} family,'' GitHub repository, 2025, accessed: Jul. 13,
+  2026. [Online]. Available:
+  \url{https://github.com/unitreerobotics/unifolm-world-model-action}
+\BIBentrySTDinterwordspacing
 
 \end{thebibliography}

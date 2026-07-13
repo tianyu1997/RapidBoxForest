@@ -1,22 +1,22 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA \rbf{} d23 baseline and profile controls}
+\captionof{table}{Shelf+IIWA \rbf{} warm-d23 baseline and registered profile controls}
 \label{tab:tro-shelf-ablation}
-\scriptsize
-\setlength{\tabcolsep}{2.2pt}
-\renewcommand{\arraystretch}{1.02}
-\begin{tabular}{@{}lcccc@{}}
+\footnotesize
+\setlength{\tabcolsep}{1.8pt}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{@{}lccc@{}}
 \toprule
-Case & Build & Batch-task diag. & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\
+Case & Build & Batch timestamp & $L_q/L_{\mathrm{ref},q}$ \\
 \midrule
-\rbf{} baseline & 0.171 [0.166, 0.174] & 0.077 [0.072, 0.085] & 0.111 [0.107, 0.117] & 1.16 [1.09, 1.40] \\
-Critical-sample & 0.279 [0.275, 0.283] & 0.087 [0.078, 0.095] & 0.145 [0.134, 0.151] & 1.16 [1.10, 1.38] \\
-Link-AABB & 0.167 [0.164, 0.171] & 0.083 [0.077, 0.086] & 0.116 [0.111, 0.119] & 1.21 [1.09, 1.50] \\
-HIFK-5/no cache & 2.770 [2.644, 3.003] & 0.181 [0.139, 0.207] & 0.739 [0.703, 0.777] & 1.16 [1.10, 1.44] \\
-SupportHull-only & 0.193 [0.188, 0.200] & 0.087 [0.082, 0.095] & 0.126 [0.120, 0.136] & 1.16 [1.09, 1.40] \\
+\rbf{} baseline & 0.171 [0.166, 0.174] & 0.077 [0.072, 0.085] & 1.16 [1.09, 1.40] \\
+Critical-sample & 0.279 [0.275, 0.283] & 0.087 [0.078, 0.095] & 1.16 [1.10, 1.38] \\
+Link-AABB & 0.167 [0.164, 0.171] & 0.083 [0.077, 0.086] & 1.21 [1.09, 1.50] \\
+HIFK-5/no cache & 2.770 [2.644, 3.003] & 0.181 [0.139, 0.207] & 1.16 [1.10, 1.44] \\
+SupportHull-only & 0.193 [0.188, 0.200] & 0.087 [0.082, 0.095] & 1.16 [1.09, 1.40] \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch task: 40 within-batch timestamps, not single-query latency; ratios: matching audits. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}
+{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch timestamp: 40 within-batch completion times, not single-query latency. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Registered caches: none (HIFK-5); d23 (Critical-sample); IFK-AA+d23 (Link-AABB and SupportHull-only). Critical-sample is non-certifying; its outputs remain validation-required.\par}
 \par\endgroup
