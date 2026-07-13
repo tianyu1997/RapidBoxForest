@@ -1,7 +1,7 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Medium/Hard random-scene summaries at the reported operating points}
+\captionof{table}{Profile-selection-catalog summaries at the reported operating points}
 \label{tab:tro-random-summary}
 \scriptsize
 \setlength{\tabcolsep}{1.3pt}
@@ -12,7 +12,7 @@
 \toprule
 Scenario & \multicolumn{3}{c}{\rbf{}} & \multicolumn{3}{c}{PRM} & \multicolumn{2}{c}{RRT-Connect} & \multicolumn{2}{c}{BIT*} \\
 \cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
- & Build & Task/q & $L/L_{\mathrm{ref},\lambda}$ & Build & \onlineq{} & $L/L_{\mathrm{ref},\lambda}$ & \onlineq{} & $L/L_{\mathrm{ref},\lambda}$ & Selected \(T/q\) & $L/L_{\mathrm{ref},\lambda}$ \\
+ & Build & Task/q & $L/L_{\mathrm{ref},\lambda}$ & Build & \onlineq{} & $L/L_{\mathrm{ref},\lambda}$ & \onlineq{} & $L/L_{\mathrm{ref},\lambda}$ & Selected \onlineq{} & $L/L_{\mathrm{ref},\lambda}$ \\
 \midrule
 IIWA-Medium & \shortstack{0.075\\[-0.2ex]{\scriptsize [0.058, 0.083]}} & \shortstack{0.009\\[-0.2ex]{\scriptsize [0.007, 0.011]}} & \shortstack{1.00\\[-0.2ex]{\scriptsize [1.00, 1.03]}} & \shortstack{3.567\\[-0.2ex]{\scriptsize [3.007, 3.933]}} & \shortstack{0.038\\[-0.2ex]{\scriptsize [0.014, 0.070]}} & \shortstack{1.03\\[-0.2ex]{\scriptsize [1.02, 1.12]}} & \shortstack{0.002\\[-0.2ex]{\scriptsize [0.001, 0.002]}} & \shortstack{1.02\\[-0.2ex]{\scriptsize [1.01, 1.05]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.007, 0.042]}} & \shortstack{1.05\\[-0.2ex]{\scriptsize [1.03, 1.07]}} \\
 IIWA-Hard & \shortstack{0.097\\[-0.2ex]{\scriptsize [0.086, 0.105]}} & \shortstack{0.014\\[-0.2ex]{\scriptsize [0.011, 0.015]}} & \shortstack{1.00\\[-0.2ex]{\scriptsize [1.00, 1.03]}} & \shortstack{4.175\\[-0.2ex]{\scriptsize [3.408, 5.637]}} & \shortstack{0.048\\[-0.2ex]{\scriptsize [0.021, 0.102]}} & \shortstack{1.03\\[-0.2ex]{\scriptsize [1.02, 1.08]}} & \shortstack{0.002\\[-0.2ex]{\scriptsize [0.002, 0.003]}} & \shortstack{1.03\\[-0.2ex]{\scriptsize [1.00, 1.07]}} & \shortstack{0.027\\[-0.2ex]{\scriptsize [0.012, 0.076]}} & \shortstack{1.05\\[-0.2ex]{\scriptsize [1.03, 1.07]}} \\
@@ -24,5 +24,5 @@ Panda-Hard & \shortstack{0.224\\[-0.2ex]{\scriptsize [0.221, 0.237]}} & \shortst
 \end{tabular}%
 }
 \par\vspace{0.1ex}
-{\footnotesize\emph{Notes:} Seconds; medians [first quartile, third quartile]. Build and \rbf{} Task/q summarize 10 scenes; query and ratio fields summarize 100 queries. Selectors follow Q3; UR5 Medium uses query-local edges. \(\lambda\) identifies the exact scene--query.\par}
+{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]. \rbf{} Task/q: ten-query batch coordinate; OMPL \(\mathrm{Online/q}\): 100 queries/condition. BIT* is selected per instance; UR5 Medium uses query-local edges; postprocessing/audit is excluded.\par}
 \par\endgroup

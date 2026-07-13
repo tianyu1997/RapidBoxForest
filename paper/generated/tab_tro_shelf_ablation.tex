@@ -1,22 +1,22 @@
 % Auto-generated from current trade-off artifacts.
 \begingroup
 \centering
-\captionof{table}{Shelf+IIWA \rbf{} baseline and profile-level controls under the d23 schedule}
+\captionof{table}{Shelf+IIWA \rbf{} d23 baseline and profile controls}
 \label{tab:tro-shelf-ablation}
 \scriptsize
 \setlength{\tabcolsep}{2.2pt}
 \renewcommand{\arraystretch}{1.02}
 \begin{tabular}{@{}lcccc@{}}
 \toprule
-Case & Build & Batch task & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\
+Case & Build & Batch-task diag. & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\
 \midrule
 \rbf{} baseline & 0.171 [0.166, 0.174] & 0.077 [0.072, 0.085] & 0.111 [0.107, 0.117] & 1.16 [1.09, 1.40] \\
 Critical-sample & 0.279 [0.275, 0.283] & 0.087 [0.078, 0.095] & 0.145 [0.134, 0.151] & 1.16 [1.10, 1.38] \\
 Link-AABB & 0.167 [0.164, 0.171] & 0.083 [0.077, 0.086] & 0.116 [0.111, 0.119] & 1.21 [1.09, 1.50] \\
-HIFK-5 endpoint & 2.770 [2.644, 3.003] & 0.181 [0.139, 0.207] & 0.739 [0.703, 0.777] & 1.16 [1.10, 1.44] \\
+HIFK-5/no cache & 2.770 [2.644, 3.003] & 0.181 [0.139, 0.207] & 0.739 [0.703, 0.777] & 1.16 [1.10, 1.44] \\
 SupportHull-only & 0.193 [0.188, 0.200] & 0.087 [0.082, 0.095] & 0.126 [0.120, 0.136] & 1.16 [1.09, 1.40] \\
 \bottomrule
 \end{tabular}
 \par\vspace{0.1ex}
-{\footnotesize\emph{Notes:} Seconds; medians [first quartile, third quartile]. Build summarizes eight seed observations; other columns summarize 40 seed--query observations. Replay is full-root d23 IFK-AA, matched d23 Critical-sample, or disabled for HIFK-5. Batch task is in-batch; Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}
+{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch task: 40 within-batch timestamps, not single-query latency; ratios: matching audits. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}
 \par\endgroup

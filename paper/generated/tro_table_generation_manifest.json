@@ -6,85 +6,85 @@
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "da1a6e087eab5b570ea958838294cd586c6234ca8279c416b220a14652e3cf21"
+      "sha256": "b55e83dc7199f788829b04d5e80e17e41e301fc0c40a185433ca1c59f85ae2d5"
     },
     "fig_tro_random_tradeoff.png": {
       "caption": "Random-scene fixed-K=5 reuse-horizon accounting preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_random_tradeoff.png",
       "placeholder": false,
-      "sha256": "af01497a48c3ab6f66d2c65e402368e429753e303eb335ca8b9e0cf1a2a9cd1a"
+      "sha256": "de7977c6b782ca51f75e06817fb6e3cc76d8bd88dedfe89fe39ad0966a8dfd2d"
     },
     "fig_tro_shelf_cross_tradeoff.pdf": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "4596fdd13a6975026c81f50f27ce42ac6ba6596cbe7b6fa565a7a0f8f863fbd1"
+      "sha256": "a7c1aa80369ab18724807bf64d03d713b89e02b838189eee3a6c7dd23c2928eb"
     },
     "fig_tro_shelf_cross_tradeoff.png": {
       "caption": "Shelf+IIWA five-query amortized-time trade-off with cross-algorithm context preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_cross_tradeoff.png",
       "placeholder": false,
-      "sha256": "af5db244b14a2a758a046f834adbdc1991d472531f924729e2ce3d64da82fa29"
+      "sha256": "ef073eb04bca04b42d2638a925eabb7964f0804da9d3f9fdc7483f2446d3ec66"
     },
     "fig_tro_shelf_tradeoff.pdf": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.pdf",
       "placeholder": false,
-      "sha256": "01c4a9f7421c45e7de56c5952f7e35c0bc7ae814ed2dafdaddde5ae3fa4a70b3"
+      "sha256": "46723e14cf948dbf9e736b16ebb2e8b9ee1fd8d3be6912326efb4e3cdd166e10"
     },
     "fig_tro_shelf_tradeoff.png": {
       "caption": "Shelf+IIWA RBF five-query amortized-time quality/segment trade-off curve preview.",
       "exists": true,
       "path": "paper/generated/fig_tro_shelf_tradeoff.png",
       "placeholder": false,
-      "sha256": "d5079bfe54e6bbc02ff7869a77261bb0a4de8f9d05597d999ff3d932141c903f"
+      "sha256": "974458b967e9bd0232fe8f61d882f9d95d428c08573f4cafed243f6a68d04153"
     },
     "tab_tro_endpoint_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_endpoint_envelope.tex",
       "placeholder": false,
-      "sha256": "94c864f636eae04edd8431810549850dccdfb60e24487d5d4308dd9361ad5787"
+      "sha256": "2215cc6509f73c3aaf05adb774688cbe5115b86eb1f2cd7899f0c54910faadc0"
     },
     "tab_tro_link_envelope.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_link_envelope.tex",
       "placeholder": false,
-      "sha256": "c0ba63351bd14da6966ee48eb561c63ea674b32e252df0ea324efb83f292c08d"
+      "sha256": "aaf9090020fb9960f170334ffe6495928667a717b3af37ae6fa280c1189892f2"
     },
     "tab_tro_random_summary.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_random_summary.tex",
       "placeholder": false,
-      "sha256": "caadb5298ba41a9c5e1457673aa22e86af553fd0bf43200e956587079879dc8c"
+      "sha256": "c3ea7422fe806628e1e84bd52f53da98311eb48a3de4f6cdf9df308c0575aadb"
     },
     "tab_tro_shelf_ablation.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_ablation.tex",
       "placeholder": false,
-      "sha256": "bd7945edf019906f5f34801103757fd4eb3ad43c863a1ddbc69ed1b96808ceb8"
+      "sha256": "0bf5fd71cc887f970bc97e73447169ef6fab82b086a77690b56869e7ebffc7ce"
     },
     "tab_tro_shelf_cross_algorithm.tex": {
       "exists": true,
       "path": "paper/generated/tab_tro_shelf_cross_algorithm.tex",
       "placeholder": false,
-      "sha256": "eed13609c927a32a8495ae0e38aeb5e0b6982f252dd710d256dde062613eeb08"
+      "sha256": "a1727ee52d9e06b58dee5fd872f162af3971e5a2d41553ae7768a0ac2eb3032f"
     }
   },
   "environment": {
     "cwd": ".",
-    "git_sha": "8af2792d0c38",
+    "git_sha": "36396ce5e7bf",
     "hostname": "tian",
     "machine": "x86_64",
     "platform": "Linux-6.8.0-124-generic-x86_64-with-glibc2.35",
     "proc_status": {
-      "VmData_kb": 21892,
+      "VmData_kb": 20868,
       "VmHWM_kb": 31608,
       "VmRSS_kb": 31608,
-      "VmSize_kb": 36588
+      "VmSize_kb": 35564
     },
     "processor": "x86_64",
     "python": "3.10.19",

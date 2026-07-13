@@ -1861,7 +1861,7 @@ def generate_exp01_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.1ex}",
-        r"{\footnotesize\emph{Notes:} 1000 shared boxes/width; medians; volume/Analytical. Monte Carlo uses \(\operatorname{round}[(50000/0.35)w]\) samples/box (2857--71429). Gap is worst extent-width shortfall; -- is unreported. IFK-AA/HIFK are certificate-capable under the stated conditions.\par}",
+        r"{\footnotesize\emph{Notes:} 1000 boxes/width; medians; volume/Analytical. Gap is the negative largest per-axis width shortfall to the per-box reference extent hull; more negative is worse. Only IFK-AA/HIFK are candidates for the theoretical conservative branch.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -1943,7 +1943,7 @@ def generate_exp02_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\end{tabular}",
         r"}",
         r"\par\vspace{0.35ex}",
-        r"{\footnotesize\emph{Notes:} 1000 shared boxes/width; entries are means. Test pools five free and known-overlap probes without early exit. Link AABB uses overlap; SupportHull uses direct GJK\@. Build excludes endpoint envelopes.\par}",
+        r"{\footnotesize\emph{Notes:} Means over 1000 boxes/width and five repeats; no early exits. AABB uses overlap; SupportHull direct GJK\@; Build excludes endpoints.\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3245,7 +3245,7 @@ def generate_exp04_table(
         "no_cache_full_root_ts": "Full-root",
         "critsample_support_hull": "Critical-sample",
         "critsample_support_hull_unsafe": "Critical-sample",
-        "no_external_lect": "HIFK-5 endpoint",
+        "no_external_lect": "HIFK-5/no cache",
         "support_hull_no_aabb": "SupportHull-only",
         "link_aabb": "Link-AABB",
         "single_thread": "1 thread",
@@ -3348,14 +3348,14 @@ def generate_exp04_table(
         r"% Auto-generated from current trade-off artifacts.",
         r"\begingroup",
         r"\centering",
-        r"\captionof{table}{Shelf+IIWA \rbf{} baseline and profile-level controls under the d23 schedule}",
+        r"\captionof{table}{Shelf+IIWA \rbf{} d23 baseline and profile controls}",
         r"\label{tab:tro-shelf-ablation}",
         r"\scriptsize",
         r"\setlength{\tabcolsep}{2.2pt}",
         r"\renewcommand{\arraystretch}{1.02}",
         r"\begin{tabular}{@{}lcccc@{}}",
         r"\toprule",
-        r"Case & Build & Batch task & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\",
+        r"Case & Build & Batch-task diag. & Diag.\ 5q & $L_q/L_{\mathrm{ref},q}$ \\",
         r"\midrule",
     ]
     for index, row in enumerate(table_rows):
@@ -3372,7 +3372,7 @@ def generate_exp04_table(
         r"\bottomrule",
         r"\end{tabular}",
         r"\par\vspace{0.1ex}",
-        r"{\footnotesize\emph{Notes:} Seconds; medians [first quartile, third quartile]. Build summarizes eight seed observations; other columns summarize 40 seed--query observations. Replay is full-root d23 IFK-AA, matched d23 Critical-sample, or disabled for HIFK-5. Batch task is in-batch; Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}",
+        r"{\footnotesize\emph{Notes:} Seconds; medians [25\%, 75\%]; b100, 8 seeds. Batch task: 40 within-batch timestamps, not single-query latency; ratios: matching audits. Baseline: IFK-AA+d23+Link-AABB+SupportHull/GJK\@. Diag.\ 5q \(=\mathrm{Build}/5+\mathrm{Batch\ task}\).\par}",
         r"\par\endgroup",
         "",
     ])
@@ -3386,7 +3386,7 @@ def generate_exp04_query_table(path: Path, rows: list[dict[str, Any]], manifest:
         "critsample_support_hull": "Critical sample",
         "critsample_support_hull_unsafe": "Critical sample",
         "link_aabb": "Link AABB",
-        "no_external_lect": "HIFK-5 endpoint",
+        "no_external_lect": "HIFK-5/no cache",
         "single_thread": "1 thread",
     }
     order = [
@@ -3602,9 +3602,9 @@ def generate_exp05_table(
         label="tab:tro-shelf-cross-algorithm",
         methods=methods,
         notes=(
-            r"Seconds; medians [first quartile, third quartile] over eight seeds. "
-            r"\rbf{} Batch task is in-batch; other \(T\) values are timed per query. "
-            r"Coordinates exclude final postprocessing/audit; selectors follow Q2."
+            r"Seconds; medians [25\%, 75\%], eight seeds. "
+            r"\rbf{} Batch task: 40 within-batch completions from eight five-query runs; other \(T\) values are per query. "
+            r"Times are method-local; postprocessing/audit is excluded."
         ),
         include_segment=False,
         time_unit="s",
@@ -3769,7 +3769,7 @@ def generate_exp04_figure(
         ("critsample_support_hull_unsafe", "Critical sample", "#17becf", "v"),
         ("critsample_support_hull", "Critical sample", "#17becf", "v"),
         ("link_aabb", "Link AABB", "#2ca02c", "s"),
-        ("no_external_lect", "HIFK-5 endpoint", "#ff7f0e", "D"),
+        ("no_external_lect", "HIFK-5/no cache", "#ff7f0e", "D"),
         ("single_thread", "1T", "#9467bd", "^"),
     ]
     exp04_font_scale = 1.70
@@ -4379,11 +4379,11 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
             2,
         )
 
-    caption = r"\captionof{table}{Medium/Hard random-scene summaries at the reported operating points}"
+    caption = r"\captionof{table}{Profile-selection-catalog summaries at the reported operating points}"
     path_metric = r"$L/L_{\mathrm{ref},\lambda}$" if has_current_baselines else r"$L/L_{\mathrm{ref,scn}}$"
     notes = (
-        r"Seconds; medians [first quartile, third quartile]. Build and \rbf{} Task/q summarize 10 scenes; query and ratio fields summarize 100 queries. "
-        r"Selectors follow Q3; UR5 Medium uses query-local edges. \(\lambda\) identifies the exact scene--query."
+        r"Seconds; medians [25\%, 75\%]. \rbf{} Task/q: ten-query batch coordinate; OMPL \(\mathrm{Online/q}\): 100 queries/condition. "
+        r"BIT* is selected per instance; UR5 Medium uses query-local edges; postprocessing/audit is excluded."
     )
     if not has_current_baselines:
         path_metric = r"$L/L_{\mathrm{ref,scn}}$"
@@ -4408,7 +4408,7 @@ def generate_exp06_table(path: Path, rows: list[dict[str, Any]]) -> None:
         r"\toprule",
         r"Scenario & \multicolumn{3}{c}{\rbf{}} & \multicolumn{3}{c}{PRM} & \multicolumn{2}{c}{RRT-Connect} & \multicolumn{2}{c}{BIT*} \\",
         r"\cmidrule(lr){2-4}\cmidrule(lr){5-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}",
-        rf" & Build & Task/q & {path_metric} & Build & \onlineq{{}} & {path_metric} & \onlineq{{}} & {path_metric} & Selected \(T/q\) & {path_metric} \\",
+        rf" & Build & Task/q & {path_metric} & Build & \onlineq{{}} & {path_metric} & \onlineq{{}} & {path_metric} & Selected \onlineq{{}} & {path_metric} \\",
         r"\midrule",
     ]
     for scenario, _robot, _difficulty, row, scenario_context in scenario_items:
